@@ -118,12 +118,12 @@ function runTests() {
       includeComponentIds: [],
       excludeComponentIds: [],
       languages: [],
-      locale: 'ja',
+      locale: 'zh-CN',
     });
 
     assert.strictEqual(request.mode, 'manifest');
     assert.strictEqual(request.target, 'claude');
-    assert.deepStrictEqual(request.includeComponentIds, ['locale:ja']);
+    assert.deepStrictEqual(request.includeComponentIds, ['locale:zh-cn']);
     assert.deepStrictEqual(request.legacyLanguages, []);
   })) passed++; else failed++;
 
@@ -135,12 +135,12 @@ function runTests() {
       includeComponentIds: [],
       excludeComponentIds: [],
       languages: ['typescript'],
-      locale: 'ja-JP',
+      locale: 'zh',
     });
 
     assert.strictEqual(request.mode, 'legacy-compat');
     assert.deepStrictEqual(request.legacyLanguages, ['typescript']);
-    assert.deepStrictEqual(request.includeComponentIds, ['locale:ja']);
+    assert.deepStrictEqual(request.includeComponentIds, ['locale:zh-cn']);
   })) passed++; else failed++;
 
   if (test('rejects unsupported locale codes', () => {
@@ -167,7 +167,7 @@ function runTests() {
         includeComponentIds: [],
         excludeComponentIds: [],
         languages: [],
-        locale: 'ja',
+        locale: 'zh-CN',
       }),
       /--locale can only be used with --target claude/
     );

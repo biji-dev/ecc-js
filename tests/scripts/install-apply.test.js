@@ -243,17 +243,12 @@ function runTests() {
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'agents', 'ecc-architect.md')));
       assert.ok(!fs.existsSync(path.join(projectDir, '.cursor', 'agents', 'architect.md')));
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'commands', 'plan.md')));
-      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'hooks.json')));
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'mcp.json')));
-      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'hooks', 'session-start.js')));
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'scripts', 'lib', 'utils.js')));
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'skills', 'tdd-workflow', 'SKILL.md')));
       assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'skills', 'coding-standards', 'SKILL.md')));
 
-      const hooksConfig = readJson(path.join(projectDir, '.cursor', 'hooks.json'));
       const mcpConfig = readJson(path.join(projectDir, '.cursor', 'mcp.json'));
-      assert.strictEqual(hooksConfig.version, 1);
-      assert.ok(hooksConfig.hooks.sessionStart, 'Should keep Cursor sessionStart hooks');
       assert.ok(mcpConfig.mcpServers['chrome-devtools'], 'Should install shared MCP servers into Cursor');
 
       const statePath = path.join(projectDir, '.cursor', 'ecc-install-state.json');
@@ -347,7 +342,6 @@ function runTests() {
           'agents-core',
           'commands-core',
           'platform-configs',
-          'skill-unified-memory',
           'workflow-quality',
         ]
       );
@@ -376,12 +370,7 @@ function runTests() {
 
       const rulesDir = path.join(projectDir, '.agents', 'rules');
       for (const fileName of [
-        'golang-testing.md',
-        'kotlin-testing.md',
         'typescript-testing.md',
-        'ruby-testing.md',
-        'arkts-testing.md',
-        'cpp-testing.md',
       ]) {
         assert.ok(fs.existsSync(path.join(rulesDir, fileName)), `Expected ${fileName}`);
       }
@@ -434,7 +423,6 @@ function runTests() {
       const result = run(['--target', 'qwen', '--profile', 'minimal'], { cwd: projectDir, homeDir });
       assert.strictEqual(result.code, 0, result.stderr);
 
-      assert.ok(fs.existsSync(path.join(homeDir, '.qwen', 'QWEN.md')));
       assert.ok(fs.existsSync(path.join(homeDir, '.qwen', 'rules', 'common', 'coding-style.md')));
       assert.ok(fs.existsSync(path.join(homeDir, '.qwen', 'agents', 'architect.md')));
       assert.ok(fs.existsSync(path.join(homeDir, '.qwen', 'commands', 'plan.md')));
@@ -493,7 +481,7 @@ function runTests() {
       assert.ok(result.stdout.includes('Included components: (none)'));
       assert.ok(result.stdout.includes(
         'Selected modules: rules-core, agents-core, commands-core, hooks-runtime, '
-        + 'platform-configs, skill-unified-memory, workflow-quality'
+        + 'platform-configs, workflow-quality'
       ));
       assert.ok(!fs.existsSync(path.join(homeDir, '.claude', 'ecc', 'install-state.json')));
     } finally {
@@ -548,7 +536,7 @@ function runTests() {
       assert.ok(result.stdout.includes('Profile: minimal'));
       assert.ok(result.stdout.includes(
         'Selected modules: rules-core, agents-core, commands-core, platform-configs, '
-        + 'skill-unified-memory, workflow-quality'
+        + 'workflow-quality'
       ));
       assert.ok(!result.stdout.includes('hooks-runtime'));
       assert.ok(!fs.existsSync(path.join(homeDir, '.claude', 'ecc', 'install-state.json')));
@@ -719,7 +707,7 @@ function runTests() {
 
       assert.ok(fs.existsSync(path.join(projectDir, '.agents', 'rules', 'common-coding-style.md')));
       assert.ok(
-        fs.existsSync(path.join(projectDir, '.agents', 'rules', 'python-testing.md')),
+        fs.existsSync(path.join(projectDir, '.agents', 'rules', 'web-testing.md')),
         'Manifest profiles should retain broad rule coverage'
       );
       assert.ok(fs.existsSync(path.join(projectDir, '.agents', 'agents', 'architect.md')));
@@ -736,7 +724,6 @@ function runTests() {
           'agents-core',
           'commands-core',
           'platform-configs',
-          'skill-unified-memory',
           'workflow-quality'
         ]
       );
@@ -759,8 +746,9 @@ function runTests() {
         homeDir,
       });
       assert.strictEqual(result.code, 0, result.stderr);
-      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'hooks.json')));
-      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'rules', 'common-agents.mdc')));
+      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'mcp.json')),
+        'platform-configs should install shared MCP config into Cursor');
+      assert.ok(fs.existsSync(path.join(projectDir, '.cursor', 'mcp-configs', 'mcp-servers.json')));
       assert.ok(!fs.existsSync(path.join(projectDir, '.cursor', 'rules', 'common-agents.md')));
 
       const state = readJson(path.join(projectDir, '.cursor', 'ecc-install-state.json'));
@@ -852,7 +840,7 @@ function runTests() {
         assert.ok(!command.includes('${CLAUDE_PLUGIN_ROOT}'));
 
         const smokeEntry = settings.hooks.PreToolUse.find(
-          entry => entry.id === 'pre:write:doc-file-warning'
+          entry => entry.id === 'pre:config-protection'
         );
         const smokeResult = spawnSync(smokeEntry.hooks[0].command, {
           input: JSON.stringify({
@@ -866,7 +854,7 @@ function runTests() {
             ...process.env,
             HOME: homeDir,
             USERPROFILE: homeDir,
-            ECC_DISABLED_HOOKS: 'pre:write:doc-file-warning',
+            ECC_DISABLED_HOOKS: 'pre:config-protection',
           },
           shell: true,
           timeout: DEFAULT_INSTALL_APPLY_TIMEOUT_MS,

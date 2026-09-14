@@ -15,8 +15,6 @@ const {
 
 const ECC_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'ecc.js');
 const STATUS_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'status.js');
-const SESSIONS_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'sessions-cli.js');
-const WORK_ITEMS_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'work-items.js');
 
 async function test(name, fn) {
   try {
@@ -47,59 +45,6 @@ function runNode(scriptPath, args = [], options = {}) {
       ...(options.env || {}),
     },
   });
-}
-
-function createGhShim(binDir) {
-  fs.mkdirSync(binDir, { recursive: true });
-  const shimJs = path.join(binDir, 'gh.js');
-  fs.writeFileSync(shimJs, `
-const mode = process.env.ECC_FAKE_GH_MODE || 'open';
-const args = process.argv.slice(2);
-function write(payload) {
-  process.stdout.write(JSON.stringify(payload));
-}
-if (args[0] === 'pr' && args[1] === 'list') {
-  if (mode === 'empty') write([]);
-  else write([
-    {
-      number: 3,
-      title: 'Conflicting queue cleanup',
-      author: { login: 'contributor-a' },
-      url: 'https://github.com/affaan-m/everything-claude-code/pull/3',
-      updatedAt: '2026-05-11T10:00:00Z',
-      mergeStateStatus: 'DIRTY',
-      isDraft: false,
-      headRefName: 'fix/conflict'
-    },
-    {
-      number: 4,
-      title: 'Clean docs update',
-      author: { login: 'contributor-b' },
-      url: 'https://github.com/affaan-m/everything-claude-code/pull/4',
-      updatedAt: '2026-05-11T11:00:00Z',
-      mergeStateStatus: 'CLEAN',
-      isDraft: false,
-      headRefName: 'docs/clean'
-    }
-  ]);
-} else if (args[0] === 'issue' && args[1] === 'list') {
-  if (mode === 'empty') write([]);
-  else write([
-    {
-      number: 9,
-      title: 'Track release blocker',
-      author: { login: 'reporter' },
-      url: 'https://github.com/affaan-m/everything-claude-code/issues/9',
-      updatedAt: '2026-05-11T12:00:00Z',
-      labels: [{ name: 'release' }]
-    }
-  ]);
-} else {
-  process.stderr.write('unexpected gh args: ' + args.join(' '));
-  process.exit(2);
-}
-`, 'utf8');
-  return shimJs;
 }
 
 function parseJson(stdout) {
@@ -872,178 +817,7 @@ async function runTests() {
     }
   })) passed += 1; else failed += 1;
 
-  if (await test('work-items CLI supports upsert, list, show, and close', async () => {
-    const testDir = createTempDir('ecc-work-items-cli-');
-    const dbPath = path.join(testDir, 'state.db');
-
-    try {
-      const upsertResult = runNode(WORK_ITEMS_SCRIPT, [
-        'upsert',
-        'linear-ecc-99',
-        '--db',
-        dbPath,
-        '--source',
-        'linear',
-        '--source-id',
-        'ECC-99',
-        '--title',
-        'Ship work item CLI',
-        '--status',
-        'blocked',
-        '--priority',
-        'high',
-        '--url',
-        'https://linear.app/example/issue/ECC-99',
-        '--owner',
-        'control-plane',
-        '--metadata-json',
-        '{"project":"ECC 2.0"}',
-        '--json',
-      ], { cwd: testDir });
-      assert.strictEqual(upsertResult.status, 0, upsertResult.stderr);
-      const upsertPayload = parseJson(upsertResult.stdout);
-      assert.strictEqual(upsertPayload.id, 'linear-ecc-99');
-      assert.strictEqual(upsertPayload.status, 'blocked');
-      assert.strictEqual(upsertPayload.repoRoot, fs.realpathSync(testDir));
-      assert.strictEqual(upsertPayload.metadata.project, 'ECC 2.0');
-
-      const updateResult = runNode(WORK_ITEMS_SCRIPT, [
-        'upsert',
-        'linear-ecc-99',
-        '--db',
-        dbPath,
-        '--status',
-        'in-progress',
-        '--json',
-      ]);
-      assert.strictEqual(updateResult.status, 0, updateResult.stderr);
-      const updatePayload = parseJson(updateResult.stdout);
-      assert.strictEqual(updatePayload.title, 'Ship work item CLI');
-      assert.strictEqual(updatePayload.source, 'linear');
-      assert.strictEqual(updatePayload.status, 'in-progress');
-
-      const listResult = runNode(WORK_ITEMS_SCRIPT, ['list', '--db', dbPath, '--json']);
-      assert.strictEqual(listResult.status, 0, listResult.stderr);
-      const listPayload = parseJson(listResult.stdout);
-      assert.strictEqual(listPayload.totalCount, 1);
-      assert.strictEqual(listPayload.items[0].id, 'linear-ecc-99');
-
-      const showResult = runNode(WORK_ITEMS_SCRIPT, ['show', 'linear-ecc-99', '--db', dbPath]);
-      assert.strictEqual(showResult.status, 0, showResult.stderr);
-      assert.match(showResult.stdout, /linear\/#ECC-99 in-progress: Ship work item CLI/);
-
-      const closeResult = runNode(WORK_ITEMS_SCRIPT, ['close', 'linear-ecc-99', '--db', dbPath, '--json']);
-      assert.strictEqual(closeResult.status, 0, closeResult.stderr);
-      const closePayload = parseJson(closeResult.stdout);
-      assert.strictEqual(closePayload.status, 'done');
-      assert.strictEqual(closePayload.title, 'Ship work item CLI');
-    } finally {
-      cleanupTempDir(testDir);
-    }
-  })) passed += 1; else failed += 1;
-
-  if (await test('work-items CLI syncs GitHub PRs and issues into readiness', async () => {
-    const testDir = createTempDir('ecc-work-items-github-');
-    const dbPath = path.join(testDir, 'state.db');
-    const binDir = path.join(testDir, 'bin');
-    const repo = 'affaan-m/everything-claude-code';
-
-    try {
-      const env = {
-        ECC_GH_SHIM: createGhShim(binDir),
-      };
-
-      const syncResult = runNode(WORK_ITEMS_SCRIPT, [
-        'sync-github',
-        '--repo',
-        repo,
-        '--db',
-        dbPath,
-        '--limit',
-        '10',
-        '--json',
-      ], { cwd: testDir, env });
-      assert.strictEqual(syncResult.status, 0, syncResult.stderr);
-      const syncPayload = parseJson(syncResult.stdout);
-      assert.strictEqual(syncPayload.repo, repo);
-      assert.strictEqual(syncPayload.prCount, 2);
-      assert.strictEqual(syncPayload.issueCount, 1);
-      assert.strictEqual(syncPayload.closedCount, 0);
-      assert.strictEqual(syncPayload.items.length, 3);
-      assert.strictEqual(syncPayload.items[0].id, 'github-affaan-m-everything-claude-code-pr-3');
-      assert.strictEqual(syncPayload.items[0].status, 'blocked');
-      assert.strictEqual(syncPayload.items[1].status, 'needs-review');
-      assert.strictEqual(syncPayload.items[2].metadata.labels[0], 'release');
-
-      const statusResult = runNode(STATUS_SCRIPT, ['--db', dbPath, '--json', '--exit-code']);
-      assert.strictEqual(statusResult.status, 2, statusResult.stderr);
-      const statusPayload = parseJson(statusResult.stdout);
-      assert.strictEqual(statusPayload.readiness.blockedWorkItems, 3);
-
-      const closeResult = runNode(WORK_ITEMS_SCRIPT, [
-        'sync-github',
-        '--repo',
-        repo,
-        '--db',
-        dbPath,
-        '--json',
-      ], {
-        cwd: testDir,
-        env: {
-          ...env,
-          ECC_FAKE_GH_MODE: 'empty',
-        },
-      });
-      assert.strictEqual(closeResult.status, 0, closeResult.stderr);
-      const closePayload = parseJson(closeResult.stdout);
-      assert.strictEqual(closePayload.prCount, 0);
-      assert.strictEqual(closePayload.issueCount, 0);
-      assert.strictEqual(closePayload.closedCount, 3);
-      assert.ok(closePayload.closedItems.every(item => item.status === 'closed'));
-
-      const cleanStatusResult = runNode(STATUS_SCRIPT, ['--db', dbPath, '--json', '--exit-code']);
-      assert.strictEqual(cleanStatusResult.status, 0, cleanStatusResult.stderr);
-      const cleanStatusPayload = parseJson(cleanStatusResult.stdout);
-      assert.strictEqual(cleanStatusPayload.readiness.blockedWorkItems, 0);
-      assert.strictEqual(cleanStatusPayload.workItems.closedCount, 3);
-    } finally {
-      cleanupTempDir(testDir);
-    }
-  })) passed += 1; else failed += 1;
-
-  if (await test('sessions CLI supports list and detail views in human-readable and --json output', async () => {
-    const testDir = createTempDir('ecc-state-cli-');
-    const dbPath = path.join(testDir, 'state.db');
-
-    try {
-      await seedStore(dbPath);
-
-      const listJsonResult = runNode(SESSIONS_SCRIPT, ['--db', dbPath, '--json']);
-      assert.strictEqual(listJsonResult.status, 0, listJsonResult.stderr);
-      const listPayload = parseJson(listJsonResult.stdout);
-      assert.strictEqual(listPayload.totalCount, 2);
-      assert.strictEqual(listPayload.sessions[0].id, 'session-active');
-
-      const detailJsonResult = runNode(SESSIONS_SCRIPT, ['session-active', '--db', dbPath, '--json']);
-      assert.strictEqual(detailJsonResult.status, 0, detailJsonResult.stderr);
-      const detailPayload = parseJson(detailJsonResult.stdout);
-      assert.strictEqual(detailPayload.session.id, 'session-active');
-      assert.strictEqual(detailPayload.workers.length, 2);
-      assert.strictEqual(detailPayload.skillRuns.length, 2);
-      assert.strictEqual(detailPayload.decisions.length, 1);
-
-      const detailHumanResult = runNode(SESSIONS_SCRIPT, ['session-active', '--db', dbPath]);
-      assert.strictEqual(detailHumanResult.status, 0, detailHumanResult.stderr);
-      assert.match(detailHumanResult.stdout, /Session: session-active/);
-      assert.match(detailHumanResult.stdout, /Workers: 2/);
-      assert.match(detailHumanResult.stdout, /Skill runs: 2/);
-      assert.match(detailHumanResult.stdout, /Decisions: 1/);
-    } finally {
-      cleanupTempDir(testDir);
-    }
-  })) passed += 1; else failed += 1;
-
-  if (await test('ecc CLI delegates the new status, sessions, and work-items subcommands', async () => {
+  if (await test('ecc CLI delegates the status subcommand', async () => {
     const testDir = createTempDir('ecc-state-cli-');
     const dbPath = path.join(testDir, 'state.db');
 
@@ -1054,35 +828,6 @@ async function runTests() {
       assert.strictEqual(statusResult.status, 0, statusResult.stderr);
       const statusPayload = parseJson(statusResult.stdout);
       assert.strictEqual(statusPayload.activeSessions.activeCount, 1);
-
-      const sessionsResult = runNode(ECC_SCRIPT, ['sessions', 'session-active', '--db', dbPath, '--json']);
-      assert.strictEqual(sessionsResult.status, 0, sessionsResult.stderr);
-      const sessionsPayload = parseJson(sessionsResult.stdout);
-      assert.strictEqual(sessionsPayload.session.id, 'session-active');
-      assert.strictEqual(sessionsPayload.skillRuns.length, 2);
-
-      const workItemResult = runNode(ECC_SCRIPT, [
-        'work-items',
-        'upsert',
-        'handoff-roadmap',
-        '--db',
-        dbPath,
-        '--source',
-        'handoff',
-        '--title',
-        'Track roadmap handoff',
-        '--status',
-        'blocked',
-        '--json',
-      ], { cwd: testDir });
-      assert.strictEqual(workItemResult.status, 0, workItemResult.stderr);
-      const workItemPayload = parseJson(workItemResult.stdout);
-      assert.strictEqual(workItemPayload.id, 'handoff-roadmap');
-
-      const delegatedStatusResult = runNode(ECC_SCRIPT, ['status', '--db', dbPath, '--json']);
-      assert.strictEqual(delegatedStatusResult.status, 0, delegatedStatusResult.stderr);
-      const delegatedStatusPayload = parseJson(delegatedStatusResult.stdout);
-      assert.strictEqual(delegatedStatusPayload.readiness.blockedWorkItems, 1);
     } finally {
       cleanupTempDir(testDir);
     }

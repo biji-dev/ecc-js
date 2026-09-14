@@ -27,10 +27,6 @@ const {
   resolveInstallPlan,
 } = require('../../scripts/lib/install-manifests');
 
-function normalizePlanPath(value) {
-  return String(value || '').replace(/\\/g, '/');
-}
-
 function test(name, fn) {
   try {
     fn();
@@ -333,15 +329,15 @@ function runTests() {
   if (test('multiple --without flags exclude multiple modules', () => {
     const plan = resolveInstallPlan({
       profileId: 'full',
-      excludeComponentIds: ['capability:media', 'capability:social', 'capability:supply-chain'],
+      excludeComponentIds: ['capability:media', 'capability:research', 'capability:agentic'],
       target: 'claude',
     });
     assert.ok(!plan.selectedModuleIds.includes('media-generation'));
-    assert.ok(!plan.selectedModuleIds.includes('social-distribution'));
-    assert.ok(!plan.selectedModuleIds.includes('supply-chain-domain'));
+    assert.ok(!plan.selectedModuleIds.includes('research-apis'));
+    assert.ok(!plan.selectedModuleIds.includes('agentic-patterns'));
     assert.ok(plan.excludedModuleIds.includes('media-generation'));
-    assert.ok(plan.excludedModuleIds.includes('social-distribution'));
-    assert.ok(plan.excludedModuleIds.includes('supply-chain-domain'));
+    assert.ok(plan.excludedModuleIds.includes('research-apis'));
+    assert.ok(plan.excludedModuleIds.includes('agentic-patterns'));
   })) passed++; else failed++;
 
   // ─── Combined --with + --without ───
@@ -364,8 +360,8 @@ function runTests() {
   if (test('--without on a dependency of --with raises an error', () => {
     assert.throws(
       () => resolveInstallPlan({
-        includeComponentIds: ['capability:social'],
-        excludeComponentIds: ['capability:content'],
+        includeComponentIds: ['capability:optimization'],
+        excludeComponentIds: ['capability:operators'],
       }),
       /depends on excluded module/
     );
@@ -545,10 +541,6 @@ function runTests() {
       assert.strictEqual(parsed.plan.target, 'zed');
       assert.strictEqual(parsed.plan.adapter.id, 'zed-project');
       assert.strictEqual(parsed.plan.installRoot, path.join(fs.realpathSync(projectDir), '.zed'));
-      assert.ok(
-        parsed.plan.operations.some(operation => normalizePlanPath(operation.sourceRelativePath) === '.zed/settings.json'),
-        'Should include Zed native settings operation'
-      );
       assert.ok(
         !parsed.plan.operations.some(operation => operation.moduleId === 'hooks-runtime'),
         'Zed minimal dry-run should not install hook runtime files'

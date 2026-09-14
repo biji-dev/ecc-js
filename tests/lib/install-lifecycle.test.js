@@ -1663,7 +1663,7 @@ function runTests() {
     try {
       const targetRoot = path.join(projectRoot, '.cursor');
       const statePath = path.join(targetRoot, 'ecc-install-state.json');
-      const sourcePath = path.join(REPO_ROOT, '.cursor', 'hooks.json');
+      const sourcePath = path.join(REPO_ROOT, '.mcp.json');
       const destinationPath = path.join(targetRoot, 'hooks.json');
       fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
       fs.writeFileSync(destinationPath, '{"drifted":true}\n');
@@ -1687,7 +1687,7 @@ function runTests() {
             kind: 'copy-file',
             moduleId: 'platform-configs',
             sourcePath,
-            sourceRelativePath: '.cursor/hooks.json',
+            sourceRelativePath: '.mcp.json',
             destinationPath,
             strategy: 'sync-root-children',
             ownership: 'managed',

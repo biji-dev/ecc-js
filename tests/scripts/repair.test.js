@@ -108,10 +108,10 @@ function runTests() {
       assert.strictEqual(installResult.code, 0, installResult.stderr);
 
       const normalizedProjectRoot = fs.realpathSync(projectRoot);
-      const managedPath = path.join(normalizedProjectRoot, '.cursor', 'hooks', 'session-start.js');
+      const managedPath = path.join(normalizedProjectRoot, '.cursor', 'rules', 'common-coding-style.mdc');
       const statePath = path.join(normalizedProjectRoot, '.cursor', 'ecc-install-state.json');
       const expectedContent = fs.readFileSync(
-        path.join(REPO_ROOT, '.cursor', 'hooks', 'session-start.js'),
+        path.join(REPO_ROOT, 'rules', 'common', 'coding-style.md'),
         'utf8'
       );
       fs.writeFileSync(managedPath, '// drifted\n');

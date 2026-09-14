@@ -24,10 +24,7 @@ function test(name, fn) {
 const publicInstallDocs = [
   'README.md',
   'README.zh-CN.md',
-  'docs/pt-BR/README.md',
   'docs/zh-CN/README.md',
-  'docs/ja-JP/skills/configure-ecc/SKILL.md',
-  'docs/zh-CN/skills/configure-ecc/SKILL.md',
 ];
 
 console.log('\n=== Testing public install identifiers ===\n');
@@ -53,18 +50,11 @@ const pluginAndManualInstallDocs = [
 const publicCommandNamespaceDocs = [
   'README.md',
   'README.zh-CN.md',
-  'docs/pt-BR/README.md',
-  'docs/tr/README.md',
-  'docs/ko-KR/README.md',
-  'docs/ja-JP/README.md',
   'docs/zh-CN/README.md',
-  'docs/zh-TW/README.md',
 ];
 
 const manualClaudeSkillInstallDocs = [
   'README.md',
-  'docs/de-DE/README.md',
-  'docs/ru/README.md',
 ];
 
 const rootReadme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
@@ -74,10 +64,26 @@ const languageSwitcher = rootReadme.match(
 
 assert.ok(languageSwitcher, 'Expected README.md to contain the public language switcher');
 
+// Localized READMEs the slim fork drops with docs/**. Listed explicitly so any
+// other broken switcher link still fails loudly instead of being skipped.
+const forkDroppedLocalizedReadmes = new Set([
+  'docs/pt-BR/README.md',
+  'docs/zh-TW/README.md',
+  'docs/ja-JP/README.md',
+  'docs/ko-KR/README.md',
+  'docs/tr/README.md',
+  'docs/ru/README.md',
+  'docs/vi-VN/README.md',
+  'docs/th/README.md',
+  'docs/de-DE/README.md',
+  'docs/es/README.md',
+  'docs/uk-UA/README.md',
+]);
+
 const languageSwitcherReadmes = Array.from(
   languageSwitcher[1].matchAll(/href="([^"]+\.md)"/g),
   (match) => match[1]
-);
+).filter(readme => !forkDroppedLocalizedReadmes.has(readme));
 
 assert.ok(
   languageSwitcherReadmes.length > 0,
@@ -87,8 +93,6 @@ assert.ok(
 const publicUniversalInstallDocs = [
   ...languageSwitcherReadmes,
   'docs/zh-CN/README.md',
-  'docs/MIGRATION-1X-TO-2.0.md',
-  'docs/token-optimization.md',
 ];
 
 function executableLegacyInstallerLines(content) {

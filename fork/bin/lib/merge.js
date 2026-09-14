@@ -79,7 +79,7 @@ function analyze({ slim, state, queue, target }) {
     added,
     gone,
     successorHints: hints,
-    newScripts: addedBetween(fromRef, target.ref, ['scripts/*.js', 'scripts/*.mjs', 'scripts/*.sh']),
+    newScripts: addedBetween(fromRef, target.ref, ['scripts/']).filter(file => /^scripts\/[^/]+\.(?:js|mjs|cjs|sh)$/.test(file)),
     newLibDirs: inventory.libDirs.filter(dir => !headLibDirs.has(dir)),
     newSubHooks: inventory.subHookIds.filter(id => !headSubHooks.has(id)),
     newTopLevel,

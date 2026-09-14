@@ -76,6 +76,9 @@ jobs:
           else
             echo "has_report=false" >> "$GITHUB_OUTPUT"
           fi
+          if [ -f fork/.sync-report.md ]; then
+            cat fork/.sync-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then exit "$status"; fi
           exit 0
 
@@ -109,10 +112,21 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ needs.forecast.outputs.tag }}
         run: |
+          if [ "$(gh api "repos/$REPO" --jq .has_issues)" != "true" ]; then
+            echo "::warning::Issues are disabled on $REPO; the forecast is in the run summary and the sync-forecast artifact"
+            exit 0
+          fi
+          # Issue bodies are capped at 65536 characters.
+          if [ "$(wc -c < .sync-report.md)" -gt 60000 ]; then
+            head -c 60000 .sync-report.md > body.md
+            printf '\n\n_Truncated; the full forecast is in the sync-forecast artifact._\n' >> body.md
+          else
+            cp .sync-report.md body.md
+          fi
           title="upstream ${TAG} available"
           existing=$(gh issue list -R "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" -R "$REPO" --body-file .sync-report.md
+            gh issue edit "$existing" -R "$REPO" --body-file body.md
           else
-            gh issue create -R "$REPO" --title "$title" --body-file .sync-report.md
+            gh issue create -R "$REPO" --title "$title" --body-file body.md
           fi

@@ -654,7 +654,11 @@
       "scripts/work-items.js",
       "config/github-native-coordination.json",
       ".vscode/**",
-      "scripts/lib/harness-adapter-compliance.js"
+      "scripts/lib/harness-adapter-compliance.js",
+      ".agents/skills/everything-claude-code/**",
+      ".claude/ecc-tools.json",
+      ".claude/identity.json",
+      ".claude/homunculus/**"
     ],
     "keep": [
       "docs/COMMAND-REGISTRY.json",
@@ -667,7 +671,8 @@
       ".github/workflows/fork-sync.yml",
       "examples/eval-harness/**",
       "the-longform-guide.md",
-      "the-shortform-guide.md"
+      "the-shortform-guide.md",
+      "docs/ECC-JS.md"
     ]
   },
   "tests": {

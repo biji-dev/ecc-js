@@ -11,10 +11,12 @@ const { runTransforms } = require('../transforms');
 const GENERATED_EXTRA = ['package-lock.json', 'fork/install/kimi.json', 'fork/install/claude-rules.json'];
 
 function snapshot(files) {
-  return new Map(files.map(file => {
-    const target = path.join(REPO_ROOT, file);
-    return [file, fs.existsSync(target) ? fs.readFileSync(target) : null];
-  }));
+  return new Map(
+    files.map(file => {
+      const target = path.join(REPO_ROOT, file);
+      return [file, fs.existsSync(target) ? fs.readFileSync(target) : null];
+    })
+  );
 }
 
 function restoreSnapshot(saved) {
@@ -41,21 +43,26 @@ function applyDecisions({ ref, slim, state, queue, log = () => {} }) {
   const derived = (slim.derived || []).filter(file => refFiles.has(file));
   const saved = snapshot([...new Set([...(slim.derived || []), ...GENERATED_EXTRA])]);
 
+  let toRemove = [];
+  let toRestore = [];
   try {
     checkoutPaths(ref, derived);
     log(`reset ${derived.length} derived files to ${ref}`);
 
     const isDropped = buildDropMatcher(slim, queue);
-    const toRemove = listFiles().filter(isDropped);
+    toRemove = listFiles().filter(isDropped);
     removePaths(toRemove);
     log(`removed ${toRemove.length} tracked paths in the drop set`);
 
+    // Restore kept items, keep paths, and upstream tests that are no longer in the drop set
+    // (tests of an item kept again, or coupled tests of a decided queue entry).
     const isKeptItem = keptItemMatcher(slim);
     const isKeepPath = createMatcher((slim.paths && slim.paths.keep) || []);
+    const isUpstreamTest = file => file.startsWith('tests/') && !file.startsWith('tests/fork/');
     const trackedNow = new Set(listFiles());
-    const toRestore = [...refFiles].filter(file => (isKeptItem(file) || isKeepPath(file)) && !trackedNow.has(file) && !isDropped(file));
+    toRestore = [...refFiles].filter(file => (isKeptItem(file) || isKeepPath(file) || isUpstreamTest(file)) && !trackedNow.has(file) && !isDropped(file));
     checkoutPaths(ref, toRestore);
-    log(`restored ${toRestore.length} kept item files from ${ref}`);
+    log(`restored ${toRestore.length} kept item, keep path and test files from ${ref}`);
 
     const report = runTransforms(slim, state, log);
     stagePaths([...(slim.derived || []), ...GENERATED_EXTRA]);
@@ -63,7 +70,12 @@ function applyDecisions({ ref, slim, state, queue, log = () => {} }) {
   } catch (error) {
     restoreSnapshot(saved);
     stagePaths([...saved.keys()]);
-    throw new Error(`${error.message} (derived files restored to their previous contents)`);
+    const changed = toRemove.length + toRestore.length;
+    const hint = changed
+      ? ` ${toRemove.length} removals and ${toRestore.length} restorations remain staged; fix the cause and rerun npm run fork:apply,` +
+        ' or discard them with: git restore --source=HEAD --staged --worktree -- <paths>'
+      : '';
+    throw new Error(`${error.message} (derived files restored to their previous contents.${hint})`);
   }
 }
 

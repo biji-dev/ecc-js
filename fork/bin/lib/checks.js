@@ -39,17 +39,68 @@ function scriptReferences(slim) {
   return missing;
 }
 
-/** Kept prose that still names dropped catalog items via ecc: or slash-command syntax. */
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Kept prose that still names dropped catalog items: whole-word skill/agent/command names
+ * (hyphenated or 6+ chars, to avoid common words) and rules/<pack> paths for rule packs.
+ */
 function danglingReferences(slim, queue) {
-  const dropped = new Set(ITEM_KINDS.flatMap(kind => removedNames(slim, queue, kind)));
+  const itemNames = ['skills', 'agents', 'commands'].flatMap(kind => removedNames(slim, queue, kind)).filter(name => name.includes('-') || name.length >= 6);
+  const ruleNames = removedNames(slim, queue, 'rules');
+  const patterns = [];
+  if (itemNames.length) patterns.push(`(?<![\\w-])(${itemNames.map(escapeRegex).join('|')})(?![\\w-])`);
+  if (ruleNames.length) patterns.push(`rules/(${ruleNames.map(escapeRegex).join('|')})(?![\\w-])`);
+  if (!patterns.length) return [];
+  const regex = new RegExp(patterns.join('|'), 'g');
   const hits = [];
-  for (const file of keptItemFiles(slim)) {
-    const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
-    for (const match of text.matchAll(/(?:ecc:|\/)([a-z0-9][a-z0-9-]+)\b/g)) {
-      if (dropped.has(match[1])) hits.push(`${file}: ${match[0]}`);
-    }
+  const files = [...keptItemFiles(slim), '.codex/AGENTS.md'].filter(exists);
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8').split('\n');
+    lines.forEach((line, index) => {
+      for (const match of line.matchAll(regex)) hits.push(`${file}:${index + 1}: ${match[1] || match[2]}`);
+    });
   }
   return [...new Set(hits)];
+}
+
+const SHIPPED_PREFIXES = [
+  'skills/',
+  'agents/',
+  'commands/',
+  'rules/',
+  'hooks/',
+  'scripts/',
+  'ecc/',
+  'mcp-configs/',
+  'workflows/',
+  '.claude-plugin/',
+  '.codex-plugin/',
+  '.codex/',
+  '.agents/',
+  'plugins/',
+  '.mcp.json'
+];
+
+/**
+ * Harnesses cache the plugin by version, so shipped changes without a pluginBuild bump never reach
+ * users. Compares against a base ref (FORK_VERIFY_BASE or --since); skipped when no usable base.
+ */
+function bumpCheck(state, baseRef) {
+  if (!baseRef || /^0+$/.test(baseRef)) return [];
+  if (run('git', ['cat-file', '-e', `${baseRef}^{commit}`], { allowFailure: true }).status !== 0) return [];
+  const changed = run('git', ['diff', '--name-only', baseRef, 'HEAD']).stdout.split('\n').filter(Boolean);
+  const shipped = changed.filter(file => SHIPPED_PREFIXES.some(prefix => file === prefix || file.startsWith(prefix)));
+  if (!shipped.length) return [];
+  const base = run('git', ['show', `${baseRef}:fork/state.json`], { allowFailure: true });
+  if (base.status !== 0) return [];
+  const before = JSON.parse(base.stdout);
+  if (before.upstreamVersion === state.upstreamVersion && before.pluginBuild === state.pluginBuild) {
+    return [`shipped content changed since ${baseRef.slice(0, 12)} (${shipped.length} files, e.g. ${shipped.slice(0, 3).join(', ')}) without a plugin build bump; run npm run fork:bump`];
+  }
+  return [];
 }
 
 function kimiPlanCheck(slim) {
@@ -98,7 +149,7 @@ function driftCheck(slim, state) {
   return drifted;
 }
 
-function runChecks({ drift = false, kimi = true } = {}) {
+function runChecks({ drift = false, kimi = true, since = process.env.FORK_VERIFY_BASE } = {}) {
   const slim = loadSlim();
   const state = loadState();
   const queue = loadQueue();
@@ -150,9 +201,10 @@ function runChecks({ drift = false, kimi = true } = {}) {
     const drifted = driftCheck(slim, state);
     if (drifted.length) errors.push(`derived files drift from transforms: ${drifted.join(', ')}`);
   }
+  errors.push(...bumpCheck(state, since));
   const dangling = danglingReferences(slim, queue);
   if (dangling.length) warnings.push(`kept prose names dropped items (${dangling.length}), e.g. ${dangling.slice(0, 5).join('; ')}`);
   return { errors, warnings };
 }
 
-module.exports = { runChecks, scriptReferences, danglingReferences, ALLOWED_WORKFLOWS };
+module.exports = { runChecks, scriptReferences, danglingReferences, bumpCheck, ALLOWED_WORKFLOWS };

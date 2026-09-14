@@ -5,7 +5,7 @@
 const assert = require('assert');
 
 const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
-const { buildDropMatcher, keptItemMatcher, removedNames } = require('../../fork/bin/lib/config');
+const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED } = require('../../fork/bin/lib/config');
 const { diffInventory } = require('../../fork/bin/lib/inventory');
 const { pruneDecided } = require('../../fork/bin/lib/queue');
 
@@ -36,7 +36,7 @@ const slim = {
   hooks: { keep: ['session:start'], drop: { 'pre:compact': 'noise' } },
   mirrors: ['.agents/skills/{name}'],
   paths: { drop: ['docs/**', '.opencode/**', '.github/workflows/**'], keep: ['docs/COMMAND-REGISTRY.json'] },
-  tests: { drop: { 'tests/scripts/ito.test.js': { reason: 'ito' } } },
+  tests: { drop: { 'tests/scripts/ito.test.js': { reason: 'ito' } } }
 };
 
 console.log('\n=== fork glob ===\n');
@@ -111,7 +111,7 @@ test('NEW upstream items and GONE kept items are detected', () => {
     agents: ['code-reviewer', 'go-reviewer'],
     commands: ['plan', 'jira'],
     rules: ['typescript', 'python', 'elixir'],
-    hookIds: ['session:start', 'pre:compact', 'pre:new-hook'],
+    hookIds: ['session:start', 'pre:compact', 'pre:new-hook']
   };
   const { added, gone } = diffInventory(slim, { entries: [] }, inventory);
   assert.deepStrictEqual(added.skills, ['brand-new-skill']);
@@ -121,15 +121,45 @@ test('NEW upstream items and GONE kept items are detected', () => {
   assert.deepStrictEqual(gone.agents, []);
 });
 
+test('own biji-* items are fork-owned and never dropped', () => {
+  const isForkOwned = createMatcher(FORK_OWNED);
+  assert.ok(isForkOwned('skills/biji-flow/SKILL.md'));
+  assert.ok(isForkOwned('.agents/skills/biji-flow/agents/openai.yaml'));
+  assert.ok(isForkOwned('agents/biji-reviewer.md'));
+  assert.ok(isForkOwned('docs/ECC-JS.md'));
+  assert.ok(!isForkOwned('skills/react-patterns/SKILL.md'));
+  const isDropped = buildDropMatcher({ ...slim, paths: { ...slim.paths, drop: [...slim.paths.drop, 'skills/biji-*/**'] } }, { entries: [] });
+  assert.ok(!isDropped('skills/biji-flow/SKILL.md'));
+});
+
+test('tests.drop entries go stale once every item trigger is kept again', () => {
+  assert.ok(isTestDropActive(slim, { triggeredBy: ['skill:django-patterns'] }));
+  assert.ok(!isTestDropActive(slim, { triggeredBy: ['skill:react-patterns', 'agent:code-reviewer'] }));
+  assert.ok(isTestDropActive(slim, { triggeredBy: ['skill:react-patterns', 'script:ito.js'] }));
+  assert.ok(isTestDropActive(slim, { reason: 'no triggers' }));
+  const withStale = { ...slim, tests: { drop: { 'tests/skills/react.test.js': { triggeredBy: ['skill:react-patterns'] } } } };
+  assert.ok(!buildDropMatcher(withStale, { entries: [] })('tests/skills/react.test.js'));
+});
+
+test('coupled tests of pending queue items leave with the item until it is kept', () => {
+  const entry = { kind: 'skills', name: 'new-skill', status: 'pending', coupledTests: ['tests/skills/new-skill.test.js'] };
+  assert.ok(buildDropMatcher(slim, { entries: [entry] })('tests/skills/new-skill.test.js'));
+  const decided = { ...slim, skills: { ...slim.skills, keep: [...slim.skills.keep, 'new-skill'] } };
+  assert.ok(!buildDropMatcher(decided, { entries: [entry] })('tests/skills/new-skill.test.js'));
+});
+
 test('decided queue entries are pruned', () => {
   const queue = {
     entries: [
       { kind: 'skills', name: 'react-patterns', status: 'pending' },
-      { kind: 'skills', name: 'undecided', status: 'pending' },
-    ],
+      { kind: 'skills', name: 'undecided', status: 'pending' }
+    ]
   };
   assert.strictEqual(pruneDecided(slim, queue), 1);
-  assert.deepStrictEqual(queue.entries.map(entry => entry.name), ['undecided']);
+  assert.deepStrictEqual(
+    queue.entries.map(entry => entry.name),
+    ['undecided']
+  );
 });
 
 console.log(`\nPassed: ${passed}`);

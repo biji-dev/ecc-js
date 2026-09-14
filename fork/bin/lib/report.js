@@ -8,7 +8,7 @@ const ITEM_FILE = {
   skills: name => `skills/${name}/SKILL.md`,
   agents: name => `agents/${name}.md`,
   commands: name => `commands/${name}.md`,
-  rules: name => `rules/${name}`,
+  rules: name => `rules/${name}`
 };
 
 function sourceLink(entry) {
@@ -50,6 +50,12 @@ function writeReport({ analysis, state, queue, mode }) {
     '',
     `From \`${analysis.fromRef.slice(0, 12)}\` to \`${target.ref}\` — plugin version after sync: \`${state.upstreamVersion}-js.${state.pluginBuild}\`.`,
     '',
+    ...(analysis.diverged
+      ? [
+          `> **WARNING:** lastUpstreamRef \`${analysis.fromRef}\` is not an ancestor of \`${target.ref}\`; upstream history diverged (release branch or rewrite). A manual decision is required before syncing; counts below are a two-dot diff.`,
+          ''
+        ]
+      : []),
     '## Changed paths',
     `- upstream changed: ${counts.upstreamChanged}`,
     `- auto-resolved as dropped: ${counts.autoDropped}`,
@@ -60,7 +66,10 @@ function writeReport({ analysis, state, queue, mode }) {
     '## Review queue (new upstream items, not shipped until decided in fork/slim.json)',
     ...Object.entries(bySuggestion).flatMap(([suggestion, entries]) => [
       `### ${suggestion} (${entries.length})`,
-      ...entries.map(entry => `- [ ] **${entry.kind}:${entry.name}**${entry.overlapHint ? ` _(overlaps ${entry.overlapHint})_` : ''} — ${entry.description || 'no description'} ${entry.introducedBy ? `(${entry.introducedBy.sha} ${entry.introducedBy.subject})` : ''} [source](${sourceLink(entry)})`),
+      ...entries.map(
+        entry =>
+          `- [ ] **${entry.kind}:${entry.name}**${entry.overlapHint ? ` _(overlaps ${entry.overlapHint})_` : ''} — ${entry.description || 'no description'} ${entry.introducedBy ? `(${entry.introducedBy.sha} ${entry.introducedBy.subject})` : ''} [source](${sourceLink(entry)})${(entry.coupledTests || []).length ? `\n  - coupled tests (removed while pending): ${entry.coupledTests.map(file => `\`${file}\``).join(', ')}` : ''}${(entry.blockingTests || []).length ? `\n  - protected tests referencing it (kept; may fail until decided): ${entry.blockingTests.map(file => `\`${file}\``).join(', ')}` : ''}`
+      )
     ]),
     pending.length ? '' : '- queue is empty',
     '',
@@ -77,10 +86,11 @@ function writeReport({ analysis, state, queue, mode }) {
     list(analysis.newScripts, file => `- script \`${file}\``),
     list(analysis.newLibDirs, dir => `- lib dir \`${dir}\``),
     list(analysis.newSubHooks, id => `- sub-hook \`${id}\``),
+    list(analysis.newBins || [], bin => `- package bin \`${bin}\` (dropped automatically if its script is pruned)`),
     '',
     '## Security-relevant upstream diffs to kept content',
     securityDiffs(analysis.fromRef, target.ref),
-    '',
+    ''
   ].join('\n');
   fs.writeFileSync(REPORT_PATH, body);
   return REPORT_PATH;

@@ -2,7 +2,7 @@ name: fork-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'sync/**', 'slim/**']
   pull_request:
     branches: [main]
 
@@ -37,7 +37,22 @@ jobs:
         run: npm test
 
       - name: Verify fork invariants
-        run: node fork/bin/verify.js --drift
+        shell: bash
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Base for the plugin-build bump check: the PR base, the previous main tip,
+          # or the merge-base with main for sync/slim branches.
+          if [ -n "$PR_BASE" ]; then
+            base="$PR_BASE"
+          elif [ "$REF_NAME" = "main" ]; then
+            base="$EVENT_BEFORE"
+          else
+            base=$(git merge-base origin/main HEAD 2>/dev/null || true)
+          fi
+          FORK_VERIFY_BASE="$base" node fork/bin/verify.js --drift
 
       - name: Lint markdown
         run: npx markdownlint '**/*.md' --ignore node_modules

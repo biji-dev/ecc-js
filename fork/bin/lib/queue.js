@@ -8,7 +8,7 @@ const ITEM_FILE = {
   skills: name => `skills/${name}/SKILL.md`,
   agents: name => `agents/${name}.md`,
   commands: name => `commands/${name}.md`,
-  rules: name => `rules/${name}`,
+  rules: name => `rules/${name}`
 };
 
 function frontmatterDescription(text) {
@@ -16,7 +16,13 @@ function frontmatterDescription(text) {
   const match = text.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return '';
   const line = match[1].split('\n').find(entry => entry.startsWith('description:'));
-  return line ? line.slice('description:'.length).trim().replace(/^["']|["']$/g, '').slice(0, 240) : '';
+  return line
+    ? line
+        .slice('description:'.length)
+        .trim()
+        .replace(/^["']|["']$/g, '')
+        .slice(0, 240)
+    : '';
 }
 
 function introducedBy(fromRef, toRef, filePath) {
@@ -24,6 +30,24 @@ function introducedBy(fromRef, toRef, filePath) {
   if (!out) return null;
   const [sha, subject] = out.split('\t');
   return { sha, subject };
+}
+
+/** Tests that must never be quarantined automatically (they cover kept installer and hook code). */
+const PROTECTED_TESTS = /(?:install|hook-flags|resolve-ecc-root|hooks-config|dispatcher)/;
+
+/** Upstream tests at a ref that reference an item by path or whole-word name. */
+function coupledTestsAt(ref, kind, name) {
+  const needles = [ITEM_FILE[kind](name).replace(/\/SKILL\.md$/, '/'), name];
+  const result = git(['grep', '-l', '-w', '-F', ...needles.flatMap(needle => ['-e', needle]), ref, '--', 'tests/'], { allowFailure: true });
+  const files = result
+    .split('\n')
+    .filter(Boolean)
+    .map(line => line.slice(ref.length + 1))
+    .filter(file => !file.startsWith('tests/fork/'));
+  return {
+    coupledTests: files.filter(file => !PROTECTED_TESTS.test(file)),
+    blockingTests: files.filter(file => PROTECTED_TESTS.test(file))
+  };
 }
 
 function suggest(slim, kind, name, description) {
@@ -61,6 +85,7 @@ function queueNewItems({ slim, queue, added, fromRef, toRef }) {
         introducedBy: introducedBy(fromRef, toRef, file),
         description,
         ...suggest(slim, kind, name, description),
+        ...coupledTestsAt(toRef, kind, name)
       };
       queue.entries.push(entry);
       queued.push(entry);
@@ -74,9 +99,7 @@ function pruneDecided(slim, queue) {
   const before = queue.entries.length;
   queue.entries = queue.entries.filter(entry => {
     const section = slim[entry.kind] || {};
-    const decided = (section.keep || []).includes(entry.name)
-      || (section.own || []).includes(entry.name)
-      || entry.name in (section.drop || {});
+    const decided = (section.keep || []).includes(entry.name) || (section.own || []).includes(entry.name) || entry.name in (section.drop || {});
     return !decided;
   });
   return before - queue.entries.length;

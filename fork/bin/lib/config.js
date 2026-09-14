@@ -16,11 +16,44 @@ const ITEM_PATTERNS = {
   skills: name => [`skills/${name}/**`],
   agents: name => [`agents/${name}.md`],
   commands: name => [`commands/${name}.md`],
-  rules: name => [`rules/${name}/**`],
+  rules: name => [`rules/${name}/**`]
 };
 
-/** Fork-owned paths: never merged from upstream, restored from HEAD after merges. */
-const FORK_OWNED = ['fork/**', 'tests/fork/**', 'ecc/**', 'FORK.md', '.github/workflows/fork-*.yml'];
+/**
+ * Fork-owned paths: never merged from upstream, restored from HEAD after merges.
+ * Own catalog items use the biji- prefix so upstream can never add a same-named item.
+ */
+const FORK_OWNED = [
+  'fork/**',
+  'tests/fork/**',
+  'ecc/**',
+  'FORK.md',
+  'docs/ECC-JS.md',
+  '.github/workflows/fork-*.yml',
+  '.claude/rules/ecc-js-fork.md',
+  'skills/biji-*/**',
+  '.agents/skills/biji-*/**',
+  'agents/biji-*.md',
+  'commands/biji-*.md',
+  'rules/biji-*/**'
+];
+
+const TRIGGER_KIND = { skill: 'skills', agent: 'agents', command: 'commands', rule: 'rules' };
+
+/**
+ * A tests.drop entry stops applying once every trigger is an item that is kept again
+ * (e.g. a dropped skill moved back to keep restores its dedicated tests).
+ */
+function isTestDropActive(slim, entry) {
+  const triggers = (entry && entry.triggeredBy) || [];
+  if (triggers.length === 0) return true;
+  return !triggers.every(trigger => {
+    const match = String(trigger).match(/^(skill|agent|command|rule):([\w.-]+)$/);
+    if (!match) return false;
+    const section = slim[TRIGGER_KIND[match[1]]] || {};
+    return (section.keep || []).includes(match[2]) || (section.own || []).includes(match[2]);
+  });
+}
 
 function readJson(filePath, fallback) {
   if (!fs.existsSync(filePath)) return fallback;
@@ -61,12 +94,7 @@ function removedNames(slim, queue, kind) {
 
 function knownNames(slim, queue, kind) {
   const section = slim[kind] || {};
-  return new Set([
-    ...(section.keep || []),
-    ...(section.own || []),
-    ...Object.keys(section.drop || {}),
-    ...pendingNames(queue, kind),
-  ]);
+  return new Set([...(section.keep || []), ...(section.own || []), ...Object.keys(section.drop || {}), ...pendingNames(queue, kind)]);
 }
 
 /**
@@ -85,7 +113,17 @@ function buildDropMatcher(slim, queue = loadQueue()) {
     }
   }
   patterns.push(...((slim.paths && slim.paths.drop) || []));
-  patterns.push(...Object.keys((slim.tests && slim.tests.drop) || {}));
+  const testDrops = (slim.tests && slim.tests.drop) || {};
+  patterns.push(...Object.keys(testDrops).filter(file => isTestDropActive(slim, testDrops[file])));
+  // Upstream tests coupled to undecided queue items leave with the item until it is kept.
+  for (const kind of ITEM_KINDS) {
+    const removed = new Set(removedNames(slim, queue, kind));
+    for (const entry of queue.entries) {
+      if (entry.kind === kind && entry.status === 'pending' && removed.has(entry.name)) {
+        patterns.push(...(entry.coupledTests || []));
+      }
+    }
+  }
   const isDropPattern = createMatcher(patterns);
   const isKeepPattern = createMatcher([...((slim.paths && slim.paths.keep) || []), ...FORK_OWNED]);
   return filePath => isDropPattern(filePath) && !isKeepPattern(filePath);
@@ -120,6 +158,7 @@ module.exports = {
   loadQueue,
   removedNames,
   knownNames,
+  isTestDropActive,
   buildDropMatcher,
-  keptItemMatcher,
+  keptItemMatcher
 };

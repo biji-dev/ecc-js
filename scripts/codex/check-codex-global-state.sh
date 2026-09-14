@@ -159,7 +159,7 @@ if [[ -d "$SKILLS_DIR" ]]; then
   done
 
   if [[ "$missing_skills" -eq 0 ]]; then
-    ok "All 16 ECC skills are present in $SKILLS_DIR"
+    ok "All ${#required_skills[@]} ECC skills are present in $SKILLS_DIR"
   else
     warn "$missing_skills ECC skills missing from $SKILLS_DIR (install via ECC installer or npx skills)"
   fi

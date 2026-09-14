@@ -2,6 +2,12 @@
   <img src="assets/hero.png" alt="ECC - the agent harness operating system" width="100%" />
 </p>
 
+<!-- ecc-js:banner -->
+
+> **ECC-JS** is a slim fork of [affaan-m/ECC](https://github.com/affaan-m/ECC) for JavaScript/TypeScript, Bun, React, Next.js and React Native/Expo work: 140 skills, 36 agents, 66 commands and 5 rule packs. Install, scope and hooks: [docs/ECC-JS.md](docs/ECC-JS.md). Upstream sync and maintenance: [FORK.md](FORK.md). The rest of this README is upstream prose.
+
+<!-- /ecc-js:banner -->
+
 <p align="center">
   <a href="https://www.star-history.com/affaan-m/ecc">
     <picture>
@@ -783,8 +789,8 @@ Stable graduation of the 2.0 line: control-pane substrate, worktree lifecycle se
 ```text
 ECC/
 |-- agents/           # 36 specialized subagents for delegation
-|-- skills/           # 292 reusable workflows loaded on demand
-|-- commands/         # 94 maintained slash-command shims
+|-- skills/           # 140 reusable workflows loaded on demand
+|-- commands/         # 66 maintained slash-command shims
 |-- rules/            # opt-in common and language standards
 |-- hooks/            # runtime automation and enforcement
 |-- scripts/          # install, repair, sync, orchestration, and checks
@@ -806,7 +812,7 @@ ECC/
 |   |-- plugin.json         # Plugin metadata and component paths
 |   |-- marketplace.json    # Marketplace catalog for /plugin marketplace add
 |
-|-- agents/           # 67 specialized subagents for delegation
+|-- agents/           # 36 specialized subagents for delegation
 |   |-- planner.md           # Feature implementation planning
 |   |-- architect.md         # System design decisions
 |   |-- tdd-guide.md         # Test-driven development

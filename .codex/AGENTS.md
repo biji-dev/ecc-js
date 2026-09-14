@@ -25,24 +25,13 @@ Available skills:
 - security-review — Comprehensive security checklist
 - coding-standards — Universal coding standards
 - frontend-patterns — React/Next.js patterns
-- frontend-slides — Viewport-safe HTML presentations and PPTX-to-web conversion
-- article-writing — Long-form writing from notes and voice references
-- content-engine — Platform-native social content and repurposing
-- market-research — Source-attributed market and competitor research
-- investor-materials — Decks, memos, models, and one-pagers
-- investor-outreach — Personalized investor outreach and follow-ups
 - backend-patterns — API design, database, caching
 - e2e-testing — Playwright E2E tests
 - eval-harness — Eval-driven development
 - strategic-compact — Context management
 - api-design — REST API design patterns
 - verification-loop — Build, test, lint, typecheck, security
-- deep-research — Multi-source research with firecrawl and exa MCPs
-- exa-search — Neural search via Exa MCP for web, code, and companies
 - claude-api — Anthropic Claude API patterns and SDKs
-- x-api — X/Twitter API integration for posting, threads, and analytics
-- crosspost — Multi-platform content distribution
-- fal-ai-media — AI image/video/audio generation via fal.ai
 - dmux-workflows — Multi-agent orchestration with dmux
 
 ## MCP Servers

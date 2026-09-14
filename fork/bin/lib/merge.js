@@ -13,7 +13,11 @@ const { writeReport } = require('./report');
 const PROGRESS_PATH = path.join(REPO_ROOT, 'fork', '.sync-in-progress.json');
 
 function semverKey(tag) {
-  return tag.replace(/^v/, '').split('.').map(part => part.padStart(6, '0')).join('.');
+  return tag
+    .replace(/^v/, '')
+    .split('.')
+    .map(part => part.padStart(6, '0'))
+    .join('.');
 }
 
 function latestReleaseTag(slim) {
@@ -45,7 +49,7 @@ function nextState(state, target) {
     lastUpstreamTag: target.tag || state.lastUpstreamTag,
     pluginBuild: version === state.upstreamVersion ? state.pluginBuild + 1 : 1,
     upstreamVersion: version,
-    syncedAt: new Date().toISOString(),
+    syncedAt: new Date().toISOString()
   };
 }
 
@@ -60,9 +64,24 @@ function analyze({ slim, state, queue, target }) {
   const hints = {};
   for (const kind of Object.keys(ITEM_PATTERNS)) {
     for (const item of gone[kind]) {
-      hints[`${kind}:${item.name}`] = successorHints(fromRef, target.ref, ITEM_PATTERNS[kind](item.name).map(p => p.replace('/**', '')));
+      const key = `${kind}:${item.name}`;
+      hints[key] = successorHints(
+        fromRef,
+        target.ref,
+        ITEM_PATTERNS[kind](item.name).map(p => p.replace('/**', ''))
+      );
+      // Same-name conversions across kinds (e.g. a command turned into a skill).
+      for (const other of ['skills', 'agents', 'commands']) {
+        if (other !== kind && inventory[other].includes(item.name)) {
+          const queued = (added[other] || []).includes(item.name) ? ' (queued for review)' : '';
+          hints[key].push(`successor (same name): ${other}:${item.name}${queued}`);
+        }
+      }
     }
   }
+  // Compare bins with the last synced upstream package.json: the fork prunes bins, so HEAD would re-report them every sync.
+  const fromPkg = showFile(fromRef, 'package.json');
+  const fromBins = new Set(Object.keys((fromPkg && JSON.parse(fromPkg).bin) || {}));
   const upstreamChanged = git(['diff', '--name-only', fromRef, target.ref]).split('\n').filter(Boolean);
   const forkChanged = new Set(git(['diff', '--name-only', fromRef, 'HEAD']).split('\n').filter(Boolean));
   const isDropped = buildDropMatcher(slim, queue);
@@ -71,8 +90,7 @@ function analyze({ slim, state, queue, target }) {
   const manualCandidates = upstreamChanged.filter(f => forkChanged.has(f) && !isDropped(f) && !isDerived(f) && !isForkOwned(f));
   const fromTopLevel = new Set(listFiles(fromRef).map(f => f.split('/')[0]));
   const targetFiles = listFiles(target.ref);
-  const newTopLevel = inventory.topLevel.filter(top => !fromTopLevel.has(top)
-    && !targetFiles.filter(f => f.split('/')[0] === top).every(isDropped));
+  const newTopLevel = inventory.topLevel.filter(top => !fromTopLevel.has(top) && !targetFiles.filter(f => f.split('/')[0] === top).every(isDropped));
   return {
     fromRef,
     target,
@@ -83,13 +101,15 @@ function analyze({ slim, state, queue, target }) {
     newLibDirs: inventory.libDirs.filter(dir => !headLibDirs.has(dir)),
     newSubHooks: inventory.subHookIds.filter(id => !headSubHooks.has(id)),
     newTopLevel,
+    newBins: inventory.bins.filter(bin => !fromBins.has(bin)),
+    diverged: !isAncestor(fromRef, target.ref),
     counts: {
       upstreamChanged: upstreamChanged.length,
       autoDropped: upstreamChanged.filter(isDropped).length,
       derived: upstreamChanged.filter(isDerived).length,
-      manualCandidates: manualCandidates.length,
+      manualCandidates: manualCandidates.length
     },
-    manualCandidates,
+    manualCandidates
   };
 }
 
@@ -106,7 +126,8 @@ function finish({ slim, state, queue, target, analysis, log }) {
   fs.rmSync(PROGRESS_PATH, { force: true });
   writeReport({ analysis, state: next, queue, mode: 'merge' });
   log(`merged ${target.tag || target.ref}; plugin version ${next.upstreamVersion}-js.${next.pluginBuild} (outputs staged)`);
-  log('next: npm test && node fork/bin/verify.js --drift, then git commit (merge commit) and open a PR with -R biji-dev/ecc-js');
+  log('next: npm test && node fork/bin/verify.js --drift, git commit (merge commit), push the sync branch and wait for fork-ci,');
+  log('      then: git switch main && git merge --no-ff <sync branch> && git push origin main');
   return 0;
 }
 
@@ -134,21 +155,25 @@ function runMerge({ args, slim, state, queue, log }) {
     log(`${target.tag || target.ref} is already merged; nothing to do`);
     return 0;
   }
-  if (!isAncestor(state.lastUpstreamRef, target.ref)) {
-    throw new Error(`lastUpstreamRef ${state.lastUpstreamRef} is not an ancestor of ${target.ref}; upstream history changed`);
-  }
   const analysis = analyze({ slim, state, queue, target });
   const blocked = blockingGone(analysis);
 
-  if (args.mode === 'plan' || blocked.length) {
+  if (args.mode === 'plan' || blocked.length || analysis.diverged) {
     const forecastQueue = JSON.parse(JSON.stringify(queue));
     queueNewItems({ slim, queue: forecastQueue, added: analysis.added, fromRef: analysis.fromRef, toRef: target.ref });
     writeReport({ analysis, state: nextState(state, target), queue: forecastQueue, mode: 'plan' });
     if (args.mode === 'plan') {
-      log(`plan written to fork/.sync-report.md (new items: ${Object.values(analysis.added).flat().length}, gone: ${blocked.length})`);
-      return blocked.length ? 3 : 0;
+      log(`plan written to fork/.sync-report.md (new items: ${Object.values(analysis.added).flat().length}, gone: ${blocked.length}${analysis.diverged ? ', upstream history diverged' : ''})`);
+      return blocked.length || analysis.diverged ? 3 : 0;
     }
-    throw new Error(`kept items are gone upstream (see fork/.sync-report.md): ${blocked.map(i => `${i.kind}:${i.name}`).join(', ')}`);
+    if (analysis.diverged) log(`BLOCKED: lastUpstreamRef ${state.lastUpstreamRef} is not an ancestor of ${target.ref}; upstream history diverged`);
+    if (blocked.length) log(`BLOCKED: kept items are gone upstream: ${blocked.map(i => `${i.kind}:${i.name}`).join(', ')}`);
+    log('see fork/.sync-report.md; resolve in fork/slim.json (FORK.md "Resolving a blocked sync") and rerun');
+    return 3;
+  }
+  run('git', ['fetch', 'origin', '--prune'], { allowFailure: true });
+  if (run('git', ['rev-parse', '-q', '--verify', 'refs/remotes/origin/main'], { allowFailure: true }).status === 0 && !isAncestor('origin/main', 'HEAD')) {
+    throw new Error('HEAD does not contain origin/main; run git switch main && git pull --ff-only first');
   }
   if (mergeHead()) throw new Error('A merge is already in progress; conclude or abort it first');
   if (gitLines(['status', '--porcelain', '--untracked-files=no']).length) throw new Error('Working tree has uncommitted changes');
@@ -165,7 +190,10 @@ function runMerge({ args, slim, state, queue, log }) {
   const isForkOwned = createMatcher(FORK_OWNED);
   const targetFiles = new Set(listFiles(target.ref));
   removePaths(conflicted.filter(isDropped));
-  checkoutPaths(target.ref, conflicted.filter(f => isDerived(f) && targetFiles.has(f)));
+  checkoutPaths(
+    target.ref,
+    conflicted.filter(f => isDerived(f) && targetFiles.has(f))
+  );
   checkoutPaths('HEAD', listFiles('HEAD').filter(isForkOwned));
 
   // Persist progress and the queue before anything that can fail, so --continue can always resume.

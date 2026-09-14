@@ -115,6 +115,17 @@ function parseProfiles(rawProfiles, fallback = ['standard', 'strict']) {
   return parsed.length > 0 ? parsed : [...fallback];
 }
 
+/**
+ * Fork allowlist (biji-dev/ecc-js): when the managed ecc/setup.json declares
+ * hooks.allow[], only those hook ids run and the profile is ignored.
+ * ECC_HOOK_ALLOWLIST=off restores upstream profile gating.
+ */
+function getManagedAllowedHookIds(env = process.env, managed = readManagedHookConfig(env)) {
+  if (!parseBoolean(env.ECC_HOOK_ALLOWLIST, true)) return null;
+  if (!Array.isArray(managed.allow)) return null;
+  return new Set(managed.allow.map(value => normalizeId(value)).filter(Boolean));
+}
+
 function isDryRun(env = process.env) {
   return env.ECC_DRY_RUN === '1';
 }
@@ -134,6 +145,11 @@ function isHookEnabled(hookId, options = {}) {
     return false;
   }
 
+  const allowed = getManagedAllowedHookIds(env, managed);
+  if (allowed) {
+    return allowed.has(id);
+  }
+
   const profile = getHookProfile(env, managed);
   const allowedProfiles = parseProfiles(options.profiles);
   return allowedProfiles.includes(profile);
@@ -147,6 +163,7 @@ module.exports = {
   areHooksEnabled,
   getHookProfile,
   getDisabledHookIds,
+  getManagedAllowedHookIds,
   parseProfiles,
   isHookEnabled,
   isDryRun,

@@ -2565,7 +2565,6 @@ async function runTests() {
       assert.ok(hooks.hooks.SessionStart, 'Should have SessionStart hooks');
       assert.ok(hooks.hooks.SessionEnd, 'Should have SessionEnd hooks');
       assert.ok(hooks.hooks.Stop, 'Should have Stop hooks');
-      assert.ok(hooks.hooks.PreCompact, 'Should have PreCompact hooks');
     })
   )
     passed++;
@@ -2595,107 +2594,6 @@ async function runTests() {
       assert.ok(postEntries[0].hooks[0].command.endsWith('" sync'));
       assert.ok(postEntries[1].hooks[0].command.includes('posttooluse-dispatcher.js'));
       assert.ok(postEntries[1].hooks[0].command.endsWith('" async'));
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('hooks.json gives PowerShell dedicated GateGuard and governance routes', () => {
-      const hooksPath = path.join(__dirname, '..', '..', 'hooks', 'hooks.json');
-      const hooks = readHooksConfig(hooksPath);
-      const powerShellRoutes = hooks.hooks.PreToolUse.filter(entry => entry.matcher === 'PowerShell');
-      const governanceRoute = hooks.hooks.PreToolUse.find(entry => entry.id === 'pre:governance-capture');
-
-      assert.strictEqual(
-        powerShellRoutes.length,
-        1,
-        'Should have exactly one dedicated PreToolUse PowerShell route'
-      );
-      assert.strictEqual(
-        powerShellRoutes[0].id,
-        'pre:powershell:gateguard-fact-force',
-        'PowerShell should use its independently configurable GateGuard hook ID'
-      );
-      assert.ok(
-        powerShellRoutes[0].hooks[0].command.includes('pre:powershell:gateguard-fact-force'),
-        'Configured command should preserve the PowerShell GateGuard hook ID'
-      );
-      assert.ok(
-        powerShellRoutes[0].hooks[0].command.includes('scripts/hooks/gateguard-fact-force.js'),
-        'PowerShell route should invoke GateGuard without Bash-only preflight hooks'
-      );
-      assert.ok(governanceRoute, 'PreToolUse governance route should exist');
-      assert.ok(
-        governanceRoute.matcher.split('|').includes('PowerShell'),
-        'PreToolUse governance matcher should include PowerShell'
-      );
-      assert.ok(
-        hooks.hooks.PostToolUse.every(entry => entry.matcher === '.*'),
-        'Top-level PostToolUse dispatchers should preserve current-main wildcard matchers'
-      );
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('configured PowerShell routes enforce denial and emit redacted governance evidence', () => {
-      const root = path.join(__dirname, '..', '..');
-      const hooks = readHooksConfig(path.join(root, 'hooks', 'hooks.json'));
-      const gateRoute = hooks.hooks.PreToolUse.find(entry => entry.id === 'pre:powershell:gateguard-fact-force');
-      const governanceRoute = hooks.hooks.PreToolUse.find(entry => entry.id === 'pre:governance-capture');
-      const stateDir = createTestDir();
-      const command = 'Remove-Item -Force C:/private/configured-route-sentinel';
-      const payload = JSON.stringify({
-        tool_name: 'PowerShell',
-        tool_input: { command }
-      });
-      const env = {
-        ...process.env,
-        CLAUDE_PLUGIN_ROOT: root,
-        ECC_HOOK_PROFILE: 'standard',
-        GATEGUARD_STATE_DIR: stateDir,
-        CLAUDE_SESSION_ID: 'ecc039-configured-route-test'
-      };
-      for (const key of ['ECC_GATEGUARD', 'GATEGUARD_DISABLED', 'GATEGUARD_BASH_ROUTINE_DISABLED', 'ECC_DISABLED_HOOKS']) {
-        delete env[key];
-      }
-
-      try {
-        const gated = spawnSync(gateRoute.hooks[0].command, {
-          cwd: root,
-          env,
-          input: payload,
-          encoding: 'utf8',
-          shell: true,
-          timeout: 15000
-        });
-        assert.strictEqual(gated.status, 0, gated.stderr);
-        assert.strictEqual(
-          JSON.parse(gated.stdout).hookSpecificOutput?.permissionDecision,
-          'deny',
-          'exact configured GateGuard command should deny destructive PowerShell'
-        );
-
-        const governed = spawnSync(governanceRoute.hooks[0].command, {
-          cwd: root,
-          env: {
-            ...env,
-            ECC_GOVERNANCE_CAPTURE: '1',
-            CLAUDE_HOOK_EVENT_NAME: 'PreToolUse'
-          },
-          input: payload,
-          encoding: 'utf8',
-          shell: true,
-          timeout: 15000
-        });
-        assert.strictEqual(governed.status, 0, governed.stderr);
-        assert.ok(governed.stderr.includes('powershell.remove-item.force'));
-        assert.ok(!governed.stderr.includes(command), 'governance evidence should omit raw command text');
-      } finally {
-        cleanupTestDir(stateDir);
-      }
     })
   )
     passed++;

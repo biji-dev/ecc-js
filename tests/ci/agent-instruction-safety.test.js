@@ -20,30 +20,12 @@ const guardrails = [
     ],
   },
   {
-    path: '.kiro/skills/search-first/SKILL.md',
-    heading: '## Scope and Approval Rules',
-    requiredPatterns: [
-      /Default to read-only research/i,
-      /Do not install packages/i,
-      /approval checkpoint/i,
-    ],
-  },
-  {
     path: 'skills/autonomous-agent-harness/SKILL.md',
     heading: '## Consent and Safety Boundaries',
     requiredPatterns: [
       /explicitly requested and scoped/i,
       /Do not create schedules/i,
       /Prefer dry-run plans/i,
-    ],
-  },
-  {
-    path: 'skills/defi-amm-security/SKILL.md',
-    heading: '## Execution Safety',
-    requiredPatterns: [
-      /local audit examples/i,
-      /trusted checkout or disposable sandbox/i,
-      /private keys, seed phrases/i,
     ],
   },
   {

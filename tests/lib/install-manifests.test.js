@@ -102,10 +102,6 @@ function runTests() {
       'Should include capability:security');
     assert.ok(components.some(component => component.id === 'capability:machine-learning'),
       'Should include capability:machine-learning');
-    assert.ok(components.some(component => component.id === 'agent:mle-reviewer'),
-      'Should include agent:mle-reviewer');
-    assert.ok(components.some(component => component.id === 'skill:mle-workflow'),
-      'Should include skill:mle-workflow');
   })) passed++; else failed++;
 
   if (test('every locale alias resolves to a real component with a real module', () => {
@@ -192,28 +188,6 @@ function runTests() {
     );
   })) passed++; else failed++;
 
-  if (test('marks unified-memory install surfaces as requiring the separate ECC runtime', () => {
-    const component = getInstallComponent('skill:unified-memory');
-    assert.deepStrictEqual(component.moduleIds, ['skill-unified-memory']);
-    assert.match(component.description, /ecc-universal/i);
-    assert.match(component.description, /separate|external/i);
-
-    const modules = listInstallModules();
-    const singleSkillModule = modules.find(module => module.id === 'skill-unified-memory');
-    const workflowModule = modules.find(module => module.id === 'workflow-quality');
-    assert.ok(singleSkillModule, 'Should define an explicit unified-memory module');
-    assert.match(singleSkillModule.description, /ecc-universal/i);
-    assert.match(singleSkillModule.description, /separate|external/i);
-    assert.match(workflowModule.description, /ecc-universal/i);
-
-    const plan = resolveInstallPlan({
-      includeComponentIds: ['skill:unified-memory'],
-      target: 'claude',
-    });
-    assert.ok(plan.selectedModuleIds.includes('skill-unified-memory'));
-    assert.ok(plan.selectedModuleIds.includes('platform-configs'));
-  })) passed++; else failed++;
-
   if (test('lists supported legacy compatibility languages', () => {
     const languages = listLegacyCompatibilityLanguages();
     assert.ok(languages.includes('typescript'));
@@ -245,14 +219,6 @@ function runTests() {
     assert.ok(plan.operations.length > 0, 'Should include scaffold operations');
     assert.ok(
       plan.operations.some(operation => (
-        operation.sourceRelativePath === '.cursor/hooks.json'
-        && operation.destinationPath === path.join(projectRoot, '.cursor', 'hooks.json')
-        && operation.strategy === 'preserve-relative-path'
-      )),
-      'Should preserve non-rule Cursor platform files'
-    );
-    assert.ok(
-      plan.operations.some(operation => (
         operation.sourceRelativePath === '.mcp.json'
         && operation.destinationPath === path.join(projectRoot, '.cursor', 'mcp.json')
         && operation.kind === 'merge-json'
@@ -262,11 +228,11 @@ function runTests() {
     );
     assert.ok(
       plan.operations.some(operation => (
-        operation.sourceRelativePath === '.cursor/rules/common-agents.md'
+        operation.sourceRelativePath === 'rules/common/agents.md'
         && operation.destinationPath === path.join(projectRoot, '.cursor', 'rules', 'common-agents.mdc')
         && operation.strategy === 'flatten-copy'
       )),
-      'Should produce Cursor .mdc rules while preferring native Cursor platform copies over duplicate rules-core files'
+      'Should produce Cursor .mdc rules from rules-core files'
     );
   })) passed++; else failed++;
 
@@ -281,7 +247,6 @@ function runTests() {
         'agents-core',
         'commands-core',
         'platform-configs',
-        'skill-unified-memory',
         'workflow-quality'
       ]
     );
@@ -306,7 +271,6 @@ function runTests() {
         'agents-core',
         'commands-core',
         'platform-configs',
-        'skill-unified-memory',
         'workflow-quality'
       ]
     );
@@ -330,17 +294,12 @@ function runTests() {
         'agents-core',
         'commands-core',
         'platform-configs',
-        'skill-unified-memory',
         'workflow-quality'
       ]
     );
     assert.deepStrictEqual(plan.skippedModuleIds, []);
     assert.strictEqual(plan.targetAdapterId, 'qwen-home');
     assert.strictEqual(plan.targetRoot, path.join(homeDir, '.qwen'));
-    assert.ok(
-      plan.operations.some(operation => operation.sourceRelativePath === '.qwen'),
-      'Should install Qwen native config'
-    );
     assert.ok(
       !plan.operations.some(operation => operation.destinationPath.includes(`${path.sep}hooks`)),
       'Qwen minimal profile should not install hook runtime files'
@@ -362,17 +321,12 @@ function runTests() {
         'agents-core',
         'commands-core',
         'platform-configs',
-        'skill-unified-memory',
         'workflow-quality'
       ]
     );
     assert.deepStrictEqual(plan.skippedModuleIds, []);
     assert.strictEqual(plan.targetAdapterId, 'zed-project');
     assert.strictEqual(plan.targetRoot, path.join(projectRoot, '.zed'));
-    assert.ok(
-      plan.operations.some(operation => operation.sourceRelativePath === '.zed'),
-      'Should install Zed native project settings'
-    );
     assert.ok(
       !plan.selectedModuleIds.includes('hooks-runtime')
       && !plan.operations.some(operation => operation.moduleId === 'hooks-runtime'),
@@ -399,9 +353,6 @@ function runTests() {
       'Should include deployment and container support');
     assert.ok(plan.selectedModuleIds.includes('security'),
       'Should include security through machine-learning dependencies');
-    assert.ok(plan.operations.some(operation => (
-      operation.sourceRelativePath === 'skills/mle-workflow'
-    )), 'Should install the MLE workflow skill');
   })) passed++; else failed++;
 
   if (test('resolves machine-learning component on JoyCode and Qwen targets', () => {
@@ -417,33 +368,12 @@ function runTests() {
         `Should include machine-learning module for ${target}`);
       assert.ok(!plan.skippedModuleIds.includes('machine-learning'),
         `Should not skip machine-learning module for ${target}`);
-      assert.ok(plan.operations.some(operation => (
-        operation.sourceRelativePath === 'skills/mle-workflow'
-      )), `Should install the MLE workflow skill for ${target}`);
     }
   })) passed++; else failed++;
 
-  if (test('minimal machine-learning install includes MLE reviewer agent surface', () => {
-    const plan = resolveInstallPlan({
-      profileId: 'minimal',
-      includeComponentIds: ['capability:machine-learning'],
-      target: 'claude',
-      projectRoot: '/workspace/ml-app',
-    });
-
-    assert.ok(plan.selectedModuleIds.includes('agents-core'),
-      'Minimal install should keep the agent surface available');
-    assert.ok(plan.operations.some(operation => (
-      operation.sourceRelativePath === 'agents'
-    )), 'Should install the agent directory that contains mle-reviewer.md');
-    assert.ok(plan.operations.some(operation => (
-      operation.sourceRelativePath === 'skills/mle-workflow'
-    )), 'Should install the MLE workflow skill');
-  })) passed++; else failed++;
-
   if (test('resolves explicit modules with dependency expansion', () => {
-    const plan = resolveInstallPlan({ moduleIds: ['security'] });
-    assert.ok(plan.selectedModuleIds.includes('security'), 'Should include requested module');
+    const plan = resolveInstallPlan({ moduleIds: ['optimization-workflows'] });
+    assert.ok(plan.selectedModuleIds.includes('optimization-workflows'), 'Should include requested module');
     assert.ok(plan.selectedModuleIds.includes('workflow-quality'),
       'Should include transitive dependency');
     assert.ok(plan.selectedModuleIds.includes('platform-configs'),
@@ -559,7 +489,7 @@ function runTests() {
     assert.deepStrictEqual(selection.ruleLanguages, ['cpp', 'golang', 'kotlin']);
     assert.deepStrictEqual(
       selection.moduleIds,
-      ['rules-core', 'agents-core', 'commands-core', 'skill-unified-memory', 'workflow-quality']
+      ['rules-core', 'agents-core', 'commands-core', 'platform-configs', 'workflow-quality']
     );
   })) passed++; else failed++;
 
@@ -611,10 +541,10 @@ function runTests() {
   if (test('fails when a selected component depends on an excluded component module', () => {
     assert.throws(
       () => resolveInstallPlan({
-        includeComponentIds: ['capability:social'],
-        excludeComponentIds: ['capability:content'],
+        includeComponentIds: ['capability:optimization'],
+        excludeComponentIds: ['capability:operators'],
       }),
-      /depends on excluded module business-content/
+      /depends on excluded module operator-workflows/
     );
   })) passed++; else failed++;
 

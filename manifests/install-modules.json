@@ -92,7 +92,8 @@
       "paths": [
         "hooks",
         "scripts/hooks",
-        "scripts/lib"
+        "scripts/lib",
+        "ecc"
       ],
       "targets": [
         "claude",
@@ -113,19 +114,10 @@
       "paths": [
         ".claude-plugin",
         ".codex",
-        ".cursor",
-        ".gemini",
-        ".opencode",
-        ".pi",
-        ".qwen",
-        ".zed",
         "mcp-configs",
         "scripts/auto-update.js",
         "scripts/setup-package-manager.js",
-        ".hermes",
-        ".openclaw",
-        ".kimi",
-        ".adal"
+        ".kimi"
       ],
       "targets": [
         "claude",
@@ -154,74 +146,27 @@
       "kind": "skills",
       "description": "Core framework, language, and application-engineering skills.",
       "paths": [
-        "skills/android-clean-architecture",
-        "skills/angular-developer",
         "skills/api-design",
         "skills/backend-patterns",
         "skills/coding-standards",
-        "skills/compose-multiplatform-patterns",
         "skills/contract-first",
-        "skills/csharp-testing",
-        "skills/fsharp-testing",
-        "skills/cpp-coding-standards",
-        "skills/cpp-testing",
-        "skills/dart-flutter-patterns",
-        "skills/django-patterns",
-        "skills/django-tdd",
-        "skills/django-verification",
-        "skills/dotnet-patterns",
-        "skills/fastapi-patterns",
         "skills/frontend-design-direction",
         "skills/frontend-patterns",
-        "skills/frontend-slides",
         "skills/make-interfaces-feel-better",
-        "skills/golang-patterns",
-        "skills/golang-testing",
-        "skills/java-coding-standards",
-        "skills/kotlin-coroutines-flows",
-        "skills/kotlin-exposed-patterns",
-        "skills/kotlin-ktor-patterns",
-        "skills/kotlin-patterns",
-        "skills/kotlin-testing",
-        "skills/laravel-plugin-discovery",
-        "skills/laravel-patterns",
-        "skills/laravel-tdd",
-        "skills/laravel-verification",
         "skills/mcp-server-patterns",
-        "skills/nestjs-patterns",
-        "skills/perl-patterns",
-        "skills/perl-testing",
-        "skills/python-patterns",
-        "skills/python-testing",
-        "skills/quarkus-patterns",
-        "skills/quarkus-tdd",
-        "skills/quarkus-verification",
-        "skills/rails-patterns",
         "skills/react-patterns",
         "skills/react-performance",
         "skills/react-testing",
-        "skills/rust-patterns",
-        "skills/rust-testing",
-        "skills/springboot-patterns",
-        "skills/springboot-tdd",
-        "skills/springboot-verification",
-        "skills/ui-to-vue",
-        "skills/vue-patterns",
         "skills/accessibility",
         "skills/bun-runtime",
         "skills/design-system",
-        "skills/django-celery",
-        "skills/flutter-dart-code-review",
         "skills/frontend-a11y",
-        "skills/generating-python-installer",
         "skills/hexagonal-architecture",
         "skills/motion-advanced",
         "skills/motion-foundations",
         "skills/motion-patterns",
         "skills/nextjs-turbopack",
-        "skills/nuxt4-patterns",
         "skills/react-native-patterns",
-        "skills/tinystruct-patterns",
         "skills/vite-patterns"
       ],
       "targets": [
@@ -234,7 +179,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "rules-core",
@@ -253,7 +199,6 @@
       "paths": [
         "skills/clickhouse-io",
         "skills/database-migrations",
-        "skills/jpa-patterns",
         "skills/mysql-patterns",
         "skills/postgres-patterns",
         "skills/prisma-patterns",
@@ -269,44 +214,14 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
       ],
       "defaultInstall": false,
       "cost": "medium",
-      "stability": "stable"
-    },
-    {
-      "id": "skill-unified-memory",
-      "kind": "skills",
-      "description": "Single-skill unified-memory guidance; requires the separately installed ecc-universal CLI runtime.",
-      "paths": [
-        "skills/unified-memory"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "gemini",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed",
-        "hermes",
-        "openclaw",
-        "kimi",
-        "adal"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "light",
       "stability": "stable"
     },
     {
@@ -317,7 +232,6 @@
         "skills/agent-sort",
         "skills/agent-introspection-debugging",
         "skills/ai-regression-testing",
-        "skills/configure-ecc",
         "skills/code-tour",
         "skills/continuous-learning",
         "skills/continuous-learning-v2",
@@ -338,14 +252,12 @@
         "skills/strategic-compact",
         "skills/tdd-workflow",
         "skills/verification-loop",
-        "skills/windows-desktop-e2e",
         "skills/agent-self-evaluation",
         "skills/architecture-decision-records",
         "skills/browser-qa",
         "skills/ck",
         "skills/click-path-audit",
         "skills/codebase-onboarding",
-        "skills/codehealth-mcp",
         "skills/config-gc",
         "skills/context-budget",
         "skills/delivery-gate",
@@ -378,9 +290,7 @@
         "kimi",
         "adal"
       ],
-      "dependencies": [
-        "skill-unified-memory"
-      ],
+      "dependencies": [],
       "defaultInstall": true,
       "cost": "medium",
       "stability": "stable"
@@ -396,8 +306,7 @@
         "skills/parallel-execution-optimizer",
         "skills/recursive-decision-ledger",
         "skills/agent-eval",
-        "skills/benchmark",
-        "skills/benchmark-methodology"
+        "skills/benchmark"
       ],
       "targets": [
         "claude",
@@ -409,7 +318,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "workflow-quality",
@@ -424,25 +334,12 @@
       "kind": "skills",
       "description": "Security review and security-focused framework guidance.",
       "paths": [
-        "skills/defi-amm-security",
-        "skills/django-security",
         "skills/healthcare-phi-compliance",
-        "skills/hipaa-compliance",
-        "skills/laravel-security",
-        "skills/llm-trading-agent-security",
-        "skills/nodejs-keccak256",
-        "skills/perl-security",
-        "skills/quarkus-security",
         "skills/security-review",
         "skills/security-scan",
         "skills/security-bounty-hunter",
-        "skills/springboot-security",
-        "skills/evm-token-decimals",
         "the-security-guide.md",
         "skills/gateguard",
-        "skills/healthcare-cdss-patterns",
-        "skills/healthcare-emr-patterns",
-        "skills/healthcare-eval-harness",
         "skills/safety-guard"
       ],
       "targets": [
@@ -455,7 +352,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "workflow-quality"
@@ -469,14 +367,7 @@
       "kind": "skills",
       "description": "Research and API integration skills for deep investigations and model integrations.",
       "paths": [
-        "skills/deep-research",
-        "skills/exa-search",
         "skills/research-ops",
-        "skills/scientific-db-pubmed-database",
-        "skills/scientific-db-uspto-database",
-        "skills/scientific-pkg-gget",
-        "skills/scientific-thinking-literature-review",
-        "skills/scientific-thinking-scholar-evaluation",
         "skills/documentation-lookup"
       ],
       "targets": [
@@ -489,7 +380,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
@@ -503,20 +395,8 @@
       "kind": "skills",
       "description": "Business, writing, market, and investor communication skills.",
       "paths": [
-        "skills/article-writing",
-        "skills/brand-voice",
-        "skills/content-engine",
-        "skills/investor-materials",
-        "skills/investor-outreach",
-        "skills/lead-intelligence",
         "skills/product-capability",
-        "skills/social-graph-ranker",
-        "skills/seo",
-        "skills/market-research",
-        "skills/brand-discovery",
-        "skills/competitive-platform-analysis",
-        "skills/competitive-report-structure",
-        "skills/marketing-campaign"
+        "skills/seo"
       ],
       "targets": [
         "claude",
@@ -528,7 +408,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
@@ -544,23 +425,13 @@
       "paths": [
         "skills/automation-audit-ops",
         "skills/api-connector-builder",
-        "skills/connections-optimizer",
         "skills/cost-tracking",
-        "skills/customer-billing-ops",
         "skills/dashboard-builder",
-        "skills/ecc-tools-cost-audit",
-        "skills/email-ops",
-        "skills/finance-billing-ops",
         "skills/github-ops",
-        "skills/google-workspace-ops",
-        "skills/jira-integration",
         "skills/knowledge-ops",
-        "skills/messages-ops",
         "skills/project-flow-ops",
         "skills/terminal-ops",
-        "skills/unified-notifications-ops",
-        "skills/workspace-surface-audit",
-        "skills/mailtrap-email-integration"
+        "skills/workspace-surface-audit"
       ],
       "targets": [
         "claude",
@@ -572,40 +443,11 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "medium",
-      "stability": "beta"
-    },
-    {
-      "id": "prediction-market-skills",
-      "kind": "skills",
-      "description": "Public, non-advisory prediction-market workflows and the consolidated read-only Ito baskets data skill with gated Ito API access.",
-      "paths": [
-        "skills/ito-baskets",
-        "skills/prediction-market-oracle-research",
-        "skills/prediction-market-risk-review"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed"
-      ],
-      "dependencies": [
-        "research-apis",
-        "business-content",
-        "security"
       ],
       "defaultInstall": false,
       "cost": "medium",
@@ -616,10 +458,7 @@
       "kind": "skills",
       "description": "Generic operator desk patterns: never-silent approval loop, counterparty channel discipline, master agreement generation with a rolling schedule, and deterministic e-signature field placement.",
       "paths": [
-        "skills/operator-approval-loop",
-        "skills/counterparty-channel-discipline",
-        "skills/master-agreement-generator",
-        "skills/esign-field-placement"
+        "skills/counterparty-channel-discipline"
       ],
       "targets": [
         "claude",
@@ -631,7 +470,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [],
       "defaultInstall": false,
@@ -639,112 +479,12 @@
       "stability": "beta"
     },
     {
-      "id": "ito-compute",
-      "kind": "skills",
-      "description": "Authenticated It\u00f4 GPU inventory, RFQ, status, device revocation, and explicitly gated node-qualification workflows through the separately installed canonical CLI.",
-      "paths": [
-        "skills/ito-compute",
-        "skills/ito-inference",
-        "skills/ito-training"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "gemini",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed",
-        "hermes",
-        "openclaw",
-        "kimi",
-        "adal"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "light",
-      "stability": "beta"
-    },
-    {
-      "id": "nasiko-control-plane",
-      "kind": "skills",
-      "description": "Experimental Nasiko CLI lifecycle bridge guidance for pinned installation, read-only status, qualified uninstall, and opt-in telemetry boundaries.",
-      "paths": [
-        "skills/nasiko-control-plane"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "gemini",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed",
-        "hermes",
-        "openclaw",
-        "kimi"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "light",
-      "stability": "experimental"
-    },
-    {
-      "id": "social-distribution",
-      "kind": "skills",
-      "description": "Social publishing and distribution skills.",
-      "paths": [
-        "skills/crosspost",
-        "skills/x-api",
-        "skills/social-publisher"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed"
-      ],
-      "dependencies": [
-        "business-content"
-      ],
-      "defaultInstall": false,
-      "cost": "medium",
-      "stability": "stable"
-    },
-    {
       "id": "media-generation",
       "kind": "skills",
       "description": "Media generation, technical explainers, and AI-assisted editing skills.",
       "paths": [
-        "skills/blender-motion-state-inspection",
-        "skills/fal-ai-media",
-        "skills/manim-video",
         "skills/remotion-video-creation",
-        "skills/ui-demo",
-        "skills/video-editing",
-        "skills/videodb",
-        "skills/taste",
-        "skills/tasteforge-video",
-        "skills/taste-distillation",
-        "skills/taste-application"
+        "skills/ui-demo"
       ],
       "targets": [
         "claude",
@@ -755,7 +495,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
@@ -780,7 +521,8 @@
         "claude",
         "claude-project",
         "codex",
-        "opencode"
+        "opencode",
+        "kimi"
       ],
       "dependencies": [
         "commands-core",
@@ -791,43 +533,10 @@
       "stability": "beta"
     },
     {
-      "id": "swift-apple",
-      "kind": "skills",
-      "description": "Swift, SwiftUI, and Apple platform skills including concurrency, persistence, and design patterns.",
-      "paths": [
-        "skills/foundation-models-on-device",
-        "skills/liquid-glass-design",
-        "skills/swift-actor-persistence",
-        "skills/swift-concurrency-6-2",
-        "skills/swift-protocol-di-testing",
-        "skills/swiftui-patterns",
-        "skills/ios-icon-gen"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "medium",
-      "stability": "stable"
-    },
-    {
       "id": "agentic-patterns",
       "kind": "skills",
       "description": "Agentic engineering, autonomous loops, agent harness construction, and LLM pipeline optimization skills.",
       "paths": [
-        "scripts/claw.js",
         "skills/agent-architecture-audit",
         "skills/agent-harness-construction",
         "skills/agentic-engineering",
@@ -842,7 +551,6 @@
         "skills/data-scraper-agent",
         "skills/dynamic-workflow-mode",
         "skills/enterprise-agent-ops",
-        "skills/nanoclaw-repl",
         "skills/prompt-optimizer",
         "skills/ralphinho-rfc-pipeline",
         "skills/regex-vs-llm-structured-text",
@@ -850,11 +558,8 @@
         "skills/team-agent-orchestration",
         "skills/token-budget-advisor",
         "skills/team-builder",
-        "skills/agent-payment-x402",
         "skills/autonomous-agent-harness",
         "skills/gan-style-harness",
-        "skills/hermes-imports",
-        "skills/openclaw-persona-forge",
         "skills/opensource-pipeline",
         "skills/orch-add-feature",
         "skills/orch-build-mvp",
@@ -874,7 +579,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
@@ -888,22 +594,11 @@
       "kind": "skills",
       "description": "Deployment workflows, Docker patterns, and infrastructure skills.",
       "paths": [
-        "skills/cisco-ios-patterns",
         "skills/deployment-patterns",
         "skills/docker-patterns",
         "skills/terminal-opener",
-        "skills/homelab-network-readiness",
-        "skills/homelab-network-setup",
-        "skills/netmiko-ssh-automation",
-        "skills/network-bgp-diagnostics",
-        "skills/network-config-validation",
-        "skills/network-interface-health",
         "skills/canary-watch",
         "skills/flox-environments",
-        "skills/homelab-pihole-dns",
-        "skills/homelab-vlan-segmentation",
-        "skills/homelab-wireguard-vpn",
-        "skills/kubernetes-patterns",
         "skills/uncloud"
       ],
       "targets": [
@@ -916,7 +611,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "platform-configs"
@@ -930,10 +626,7 @@
       "kind": "skills",
       "description": "Production machine-learning engineering workflows for data contracts, reproducible training, evaluation, deployment, monitoring, and rollback.",
       "paths": [
-        "skills/mle-workflow",
-        "skills/ml-adoption-playbook",
-        "skills/pytorch-patterns",
-        "skills/recsys-pipeline-architect"
+        "skills/ml-adoption-playbook"
       ],
       "targets": [
         "claude",
@@ -945,7 +638,8 @@
         "codebuddy",
         "joycode",
         "qwen",
-        "zed"
+        "zed",
+        "kimi"
       ],
       "dependencies": [
         "framework-language",
@@ -959,215 +653,11 @@
       "stability": "beta"
     },
     {
-      "id": "supply-chain-domain",
-      "kind": "skills",
-      "description": "Supply chain, logistics, procurement, and manufacturing domain skills.",
-      "paths": [
-        "skills/carrier-relationship-management",
-        "skills/customs-trade-compliance",
-        "skills/energy-procurement",
-        "skills/inventory-demand-planning",
-        "skills/logistics-exception-management",
-        "skills/production-scheduling",
-        "skills/quality-nonconformance",
-        "skills/returns-reverse-logistics"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "document-processing",
-      "kind": "skills",
-      "description": "Document processing, conversion, and translation skills.",
-      "paths": [
-        "skills/nutrient-document-processing",
-        "skills/visa-doc-translate"
-      ],
-      "targets": [
-        "claude",
-        "claude-project",
-        "cursor",
-        "antigravity",
-        "codex",
-        "opencode",
-        "codebuddy",
-        "joycode",
-        "qwen",
-        "zed"
-      ],
-      "dependencies": [
-        "platform-configs"
-      ],
-      "defaultInstall": false,
-      "cost": "medium",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-ja-jp",
-      "kind": "docs",
-      "description": "Japanese (ja-JP) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/ja-JP"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
       "id": "docs-zh-cn",
       "kind": "docs",
       "description": "Simplified Chinese (zh-CN) translated reference docs for agents, commands, skills, and rules.",
       "paths": [
         "docs/zh-CN"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-ko-kr",
-      "kind": "docs",
-      "description": "Korean (ko-KR) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/ko-KR"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-pt-br",
-      "kind": "docs",
-      "description": "Brazilian Portuguese (pt-BR) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/pt-BR"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-ru",
-      "kind": "docs",
-      "description": "Russian (ru) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/ru"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-tr",
-      "kind": "docs",
-      "description": "Turkish (tr) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/tr"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-vi-vn",
-      "kind": "docs",
-      "description": "Vietnamese (vi-VN) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/vi-VN"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-zh-tw",
-      "kind": "docs",
-      "description": "Traditional Chinese (zh-TW) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/zh-TW"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-de-de",
-      "kind": "docs",
-      "description": "German (de-DE) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/de-DE"
-      ],
-      "targets": [
-        "claude",
-        "claude-project"
-      ],
-      "dependencies": [],
-      "defaultInstall": false,
-      "cost": "heavy",
-      "stability": "stable"
-    },
-    {
-      "id": "docs-uk-ua",
-      "kind": "docs",
-      "description": "Ukrainian (uk-UA) translated reference docs for agents, commands, skills, and rules.",
-      "paths": [
-        "docs/uk-UA"
       ],
       "targets": [
         "claude",

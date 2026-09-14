@@ -161,7 +161,14 @@ function isExemptPath(filePath, data) {
 }
 
 function isRoutineBashGateDisabled() {
-  return ECC_ENABLE_VALUES.has(normalizeEnvValue(process.env.GATEGUARD_BASH_ROUTINE_DISABLED));
+  const envValue = normalizeEnvValue(process.env.GATEGUARD_BASH_ROUTINE_DISABLED);
+  if (ECC_ENABLE_VALUES.has(envValue)) return true;
+  if (ECC_DISABLE_VALUES.has(envValue)) return false;
+  // Fork default (biji-dev/ecc-js): ecc/setup.json hooks.gateguard.bashRoutineDisabled keeps destructive checks only.
+  const hookFlags = require('../lib/hook-flags');
+  if (!hookFlags.parseBoolean(process.env.ECC_HOOK_ALLOWLIST, true)) return false;
+  const managed = hookFlags.readManagedHookConfig(process.env);
+  return Boolean(managed.gateguard && managed.gateguard.bashRoutineDisabled === true);
 }
 
 /**

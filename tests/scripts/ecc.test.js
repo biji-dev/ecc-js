@@ -69,13 +69,8 @@ function main() {
       assert.match(result.stdout, /list-installed/);
       assert.match(result.stdout, /doctor/);
       assert.match(result.stdout, /auto-update/);
-      assert.match(result.stdout, /consult/);
-      assert.match(result.stdout, /control-pane/);
       assert.match(result.stdout, /loop-status/);
-      assert.match(result.stdout, /work-items/);
-      assert.match(result.stdout, /platform-audit/);
       assert.match(result.stdout, /security-ioc-scan/);
-      assert.match(result.stdout, /feedback/);
     }],
     ['delegates explicit install command', () => {
       const homeDir = createTempDir('ecc-cli-install-home-');
@@ -128,19 +123,6 @@ function main() {
       const payload = parseJson(result.stdout);
       assert.strictEqual(payload.id, 'framework:nextjs');
       assert.deepStrictEqual(payload.moduleIds, ['framework-language']);
-    }],
-    ['delegates consult command', () => {
-      const result = runCli(['consult', 'security', 'reviews', '--json']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      const payload = parseJson(result.stdout);
-      assert.strictEqual(payload.schemaVersion, 'ecc.consult.v1');
-      assert.strictEqual(payload.matches[0].componentId, 'capability:security');
-    }],
-    ['supports help for the control-pane subcommand', () => {
-      const result = runCli(['help', 'control-pane']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Usage:/);
-      assert.match(result.stdout, /control-pane/);
     }],
     ['delegates lifecycle commands', () => {
       const homeDir = createTempDir('ecc-cli-home-');
@@ -237,24 +219,6 @@ function main() {
       const payload = parseJson(result.stdout);
       assert.deepStrictEqual(payload.results, []);
     }],
-    ['delegates session-inspect command', () => {
-      const homeDir = createTempDir('ecc-cli-home-');
-      const sessionsDir = path.join(homeDir, '.claude', 'sessions');
-      fs.mkdirSync(sessionsDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(sessionsDir, '2026-03-13-a1b2c3d4-session.tmp'),
-        '# ECC Session\n\n**Branch:** feat/ecc-cli\n'
-      );
-
-      const result = runCli(['session-inspect', 'claude:latest'], {
-        env: { HOME: homeDir },
-      });
-
-      assert.strictEqual(result.status, 0, result.stderr);
-      const payload = parseJson(result.stdout);
-      assert.strictEqual(payload.adapterId, 'claude-history');
-      assert.strictEqual(payload.workers[0].branch, 'feat/ecc-cli');
-    }],
     ['delegates loop-status command', () => {
       const homeDir = createTempDir('ecc-cli-home-');
       const transcriptDir = path.join(homeDir, '.claude', 'projects', '-tmp-ecc');
@@ -290,13 +254,6 @@ function main() {
       assert.strictEqual(result.status, 0, result.stderr);
       assert.match(result.stdout, /Usage: node scripts\/repair\.js/);
     }],
-    ['delegates feedback command', () => {
-      const result = runCli(['feedback', '--json']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      const payload = parseJson(result.stdout);
-      assert.strictEqual(payload.schemaVersion, 'ecc.feedback.v1');
-      assert.strictEqual(payload.diagnosticsUploaded, false);
-    }],
     ['supports help for the auto-update subcommand', () => {
       const result = runCli(['help', 'auto-update']);
       assert.strictEqual(result.status, 0, result.stderr);
@@ -306,21 +263,6 @@ function main() {
       const result = runCli(['help', 'catalog']);
       assert.strictEqual(result.status, 0, result.stderr);
       assert.match(result.stdout, /node scripts\/catalog\.js show <component-id>/);
-    }],
-    ['supports help for the consult subcommand', () => {
-      const result = runCli(['help', 'consult']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      assert.match(result.stdout, /node scripts\/consult\.js "security reviews"/);
-    }],
-    ['supports help for the work-items subcommand', () => {
-      const result = runCli(['help', 'work-items']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      assert.match(result.stdout, /node scripts\/work-items\.js upsert/);
-    }],
-    ['supports help for the platform-audit subcommand', () => {
-      const result = runCli(['help', 'platform-audit']);
-      assert.strictEqual(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Usage: node scripts\/platform-audit\.js/);
     }],
     ['supports help for the security-ioc-scan subcommand', () => {
       const result = runCli(['help', 'security-ioc-scan']);

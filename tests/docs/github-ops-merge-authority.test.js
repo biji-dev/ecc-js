@@ -11,16 +11,6 @@ const policyDocs = [
     approval: 'user approval',
     prohibition: 'never auto-merge',
   },
-  {
-    path: 'docs/ja-JP/skills/github-ops/SKILL.md',
-    approval: 'user approval',
-    prohibition: 'never auto-merge',
-  },
-  {
-    path: 'docs/zh-CN/skills/github-ops/SKILL.md',
-    approval: '用户批准',
-    prohibition: '切勿自动合并',
-  },
 ];
 
 console.log('\n=== Testing GitHub operations merge authority ===\n');

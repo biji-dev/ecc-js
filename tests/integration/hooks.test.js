@@ -256,16 +256,6 @@ ${entry.evidence || 'Learned from repeated observations.'}
   fs.writeFileSync(filePath, body);
 }
 
-function getHookCommandByDescription(hooks, lifecycle, descriptionText) {
-  const hookGroup = hooks.hooks[lifecycle]?.find(
-    entry => entry.description && entry.description.includes(descriptionText)
-  );
-
-  assert.ok(hookGroup, `Expected ${lifecycle} hook matching "${descriptionText}"`);
-  assert.ok(hookGroup.hooks?.[0]?.command, `Expected ${lifecycle} hook command for "${descriptionText}"`);
-  return hookGroup.hooks[0].command;
-}
-
 function getHookCommandById(hooks, lifecycle, hookId) {
   const hookGroup = hooks.hooks[lifecycle]?.find(entry => entry.id === hookId);
 
@@ -556,50 +546,6 @@ async function runTests() {
       const parsed = JSON.parse(output);
       assert.ok(parsed.tool_input, 'Should output valid JSON with tool_input');
       assert.ok(parsed.tool_input.command, 'Should have a command in output');
-    }
-  })) passed++; else failed++;
-
-  if (await asyncTest('MCP health hook blocks unhealthy MCP tool calls through hooks.json', async () => {
-    const hookCommand = getHookCommandByDescription(
-      hooks,
-      'PreToolUse',
-      'Check MCP server health before MCP tool execution'
-    );
-
-    const testDir = createTestDir();
-    const configPath = path.join(testDir, 'claude.json');
-    const statePath = path.join(testDir, 'mcp-health.json');
-    const serverScript = path.join(testDir, 'broken-mcp.js');
-
-    try {
-      fs.writeFileSync(serverScript, 'process.exit(1);\n');
-      fs.writeFileSync(
-        configPath,
-        JSON.stringify({
-          mcpServers: {
-            broken: {
-              command: process.execPath,
-              args: [serverScript]
-            }
-          }
-        })
-      );
-
-      const result = await runHookCommand(
-        hookCommand,
-        { tool_name: 'mcp__broken__search', tool_input: {} },
-        {
-          CLAUDE_HOOK_EVENT_NAME: 'PreToolUse',
-          ECC_MCP_CONFIG_PATH: configPath,
-          ECC_MCP_HEALTH_STATE_PATH: statePath,
-          ECC_MCP_HEALTH_TIMEOUT_MS: '1000'
-        }
-      );
-
-      assert.strictEqual(result.code, 2, 'Expected unhealthy MCP preflight to block');
-      assert.ok(result.stderr.includes('broken is unavailable'), `Expected health warning, got: ${result.stderr}`);
-    } finally {
-      cleanupTestDir(testDir);
     }
   })) passed++; else failed++;
 

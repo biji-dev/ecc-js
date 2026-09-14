@@ -1,0 +1,118 @@
+name: fork-sync
+
+# Forecast-only: detects a new upstream affaan-m/ECC release tag and opens an
+# issue with the sync forecast. The actual merge runs locally with
+# `npm run fork:sync` (see FORK.md). No job here holds a write token while
+# executing repository code.
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Upstream release tag to forecast (e.g. v2.3.0); empty = latest'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    name: Forecast upstream sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      has_report: ${{ steps.plan.outputs.has_report }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+
+      - name: Configure upstream remote
+        run: |
+          git remote add ecc-upstream https://github.com/affaan-m/ECC.git
+          git config remote.ecc-upstream.tagOpt --no-tags
+          git config --replace-all remote.ecc-upstream.fetch '+refs/heads/main:refs/remotes/ecc-upstream/main'
+          git config --add remote.ecc-upstream.fetch '+refs/tags/v*:refs/tags/upstream/v*'
+          git fetch ecc-upstream --prune
+
+      - name: Run sync forecast
+        id: plan
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set +e
+          args=(--plan)
+          if [ -n "$INPUT_REF" ]; then
+            if ! printf '%s' "$INPUT_REF" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "Invalid ref input" >&2
+              exit 1
+            fi
+            args+=(--ref "$INPUT_REF")
+          fi
+          node fork/bin/sync.js "${args[@]}"
+          status=$?
+          if [ -f fork/.sync-report.md ]; then
+            echo "has_report=true" >> "$GITHUB_OUTPUT"
+            tag=$(head -1 fork/.sync-report.md | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            echo "tag=${tag:-unknown}" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_report=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then exit "$status"; fi
+          exit 0
+
+      - name: Upload forecast
+        if: steps.plan.outputs.has_report == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-forecast
+          path: fork/.sync-report.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  notify:
+    name: Open or refresh sync issue
+    needs: forecast
+    if: needs.forecast.outputs.has_report == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Download forecast
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sync-forecast
+
+      - name: Create or update issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.forecast.outputs.tag }}
+        run: |
+          title="upstream ${TAG} available"
+          existing=$(gh issue list -R "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" -R "$REPO" --body-file .sync-report.md
+          else
+            gh issue create -R "$REPO" --title "$title" --body-file .sync-report.md
+          fi

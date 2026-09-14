@@ -131,8 +131,27 @@ const PRIMARY_COMMANDS = [
   'uninstall',
 ];
 
+// Fork (biji-dev/ecc-js): subcommands whose scripts were pruned are not routed or advertised.
+const PRUNED_COMMANDS = new Set(
+  Object.keys(COMMANDS).filter(name => !require('fs').existsSync(path.join(__dirname, COMMANDS[name].script)))
+);
+for (const name of PRUNED_COMMANDS) delete COMMANDS[name];
+for (let i = PRIMARY_COMMANDS.length - 1; i >= 0; i -= 1) {
+  if (PRUNED_COMMANDS.has(PRIMARY_COMMANDS[i])) PRIMARY_COMMANDS.splice(i, 1);
+}
+
+function stripPrunedExamples(text) {
+  return text
+    .split('\n')
+    .filter(line => {
+      const match = line.match(/^\s+ecc ([a-z-]+)/);
+      return !match || !PRUNED_COMMANDS.has(match[1]);
+    })
+    .join('\n');
+}
+
 function showHelp(exitCode = 0) {
-  process.stdout.write(`
+  process.stdout.write(stripPrunedExamples(`
 ECC selective-install CLI
 
 Usage:
@@ -197,7 +216,7 @@ Examples:
   ecc session-inspect claude:latest
   ecc loop-status --json
   ecc uninstall --target antigravity --dry-run
-`);
+`));
 
   process.exit(exitCode);
 }

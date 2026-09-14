@@ -136,17 +136,11 @@ fi
 
 declare -a required_skills=(
   api-design
-  article-writing
   backend-patterns
   coding-standards
-  content-engine
   e2e-testing
   eval-harness
   frontend-patterns
-  frontend-slides
-  investor-materials
-  investor-outreach
-  market-research
   security-review
   strategic-compact
   tdd-workflow

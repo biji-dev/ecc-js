@@ -219,15 +219,6 @@ function main() {
         /<script|<foreignObject|\son[a-z]+=|(?:href|xlink:href)=/i
       );
     }],
-    ['sponsor docs match the current public tiers', () => {
-      const sponsors = read('SPONSORS.md');
-
-      assert.match(sponsors, /## Supporters — \$10\/mo/);
-      assert.match(sponsors, /\| Supporter \| \$10 \|/);
-      assert.match(sponsors, /\| Business Sponsor \| \$800 \|/);
-      assert.match(sponsors, /\| Strategic Sponsor \| \$3,700 \|/);
-      assert.doesNotMatch(sponsors, /Supporters — \$5\/mo|\| Supporter \| \$5 \|/);
-    }],
     ['README shows the verified local Kimi via Ito path without claiming managed serving', () => {
       const readme = read('README.md');
       const localModelPath = extractNamedTable(readme, 'Local Kimi model path');
@@ -365,37 +356,9 @@ function main() {
         fs.rmSync(projectDir, { recursive: true, force: true });
       }
     }],
-    ['sponsor roster keeps Itô and Moonshot distinct from node tooling', () => {
-      const sponsors = read('SPONSORS.md');
-      assert.ok(sponsors.includes('[**Itô**]'));
-      assert.ok(sponsors.includes('assets/images/sponsors/ito-transparent.png'));
-      assert.ok(sponsors.includes('assets/images/sponsors/ito-transparent-light.png'));
-      assert.doesNotMatch(sponsors, /assets\/images\/sponsors\/ito(?:-dark)?\.svg/);
-      assert.ok(sponsors.includes('[**Moonshot AI (Kimi)**]'));
-      assert.ok(sponsors.includes('assets/images/sponsors/moonshot.png'));
-      assert.doesNotMatch(sponsors, /sixtytwo|sixty.?two/i);
-      assertExactComputeRoute(sponsors);
-    }],
-    ['inference guide distinguishes rental compute from managed serving', () => {
-      assertHonestComputeCopy(read('docs/ATLAS-CLOUD-GUIDE.md'));
-    }],
     ['harness docs route generic open-source model intent without lock-in', () => {
       assertHonestComputeCopy(read('.claude-plugin/README.md'));
       assertHonestComputeCopy(read('.kimi/README.md'));
-    }],
-    ['integration record keeps the thesis and real client boundary honest', () => {
-      const record = read('docs/design/ecc-ito-compute-integration.md');
-      assert.match(record, /-> any open-source model/);
-      assert.doesNotMatch(record, /public Kimi|Moonshot|video and sponsorship/i);
-      assert.match(record, /Status: \*\*Implemented local CLI bridge/i);
-      assert.match(record, /auth`, `find`, `status`, and `evals/);
-      assert.match(record, /ito_auth`, `ito_find`, and `ito_status/);
-      assert.match(record, /sixtytwo-cli==0\.3\.33/);
-      assert.match(record, /explicit node/i);
-      assert.match(record, /unpublished/i);
-      assert.match(record, /managed inference remains unavailable/i);
-      assert.match(record, /version bump[\s\S]*intentionally deferred/i);
-      assert.doesNotMatch(record, /manual_copy|ito\.compute\.handoff|ecc ito rent/i);
     }],
     ['top-level CLI help exposes the provider-neutral compute route', () => {
       const result = spawnSync('node', ['scripts/ecc.js', '--help'], {

@@ -102,13 +102,6 @@ function runTests() {
       assert.ok(result.stdout.includes('Install modules'));
     })) passed++; else failed++;
 
-    if (test('control-pane.js --help runs without sql.js installed', () => {
-      const result = run('scripts/control-pane.js', ['--help'], pluginDir);
-      assert.strictEqual(result.code, 0, `stderr: ${result.stderr}`);
-      assert.ok(!result.stderr.includes('Cannot find module'), `stderr: ${result.stderr}`);
-      assert.ok(result.stdout.includes('Usage:'));
-    })) passed++; else failed++;
-
     if (test('install-plan.js --config gives an actionable error when ajv is genuinely missing', () => {
       const configPath = path.join(pluginDir, 'ecc-install.json');
       fs.writeFileSync(configPath, JSON.stringify({ version: 1, profile: 'minimal' }));

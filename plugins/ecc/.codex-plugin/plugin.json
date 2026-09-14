@@ -1,6 +1,6 @@
 {
   "name": "ecc",
-  "version": "2.2.1",
+  "version": "2.2.1-js.1",
   "description": "Harness-native ECC workflows for Codex: shared skills, production-ready MCP configs, and selective-install-aligned conventions for TDD, security scanning, code review, and autonomous development.",
   "author": {
     "name": "Affaan Mustafa",
@@ -24,7 +24,7 @@
   "mcpServers": "../../.mcp.json",
   "interface": {
     "displayName": "ECC",
-    "shortDescription": "249 ECC skills plus MCP configs for TDD, security, code review, and autonomous development.",
+    "shortDescription": "140 ECC skills plus MCP configs for TDD, security, code review, and autonomous development.",
     "longDescription": "ECC is a harness-native operator system for Codex and adjacent agent harnesses. It packages reusable skills, MCP configs, TDD workflows, security scanning, code review, architecture decisions, operator workflows, and release gates in one installable plugin.",
     "developerName": "Affaan Mustafa",
     "category": "Coding",

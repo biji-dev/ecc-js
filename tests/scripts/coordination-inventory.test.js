@@ -95,20 +95,16 @@ test('task file adapter reads structured status, labels mtime, skips symlinks an
     assert.equal(collectTaskFiles(path.join(dir, 'missing')).status, 'unavailable');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
-test('CLI JSON end to end, no output file changes and safe errors', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coordination-cli-'));
-  const cli = path.resolve(__dirname, '../../scripts/coordination-inventory.js');
+test('discovered freeform task files compose into inventory and report missing telemetry honestly', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coordination-discovery-'));
   try {
-    const file = path.join(dir,'input.json'); fs.writeFileSync(file, JSON.stringify(fixture()));
-    const r = spawnSync(process.execPath, [cli, '--manifest', file, '--now', now], { encoding:'utf8' });
-    assert.equal(r.status,0,r.stderr); assert.equal(JSON.parse(r.stdout).warnings.length,1);
-    assert.deepEqual(fs.readdirSync(dir),['input.json']);
-    const bad = spawnSync(process.execPath,[cli,'--unknown','CANARY_SECRET'],{encoding:'utf8'});
-    assert.equal(bad.status,1); assert.ok(!bad.stderr.includes('CANARY_SECRET'));
-    const help = spawnSync(process.execPath,[cli,'--help'],{encoding:'utf8'}); assert.equal(help.status,0);
+    fs.mkdirSync(path.join(dir,'worker')); fs.writeFileSync(path.join(dir,'worker','STATUS.md'),'Freeform progress.\n');
+    const discovery = collectTaskFiles(dir);
+    const report = buildInventory({ version: 1, repositories: [], leases: [], tasks: discovery.tasks }, { now });
+    assert.equal(report.tasks[0].status,'unknown'); assert.equal(report.tasks[0].heartbeat.state,'unknown');
+    assert.ok(report.tasks[0].statusFileModifiedAt); assert.equal(report.tasks[0].process.state,'unknown');
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
-
 test('prototype-named paths and strict calendar dates are safe', () => {
   const f = fixture(); f.repositories[0].sources = {}; f.tasks[0].paths = ['toString']; f.tasks[1].paths = ['valueOf'];
   assert.equal(run(f).warnings.length, 0);
@@ -121,16 +117,6 @@ test('aggregate comparison budget rejects compact but computationally excessive 
   const f = fixture(); f.repositories[0].sources = {};
   f.tasks = Array.from({length:64}, (_,i) => task(`task${i}`, Array.from({length:128}, (_,j) => `src/${i}/${j}.js`)));
   assert.throws(() => run(f), /budget/);
-});
-test('CLI discovery composes normalized tasks and reports missing telemetry honestly', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coordination-discovery-'));
-  try {
-    fs.mkdirSync(path.join(dir,'worker')); fs.writeFileSync(path.join(dir,'worker','STATUS.md'),'Freeform progress.\n');
-    const r = spawnSync(process.execPath,[path.resolve(__dirname,'../../scripts/coordination-inventory.js'),'--coordination',dir,'--now',now],{encoding:'utf8'});
-    assert.equal(r.status,0,r.stderr); const report=JSON.parse(r.stdout);
-    assert.equal(report.tasks[0].status,'unknown'); assert.equal(report.tasks[0].heartbeat.state,'unknown');
-    assert.ok(report.tasks[0].statusFileModifiedAt); assert.equal(report.tasks[0].process.state,'unknown');
-  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 test('source snippets are bounded before invoking inherited regex extractor', () => {
   const f = fixture(); f.repositories[0].sources = { 'a.js': `import ${' '.repeat(32000)}x` }; f.tasks=[];

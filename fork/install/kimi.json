@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "target": "kimi",
+  "modules": [
+    "rules-core",
+    "framework-language",
+    "database",
+    "workflow-quality",
+    "optimization-workflows",
+    "security",
+    "research-apis",
+    "business-content",
+    "operator-workflows",
+    "operator-desk-patterns",
+    "media-generation",
+    "orchestration",
+    "agentic-patterns",
+    "devops-infra",
+    "machine-learning"
+  ]
+}

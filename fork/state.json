@@ -1,0 +1,13 @@
+{
+  "lastUpstreamRef": "8321021c54d670126ce3b2969d5deb880b4b0c2a",
+  "lastUpstreamTag": "v2.2.1",
+  "upstreamVersion": "2.2.1",
+  "pluginBuild": 1,
+  "syncedAt": "2026-09-14T00:00:00Z",
+  "counts": {
+    "skills": 140,
+    "agents": 36,
+    "commands": 66,
+    "rules": 5
+  }
+}

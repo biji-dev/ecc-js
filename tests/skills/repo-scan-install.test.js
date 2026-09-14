@@ -17,18 +17,6 @@ const skillFiles = [
     heading: '## Installation',
     descriptionTerms: ['bootstrap', 'external', 'install'],
     reinvocationText: 'Reload your agent harness, then invoke `repo-scan` again',
-  },
-  {
-    relativePath: path.join('docs', 'zh-CN', 'skills', 'repo-scan', 'SKILL.md'),
-    heading: '## 安装',
-    descriptionTerms: ['引导', '外部', '安装'],
-    reinvocationText: '重新加载智能体运行环境，然后再次调用 `repo-scan`',
-  },
-  {
-    relativePath: path.join('docs', 'ja-JP', 'skills', 'repo-scan', 'SKILL.md'),
-    heading: '## インストール',
-    descriptionTerms: ['ブートストラップ', '外部', 'インストール'],
-    reinvocationText: 'エージェントハーネスを再読み込みしてから、`repo-scan` を再度呼び出してください',
   }
 ];
 const pinnedCommit = '2742664ebcad1450c208eda0ae45d3c17fad5dd8';

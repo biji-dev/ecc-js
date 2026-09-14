@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "totalCommands": 94,
+  "totalCommands": 66,
   "commands": [
     {
       "command": "aside",
@@ -57,49 +57,6 @@
       "path": "commands/cost-report.md"
     },
     {
-      "command": "cpp-build",
-      "description": "Fix C++ build errors, CMake issues, and linker problems incrementally. Invokes the cpp-build-resolver agent for minimal, surgical fixes.",
-      "type": "testing",
-      "primaryAgents": [
-        "cpp-build-resolver"
-      ],
-      "allAgents": [
-        "cpp-build-resolver"
-      ],
-      "skills": [
-        "cpp-coding-standards"
-      ],
-      "path": "commands/cpp-build.md"
-    },
-    {
-      "command": "cpp-review",
-      "description": "Comprehensive C++ code review for memory safety, modern C++ idioms, concurrency, and security. Invokes the cpp-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "cpp-reviewer"
-      ],
-      "allAgents": [
-        "cpp-reviewer"
-      ],
-      "skills": [
-        "cpp-coding-standards",
-        "cpp-testing"
-      ],
-      "path": "commands/cpp-review.md"
-    },
-    {
-      "command": "cpp-test",
-      "description": "Enforce TDD workflow for C++. Write GoogleTest tests first, then implement. Verify coverage with gcov/lcov.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "cpp-testing",
-        "tdd-workflow"
-      ],
-      "path": "commands/cpp-test.md"
-    },
-    {
       "command": "ecc-guide",
       "description": "Navigate ECC's current agents, skills, commands, hooks, install profiles, and docs from the live repository surface.",
       "type": "review",
@@ -110,72 +67,6 @@
         "security-scan"
       ],
       "path": "commands/ecc-guide.md"
-    },
-    {
-      "command": "epic-claim",
-      "description": "Claim an epic issue, stamp coordination state, and sync local ownership.",
-      "type": "review",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "orch-add-feature",
-        "orch-change-feature"
-      ],
-      "path": "commands/epic-claim.md"
-    },
-    {
-      "command": "epic-decompose",
-      "description": "Break an epic into task children without creating task branches.",
-      "type": "review",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-decompose.md"
-    },
-    {
-      "command": "epic-publish",
-      "description": "Publish a validated epic update back to the issue and local cache.",
-      "type": "general",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-publish.md"
-    },
-    {
-      "command": "epic-review",
-      "description": "Mark epic review requested, approved, or changes requested.",
-      "type": "review",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-review.md"
-    },
-    {
-      "command": "epic-sync",
-      "description": "Sync epic issue bodies, labels, and local coordination snapshots from GitHub.",
-      "type": "general",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-sync.md"
-    },
-    {
-      "command": "epic-unblock",
-      "description": "Sweep blocked epic issues and reopen anything whose dependencies are closed.",
-      "type": "general",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-unblock.md"
-    },
-    {
-      "command": "epic-validate",
-      "description": "Validate epic readiness, dependencies, and coordination policy.",
-      "type": "review",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/epic-validate.md"
     },
     {
       "command": "evolve",
@@ -189,15 +80,6 @@
       "path": "commands/evolve.md"
     },
     {
-      "command": "fastapi-review",
-      "description": "Review a FastAPI application for architecture, async correctness, dependency injection, Pydantic schemas, security, performance, and testability.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/fastapi-review.md"
-    },
-    {
       "command": "feature-dev",
       "description": "Guided feature development with codebase understanding and architecture focus",
       "type": "testing",
@@ -205,53 +87,6 @@
       "allAgents": [],
       "skills": [],
       "path": "commands/feature-dev.md"
-    },
-    {
-      "command": "flutter-build",
-      "description": "Fix Dart analyzer errors and Flutter build failures incrementally. Invokes the dart-build-resolver agent for minimal, surgical fixes.",
-      "type": "testing",
-      "primaryAgents": [
-        "dart-build-resolver"
-      ],
-      "allAgents": [
-        "dart-build-resolver"
-      ],
-      "skills": [
-        "flutter-dart-code-review"
-      ],
-      "path": "commands/flutter-build.md"
-    },
-    {
-      "command": "flutter-review",
-      "description": "Review Flutter/Dart code for idiomatic patterns, widget best practices, state management, performance, accessibility, and security. Invokes the flutter-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "flutter-reviewer"
-      ],
-      "allAgents": [
-        "flutter-reviewer"
-      ],
-      "skills": [
-        "flutter-dart-code-review"
-      ],
-      "path": "commands/flutter-review.md"
-    },
-    {
-      "command": "flutter-test",
-      "description": "Run Flutter/Dart tests, report failures, and incrementally fix test issues. Covers unit, widget, golden, and integration tests.",
-      "type": "testing",
-      "primaryAgents": [
-        "dart-build-resolver",
-        "flutter-reviewer"
-      ],
-      "allAgents": [
-        "dart-build-resolver",
-        "flutter-reviewer"
-      ],
-      "skills": [
-        "flutter-dart-code-review"
-      ],
-      "path": "commands/flutter-test.md"
     },
     {
       "command": "gan-build",
@@ -270,58 +105,6 @@
       "allAgents": [],
       "skills": [],
       "path": "commands/gan-design.md"
-    },
-    {
-      "command": "go-build",
-      "description": "Fix Go build errors, go vet warnings, and linter issues incrementally. Invokes the go-build-resolver agent for minimal, surgical fixes.",
-      "type": "testing",
-      "primaryAgents": [
-        "go-build-resolver"
-      ],
-      "allAgents": [
-        "go-build-resolver"
-      ],
-      "skills": [
-        "golang-patterns"
-      ],
-      "path": "commands/go-build.md"
-    },
-    {
-      "command": "go-review",
-      "description": "Comprehensive Go code review for idiomatic patterns, concurrency safety, error handling, and security. Invokes the go-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "go-reviewer"
-      ],
-      "allAgents": [
-        "go-reviewer"
-      ],
-      "skills": [
-        "golang-patterns",
-        "golang-testing"
-      ],
-      "path": "commands/go-review.md"
-    },
-    {
-      "command": "go-test",
-      "description": "Enforce TDD workflow for Go. Write table-driven tests first, then implement. Verify 80%+ coverage with go test -cover.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "golang-testing",
-        "tdd-workflow"
-      ],
-      "path": "commands/go-test.md"
-    },
-    {
-      "command": "gradle-build",
-      "description": "Fix Gradle build errors for Android and KMP projects",
-      "type": "build",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [],
-      "path": "commands/gradle-build.md"
     },
     {
       "command": "harness-audit",
@@ -400,60 +183,6 @@
       "path": "commands/instinct-status.md"
     },
     {
-      "command": "jira",
-      "description": "Retrieve a Jira ticket, analyze requirements, update status, or add comments. Uses the jira-integration skill and MCP or REST API.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "jira-integration"
-      ],
-      "path": "commands/jira.md"
-    },
-    {
-      "command": "kotlin-build",
-      "description": "Fix Kotlin/Gradle build errors, compiler warnings, and dependency issues incrementally. Invokes the kotlin-build-resolver agent for minimal, surgical fixes.",
-      "type": "testing",
-      "primaryAgents": [
-        "kotlin-build-resolver"
-      ],
-      "allAgents": [
-        "kotlin-build-resolver"
-      ],
-      "skills": [
-        "kotlin-patterns"
-      ],
-      "path": "commands/kotlin-build.md"
-    },
-    {
-      "command": "kotlin-review",
-      "description": "Comprehensive Kotlin code review for idiomatic patterns, null safety, coroutine safety, and security. Invokes the kotlin-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "kotlin-reviewer"
-      ],
-      "allAgents": [
-        "kotlin-reviewer"
-      ],
-      "skills": [
-        "kotlin-patterns",
-        "kotlin-testing"
-      ],
-      "path": "commands/kotlin-review.md"
-    },
-    {
-      "command": "kotlin-test",
-      "description": "Enforce TDD workflow for Kotlin. Write Kotest tests first, then implement. Verify 80%+ coverage with Kover.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "kotlin-testing",
-        "tdd-workflow"
-      ],
-      "path": "commands/kotlin-test.md"
-    },
-    {
       "command": "learn-eval",
       "description": "Extract reusable patterns from the session, self-evaluate quality before saving, and determine the right save location (Global vs Project).",
       "type": "testing",
@@ -488,17 +217,6 @@
       "allAgents": [],
       "skills": [],
       "path": "commands/loop-status.md"
-    },
-    {
-      "command": "marketing-campaign",
-      "description": "Plan and execute a full marketing campaign. Accepts a product brief and returns positioning, landing page copy, email sequence, social posts, ad variants, video scripts, and a content calendar. Can also review existing copy for conversion quality.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "marketing-campaign"
-      ],
-      "path": "commands/marketing-campaign.md"
     },
     {
       "command": "model-route",
@@ -769,22 +487,6 @@
       "path": "commands/prune.md"
     },
     {
-      "command": "python-review",
-      "description": "Comprehensive Python code review for PEP 8 compliance, type hints, security, and Pythonic idioms. Invokes the python-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "python-reviewer"
-      ],
-      "allAgents": [
-        "python-reviewer"
-      ],
-      "skills": [
-        "python-patterns",
-        "python-testing"
-      ],
-      "path": "commands/python-review.md"
-    },
-    {
       "command": "quality-gate",
       "description": "Run the ECC formatter quality gate for a single file and report remediation steps.",
       "type": "testing",
@@ -868,49 +570,6 @@
       "allAgents": [],
       "skills": [],
       "path": "commands/review-pr.md"
-    },
-    {
-      "command": "rust-build",
-      "description": "Fix Rust build errors, borrow checker issues, and dependency problems incrementally. Invokes the rust-build-resolver agent for minimal, surgical fixes.",
-      "type": "testing",
-      "primaryAgents": [
-        "rust-build-resolver"
-      ],
-      "allAgents": [
-        "rust-build-resolver"
-      ],
-      "skills": [
-        "rust-patterns"
-      ],
-      "path": "commands/rust-build.md"
-    },
-    {
-      "command": "rust-review",
-      "description": "Comprehensive Rust code review for ownership, lifetimes, error handling, unsafe usage, and idiomatic patterns. Invokes the rust-reviewer agent.",
-      "type": "testing",
-      "primaryAgents": [
-        "rust-reviewer"
-      ],
-      "allAgents": [
-        "rust-reviewer"
-      ],
-      "skills": [
-        "rust-patterns",
-        "rust-testing"
-      ],
-      "path": "commands/rust-review.md"
-    },
-    {
-      "command": "rust-test",
-      "description": "Enforce TDD workflow for Rust. Write tests first, then implement. Verify 80%+ coverage with cargo-llvm-cov.",
-      "type": "testing",
-      "primaryAgents": [],
-      "allAgents": [],
-      "skills": [
-        "rust-patterns",
-        "rust-testing"
-      ],
-      "path": "commands/rust-test.md"
     },
     {
       "command": "santa-loop",
@@ -1007,74 +666,37 @@
       "allAgents": [],
       "skills": [],
       "path": "commands/update-docs.md"
-    },
-    {
-      "command": "vue-review",
-      "description": "Comprehensive Vue.js code review for Composition API correctness, reactivity, composable patterns, template security, accessibility, and Vue-specific performance. Invokes the vue-reviewer agent (and typescript-reviewer alongside on .vue/.ts changes).",
-      "type": "testing",
-      "primaryAgents": [
-        "typescript-reviewer",
-        "vue-reviewer"
-      ],
-      "allAgents": [
-        "typescript-reviewer",
-        "vue-reviewer"
-      ],
-      "skills": [
-        "vue-patterns"
-      ],
-      "path": "commands/vue-review.md"
     }
   ],
   "statistics": {
     "byType": {
-      "build": 2,
-      "general": 10,
+      "build": 1,
+      "general": 7,
       "orchestration": 11,
       "planning": 2,
       "refactoring": 1,
-      "review": 15,
-      "testing": 53
+      "review": 11,
+      "testing": 33
     },
     "topAgents": [
       {
-        "agent": "dart-build-resolver",
-        "count": 2
+        "agent": "planner",
+        "count": 1
       },
       {
-        "agent": "flutter-reviewer",
-        "count": 2
+        "agent": "react-build-resolver",
+        "count": 1
+      },
+      {
+        "agent": "react-reviewer",
+        "count": 1
+      },
+      {
+        "agent": "security-reviewer",
+        "count": 1
       },
       {
         "agent": "typescript-reviewer",
-        "count": 2
-      },
-      {
-        "agent": "cpp-build-resolver",
-        "count": 1
-      },
-      {
-        "agent": "cpp-reviewer",
-        "count": 1
-      },
-      {
-        "agent": "go-build-resolver",
-        "count": 1
-      },
-      {
-        "agent": "go-reviewer",
-        "count": 1
-      },
-      {
-        "agent": "kotlin-build-resolver",
-        "count": 1
-      },
-      {
-        "agent": "kotlin-reviewer",
-        "count": 1
-      },
-      {
-        "agent": "planner",
         "count": 1
       }
     ],
@@ -1084,23 +706,15 @@
         "count": 6
       },
       {
-        "skill": "orch-add-feature",
-        "count": 4
-      },
-      {
-        "skill": "orch-change-feature",
-        "count": 4
-      },
-      {
-        "skill": "tdd-workflow",
-        "count": 4
-      },
-      {
         "skill": "accessibility",
         "count": 3
       },
       {
-        "skill": "flutter-dart-code-review",
+        "skill": "orch-add-feature",
+        "count": 3
+      },
+      {
+        "skill": "orch-change-feature",
         "count": 3
       },
       {
@@ -1108,15 +722,23 @@
         "count": 3
       },
       {
-        "skill": "rust-patterns",
-        "count": 3
-      },
-      {
-        "skill": "cpp-coding-standards",
+        "skill": "ecc-guide",
         "count": 2
       },
       {
-        "skill": "cpp-testing",
+        "skill": "plan-canvas",
+        "count": 2
+      },
+      {
+        "skill": "react-patterns",
+        "count": 2
+      },
+      {
+        "skill": "react-testing",
+        "count": 2
+      },
+      {
+        "skill": "security-scan",
         "count": 2
       }
     ]

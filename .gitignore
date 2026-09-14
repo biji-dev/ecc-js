@@ -107,3 +107,7 @@ ecc2/target/
 assets/images/security/badrudi-exploit.mp4
 
 .aider*
+
+# Fork sync working files (biji-dev/ecc-js)
+fork/.sync-report.md
+fork/.sync-in-progress.json

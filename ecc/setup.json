@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "allow": [
+      "pre:bash:block-no-verify",
+      "pre:bash:gateguard-fact-force",
+      "pre:bash:commit-quality",
+      "pre:config-protection",
+      "pre:observe",
+      "post:dispatcher:sync",
+      "post:dispatcher:async",
+      "post:edit:console-warn",
+      "post:edit:accumulator",
+      "post:observe:continuous-learning",
+      "post:skill:track",
+      "session:start",
+      "stop:session-end",
+      "stop:format-typecheck",
+      "stop:cost-tracker",
+      "stop:desktop-notify",
+      "session:end:marker"
+    ],
+    "gateguard": {
+      "bashRoutineDisabled": true
+    }
+  }
+}

@@ -1,0 +1,1194 @@
+{
+  "version": 1,
+  "upstream": {
+    "remote": "ecc-upstream",
+    "url": "https://github.com/affaan-m/ECC.git",
+    "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+    "tagNamespace": "upstream/"
+  },
+  "skills": {
+    "keep": [
+      "accessibility",
+      "agent-architecture-audit",
+      "agent-eval",
+      "agent-harness-construction",
+      "agent-introspection-debugging",
+      "agent-self-evaluation",
+      "agent-sort",
+      "agentic-engineering",
+      "agentic-os",
+      "ai-first-engineering",
+      "ai-regression-testing",
+      "api-connector-builder",
+      "api-design",
+      "architecture-decision-records",
+      "automation-audit-ops",
+      "autonomous-agent-harness",
+      "autonomous-loops",
+      "backend-patterns",
+      "benchmark",
+      "benchmark-optimization-loop",
+      "blueprint",
+      "browser-qa",
+      "bun-runtime",
+      "canary-watch",
+      "ck",
+      "claude-devfleet",
+      "click-path-audit",
+      "clickhouse-io",
+      "code-tour",
+      "codebase-onboarding",
+      "coding-standards",
+      "config-gc",
+      "content-hash-cache-pattern",
+      "context-budget",
+      "continuous-agent-loop",
+      "continuous-learning",
+      "continuous-learning-v2",
+      "contract-first",
+      "cost-aware-llm-pipeline",
+      "cost-tracking",
+      "council",
+      "council-multi-model",
+      "counterparty-channel-discipline",
+      "dashboard-builder",
+      "data-scraper-agent",
+      "data-throughput-accelerator",
+      "database-migrations",
+      "delivery-gate",
+      "deployment-patterns",
+      "design-system",
+      "dev-team",
+      "dmux-workflows",
+      "docker-patterns",
+      "documentation-lookup",
+      "dynamic-workflow-mode",
+      "e2e-testing",
+      "ecc-guide",
+      "ecc-recipes",
+      "enterprise-agent-ops",
+      "error-handling",
+      "eval-harness",
+      "flox-environments",
+      "frontend-a11y",
+      "frontend-design-direction",
+      "frontend-patterns",
+      "gan-style-harness",
+      "gateguard",
+      "git-workflow",
+      "github-ops",
+      "growth-log",
+      "healthcare-phi-compliance",
+      "hexagonal-architecture",
+      "hookify-rules",
+      "inherit-legacy-style",
+      "intent-driven-development",
+      "iterative-retrieval",
+      "knowledge-ops",
+      "latency-critical-systems",
+      "living-docs-governance",
+      "loop-design-check",
+      "make-interfaces-feel-better",
+      "mcp-server-patterns",
+      "ml-adoption-playbook",
+      "motion-advanced",
+      "motion-foundations",
+      "motion-patterns",
+      "mysql-patterns",
+      "nextjs-turbopack",
+      "opensource-pipeline",
+      "orch-add-feature",
+      "orch-build-mvp",
+      "orch-change-feature",
+      "orch-fix-defect",
+      "orch-pipeline",
+      "orch-refine-code",
+      "parallel-execution-optimizer",
+      "plan-canvas",
+      "plan-orchestrate",
+      "plankton-code-quality",
+      "postgres-patterns",
+      "prisma-patterns",
+      "product-capability",
+      "product-lens",
+      "production-audit",
+      "project-flow-ops",
+      "prompt-optimizer",
+      "ralphinho-rfc-pipeline",
+      "react-native-patterns",
+      "react-patterns",
+      "react-performance",
+      "react-testing",
+      "recursive-decision-ledger",
+      "redis-patterns",
+      "regex-vs-llm-structured-text",
+      "remotion-video-creation",
+      "repo-scan",
+      "research-ops",
+      "rules-distill",
+      "safety-guard",
+      "santa-method",
+      "search-first",
+      "security-bounty-hunter",
+      "security-review",
+      "security-scan",
+      "seo",
+      "skill-comply",
+      "skill-scout",
+      "skill-stocktake",
+      "strategic-compact",
+      "tdd-workflow",
+      "team-agent-orchestration",
+      "team-builder",
+      "terminal-opener",
+      "terminal-ops",
+      "token-budget-advisor",
+      "ui-demo",
+      "uncloud",
+      "verification-loop",
+      "vite-patterns",
+      "workspace-surface-audit"
+    ],
+    "drop": {
+      "agent-payment-x402": "initial-slim:lang — Covers x402 on-chain payments with agentwallet-sdk and OKX X Layer wallets. Web3 and x402 are absent from the user's stack; their payments are Xendit, Midtrans ",
+      "android-clean-architecture": "initial-slim:lang — Covers Android/KMP clean architecture with Kotlin, Room, SQLDelight, Koin and Hilt. Kotlin and Android native are absent; the user's mobile apps are Expo.",
+      "angular-developer": "initial-slim:lang — Angular is absent from every user project.",
+      "article-writing": "initial-slim:non-technical — Long-form blog and newsletter writing in a brand voice. Marketing and publishing ops are absent from the user's work, and the skill is unused.",
+      "benchmark-methodology": "initial-slim:non-technical — Despite its name, this is brand/consulting competitor scoring: positioning, voice, visual craft, pricing, 'client's strategic tension'. It is step 2 of a compet",
+      "blender-motion-state-inspection": "initial-slim:non-technical — Blender rig and animation inspection with Blender Python. The policy explicitly lists Blender tooling as a separate ECC product. The user's 3D work is three.js/",
+      "brand-discovery": "initial-slim:non-technical — Multi-session brand-identity interviews that produce a brandbook. Off-domain business/marketing work.",
+      "brand-voice": "initial-slim:non-technical — Builds a writing-voice profile from X posts and newsletters for content and outreach. It anchors the marketing and social-publishing cluster, which is absent fr",
+      "carrier-relationship-management": "initial-slim:non-technical — Freight carrier and logistics procurement expertise. Logistics ops are absent from the user's work.",
+      "cisco-ios-patterns": "initial-slim:lang — Cisco IOS network config review. Cisco and networking are absent.",
+      "codehealth-mcp": "initial-slim:paid-api — Only works with the third-party CodeScene MCP and a personal CS_ACCESS_TOKEN. The user has no codescene config in ~/.claude.json or settings, and the skill is u",
+      "competitive-platform-analysis": "initial-slim:non-technical — Scopes competitors for a client positioning brief; step 1 of the brand/consulting competitive pipeline. Off-domain.",
+      "competitive-report-structure": "initial-slim:non-technical — Assembles a consulting competitive report (landscape map, white-space). Off-domain business work.",
+      "compose-multiplatform-patterns": "initial-slim:lang — Jetpack Compose and Compose Multiplatform in Kotlin. Kotlin and KMP are absent.",
+      "configure-ecc": "initial-slim:broken-in-fork — The install and reconfigure wizard. It routes for Claude Code, Codex and Kimi, all kept harnesses, and the `ecc setup` and `ecc welcome` CLI entries point to it",
+      "connections-optimizer": "initial-slim:non-technical — Prunes X/LinkedIn networks and drafts outreach. Social-graph ops unrelated to the user's products.",
+      "content-engine": "initial-slim:non-technical — Social and content production for X, LinkedIn, TikTok and newsletters. Marketing and social publishing are absent from the user's work, and the skill is unused.",
+      "cpp-coding-standards": "initial-slim:lang — C++ Core Guidelines. The user has no C++ code.",
+      "cpp-testing": "initial-slim:lang — GoogleTest/CTest testing. C++ is not in the user's stack.",
+      "crosspost": "initial-slim:non-technical — Posts content across X, LinkedIn, Threads and Bluesky. Social publishing is on the user's ABSENT list.",
+      "csharp-testing": "initial-slim:lang — xUnit/.NET testing. C#/.NET is absent; the only C# is a Unity tool folder inside miaw-call, which is not .NET/xUnit.",
+      "customer-billing-ops": "initial-slim:non-technical — Operator workflow for fixing Stripe customer billing (refunds, duplicate subscriptions). It is ECC business ops. The user's products bill mainly through Xendit/",
+      "customs-trade-compliance": "initial-slim:non-technical — Customs and trade compliance is on the user's ABSENT list.",
+      "dart-flutter-patterns": "initial-slim:lang — Flutter/Dart patterns. Flutter is absent; the only Flutter code is maxchat-mobile, obsolete since 2023, and the user's mobile work is Expo/React Native.",
+      "deep-research": "initial-slim:paid-api — Cited web research that requires firecrawl or exa MCP servers. Neither is configured for the user; built-in WebSearch/WebFetch and general-purpose agents cover ",
+      "defi-amm-security": "initial-slim:lang — Solidity AMM security checklist. Web3/DeFi is absent.",
+      "django-celery": "initial-slim:lang — Django and Celery are absent; the user runs background jobs on BullMQ and pg-boss.",
+      "django-patterns": "initial-slim:lang — Django/DRF is absent from the user's stack.",
+      "django-security": "initial-slim:lang — Django is absent.",
+      "django-tdd": "initial-slim:lang — Django is absent.",
+      "django-verification": "initial-slim:lang — Django is absent.",
+      "dotnet-patterns": "initial-slim:lang — C#/.NET is absent.",
+      "ecc-tools-cost-audit": "initial-slim:ecc-product — Audits billing and cost burn in the ECC Tools GitHub App repo, which is ECC maintainer tooling.",
+      "email-ops": "initial-slim:non-technical — Operator mailbox triage and send verification for ECC business correspondence (investor, sponsor, billing). The user's email work is transactional Resend inside",
+      "energy-procurement": "initial-slim:non-technical — Energy and procurement ops are on the user's ABSENT list.",
+      "esign-field-placement": "initial-slim:non-technical — Browser-automation recipe for placing signature fields in a web e-signature composer for generated agreements. This is ECC business-desk ops, not the user's pro",
+      "evm-token-decimals": "initial-slim:lang — EVM token decimal handling. Web3 is absent.",
+      "exa-search": "initial-slim:paid-api — Needs the Exa MCP server and an API key, which the user has not configured; the built-in WebSearch/WebFetch and context7 cover search and docs.",
+      "fal-ai-media": "initial-slim:non-technical — AI image/video/audio generation through the fal.ai MCP. No user product generates media with fal, and the MCP is not configured.",
+      "fastapi-patterns": "initial-slim:lang — FastAPI is absent.",
+      "finance-billing-ops": "initial-slim:non-technical — ECC operator revenue, pricing and Stripe-sales reporting. It is business ops, not engineering for the user's products.",
+      "flutter-dart-code-review": "initial-slim:lang — Flutter/Dart review checklist. Flutter is absent; maxchat-mobile is obsolete since 2023.",
+      "foundation-models-on-device": "initial-slim:lang — Apple FoundationModels on-device LLM in Swift for iOS 26. Native Swift/iOS is absent; the user's mobile work is Expo.",
+      "frontend-slides": "initial-slim:non-technical — Builds animated HTML presentations and converts PPTX. None of the user's products need it, and its main consumer (investor-materials) is off-domain.",
+      "fsharp-testing": "initial-slim:lang — F# is absent.",
+      "generating-python-installer": "initial-slim:lang — Packaging Windows Python apps with Nuitka and Inno Setup. The user uses Python only for incidental scripts and ships no Windows Python apps.",
+      "golang-patterns": "initial-slim:lang — Go appears only in sabbi/hopis-be, a client repo marked obsolete where the user has 0 commits. It is a secondary/legacy item with no own Go work.",
+      "golang-testing": "initial-slim:lang — Should follow the same decision as golang-patterns. Go exists only in the obsolete sabbi client repo, where the user has no commits.",
+      "google-workspace-ops": "initial-slim:non-technical — Office ops on Google Drive, Docs, Sheets and Slides. It is not part of any user product or engineering workflow, and the claude.ai Google Drive connector alread",
+      "healthcare-cdss-patterns": "initial-slim:lang — Covers clinical decision support: drug interactions, dose validation, NEWS2/qSOFA scoring. None of the user's code does this. qlinique is a booking, reminder an",
+      "healthcare-emr-patterns": "initial-slim:lang — Covers EMR/EHR encounter flows, prescriptions and CDSS integration. qlinique has no encounter or prescription modules, and the profile lists EMR as absent.",
+      "healthcare-eval-harness": "initial-slim:lang — A Jest-based patient-safety deploy gate for CDSS accuracy and EMR workflow integrity. It only makes sense if you have the EMR/CDSS modules the user doesn't buil",
+      "hermes-imports": "initial-slim:ecc-product — ECC-maintainer tooling for turning private Hermes operator workflows into public ECC skills and release packs. It has nothing to do with the user's products.",
+      "hipaa-compliance": "initial-slim:lang — A thin entry point for US HIPAA work (covered entities, BAAs). The user has no US healthcare work; qlinique falls under Indonesian PDP.",
+      "homelab-network-readiness": "initial-slim:lang — Readiness checklist for home VLANs, Pi-hole and WireGuard. Homelab and network work is explicitly absent.",
+      "homelab-network-setup": "initial-slim:lang — Plans home network gateways, switches and DHCP. The user runs VPS deployments, not homelab networks.",
+      "homelab-pihole-dns": "initial-slim:lang — Pi-hole install and DNS troubleshooting on a home network. Absent domain.",
+      "homelab-vlan-segmentation": "initial-slim:lang — Home VLAN segmentation on UniFi, pfSense and MikroTik. Absent domain.",
+      "homelab-wireguard-vpn": "initial-slim:lang — WireGuard remote access into a home network. Absent domain.",
+      "inventory-demand-planning": "initial-slim:non-technical — Retail demand-planner persona: safety stock, ABC/XYZ analysis, vendor negotiation. This is business ops, not engineering for the user's products.",
+      "investor-materials": "initial-slim:non-technical — Pitch decks, financial models and fundraising documents. Investor ops is explicitly absent.",
+      "investor-outreach": "initial-slim:non-technical — Cold emails and updates to investors. Investor ops is explicitly absent.",
+      "ios-icon-gen": "initial-slim:lang — Builds Xcode asset-catalog PNG imagesets for native iOS projects. The user's mobile apps are Expo managed, and native iOS is absent.",
+      "ito-baskets": "initial-slim:ecc-product — Read-only data for Itô prediction-market baskets, a separate ECC-affiliated product. Prediction markets are absent.",
+      "ito-compute": "initial-slim:ecc-product — GPU RFQ and procurement through the Itô compute CLI, a separate product. No GPU or ML training work in the user's stack.",
+      "ito-inference": "initial-slim:ecc-product — A placeholder skill for serving models on Itô compute bookings. Separate product, and no user use.",
+      "ito-training": "initial-slim:ecc-product — A placeholder skill for ML training on Itô compute. Separate product; ML training is absent.",
+      "java-coding-standards": "initial-slim:lang — Java coding standards for Spring Boot and Quarkus. Java is absent.",
+      "jira-integration": "initial-slim:jira — Jira ticket workflows through mcp-atlassian or REST. No project uses Jira; the user tracks work in GitHub.",
+      "jpa-patterns": "initial-slim:lang — JPA/Hibernate on Spring Boot. Java/JPA is absent; the user uses Drizzle and Prisma.",
+      "kotlin-coroutines-flows": "initial-slim:lang — Kotlin coroutines for Android and KMP. Kotlin is absent; openclaw's Kotlin doesn't count.",
+      "kotlin-exposed-patterns": "initial-slim:lang — The JetBrains Exposed ORM. Kotlin server work is absent.",
+      "kotlin-ktor-patterns": "initial-slim:lang — Ktor servers. Kotlin server work is absent.",
+      "kotlin-patterns": "initial-slim:lang — Idiomatic Kotlin. Kotlin is absent.",
+      "kotlin-testing": "initial-slim:lang — Kotest, MockK and Kover. Kotlin is absent.",
+      "kubernetes-patterns": "initial-slim:unused-infra — Kubernetes manifests, RBAC and HPA. The user deploys with Docker compose, pm2 and nginx/Caddy on VPSes; Kubernetes is absent.",
+      "laravel-patterns": "initial-slim:lang — Laravel architecture. PHP/Laravel is absent.",
+      "laravel-plugin-discovery": "initial-slim:lang — Evaluating Laravel packages through the LaraPlugins MCP. PHP is absent.",
+      "laravel-security": "initial-slim:lang — Laravel security practices. PHP is absent.",
+      "laravel-tdd": "initial-slim:lang — PHPUnit and Pest testing for Laravel. PHP is absent.",
+      "laravel-verification": "initial-slim:lang — A verification loop for Laravel projects. PHP is absent.",
+      "lead-intelligence": "initial-slim:non-technical — A sales and outreach lead pipeline (X API, LinkedIn, Apollo replacement). Marketing and social ops are absent.",
+      "liquid-glass-design": "initial-slim:lang — SwiftUI, UIKit and WidgetKit code for iOS 26 Liquid Glass. Native Swift is absent. pasarbesar's expo-glass-effect use belongs to the Expo plugin.",
+      "llm-trading-agent-security": "initial-slim:lang — Security for agents that control wallets or transactions: spend limits, MEV, key handling. Web3 and trading are absent.",
+      "logistics-exception-management": "initial-slim:non-technical — Freight exceptions analyst persona (LTL/FTL claims, carrier disputes). Logistics ops is absent; uwu only calls a courier aggregator API.",
+      "mailtrap-email-integration": "initial-slim:paid-api — Specific to Mailtrap's API and sandbox. The user sends transactional email with Resend (7 mentions) and no project uses Mailtrap.",
+      "manim-video": "initial-slim:non-technical — Python Manim explainer videos for launches. The user makes product videos with Remotion (meetgrab); marketing video ops is absent.",
+      "market-research": "initial-slim:non-technical — Market sizing, investor dossiers and competitive research for business decisions. Investor and marketing ops are absent, and deep-research and research-ops cove",
+      "marketing-campaign": "initial-slim:non-technical — Plans marketing campaigns: landing copy, email sequences, ads, social posts. Marketing and social publishing ops are explicitly absent.",
+      "master-agreement-generator": "initial-slim:non-technical — Drafts counterparty legal master agreements from templates (desk ops). Unrelated to the user's products.",
+      "messages-ops": "initial-slim:ecc-product — An ECC operator workflow for reading iMessage and DMs and recovering one-time codes. It is personal-operator tooling, not engineering for the user's products.",
+      "mle-workflow": "initial-slim:lang — Production ML engineering: data contracts, reproducible training, model promotion and serving. ML training is absent. The user's LLM evals and cost guards are c",
+      "nanoclaw-repl": "initial-slim:claw-harness — Operating guide for scripts/claw.js, ECC's own experimental REPL on claude -p. It is a separate ECC product, not a user workflow.",
+      "nasiko-control-plane": "initial-slim:ecc-product — Lifecycle bridge for the separate Nasiko CLI product, run through `ecc nasiko`. The user's products have nothing to do with it.",
+      "nestjs-patterns": "initial-slim:lang — NestJS appears only in the embog prototype (NestJS 11, 2026-01) and the obsolete maxchat-backend team repo. None of the active products use it; they run on Hono",
+      "netmiko-ssh-automation": "initial-slim:lang — Python Netmiko automation for network devices. Network automation is listed as absent.",
+      "network-bgp-diagnostics": "initial-slim:lang — BGP neighbor and route troubleshooting. The user runs no network infrastructure.",
+      "network-config-validation": "initial-slim:lang — Pre-deployment checks for router and switch configs. The stack is absent.",
+      "network-interface-health": "initial-slim:lang — Diagnoses interface CRC errors, drops and duplex mismatches on routers and switches. The stack is absent.",
+      "nodejs-keccak256": "initial-slim:lang — Guards against Ethereum Keccak vs SHA3 hashing bugs in JS. Web3/EVM is listed as absent.",
+      "nutrient-document-processing": "initial-slim:paid-api — Curl recipes for the commercial Nutrient DWS API, which the user does not use. The user's own server-side PDF generation lives in their TS backends.",
+      "nuxt4-patterns": "initial-slim:lang — Nuxt 4 hydration and data-fetching patterns. The census finds no Nuxt anywhere, and Vue itself is legacy-only.",
+      "openclaw-persona-forge": "initial-slim:non-technical — Chinese-language gacha generator for OpenClaw 'lobster soul' personas. openclaw is a third-party clone, and this does not serve any product.",
+      "operator-approval-loop": "initial-slim:non-technical — Approval-ledger contract for agents that draft messages to external counterparties. It belongs to the desk-pattern business-ops cluster (master-agreement-genera",
+      "perl-patterns": "initial-slim:lang — Modern Perl idioms. Perl is absent from the user's stack.",
+      "perl-security": "initial-slim:lang — Perl taint mode and DBI security. Perl is absent.",
+      "perl-testing": "initial-slim:lang — Test2 and prove patterns for Perl. Perl is absent.",
+      "prediction-market-oracle-research": "initial-slim:lang — Prediction-market oracle research. Prediction markets are listed as absent.",
+      "prediction-market-risk-review": "initial-slim:lang — Risk review for prediction-market and trading-agent workflows. The domain is absent.",
+      "production-scheduling": "initial-slim:non-technical — Manufacturing job sequencing, SMED and OEE expertise. It is unrelated to the user's software products.",
+      "python-patterns": "initial-slim:lang — The user writes Python only in incidental ops scripts (miaw-call RTP analysis, Blender), plus yt-dlp and ERPNext as consumed tools. The python-reviewer agent an",
+      "python-testing": "initial-slim:lang — pytest strategy guide. No own project has a Python test suite; Python exists only as ad-hoc ops scripts.",
+      "pytorch-patterns": "initial-slim:lang — PyTorch training loops and model architecture. ML training is absent.",
+      "quality-nonconformance": "initial-slim:non-technical — Manufacturing NCR, CAPA and SPC quality expertise. It is unrelated to the user's products.",
+      "quarkus-patterns": "initial-slim:lang — Java Quarkus and Camel patterns. Java is absent.",
+      "quarkus-security": "initial-slim:lang — Quarkus authn/authz and OIDC. Java is absent.",
+      "quarkus-tdd": "initial-slim:lang — JUnit, REST Assured and JaCoCo TDD for Quarkus. Java is absent.",
+      "quarkus-verification": "initial-slim:lang — Quarkus build and native-compile verification loop. Java is absent.",
+      "rails-patterns": "initial-slim:lang — Ruby on Rails 7/8 patterns. Ruby is absent. The recent 'Fix/rails patterns followups' commit is maintainer activity, not user need.",
+      "recsys-pipeline-architect": "initial-slim:lang — Six-stage feed and recommendation pipeline scaffold based on xAI's For You algorithm. None of the products has a feed or ranking system, and recsys is listed as",
+      "returns-reverse-logistics": "initial-slim:non-technical — Covers RMA, warehouse inspection grading and the disposition persona for a returns operations manager. Logistics ops is listed as absent, and no product runs wa",
+      "rust-patterns": "initial-slim:lang — Rust is an absent stack; none of the user's products contain Rust.",
+      "rust-testing": "initial-slim:lang — Rust testing patterns (cargo, mockall, proptest) for an absent stack.",
+      "scientific-db-pubmed-database": "initial-slim:non-technical — PubMed/NCBI biomedical literature search. The only clinic product, qlinique, is PDP clinic SaaS and needs no literature research.",
+      "scientific-db-uspto-database": "initial-slim:non-technical — Looks up USPTO patent and trademark records, which is IP research unrelated to any product.",
+      "scientific-pkg-gget": "initial-slim:non-technical — A bioinformatics genomic lookup CLI (Python gget), unrelated to the user's stack or domains.",
+      "scientific-thinking-literature-review": "initial-slim:non-technical — Covers academic systematic and scoping literature reviews (PICO etc.), which is not engineering work on the user's products.",
+      "scientific-thinking-scholar-evaluation": "initial-slim:non-technical — A rubric for evaluating academic papers and proposals. The user does no scholarly work.",
+      "social-graph-ranker": "initial-slim:non-technical — Ranks X/LinkedIn warm-intro graphs for outreach. Investor, marketing and social ops is listed as absent.",
+      "social-publisher": "initial-slim:non-technical — Publishes social posts through the third-party SocialClaw SaaS API. Social publishing ops is absent.",
+      "springboot-patterns": "initial-slim:lang — Java/Spring Boot is absent from every project.",
+      "springboot-security": "initial-slim:lang — Spring Security guidance for an absent Java stack.",
+      "springboot-tdd": "initial-slim:lang — JUnit/Mockito/Testcontainers TDD for Spring Boot, which is an absent stack.",
+      "springboot-verification": "initial-slim:lang — A Maven/Gradle verification loop for Spring Boot, which is an absent stack.",
+      "swift-actor-persistence": "initial-slim:lang — Swift actor persistence. Native Swift/iOS is absent (mobile is Expo/RN, and openclaw's Swift doesn't count).",
+      "swift-concurrency-6-2": "initial-slim:lang — Swift 6.2 concurrency for an absent native iOS/macOS stack.",
+      "swift-protocol-di-testing": "initial-slim:lang — Swift protocol DI and Swift Testing for an absent stack.",
+      "swiftui-patterns": "initial-slim:lang — SwiftUI UI patterns. Native iOS is absent, and the expo plugin covers the user's mobile work.",
+      "taste": "initial-slim:non-technical — Creative direction for angelcore/hyperpop music videos, part of ECC's separate taste/tasteforge product line.",
+      "taste-application": "initial-slim:ecc-product — A Python video-generation, grading and cutting pipeline (the tasteforge engine). It is a separate ECC product with no link to the user's products.",
+      "taste-distillation": "initial-slim:ecc-product — Measures reference videos into LUT/cut-rhythm style packs. It belongs to the separate tasteforge product.",
+      "tasteforge-video": "initial-slim:ecc-product — Documents ECC's packaged TasteForge offline engine (consumed by Ito-Markets/ito-video), a separate ECC product.",
+      "tinystruct-patterns": "initial-slim:lang — Guidance for the tinystruct Java framework. Java is absent.",
+      "ui-to-vue": "initial-slim:lang — Batch-converts screenshots into Vue 3 components with Vant, Element Plus or Ant Design Vue. The user's only Vue product (wagrab) uses Quasar and is legacy, and ",
+      "unified-memory": "initial-slim:claw-harness — Cross-harness memory vault guidance (Claude to Codex handoffs). It fits the kept harnesses, but it needs the separate ecc-universal npm runtime or scripts/ecc.j",
+      "unified-notifications-ops": "initial-slim:non-technical — An ECC-native operator workflow for routing GitHub, Linear, desktop and chat notifications. It is an ops process layer unrelated to the user's products and has ",
+      "video-editing": "initial-slim:non-technical — A creator workflow for editing real footage into vlogs and short-form (FFmpeg, Descript/CapCut, ElevenLabs) that feeds the taste pipeline. The user's video need",
+      "videodb": "initial-slim:non-technical — A Python SDK workflow for the third-party VideoDB SaaS (desktop capture, video indexing and stream links). No product uses VideoDB.",
+      "visa-doc-translate": "initial-slim:non-technical — A personal visa document OCR, translation and PDF task that auto-executes without confirmation. It is unrelated to engineering or the user's products.",
+      "vue-patterns": "initial-slim:lang — Vue 3/Pinia patterns are relevant only to the legacy wagrab Quasar extension (last commit 2026-02) and the dormant komeng/qute. Its Nuxt content is an absent st",
+      "windows-desktop-e2e": "initial-slim:lang — pywinauto/UIA E2E for WPF, WinForms, Win32 and Qt Windows-native apps. The user's desktop app (numa-home) is Electrobun/TS, and web E2E uses Playwright.",
+      "x-api": "initial-slim:non-technical — X/Twitter posting, threads and analytics API integration. Social publishing ops is absent, and no product integrates X."
+    },
+    "pinned": [
+      "verification-loop",
+      "e2e-testing",
+      "make-interfaces-feel-better",
+      "design-system",
+      "continuous-learning-v2"
+    ],
+    "own": []
+  },
+  "agents": {
+    "keep": [
+      "a11y-architect",
+      "agent-evaluator",
+      "architect",
+      "build-error-resolver",
+      "code-architect",
+      "code-explorer",
+      "code-reviewer",
+      "code-simplifier",
+      "comment-analyzer",
+      "conversation-analyzer",
+      "database-reviewer",
+      "doc-updater",
+      "docs-lookup",
+      "e2e-runner",
+      "gan-evaluator",
+      "gan-generator",
+      "gan-planner",
+      "harness-optimizer",
+      "loop-operator",
+      "opensource-forker",
+      "opensource-packager",
+      "opensource-sanitizer",
+      "performance-optimizer",
+      "planner",
+      "pr-test-analyzer",
+      "rag-pipeline-reviewer",
+      "react-build-resolver",
+      "react-reviewer",
+      "refactor-cleaner",
+      "security-reviewer",
+      "seo-specialist",
+      "silent-failure-hunter",
+      "spec-miner",
+      "tdd-guide",
+      "type-design-analyzer",
+      "typescript-reviewer"
+    ],
+    "drop": {
+      "chief-of-staff": "initial-slim:non-technical — Triages personal email, Slack, LINE and Messenger through the gog CLI and SOUL.md tone drafting. That is communication ops, unrelated to software engineering or",
+      "cpp-build-resolver": "initial-slim:lang — C++/CMake is not in the user's stack.",
+      "cpp-reviewer": "initial-slim:lang — C++ is not in the user's stack. Remove the cpp entry from the orch-review LANGUAGE_REVIEWER map in the same change.",
+      "csharp-reviewer": "initial-slim:lang — C#/.NET is not in the user's stack; the only C# is an incidental Unity tool in miaw-call. Remove LANGUAGE_REVIEWER.csharp from orch-review.",
+      "dart-build-resolver": "initial-slim:lang — Flutter/Dart is absent; maxchat-mobile has been stale since 2023 and belongs to an obsolete team repo.",
+      "django-build-resolver": "initial-slim:lang — Django/Python web is not in the user's stack, and nothing references this agent.",
+      "django-reviewer": "initial-slim:lang — Django is not in the user's stack. Remove LANGUAGE_REVIEWER.django from orch-review.",
+      "fastapi-reviewer": "initial-slim:lang — FastAPI is not in the user's stack. Remove LANGUAGE_REVIEWER.fastapi from orch-review.",
+      "flutter-reviewer": "initial-slim:lang — Flutter/Dart is absent; the only Flutter code is maxchat-mobile, which is obsolete and last committed in 2023. Remove the flutter/dart entries from orch-review ",
+      "fsharp-reviewer": "initial-slim:lang — F# is not in the user's stack. Remove it from install-components.json and the orch-review LANGUAGE_REVIEWER map.",
+      "go-build-resolver": "initial-slim:lang — The only Go code is the sabbi HOPIS backend: a client repo marked obsolete, with 0 of 2618 commits by the user and last activity 2025-07. Keeping it only makes ",
+      "go-reviewer": "initial-slim:lang — The only Go code is the obsolete sabbi client backend, where the user has 0 commits. Dropping it means removing LANGUAGE_REVIEWER.go from orch-review and the /g",
+      "harmonyos-app-resolver": "initial-slim:lang — HarmonyOS/ArkTS is not in the user's stack. Remove its mentions from rules/common/agents.md and install-components.json.",
+      "healthcare-reviewer": "initial-slim:lang — The agent targets HIPAA/EMR/CDSS and HL7/FHIR, none of which are in the stack. qlinique, however, is an Indonesian clinic SaaS in TS/Postgres with patient data,",
+      "homelab-architect": "initial-slim:lang — Home and small-lab network design is outside the user's work, and nothing references this agent.",
+      "java-build-resolver": "initial-slim:lang — Java, Maven/Gradle, Spring Boot and Quarkus are not in the user's stack.",
+      "java-reviewer": "initial-slim:lang — Java is not in the user's stack. Remove LANGUAGE_REVIEWER.java from orch-review.",
+      "kotlin-build-resolver": "initial-slim:lang — Kotlin/Gradle is absent; the only Kotlin in the census is the openclaw third-party clone, which does not count.",
+      "kotlin-reviewer": "initial-slim:lang — Kotlin, Android and KMP are not in the user's stack; the Expo apps do not need native Kotlin review. Remove LANGUAGE_REVIEWER.kotlin from orch-review.",
+      "marketing-agent": "initial-slim:non-technical — Marketing campaign strategy and copywriting falls under marketing and social publishing ops, which the brief marks absent. It has never been used.",
+      "mle-reviewer": "initial-slim:lang — It reviews production ML in Python: training reproducibility, feature stores, pytest/ruff/mypy, pickle loading. PyTorch and ML training are absent. The user's L",
+      "network-architect": "initial-slim:lang — Enterprise and multi-site network architecture is outside the user's work, and nothing references this agent.",
+      "network-config-reviewer": "initial-slim:lang — Reviews router and switch configurations, which the user does not work with.",
+      "network-troubleshooter": "initial-slim:lang — An OSI-layer network diagnostics agent for enterprise and homelab networks, which the user does not work with.",
+      "php-reviewer": "initial-slim:lang — PHP/Laravel is not in the user's stack. Remove LANGUAGE_REVIEWER.php from orch-review.",
+      "python-reviewer": "initial-slim:lang — Python is incidental (ops and Blender scripts in miaw-call), and its dependents django-reviewer, fastapi-reviewer and mle-reviewer are being dropped. Dropping i",
+      "pytorch-build-resolver": "initial-slim:lang — PyTorch, CUDA and ML training are not in the user's stack.",
+      "rust-build-resolver": "initial-slim:lang — Rust is absent from the user's projects; ECC's own ecc2 Rust code is maintainer-only.",
+      "rust-reviewer": "initial-slim:lang — Rust is not in the user's stack. Remove LANGUAGE_REVIEWER.rust from orch-review and its mention in rules/common.",
+      "swift-build-resolver": "initial-slim:lang — Swift/Xcode is absent (Expo handles native builds; the Swift in openclaw is a third-party clone), and nothing references this agent.",
+      "swift-reviewer": "initial-slim:lang — Swift is not in the user's stack. Remove LANGUAGE_REVIEWER.swift from orch-review.",
+      "vue-reviewer": "initial-slim:lang — Vue is legacy for this user: wagrab (Vue 3/Quasar) was last committed 2026-02, komeng and qute are dormant, and the ytgrab and rekrutme Vue frontends are supers"
+    },
+    "pinned": [
+      "security-reviewer",
+      "typescript-reviewer",
+      "code-reviewer",
+      "database-reviewer",
+      "silent-failure-hunter",
+      "planner",
+      "react-reviewer",
+      "code-architect",
+      "code-explorer",
+      "pr-test-analyzer",
+      "gan-evaluator"
+    ],
+    "own": []
+  },
+  "commands": {
+    "keep": [
+      "aside",
+      "auto-update",
+      "build-fix",
+      "checkpoint",
+      "code-review",
+      "cost-report",
+      "ecc-guide",
+      "evolve",
+      "feature-dev",
+      "gan-build",
+      "gan-design",
+      "harness-audit",
+      "hookify",
+      "hookify-configure",
+      "hookify-help",
+      "hookify-list",
+      "instinct-export",
+      "instinct-import",
+      "instinct-status",
+      "learn",
+      "learn-eval",
+      "loop-start",
+      "loop-status",
+      "model-route",
+      "multi-backend",
+      "multi-execute",
+      "multi-frontend",
+      "multi-plan",
+      "multi-workflow",
+      "orch-add-feature",
+      "orch-build-mvp",
+      "orch-change-feature",
+      "orch-fix-defect",
+      "orch-refine-code",
+      "orch-review",
+      "plan",
+      "plan-canvas",
+      "plan-prd",
+      "pm2",
+      "pr",
+      "project-init",
+      "projects",
+      "promote",
+      "prp-commit",
+      "prp-implement",
+      "prp-plan",
+      "prp-pr",
+      "prp-prd",
+      "prune",
+      "quality-gate",
+      "react-build",
+      "react-review",
+      "react-test",
+      "refactor-clean",
+      "resume-session",
+      "review-pr",
+      "santa-loop",
+      "save-session",
+      "security-scan",
+      "sessions",
+      "setup-pm",
+      "skill-create",
+      "skill-health",
+      "test-coverage",
+      "update-codemaps",
+      "update-docs"
+    ],
+    "drop": {
+      "cpp-build": "initial-slim:lang — C++/CMake is absent from all of the user's own products.",
+      "cpp-review": "initial-slim:lang — C++ is absent. The cpp-* trio references each other, so all three drop together.",
+      "cpp-test": "initial-slim:lang — Covers GoogleTest/gcov TDD for C++, which is absent.",
+      "epic-claim": "initial-slim:ecc-product — GitHub-issue epic coordination with a SQLite cache. It calls `node scripts/github-coordination.js` by relative path, which only resolves inside the ECC checkout",
+      "epic-decompose": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family, which is niche and only runs from the ECC repo root. The task-runner/PRD harness covers decomposition.",
+      "epic-publish": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family, unused and bound to a script path relative to the ECC repo.",
+      "epic-review": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family; unused, and the census shows no epic-issue workflow.",
+      "epic-sync": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family; unused.",
+      "epic-unblock": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family; unused.",
+      "epic-validate": "initial-slim:ecc-product — Part of the epic-* GitHub coordination family; unused.",
+      "fastapi-review": "initial-slim:lang — FastAPI is explicitly absent, and there is no Python web app.",
+      "flutter-build": "initial-slim:lang — Flutter/Dart only appears in a stale 2023 team repo and is absent from own products.",
+      "flutter-review": "initial-slim:lang — Flutter is absent. The flutter-* trio references each other, so all three drop together.",
+      "flutter-test": "initial-slim:lang — Flutter test workflow for an absent stack.",
+      "go-build": "initial-slim:lang — There is no own Go code; Go appears only in the obsolete sabbi client repo (0 user commits) and the excluded GLM-Free-API sidecar. The go-* trio references each",
+      "go-review": "initial-slim:lang — Go review for client work only; the client repo is obsolete and has no own commits. Decide together with go-build and go-test.",
+      "go-test": "initial-slim:lang — Go TDD workflow; decide together with go-build and go-review.",
+      "gradle-build": "initial-slim:lang — Android/KMP Gradle is absent. Kotlin appears only in the third-party openclaw fork.",
+      "jira": "initial-slim:jira — No project uses Jira; the user works on GitHub issues and PRs.",
+      "kotlin-build": "initial-slim:lang — Kotlin is absent from all own products.",
+      "kotlin-review": "initial-slim:lang — Kotlin is absent; the trio drops together.",
+      "kotlin-test": "initial-slim:lang — Kotest/Kover TDD for an absent stack.",
+      "marketing-campaign": "initial-slim:non-technical — Marketing and social publishing ops are explicitly out of scope for the user.",
+      "python-review": "initial-slim:lang — There is no own Python application, only incidental ops/Blender scripts. The PEP 8, mypy and pylint app-review flow does not fit, and its only referrer, fastapi",
+      "rust-build": "initial-slim:lang — Rust is absent from the user's projects. The repo's own ecc2 Rust code is maintainer-only.",
+      "rust-review": "initial-slim:lang — Rust is absent; the trio drops together.",
+      "rust-test": "initial-slim:lang — Rust TDD for an absent stack.",
+      "vue-review": "initial-slim:lang — Vue 3/Quasar is declining legacy. wagrab is the only own Vue product touched in 2026 (last commit 2026-02-04); komeng and qute are dormant."
+    },
+    "pinned": [
+      "plan",
+      "prp-implement",
+      "prp-pr",
+      "build-fix",
+      "learn-eval",
+      "gan-design",
+      "orch-review",
+      "pr",
+      "plan-prd",
+      "prp-plan",
+      "update-docs"
+    ],
+    "own": []
+  },
+  "rules": {
+    "keep": [
+      "common",
+      "react",
+      "react-native",
+      "typescript",
+      "web"
+    ],
+    "drop": {
+      "angular": "initial-slim:lang — Angular is absent. Globs such as *.service.ts, *.module.ts and *.guard.ts would also match files in NestJS and other TS backends.",
+      "arkts": "initial-slim:lang — HarmonyOS/ArkTS is absent. The **/*.ts glob would inject ArkTS rules into every TypeScript file the user touches.",
+      "cpp": "initial-slim:lang — C++ is absent from every project.",
+      "csharp": "initial-slim:lang — C#/.NET is absent.",
+      "dart": "initial-slim:lang — Flutter/Dart appears only in maxchat-mobile (2023, obsolete). The user's mobile stack is Expo React Native.",
+      "fsharp": "initial-slim:lang — F# is absent.",
+      "golang": "initial-slim:lang — Go appears only in the obsolete sabbi client repo, with 0 of the user's own commits. The rules are tiny (2.9 KB) and scoped to *.go, go.mod and go.sum.",
+      "java": "initial-slim:lang — Java/Spring is absent.",
+      "kotlin": "initial-slim:lang — Kotlin (server, Android or KMP) is absent. The only Kotlin in the census is the third-party openclaw clone, which does not count.",
+      "nuxt": "initial-slim:lang — Nuxt is absent. Its globs (**/pages/**, **/layouts/**, **/middleware/**, **/app.config.*) would also load Nuxt rules inside the user's Next.js and Astro project",
+      "perl": "initial-slim:lang — Perl is absent.",
+      "php": "initial-slim:lang — PHP/Laravel is absent.",
+      "python": "initial-slim:lang — Python is used only for occasional ops scripts, and FastAPI is absent. fastapi.md's glob **/app/**/*.py targets a framework the user does not use. Generic PEP8/",
+      "ruby": "initial-slim:lang — Ruby/Rails is absent.",
+      "rust": "initial-slim:lang — Rust is absent from the user's products. The only Rust is ECC's own ecc2 crate, which is maintainer tooling.",
+      "swift": "initial-slim:lang — Swift/iOS native is absent. The only Swift is in the openclaw third-party clone, which does not count.",
+      "vue": "initial-slim:lang — Vue 3/Quasar is legacy for this user: wagrab's last commit was 2026-02 and komeng/qute have been dormant since 2025. The rules are small and scoped to *.vue fil"
+    },
+    "pinned": [
+      "common",
+      "typescript"
+    ],
+    "own": []
+  },
+  "hooks": {
+    "keep": [
+      "pre:bash:dispatcher",
+      "pre:config-protection",
+      "pre:observe:continuous-learning",
+      "session:start",
+      "post:dispatcher:sync",
+      "post:dispatcher:async",
+      "post:skill:track",
+      "stop:format-typecheck",
+      "stop:session-end",
+      "stop:cost-tracker",
+      "stop:desktop-notify",
+      "session:end:marker"
+    ],
+    "drop": {
+      "pre:powershell:gateguard-fact-force": "no PowerShell on macOS",
+      "pre:write:doc-file-warning": "user decision 2026-09-14",
+      "pre:edit-write:suggest-compact": "noisy; native auto-compact",
+      "pre:governance-capture": "ECC2 control plane only",
+      "pre:mcp-health-check": "false alarms on plugin MCPs; blocking probes",
+      "pre:edit-write:gateguard-fact-force": "~1005 blocked calls; destructive-only Bash gate kept instead",
+      "pre:compact": "hidden paid claude -p call",
+      "session-start:plan-canvas-sessions": "plan-canvas hooks off by default",
+      "post:mcp-health-check": "pairs with dropped pre:mcp-health-check",
+      "stop:plan-canvas-pending": "plan-canvas hooks off by default",
+      "stop:check-console-log": "duplicates post:edit:console-warn",
+      "stop:evaluate-session": "continuous-learning v1 evaluator extracts nothing"
+    }
+  },
+  "mirrors": [
+    ".agents/skills/{name}"
+  ],
+  "paths": {
+    "drop": [
+      "docs/**",
+      "ecc2/**",
+      "src/**",
+      "pyproject.toml",
+      "ecc_dashboard.py",
+      "integrations/**",
+      "docker/**",
+      "examples/**",
+      "contexts/**",
+      "scaffolds/**",
+      ".cursor/**",
+      ".opencode/**",
+      ".kiro/**",
+      ".gemini/**",
+      ".qwen/**",
+      ".zed/**",
+      ".pi/**",
+      ".hermes/**",
+      ".openclaw/**",
+      ".adal/**",
+      ".trae/**",
+      ".codebuddy/**",
+      ".github/workflows/**",
+      ".github/dependabot.yml",
+      ".github/FUNDING.yml",
+      ".github/copilot-instructions.md",
+      ".github/prompts/**",
+      ".github/release.yml",
+      ".claude/commands/**",
+      ".claude/workflows/**",
+      ".claude/research/**",
+      ".claude/team/**",
+      ".claude/enterprise/**",
+      "tests/**/*.py",
+      "tests/**/__pycache__/**",
+      "tests/conftest.py",
+      "tests/__init__.py",
+      "SPONSORING.md",
+      "SPONSORS.md",
+      "SOUL.md",
+      "install.ps1",
+      "yarn.lock",
+      ".yarnrc.yml",
+      "scripts/build-opencode.js",
+      "scripts/claw.js",
+      "scripts/consult.js",
+      "scripts/control-pane.js",
+      "scripts/coordination-inventory.js",
+      "scripts/discord/**",
+      "scripts/discussion-audit.js",
+      "scripts/feedback.js",
+      "scripts/gemini-adapt-agents.js",
+      "scripts/github-coordination.js",
+      "scripts/harness-adapter-compliance.js",
+      "scripts/ito.js",
+      "scripts/mcp-inventory.js",
+      "scripts/memory-mcp.mjs",
+      "scripts/memory.js",
+      "scripts/nasiko.js",
+      "scripts/observability-readiness.js",
+      "scripts/operator-readiness-dashboard.js",
+      "scripts/platform-audit.js",
+      "scripts/preview-pack-smoke.js",
+      "scripts/proximity-tick.js",
+      "scripts/release-approval-gate.js",
+      "scripts/release-video-suite.js",
+      "scripts/release.sh",
+      "scripts/session-inspect.js",
+      "scripts/sessions-cli.js",
+      "scripts/work-items.js",
+      "config/github-native-coordination.json",
+      ".vscode/**",
+      "scripts/lib/harness-adapter-compliance.js"
+    ],
+    "keep": [
+      "docs/COMMAND-REGISTRY.json",
+      "docs/COMMAND-AGENT-MAP.md",
+      "docs/SKILL-PLACEMENT-POLICY.md",
+      "docs/CODEX-NAVIGATION-GUIDE.md",
+      "docs/zh-CN/README.md",
+      "docs/zh-CN/AGENTS.md",
+      ".github/workflows/fork-ci.yml",
+      ".github/workflows/fork-sync.yml",
+      "examples/eval-harness/**",
+      "the-longform-guide.md",
+      "the-shortform-guide.md"
+    ]
+  },
+  "tests": {
+    "drop": {
+      "tests/ci/dependabot-config.test.js": {
+        "reason": "The whole file checks .github/dependabot.yml, which the fork removed on purpose (slim.json drops it). It crashes with ENOENT before any case runs.",
+        "triggeredBy": [
+          "tree:.github/dependabot.yml"
+        ]
+      },
+      "tests/ci/fusion-bundle.test.js": {
+        "reason": "The whole file checks skills/video-editing/assets/fusion/** (the ito-v28 and ito-production-v1 provenance hashes and READMEs), checks that package.json files includes skills/video-editing/, and has an",
+        "triggeredBy": [
+          "skill:video-editing",
+          "npm-packaging"
+        ]
+      },
+      "tests/ci/ito-baskets-skill.test.js": {
+        "reason": "It loads skills/ito-baskets/scripts/ito-baskets, and that skill was dropped. The file fails with MODULE_NOT_FOUND as soon as it loads, and every case is about that skill.",
+        "triggeredBy": [
+          "skill:ito-baskets"
+        ]
+      },
+      "tests/ci/ito-compute-skill.test.js": {
+        "reason": "Every case is about the dropped ito-compute skill: its SKILL.md, docs/design/ecc-ito-compute-integration.md, the ito-compute install module and npm files entry, and its MCP template. The one case that",
+        "triggeredBy": [
+          "skill:ito-compute",
+          "script:ito.js",
+          "tree:docs"
+        ]
+      },
+      "tests/ci/ito-inference-skill.test.js": {
+        "reason": "All 3 cases fail and all 3 are about removed things: skills/ito-inference, scripts/ito.js and the ito-compute install module.",
+        "triggeredBy": [
+          "skill:ito-inference",
+          "script:ito.js",
+          "skill:ito-compute"
+        ]
+      },
+      "tests/ci/ito-training-skill.test.js": {
+        "reason": "All 7 cases fail. They check skills/ito-training/SKILL.md, scripts/ito.js and the ito-compute module, all removed.",
+        "triggeredBy": [
+          "skill:ito-training",
+          "script:ito.js",
+          "skill:ito-compute"
+        ]
+      },
+      "tests/ci/mle-workflow-coverage.test.js": {
+        "reason": "It reads skills/mle-workflow/SKILL.md and its .agents copy. That skill is on the drop list (initial-slim:lang), so the file fails with ENOENT before any case runs.",
+        "triggeredBy": [
+          "skill:mle-workflow"
+        ]
+      },
+      "tests/ci/nasiko-control-plane.test.js": {
+        "reason": "The file tests the Nasiko lifecycle bridge: scripts/nasiko.js, the `ecc nasiko` route, skills/nasiko-control-plane and its helper scripts/lib/nasiko-release.js. The script and skill are dropped. The 1",
+        "triggeredBy": [
+          "script:nasiko.js",
+          "skill:nasiko-control-plane"
+        ]
+      },
+      "tests/ci/release-announce-workflow.test.js": {
+        "reason": "It reads .github/workflows/release-announce.yml, an upstream release workflow the fork removed. It fails with ENOENT when the file loads.",
+        "triggeredBy": [
+          "tree:.github/workflows",
+          "release-workflow"
+        ]
+      },
+      "tests/ci/release-packed-artifact-workflow.test.js": {
+        "reason": "It checks the upstream release.yml npm-pack workflows. The fork does not publish to npm and removed .github/workflows/**. It fails with ENOENT.",
+        "triggeredBy": [
+          "tree:.github/workflows",
+          "release-workflow",
+          "npm-publish"
+        ]
+      },
+      "tests/ci/secret-curl-flags.test.js": {
+        "reason": "All 4 cases target removed files: skills/jira-integration/SKILL.md and skills/social-publisher/SKILL.md (both dropped in fork/slim.json), plus docs/ja-JP and docs/zh-CN skill translations (docs tree r",
+        "triggeredBy": [
+          "skill:jira-integration",
+          "skill:social-publisher",
+          "tree:docs"
+        ]
+      },
+      "tests/ci/supply-chain-watch-workflow.test.js": {
+        "reason": "It reads .github/workflows/supply-chain-watch.yml, which was removed with .github/workflows/**. The only workflows the fork keeps are fork-ci.yml and fork-sync.yml. It fails with ENOENT.",
+        "triggeredBy": [
+          "tree:.github/workflows"
+        ]
+      },
+      "tests/ci/tasteforge-video-skill.test.js": {
+        "reason": "Every case is about the dropped tasteforge-video skill: its SKILL.md, fixtures, media-generation module paths and packing. The few cases that pass use fixtures or the generic validator only in service",
+        "triggeredBy": [
+          "skill:tasteforge-video"
+        ]
+      },
+      "tests/ci/unified-memory-surface.test.js": {
+        "reason": "Both cases check skills/unified-memory in its canonical, .agents and .cursor copies, plus docs/HERMES-SETUP.md and the memory runtime docs. All of these are dropped: the skill, the .cursor harness, do",
+        "triggeredBy": [
+          "skill:unified-memory",
+          "tree:.cursor",
+          "tree:docs",
+          "script:memory"
+        ]
+      },
+      "tests/docker/plugin-setup-harness.test.js": {
+        "reason": "Tests docker/plugin-setup/* (Dockerfile, compose, runners) and .github/workflows/ci.yml. Both trees are removed.",
+        "triggeredBy": [
+          "tree:docker",
+          "tree:.github/workflows"
+        ]
+      },
+      "tests/docs/antigravity-guide.test.js": {
+        "reason": "Checks the contents of docs/ANTIGRAVITY-GUIDE.md, which is removed. Antigravity is not a kept harness.",
+        "triggeredBy": [
+          "tree:docs (docs/ANTIGRAVITY-GUIDE.md)"
+        ]
+      },
+      "tests/docs/copilot-support.test.js": {
+        "reason": "Tests the GitHub Copilot support files (.github/prompts, .github/copilot-instructions.md), which are removed. Its 2 passing cases only check the leftover .vscode/settings.json and the Copilot section ",
+        "triggeredBy": [
+          "file:.github/copilot-instructions.md",
+          "tree:.github/prompts"
+        ]
+      },
+      "tests/docs/ecc2-release-surface.test.js": {
+        "reason": "Checks the ECC2 release docs and the hermes-imports skill. All of them are removed, and the fork does not run upstream releases.",
+        "triggeredBy": [
+          "tree:docs (docs/releases/2.0.0-rc.1, docs/architecture, docs/business, docs/HERMES-SETUP.md)",
+          "tree:ecc2",
+          "skill:hermes-imports"
+        ]
+      },
+      "tests/docs/evaluator-rag-prototype.test.js": {
+        "reason": "Every case reads fixtures under the dropped examples/evaluator-rag-prototype/ or dropped docs (docs/architecture/evaluator-rag-prototype.md, docs/ECC-2.0-GA-ROADMAP.md). No kept code is tested. Left u",
+        "triggeredBy": [
+          "tree:examples",
+          "tree:docs"
+        ]
+      },
+      "tests/docs/harness-adapter-compliance.test.js": {
+        "reason": "Tests the removed scripts/harness-adapter-compliance.js CLI and the removed compliance matrix doc. The one passing case only checks the source data in the leftover scripts/lib/harness-adapter-complian",
+        "triggeredBy": [
+          "script:harness-adapter-compliance.js",
+          "tree:docs (docs/architecture/harness-adapter-compliance.md)"
+        ]
+      },
+      "tests/docs/legacy-artifact-inventory.test.js": {
+        "reason": "All 7 cases read docs/legacy-artifact-inventory.md, an upstream maintainer ledger that is removed.",
+        "triggeredBy": [
+          "tree:docs (docs/legacy-artifact-inventory.md)"
+        ]
+      },
+      "tests/docs/platform-value-loop.test.js": {
+        "reason": "Every case reads dropped docs (docs/architecture/platform-value-loop.md, docs/architecture/cross-harness.md, docs/releases/**) about ECC 2.0 product direction and Ito release packs. No kept code is te",
+        "triggeredBy": [
+          "tree:docs",
+          "script:ito.js",
+          "skill:ito-baskets"
+        ]
+      },
+      "tests/docs/release-2.2-copy.test.js": {
+        "reason": "Checks upstream 2.2.0 release notes and copy, which are removed. This is upstream release/publish material the fork does not run.",
+        "triggeredBy": [
+          "tree:docs (docs/releases/2.2.0)"
+        ]
+      },
+      "tests/docs/release-2.2-launch-runbook.test.js": {
+        "reason": "Checks the upstream 2.2.0 launch runbook, which is removed. The fork does not run release workflows.",
+        "triggeredBy": [
+          "tree:docs (docs/releases/2.2.0/launch-runbook.md)"
+        ]
+      },
+      "tests/docs/stale-pr-salvage-ledger.test.js": {
+        "reason": "All 6 cases read upstream maintainer ledgers under docs/, which are removed.",
+        "triggeredBy": [
+          "tree:docs (docs/stale-pr-salvage-ledger.md, docs/legacy-artifact-inventory.md)"
+        ]
+      },
+      "tests/hooks/cursor-block-no-verify.test.js": {
+        "reason": "All 14 cases run the Cursor wrapper .cursor/hooks/before-shell-execution-block-no-verify.js, which is removed. The kept Claude block-no-verify hook is covered by other tests.",
+        "triggeredBy": [
+          "tree:.cursor"
+        ]
+      },
+      "tests/lib/control-pane-proximity.test.js": {
+        "reason": "Requires scripts/proximity-tick (removed) and tests the control-pane proximity lib that only the removed control-pane and proximity-tick scripts use.",
+        "triggeredBy": [
+          "script:proximity-tick.js",
+          "script:control-pane.js"
+        ]
+      },
+      "tests/lib/mcp-inventory.test.js": {
+        "reason": "Requires scripts/mcp-inventory (removed CLI) and tests its lib and readers, including the opencode reader. No kept script uses scripts/lib/mcp-inventory.",
+        "triggeredBy": [
+          "script:mcp-inventory.js",
+          "tree:.opencode"
+        ]
+      },
+      "tests/lib/memory-read-completeness.test.js": {
+        "reason": "Setup imports scripts/memory-mcp.mjs (removed), so it fails with 'Regression harness setup failed'. It is a regression test for the removed memory MCP and memory CLI.",
+        "triggeredBy": [
+          "script:memory-mcp.mjs",
+          "script:memory.js"
+        ]
+      },
+      "tests/lib/opencode-legacy-migration.test.js": {
+        "reason": "Every case covers moving old OpenCode installs to the new install layout (the opencode-home target). The 2 failing repair cases run scripts/build-opencode.js through install-lifecycle. The OpenCode ha",
+        "triggeredBy": [
+          "tree:.opencode",
+          "script:build-opencode.js"
+        ]
+      },
+      "tests/opencode-config.test.js": {
+        "reason": "Reads .opencode/opencode.json and .opencode/commands. The whole OpenCode harness tree was removed.",
+        "triggeredBy": [
+          "tree:.opencode"
+        ]
+      },
+      "tests/opencode-plugin-hooks.test.js": {
+        "reason": "Runs scripts/build-opencode.js and loads .opencode/dist/plugins/ecc-hooks.js. Both are removed.",
+        "triggeredBy": [
+          "tree:.opencode",
+          "script:build-opencode.js"
+        ]
+      },
+      "tests/opencode-tools.test.js": {
+        "reason": "Runs scripts/build-opencode.js and tests .opencode/dist/tools. Both are removed.",
+        "triggeredBy": [
+          "tree:.opencode",
+          "script:build-opencode.js"
+        ]
+      },
+      "tests/pi/pi-extension-adapter.test.js": {
+        "reason": "Requires .pi/extensions/hook-runtime.js. The Pi harness tree was removed.",
+        "triggeredBy": [
+          "tree:.pi"
+        ]
+      },
+      "tests/pi/pi-hook-runtime.test.js": {
+        "reason": "Reads .pi/extensions/index.ts and hook-runtime.js. The Pi harness tree was removed.",
+        "triggeredBy": [
+          "tree:.pi"
+        ]
+      },
+      "tests/pi/pi-package-manifest.test.js": {
+        "reason": "Checks the Pi package manifest and the .pi/ adapter that ships in the npm package. The Pi harness and npm publishing are both removed. Its 5 passing checks only confirm that skills/ and commands/ are ",
+        "triggeredBy": [
+          "tree:.pi",
+          "npm-packaging:package.json pi key/files"
+        ]
+      },
+      "tests/plugin-manifest.test.js": {
+        "reason": "replaced by tests/fork/manifest-integrity.test.js (npm/OpenCode/version-equality assertions do not apply to the fork)",
+        "triggeredBy": [
+          "tree:.opencode",
+          "npm-publish",
+          "fork-versioning"
+        ]
+      },
+      "tests/scripts/build-opencode.test.js": {
+        "reason": "All 4 cases exercise scripts/build-opencode.js and the compiled .opencode/dist payload (including an npm pack check). The fork removed both the script and the .opencode harness.",
+        "triggeredBy": [
+          "script:build-opencode.js",
+          "tree:.opencode",
+          "npm-packaging-surface"
+        ]
+      },
+      "tests/scripts/claw.test.js": {
+        "reason": "The file requires scripts/claw.js at the top, and every case tests that module's exports. The script was removed, so the file fails with MODULE_NOT_FOUND.",
+        "triggeredBy": [
+          "script:claw.js"
+        ]
+      },
+      "tests/scripts/consult.test.js": {
+        "reason": "All 12 cases spawn scripts/consult.js, which the fork removed. Several cases also target dropped MLE and PyTorch components.",
+        "triggeredBy": [
+          "script:consult.js"
+        ]
+      },
+      "tests/scripts/control-pane.test.js": {
+        "reason": "The file tests the ECC2 operator control-pane CLI and its HTTP server. It requires scripts/control-pane at module top, so it cannot load, and the fixtures build an ECC2 sqlite database. Both the scrip",
+        "triggeredBy": [
+          "script:control-pane.js",
+          "tree:ecc2"
+        ]
+      },
+      "tests/scripts/discussion-audit.test.js": {
+        "reason": "All 5 cases run scripts/discussion-audit.js through execFileSync/spawnSync. It only imports query constants from lib/github-discussions. The script was removed.",
+        "triggeredBy": [
+          "script:discussion-audit.js"
+        ]
+      },
+      "tests/scripts/feedback.test.js": {
+        "reason": "All 5 cases spawn scripts/feedback.js, which the fork removed.",
+        "triggeredBy": [
+          "script:feedback.js"
+        ]
+      },
+      "tests/scripts/gemini-adapt-agents.test.js": {
+        "reason": "All 4 cases run scripts/gemini-adapt-agents.js, which writes .gemini/agents. The script and the Gemini harness were removed.",
+        "triggeredBy": [
+          "script:gemini-adapt-agents.js",
+          "tree:.gemini"
+        ]
+      },
+      "tests/scripts/github-coordination.test.js": {
+        "reason": "All 4 cases spawn scripts/github-coordination.js, which was removed along with config/github-native-coordination.json. The lib-level coverage is in tests/lib/github-coordination*.test.js.",
+        "triggeredBy": [
+          "script:github-coordination.js",
+          "config/github-native-coordination.json"
+        ]
+      },
+      "tests/scripts/ito-cli-bridge.test.js": {
+        "reason": "End-to-end contract tests for the Itô CLI bridge. The file requires scripts/ito at module top, so it cannot load, and every case goes through ecc ito or scripts/ito.js. The two cases that touch lib/it",
+        "triggeredBy": [
+          "script:ito.js",
+          "skill:ito-compute"
+        ]
+      },
+      "tests/scripts/memory-mcp.test.js": {
+        "reason": "All 14 cases start or import scripts/memory-mcp.mjs, which was removed. Every case fails at MCP initialize or on ERR_MODULE_NOT_FOUND. The memory-vault lib keeps its own coverage in tests/lib/memory-v",
+        "triggeredBy": [
+          "script:memory-mcp.mjs"
+        ]
+      },
+      "tests/scripts/memory.test.js": {
+        "reason": "The file requires scripts/memory.js at module top, and every case tests that CLI directly or through ecc memory. The script was removed.",
+        "triggeredBy": [
+          "script:memory.js"
+        ]
+      },
+      "tests/scripts/npm-publish-surface.test.js": {
+        "reason": "The file runs npm pack and checks the published tarball against a hard-coded list that includes many dropped scripts and trees (examples/eval-harness, consult.js, control-pane.js, discussion-audit.js,",
+        "triggeredBy": [
+          "npm-packaging-surface",
+          "tree:examples",
+          "script:consult.js",
+          "script:control-pane.js",
+          "script:ito.js",
+          "script:memory.js"
+        ]
+      },
+      "tests/scripts/observability-readiness.test.js": {
+        "reason": "The whole file requires and runs scripts/observability-readiness.js, which slim.json removed. It fails at load with MODULE_NOT_FOUND.",
+        "triggeredBy": [
+          "script:observability-readiness.js"
+        ]
+      },
+      "tests/scripts/openclaw-persona-forge-gacha.test.js": {
+        "reason": "It runs skills/openclaw-persona-forge/gacha.py, and that skill was dropped. Both cases fail because the file is missing.",
+        "triggeredBy": [
+          "skill:openclaw-persona-forge"
+        ]
+      },
+      "tests/scripts/operator-readiness-dashboard.test.js": {
+        "reason": "It requires scripts/operator-readiness-dashboard.js, which was removed (MODULE_NOT_FOUND). Its fixtures also point to other removed operator and release scripts.",
+        "triggeredBy": [
+          "script:operator-readiness-dashboard.js",
+          "script:observability-readiness.js",
+          "script:platform-audit.js",
+          "script:preview-pack-smoke.js",
+          "script:release-video-suite.js"
+        ]
+      },
+      "tests/scripts/platform-audit.test.js": {
+        "reason": "All 8 cases test the CLI and report output of the removed scripts/platform-audit.js, and all 8 fail. It only loads scripts/lib/github-discussions to build fixtures, so it doesn't test that kept lib's ",
+        "triggeredBy": [
+          "script:platform-audit.js",
+          "script:discussion-audit.js",
+          "script:operator-readiness-dashboard.js",
+          "script:observability-readiness.js"
+        ]
+      },
+      "tests/scripts/preview-pack-smoke.test.js": {
+        "reason": "It requires scripts/preview-pack-smoke.js, which was removed (MODULE_NOT_FOUND).",
+        "triggeredBy": [
+          "script:preview-pack-smoke.js"
+        ]
+      },
+      "tests/scripts/release-announce.test.js": {
+        "reason": "It dynamically imports scripts/discord/announcement-core.mjs. The discord scripts were removed (ERR_MODULE_NOT_FOUND), and release announcements are an upstream release workflow the fork doesn't run.",
+        "triggeredBy": [
+          "script:discord",
+          "tree:scripts/discord"
+        ]
+      },
+      "tests/scripts/release-approval-gate.test.js": {
+        "reason": "It requires scripts/release-approval-gate.js, which was removed (MODULE_NOT_FOUND). This is an upstream release gate the fork doesn't use.",
+        "triggeredBy": [
+          "script:release-approval-gate.js",
+          "workflow:release"
+        ]
+      },
+      "tests/scripts/release-heading.test.js": {
+        "reason": "At load it reads and runs parts of scripts/release.sh, which was removed (ENOENT).",
+        "triggeredBy": [
+          "script:release.sh"
+        ]
+      },
+      "tests/scripts/release-publish.test.js": {
+        "reason": "Every case checks .github/workflows/release.yml and reusable-release.yml for npm publish, provenance and dist-tag steps. Those workflows were removed (ENOENT), and the fork doesn't publish to npm.",
+        "triggeredBy": [
+          "tree:.github/workflows",
+          "workflow:release",
+          "npm-publish"
+        ]
+      },
+      "tests/scripts/release-video-suite.test.js": {
+        "reason": "It requires scripts/release-video-suite.js, which was removed (MODULE_NOT_FOUND).",
+        "triggeredBy": [
+          "script:release-video-suite.js"
+        ]
+      },
+      "tests/scripts/release.test.js": {
+        "reason": "These are source-level tests of scripts/release.sh plus release.yml, reusable-release.yml and ci.yml, and all of those were removed (ENOENT at load). It also checks for the build-opencode test call.",
+        "triggeredBy": [
+          "script:release.sh",
+          "tree:.github/workflows",
+          "script:build-opencode"
+        ]
+      },
+      "tests/scripts/session-inspect.test.js": {
+        "reason": "All 8 cases run the removed scripts/session-inspect.js CLI, and all 8 fail. The canonical-session lib is only used to compute a fixture path.",
+        "triggeredBy": [
+          "script:session-inspect.js"
+        ]
+      },
+      "tests/scripts/trae-install.test.js": {
+        "reason": "It runs .trae/install.sh and .trae/uninstall.sh. The Trae harness directory was removed, and all 4 cases fail with 'No such file or directory'.",
+        "triggeredBy": [
+          "tree:.trae",
+          "harness:trae"
+        ]
+      },
+      "tests/scripts/work-items.test.js": {
+        "reason": "All 5 cases spawn the removed scripts/work-items.js CLI to test its claim command, and all 5 fail. The state-store lib is only used to seed fixtures.",
+        "triggeredBy": [
+          "script:work-items.js"
+        ]
+      },
+      "tests/skills/build-agreement.test.js": {
+        "reason": "Requires skills/master-agreement-generator/scripts/build-agreement.js. That skill is in the fork/slim.json drop list.",
+        "triggeredBy": [
+          "skill:master-agreement-generator"
+        ]
+      }
+    }
+  },
+  "requires": [
+    {
+      "path": "skills/continuous-learning-v2",
+      "why": "resolve-ecc-root.js DEFAULT_SKILL_PROBE + observe hooks"
+    },
+    {
+      "path": "scripts/hooks/plugin-hook-bootstrap.js",
+      "why": "hook bootstrap"
+    },
+    {
+      "path": "scripts/lib/resolve-ecc-root.js",
+      "why": "hook root resolver"
+    },
+    {
+      "path": "ecc/setup.json",
+      "why": "hook allowlist"
+    }
+  ],
+  "derived": [
+    "README.md",
+    "AGENTS.md",
+    "README.zh-CN.md",
+    "docs/zh-CN/README.md",
+    "docs/zh-CN/AGENTS.md",
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".codex-plugin/plugin.json",
+    "plugins/ecc/.codex-plugin/plugin.json",
+    ".agents/plugins/marketplace.json",
+    "package.json",
+    "agent.yaml",
+    "manifests/install-modules.json",
+    "manifests/install-profiles.json",
+    "manifests/install-components.json",
+    "docs/COMMAND-REGISTRY.json",
+    "hooks/hooks.json",
+    "hooks/hooks.metadata.json"
+  ],
+  "queueHints": {
+    "keepRegex": "react|next|typescript|javascript|bun|node|vite|expo|react-native|prisma|drizzle|postgres|redis|tailwind|playwright|vitest|jest|docker|security|review|test|agent|llm|mcp|api",
+    "dropRegex": "django|laravel|rails|golang|go-|kotlin|java|swift|rust|cpp|csharp|php|perl|dotnet|flutter|dart|quarkus|spring|python|pytorch|vue|nuxt|angular|ito-|nasiko|taste|healthcare|homelab|network-|investor|marketing|jira|social|seo-outreach",
+    "overlaps": {
+      "superpowers": [
+        "brainstorm",
+        "debugging",
+        "plans"
+      ],
+      "frontend-design": [
+        "design-direction"
+      ],
+      "code-review": [
+        "code-review"
+      ],
+      "expo": [
+        "expo",
+        "eas"
+      ],
+      "playwright": [
+        "e2e",
+        "browser"
+      ],
+      "context7": [
+        "documentation-lookup",
+        "docs-lookup"
+      ],
+      "feature-dev": [
+        "feature-dev",
+        "code-explorer",
+        "code-architect"
+      ]
+    }
+  },
+  "versioning": {
+    "scheme": "{upstreamVersion}-js.{pluginBuild}"
+  }
+}

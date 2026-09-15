@@ -985,6 +985,12 @@
           "config/github-native-coordination.json"
         ]
       },
+      "tests/scripts/install-ps1.test.js": {
+        "reason": "Tests the install.ps1 PowerShell wrapper, which the fork removed (slim.json paths.drop). Its two delegation cases run only where pwsh is on PATH, so it passed locally and on older runner images but fails once ubuntu-latest ships PowerShell.",
+        "triggeredBy": [
+          "tree:install.ps1"
+        ]
+      },
       "tests/scripts/ito-cli-bridge.test.js": {
         "reason": "End-to-end contract tests for the Itô CLI bridge. The file requires scripts/ito at module top, so it cannot load, and every case goes through ecc ito or scripts/ito.js. The two cases that touch lib/it",
         "triggeredBy": [

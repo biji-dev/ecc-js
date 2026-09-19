@@ -191,13 +191,33 @@ if runtime ids changed, then rerun the sync.
 target (a release-branch tag or a history rewrite). Nothing is merged; decide
 by hand whether to merge the tag anyway and reset `fork/state.json` afterwards.
 
-### Enabling another hook
+### Enabling or disabling a hook
+
+Two layers: `fork/slim.json` `hooks.keep` decides which top-level entries stay in
+`hooks/hooks.json`, and `ecc/setup.json` `hooks.allow` decides which runtime ids
+actually run (dispatcher sub-hooks included). A hook needs both.
+
+To enable one:
 
 1. If it is a top-level entry in upstream `hooks/hooks.json`, move its id from
    `hooks.drop` to `hooks.keep` in `fork/slim.json`.
 2. Add its runtime id (top-level or dispatcher sub-hook id) to
    `ecc/setup.json` `hooks.allow`.
 3. `npm run fork:apply && npm run fork:bump`, run the tests and commit.
+
+To disable one, reverse it: drop the runtime id from `hooks.allow`, and move a
+top-level id from `hooks.keep` to `hooks.drop` with a reason. Same apply, bump,
+test, commit. For a one-off or single project, `ECC_DISABLED_HOOKS` beats the
+allowlist and needs no release — see "Hooks" in [docs/ECC-JS.md](docs/ECC-JS.md)
+for the precedence order and the per-project settings example.
+
+### Changing which items ship
+
+Move a name between `keep` and `drop` (with a reason) in `fork/slim.json`, then
+`npm run fork:apply && npm run fork:bump`, test and commit. Dropping an item also
+removes its `.agents/skills` mirror and any `tests.drop` entry triggered by it;
+keeping it again restores both. Drop a name out of `pinned` as well, or
+`verify.js` fails on the missing pin.
 
 ### Your own skills, agents and commands
 

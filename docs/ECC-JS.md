@@ -113,21 +113,112 @@ list exists. Hooks that upstream adds later stay off until they are allowlisted.
 | Session | `session:start`, `stop:session-end` | Session context load and save (Codex gets the SessionStart mirror) |
 | Notify | `stop:desktop-notify` | Desktop notification when a turn ends |
 
-Dropped hook entries and why (from `fork/slim.json` `hooks.drop`):
-GateGuard Edit/Write gate (about 1,000 blocked calls), PowerShell GateGuard (no
-PowerShell), strategic-compact suggestion (native auto-compact), doc-file
-warning, governance capture (ECC2 only), MCP health checks (false alarms,
-blocking probes), pre-compact summary (hidden paid `claude -p` call),
-plan-canvas session hooks, the Stop console.log check (duplicate of
-console-warn) and the v1 session evaluator.
+Two ids describe an entry rather than a behaviour: `pre:bash:dispatcher` is the
+Bash dispatcher that hosts the three `pre:bash:*` hooks above, and the hook
+entry `pre:observe:continuous-learning` runs under the runtime id `pre:observe`.
+The dispatchers themselves are never gated; each sub-hook inside them is.
 
-Per-machine or per-project switches:
+### Hooks that are off
 
-- `ECC_DISABLED_HOOKS=id,id` turns specific hooks off (still honoured with the allowlist).
-- `ECC_HOOKS_ENABLED=false` turns every ECC hook off.
-- `ECC_HOOK_ALLOWLIST=off` restores upstream profile gating (the test suite uses this).
+Upstream ships these; the fork removed them from `hooks/hooks.json`
+(`fork/slim.json` `hooks.drop`):
 
-To turn on another hook, see "Enabling another hook" in [FORK.md](../FORK.md).
+| Hook id | Why it is off |
+| --- | --- |
+| `pre:edit-write:gateguard-fact-force` | The Edit/Write fact gate; about 1,005 blocked tool calls in one week. The destructive-only Bash gate is kept instead |
+| `pre:powershell:gateguard-fact-force` | No PowerShell on macOS |
+| `pre:write:doc-file-warning` | Not wanted (decision 2026-09-14) |
+| `pre:edit-write:suggest-compact` | Noisy; native auto-compact already handles it |
+| `pre:governance-capture` | ECC2 control plane only |
+| `pre:mcp-health-check` | False alarms on plugin MCPs, and the probes block |
+| `post:mcp-health-check` | Pairs with the dropped pre-check |
+| `pre:compact` | Hidden paid `claude -p` call |
+| `session-start:plan-canvas-sessions` | plan-canvas is off by default |
+| `stop:plan-canvas-pending` | plan-canvas is off by default |
+| `stop:check-console-log` | Duplicates `post:edit:console-warn` |
+| `stop:evaluate-session` | Continuous-learning v1 evaluator; extracts nothing |
+
+Anything upstream adds later is also off until you allowlist it.
+
+### How a hook is decided, in order
+
+`scripts/lib/hook-flags.js` `isHookEnabled()` checks, in this order:
+
+1. `ECC_HOOKS_ENABLED=false` (or `CLAUDE_PLUGIN_OPTION_HOOKS_ENABLED`) turns
+   every ECC hook off.
+2. `ECC_DISABLED_HOOKS=id,id` turns off the ids it lists. This wins over the
+   allowlist, so it is the per-project escape hatch.
+3. The allowlist in `ecc/setup.json` `hooks.allow`: with it, only those runtime
+   ids run and the hook profile is ignored.
+4. Only if there is no allowlist (`ECC_HOOK_ALLOWLIST=off`) does the upstream
+   profile (`minimal`/`standard`/`strict`) decide.
+
+### Turning a hook off
+
+- **This shell only:** `ECC_DISABLED_HOOKS=stop:format-typecheck claude`
+- **One project:** add it to `.claude/settings.json` in that project. This keeps
+  working regardless of what the fork ships:
+
+  ```json
+  { "env": { "ECC_DISABLED_HOOKS": "stop:format-typecheck,stop:desktop-notify" } }
+  ```
+
+- **Everywhere, permanently:** remove the runtime id from `ecc/setup.json`
+  `hooks.allow`. If it is also a top-level entry in `hooks/hooks.json`, move its
+  id from `hooks.keep` to `hooks.drop` in `fork/slim.json` with a reason. Then
+  `npm run fork:apply && npm run fork:bump`, `npm test`, commit, push, and
+  update the harnesses.
+- **All hooks at once:** `ECC_HOOKS_ENABLED=false`.
+
+### Turning a hook on
+
+Add its runtime id to `ecc/setup.json` `hooks.allow`. If upstream ships it as a
+top-level entry that the fork dropped, also move its id from `hooks.drop` to
+`hooks.keep` in `fork/slim.json`. Then `npm run fork:apply && npm run fork:bump`,
+`npm test`, commit and push. Full steps: "Enabling or disabling a hook" in
+[FORK.md](../FORK.md).
+
+Hook ids come from `hooks/hooks.metadata.json` (top-level entries) and from the
+`id:` fields in `scripts/hooks/bash-hook-dispatcher.js` and
+`scripts/hooks/posttooluse-dispatcher.js` (sub-hooks).
+
+## Turning skills, agents, commands and rules on or off
+
+`fork/slim.json` is the switchboard: `keep` ships an item, `drop` removes it
+with a reason, `own` is for your own `biji-*` items.
+
+See what is off and why:
+
+```bash
+node -e "const s=require('./fork/slim.json');for(const k of ['skills','agents','commands','rules'])for(const [n,r] of Object.entries(s[k].drop))console.log(k,n,'—',r)"
+```
+
+To bring a dropped item back, move its name from `drop` to `keep`. To remove one
+that currently ships, move it from `keep` to `drop` with a reason (and out of
+`pinned` if listed there). Either way:
+
+```bash
+npm run fork:apply     # restore or remove files, regenerate manifests (staged)
+npm run fork:bump      # new plugin version so the harness caches update
+npm test && node fork/bin/verify.js --drift --since origin/main
+git add -A && git commit && git push origin main
+```
+
+Then update the harnesses so they pick up the new build. Rule packs work the
+same way, but they are installed separately (see Rules below), so re-run the
+rules installer afterwards.
+
+## Turning ECC-JS off entirely
+
+Per harness, without uninstalling:
+
+```bash
+claude plugin disable ecc@ecc          # claude plugin enable ecc@ecc to restore
+node /Applications/ZCode.app/Contents/Resources/glm/zcode.cjs plugins disable ecc@ecc
+```
+
+Codex has no disable, only `codex plugin remove ecc@ecc`. To keep the plugin but
+silence only its hooks, set `ECC_HOOKS_ENABLED=false`.
 
 ## Install
 

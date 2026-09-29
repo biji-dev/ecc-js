@@ -26,6 +26,13 @@ function validate(plan) {
 
 const key = ref => `${ref.kind}:${ref.name}`;
 
+function inProject(project, rel) {
+  const abs = path.resolve(project, rel);
+  const root = path.resolve(project) + path.sep;
+  if (!abs.startsWith(root)) throw new Error(`path escapes the project: ${rel}`);
+  return abs;
+}
+
 function applyPlan({ project, libraryRoot, plan, dryRun = false, today = new Date().toISOString().slice(0, 10) }) {
   try {
     validate(plan);
@@ -40,67 +47,93 @@ function applyPlan({ project, libraryRoot, plan, dryRun = false, today = new Dat
 
   const copyInto = (source, rels) => {
     for (const rel of rels) {
+      inProject(project, rel);
       const target = path.join(project, rel);
       actions.push(`copy ${path.relative(libraryRoot, source)} -> ${rel}`);
       if (dryRun) continue;
+      const temp = target + '.skill-advisor-tmp';
+      fs.rmSync(temp, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(temp), { recursive: true });
+      fs.cpSync(source, temp, { recursive: true });
       fs.rmSync(target, { recursive: true, force: true });
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.cpSync(source, target, { recursive: true });
+      fs.renameSync(temp, target);
     }
   };
 
   for (const ref of plan.add || []) {
-    if (tracked.has(key(ref))) {
-      warnings.push(`${key(ref)} is already installed; use refresh`);
-      continue;
+    try {
+      if (tracked.has(key(ref))) {
+        warnings.push(`${key(ref)} is already installed; use refresh`);
+        continue;
+      }
+      const source = librarySource(libraryRoot, ref.kind, ref.name);
+      if (!fs.existsSync(source)) {
+        warnings.push(`${key(ref)} is not in the library`);
+        continue;
+      }
+      const rels = destinations(ref.kind, ref.name);
+      const taken = rels.filter(rel => fs.existsSync(path.join(project, rel)));
+      if (taken.length) {
+        warnings.push(`${key(ref)} skipped: ${taken.join(', ')} already exists and was not installed by skill-advisor`);
+        continue;
+      }
+      copyInto(source, rels);
+      tracked.set(key(ref), { kind: ref.kind, name: ref.name, hash: hashPath(source), paths: rels, pluginVersion: version, installedAt: today });
+      current.declined = current.declined.filter(entry => key(entry) !== key(ref));
+    } catch (error) {
+      warnings.push(`${key(ref)} failed: ${error.message}`);
+      if (!dryRun) {
+        for (const rel of destinations(ref.kind, ref.name)) {
+          try {
+            fs.rmSync(inProject(project, rel), { recursive: true, force: true });
+          } catch (e) {
+            // Silently ignore cleanup errors
+          }
+        }
+      }
     }
-    const source = librarySource(libraryRoot, ref.kind, ref.name);
-    if (!fs.existsSync(source)) {
-      warnings.push(`${key(ref)} is not in the library`);
-      continue;
-    }
-    const rels = destinations(ref.kind, ref.name);
-    const taken = rels.filter(rel => fs.existsSync(path.join(project, rel)));
-    if (taken.length) {
-      warnings.push(`${key(ref)} skipped: ${taken.join(', ')} already exists and was not installed by skill-advisor`);
-      continue;
-    }
-    copyInto(source, rels);
-    tracked.set(key(ref), { kind: ref.kind, name: ref.name, hash: hashPath(source), paths: rels, pluginVersion: version, installedAt: today });
-    current.declined = current.declined.filter(entry => key(entry) !== key(ref));
   }
 
   for (const ref of plan.refresh || []) {
-    const item = tracked.get(key(ref));
-    if (!item) {
-      warnings.push(`${key(ref)} is not installed; use add`);
-      continue;
+    try {
+      const item = tracked.get(key(ref));
+      if (!item) {
+        warnings.push(`${key(ref)} is not installed; use add`);
+        continue;
+      }
+      const status = itemStatus(project, libraryRoot, item);
+      if (status === 'gone') {
+        warnings.push(`${key(ref)} is no longer in the library; use remove or untrack`);
+        continue;
+      }
+      if (status === 'modified' && !ref.overwrite) {
+        warnings.push(`${key(ref)} was edited by hand; refresh it with "overwrite": true, or untrack it`);
+        continue;
+      }
+      const source = librarySource(libraryRoot, ref.kind, ref.name);
+      copyInto(source, item.paths);
+      tracked.set(key(ref), { ...item, hash: hashPath(source), pluginVersion: version, installedAt: today });
+    } catch (error) {
+      warnings.push(`${key(ref)} failed: ${error.message}`);
     }
-    const status = itemStatus(project, libraryRoot, item);
-    if (status === 'gone') {
-      warnings.push(`${key(ref)} is no longer in the library; use remove or untrack`);
-      continue;
-    }
-    if (status === 'modified' && !ref.overwrite) {
-      warnings.push(`${key(ref)} was edited by hand; refresh it with "overwrite": true, or untrack it`);
-      continue;
-    }
-    const source = librarySource(libraryRoot, ref.kind, ref.name);
-    copyInto(source, item.paths);
-    tracked.set(key(ref), { ...item, hash: hashPath(source), pluginVersion: version, installedAt: today });
   }
 
   for (const ref of plan.remove || []) {
-    const item = tracked.get(key(ref));
-    if (!item) {
-      warnings.push(`${key(ref)} is not installed`);
-      continue;
+    try {
+      const item = tracked.get(key(ref));
+      if (!item) {
+        warnings.push(`${key(ref)} is not installed`);
+        continue;
+      }
+      for (const rel of item.paths) {
+        inProject(project, rel);
+        actions.push(`delete ${rel}`);
+        if (!dryRun) fs.rmSync(path.join(project, rel), { recursive: true, force: true });
+      }
+      tracked.delete(key(ref));
+    } catch (error) {
+      warnings.push(`${key(ref)} failed: ${error.message}`);
     }
-    for (const rel of item.paths) {
-      actions.push(`delete ${rel}`);
-      if (!dryRun) fs.rmSync(path.join(project, rel), { recursive: true, force: true });
-    }
-    tracked.delete(key(ref));
   }
 
   for (const ref of plan.untrack || []) {

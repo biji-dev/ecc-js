@@ -340,6 +340,35 @@ test('an unknown library item is a warning, and an invalid plan throws', () => {
   assert.throws(() => applyPlan({ project, libraryRoot: lib, plan: { add: [{ kind: 'rule', name: 'x' }] }, today: '2026-09-29' }), /invalid plan/);
 });
 
+test('a failed add leaves no orphaned copies and later items still install', () => {
+  const { lib, project } = installFixture();
+  // Create a FILE (not directory) at .agents to cause copy failure for skills
+  write(path.join(project, '.agents'), 'this is a file, not a directory');
+  const result = applyPlan({ project, libraryRoot: lib, plan: { add: [PG, A11Y] }, today: '2026-09-29' });
+  assert.ok(result.warnings.some(w => w.includes('skill:postgres-patterns') && w.includes('failed')));
+  assert.ok(!fs.existsSync(path.join(project, '.claude', 'skills', 'postgres-patterns')));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'agents', 'a11y-architect.md')));
+  const saved = state.readState(project);
+  assert.deepStrictEqual(saved.items.map(item => `${item.kind}:${item.name}`), ['agent:a11y-architect']);
+});
+
+test('remove refuses recorded paths outside the project', () => {
+  const { lib, project } = installFixture();
+  const parent = path.dirname(project);
+  const outside = path.join(parent, 'outside.md');
+  write(outside, 'outside file');
+  const stateData = {
+    version: 1,
+    items: [{ kind: 'agent', name: 'fake', paths: ['../outside.md'], hash: 'x', pluginVersion: '1.0.0', installedAt: '2026-09-29' }],
+    declined: []
+  };
+  write(path.join(project, '.claude', 'skill-advisor.json'), JSON.stringify(stateData));
+  const result = applyPlan({ project, libraryRoot: lib, plan: { remove: [{ kind: 'agent', name: 'fake' }] }, today: '2026-09-29' });
+  assert.ok(result.warnings.some(w => w.includes('path escapes the project')));
+  assert.ok(fs.existsSync(outside));
+  assert.deepStrictEqual(state.readState(project).items, stateData.items);
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

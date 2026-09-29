@@ -8,6 +8,8 @@ const os = require('os');
 const path = require('path');
 
 const sessions = require('../../skills/skill-advisor/scripts/lib/sessions');
+const state = require('../../skills/skill-advisor/scripts/lib/state');
+const { collect } = require('../../skills/skill-advisor/scripts/collect');
 
 let passed = 0;
 let failed = 0;
@@ -131,6 +133,95 @@ test('prompts are capped at 300 characters', () => {
   ]));
   const summary = sessions.summarise(sessions.collectSessions({ home, project }));
   assert.strictEqual(summary.prompts[0].text.length, 300);
+});
+
+/** A fake library with one skill (with a binary asset), one agent and one command. */
+function libraryFixture() {
+  const root = tmp('advisor-lib-');
+  write(path.join(root, 'skills', 'postgres-patterns', 'SKILL.md'), '---\nname: postgres-patterns\ndescription: PostgreSQL query and schema patterns.\n---\n# PG\n');
+  write(path.join(root, 'skills', 'postgres-patterns', 'assets', 'erd.png'), Buffer.from([0xff, 0x00, 0x01]));
+  write(path.join(root, 'agents', 'a11y-architect.md'), '---\nname: a11y-architect\ndescription: Accessibility architect.\n---\nBody\n');
+  write(path.join(root, 'commands', 'plan-canvas.md'), '---\ndescription: Open a plan in the browser canvas.\n---\nBody\n');
+  return root;
+}
+
+console.log('\n=== skill-advisor state and collect ===\n');
+
+test('catalog lists library items with descriptions', () => {
+  assert.deepStrictEqual(state.catalog(libraryFixture()), [
+    { kind: 'skill', name: 'postgres-patterns', description: 'PostgreSQL query and schema patterns.' },
+    { kind: 'agent', name: 'a11y-architect', description: 'Accessibility architect.' },
+    { kind: 'command', name: 'plan-canvas', description: 'Open a plan in the browser canvas.' }
+  ]);
+});
+
+test('hashPath changes with content and file names, not with location', () => {
+  const lib = libraryFixture();
+  const copy = tmp('advisor-copy-');
+  fs.cpSync(path.join(lib, 'skills', 'postgres-patterns'), path.join(copy, 'pg'), { recursive: true });
+  const original = state.hashPath(path.join(lib, 'skills', 'postgres-patterns'));
+  assert.strictEqual(state.hashPath(path.join(copy, 'pg')), original);
+  fs.writeFileSync(path.join(copy, 'pg', 'SKILL.md'), 'changed');
+  assert.notStrictEqual(state.hashPath(path.join(copy, 'pg')), original);
+});
+
+test('destinations put skills in both harness folders and agents/commands in .claude only', () => {
+  assert.deepStrictEqual(state.destinations('skill', 'x'), [path.join('.claude', 'skills', 'x'), path.join('.agents', 'skills', 'x')]);
+  assert.deepStrictEqual(state.destinations('agent', 'y'), [path.join('.claude', 'agents', 'y.md')]);
+  assert.deepStrictEqual(state.destinations('command', 'z'), [path.join('.claude', 'commands', 'z.md')]);
+});
+
+test('itemStatus reports current, outdated, modified, missing and gone', () => {
+  const lib = libraryFixture();
+  const project = tmp('advisor-proj-');
+  const source = state.librarySource(lib, 'agent', 'a11y-architect');
+  const dest = path.join(project, '.claude', 'agents', 'a11y-architect.md');
+  write(dest, fs.readFileSync(source));
+  const item = { kind: 'agent', name: 'a11y-architect', hash: state.hashPath(source), paths: [path.join('.claude', 'agents', 'a11y-architect.md')] };
+  assert.strictEqual(state.itemStatus(project, lib, item), 'current');
+  fs.writeFileSync(source, 'new library version');
+  assert.strictEqual(state.itemStatus(project, lib, item), 'outdated');
+  fs.writeFileSync(dest, 'hand edit');
+  assert.strictEqual(state.itemStatus(project, lib, item), 'modified');
+  fs.rmSync(dest);
+  assert.strictEqual(state.itemStatus(project, lib, item), 'missing');
+  write(dest, 'x');
+  fs.rmSync(source);
+  assert.strictEqual(state.itemStatus(project, lib, { ...item, hash: state.hashPath(dest) }), 'gone');
+});
+
+test('collect finds docs, session docs, stack and state', () => {
+  const { home, project } = fixture();
+  const lib = libraryFixture();
+  write(path.join(project, 'docs', 'orders-prd.md'), '# PRD\nUse PostgreSQL.\n');
+  write(path.join(project, 'PLAN.md'), '# Plan\n');
+  write(path.join(project, 'CLAUDE.md'), '# Rules\n');
+  write(path.join(project, 'notes.md'), 'not a doc');
+  write(path.join(project, '.claude', 'skills', 'x', 'SKILL.md'), 'installed skill, not a doc');
+  write(path.join(project, 'node_modules', 'pkg', 'docs', 'a.md'), 'dependency doc');
+  write(path.join(project, '.worktrees', 'feat-a', 'docs', 'trd.md'), '# TRD\n');
+  write(path.join(project, 'package.json'), JSON.stringify({ dependencies: { next: '15.0.0' }, devDependencies: { prisma: '6.0.0' } }));
+  write(path.join(project, 'apps', 'web', 'package.json'), JSON.stringify({ dependencies: { react: '19.0.0' } }));
+  write(path.join(project, 'bun.lock'), '');
+  write(path.join(project, 'next.config.ts'), '');
+  const evidence = collect({ project, home, libraryRoot: lib });
+  const docPaths = evidence.docs.files.map(doc => path.relative(project, doc.path)).sort();
+  assert.deepStrictEqual(docPaths, ['.worktrees/feat-a/docs/trd.md', 'CLAUDE.md', 'PLAN.md', 'docs/orders-prd.md'].map(p => p.split('/').join(path.sep)));
+  assert.deepStrictEqual(evidence.stack.dependencies, ['next', 'prisma', 'react']);
+  assert.strictEqual(evidence.stack.lockfile, 'bun');
+  assert.deepStrictEqual(evidence.stack.configs, ['next.config.ts']);
+  assert.deepStrictEqual(evidence.sessions.unavailable, ['zcode']);
+  assert.strictEqual(evidence.catalog.length, 3);
+  assert.deepStrictEqual(evidence.state, { items: [], declined: [] });
+});
+
+test('collect caps each doc at 8 KB and lists truncated docs', () => {
+  const home = tmp('advisor-home-');
+  const project = tmp('advisor-proj-');
+  write(path.join(project, 'docs', 'big-spec.md'), 'a'.repeat(9000));
+  const evidence = collect({ project, home, libraryRoot: libraryFixture() });
+  assert.strictEqual(evidence.docs.files[0].text.length, 8192);
+  assert.deepStrictEqual(evidence.docs.truncated, [path.join(project, 'docs', 'big-spec.md')]);
 });
 
 console.log(`\nPassed: ${passed}`);

@@ -15,7 +15,7 @@ const path = require('path');
 const { REPO_ROOT, run } = require('./lib/git');
 const { loadSlim, loadState, writeJson, SLIM_PATH } = require('./lib/config');
 const { frontmatterDescription } = require('./lib/queue');
-const { PICK_KINDS, renderPick, parsePick, validatePick, applyPick, findReferences } = require('./lib/pick');
+const { PICK_KINDS, orderItems, renderPick, parsePick, validatePick, applyPick, findReferences } = require('./lib/pick');
 
 const PICK_PATH = path.join(REPO_ROOT, 'fork', 'pick.md');
 const SETUP_PATH = path.join(REPO_ROOT, 'ecc', 'setup.json');
@@ -128,7 +128,7 @@ function generate(args) {
   }
   const hookIds = [...new Set([...slim.hooks.keep, ...Object.keys(slim.hooks.drop || {})])];
   const hooks = hookIds.map(id => ({ id, tag: prefill && prefill.hooks ? (prefill.hooks.keep.includes(id) ? 'keep' : 'drop') : slim.hooks.keep.includes(id) ? 'keep' : 'drop' }));
-  fs.writeFileSync(PICK_PATH, renderPick({ items, hooks }));
+  fs.writeFileSync(PICK_PATH, renderPick({ items: orderItems(items, slim), hooks }));
   writeJson(REFS_PATH, { externalRefs: refs, references });
   process.stdout.write(`[fork:pick] wrote ${path.relative(REPO_ROOT, PICK_PATH)} (${items.length} items, ${hooks.length} hooks); edit the tags, then run: node fork/bin/pick.js apply\n`);
   return 0;

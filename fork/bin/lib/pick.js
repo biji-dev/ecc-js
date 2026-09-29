@@ -31,6 +31,20 @@ function renderPick({ items, hooks }) {
   return lines.join('\n');
 }
 
+/** Per kind: current keep/library items first, then items dropped earlier (with that reason as a signal). */
+function orderItems(items, slim) {
+  const ordered = [];
+  for (const kind of PICK_KINDS) {
+    const drop = (slim[kind] && slim[kind].drop) || {};
+    const ofKind = items.filter(item => item.kind === kind).sort((a, b) => a.name.localeCompare(b.name));
+    ordered.push(...ofKind.filter(item => !(item.name in drop)));
+    for (const item of ofKind.filter(entry => entry.name in drop)) {
+      ordered.push({ ...item, signals: [`dropped earlier: ${drop[item.name]}`, item.signals].filter(Boolean).join('; ') });
+    }
+  }
+  return ordered;
+}
+
 function parsePick(text) {
   const picked = { skills: {}, agents: {}, commands: {}, hooks: {} };
   let section = null;
@@ -140,4 +154,4 @@ function applyPick({ slim, picked, allow, subHooks, today }) {
   return { slim: next, allow: allow.filter(id => kept.has(allowOwner(id, subHooks))) };
 }
 
-module.exports = { PICK_KINDS, renderPick, parsePick, validatePick, applyPick, allowOwner, findReferences };
+module.exports = { PICK_KINDS, orderItems, renderPick, parsePick, validatePick, applyPick, allowOwner, findReferences };

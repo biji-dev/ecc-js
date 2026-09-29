@@ -3,7 +3,7 @@
  */
 
 const assert = require('assert');
-const { renderPick, parsePick, validatePick, applyPick, allowOwner, findReferences } = require('../../fork/bin/lib/pick');
+const { orderItems, renderPick, parsePick, validatePick, applyPick, allowOwner, findReferences } = require('../../fork/bin/lib/pick');
 
 let passed = 0;
 let failed = 0;
@@ -116,6 +116,17 @@ test('findReferences finds distinctive names and ecc: or path forms of short nam
     ['accessibility', 'seo', 'plan', 'react-review']
   );
   assert.deepStrictEqual(refs, { 'commands:react-review': ['accessibility', 'seo', 'plan'] });
+});
+
+test('orderItems puts current items first and flags earlier drops', () => {
+  const items = [
+    { kind: 'skills', name: 'a', tag: 'drop', description: '', signals: 'used 2x' },
+    { kind: 'skills', name: 'b', tag: 'core', description: '', signals: '' }
+  ];
+  const result = orderItems(items, { skills: { keep: ['b'], library: [], drop: { a: 'lang' } } });
+  assert.deepStrictEqual(result.map(item => item.name), ['b', 'a']);
+  assert.strictEqual(result[1].signals, 'dropped earlier: lang; used 2x');
+  assert.strictEqual(result[0].signals, '');
 });
 
 console.log(`\nPassed: ${passed}`);

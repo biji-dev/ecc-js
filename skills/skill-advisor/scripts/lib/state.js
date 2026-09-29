@@ -15,7 +15,7 @@ const KIND_DIRS = { skill: 'skills', agent: 'agents', command: 'commands' };
 
 function listFilesRecursive(dir, prefix = '') {
   const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) out.push(...listFilesRecursive(path.join(dir, entry.name), rel));
     else if (entry.isFile()) out.push(rel);

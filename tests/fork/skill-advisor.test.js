@@ -3,6 +3,7 @@
  */
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -222,6 +223,22 @@ test('collect caps each doc at 8 KB and lists truncated docs', () => {
   const evidence = collect({ project, home, libraryRoot: libraryFixture() });
   assert.strictEqual(evidence.docs.files[0].text.length, 8192);
   assert.deepStrictEqual(evidence.docs.truncated, [path.join(project, 'docs', 'big-spec.md')]);
+});
+
+test('hashPath orders files by code point, independent of locale', () => {
+  const dir = tmp('advisor-codepoint-');
+  write(path.join(dir, 'B.md'), 'b');
+  write(path.join(dir, 'a.md'), 'a');
+  const expected = crypto.createHash('sha256');
+  expected.update('B.md');
+  expected.update('\0');
+  expected.update('b');
+  expected.update('\0');
+  expected.update('a.md');
+  expected.update('\0');
+  expected.update('a');
+  expected.update('\0');
+  assert.strictEqual(state.hashPath(dir), expected.digest('hex'));
 });
 
 console.log(`\nPassed: ${passed}`);

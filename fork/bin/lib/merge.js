@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT, run, git, gitLines, revParse, isAncestor, listFiles, removePaths, checkoutPaths, stagePaths, mergeHead } = require('./git');
-const { ITEM_PATTERNS, FORK_OWNED, STATE_PATH, QUEUE_PATH, writeJson, buildDropMatcher } = require('./config');
+const { ITEM_PATTERNS, forkOwnedPatterns, STATE_PATH, QUEUE_PATH, writeJson, buildDropMatcher } = require('./config');
 const { createMatcher } = require('./glob');
 const { inventoryAt, diffInventory, addedBetween, successorHints, showFile } = require('./inventory');
 const { queueNewItems, pruneDecided } = require('./queue');
@@ -86,7 +86,7 @@ function analyze({ slim, state, queue, target }) {
   const forkChanged = new Set(git(['diff', '--name-only', fromRef, 'HEAD']).split('\n').filter(Boolean));
   const isDropped = buildDropMatcher(slim, queue);
   const isDerived = createMatcher(slim.derived || []);
-  const isForkOwned = createMatcher(FORK_OWNED);
+  const isForkOwned = createMatcher(forkOwnedPatterns(slim));
   const manualCandidates = upstreamChanged.filter(f => forkChanged.has(f) && !isDropped(f) && !isDerived(f) && !isForkOwned(f));
   const fromTopLevel = new Set(listFiles(fromRef).map(f => f.split('/')[0]));
   const targetFiles = listFiles(target.ref);
@@ -187,7 +187,7 @@ function runMerge({ args, slim, state, queue, log }) {
 
   const isDropped = buildDropMatcher(slim, queue);
   const isDerived = createMatcher(slim.derived || []);
-  const isForkOwned = createMatcher(FORK_OWNED);
+  const isForkOwned = createMatcher(forkOwnedPatterns(slim));
   const targetFiles = new Set(listFiles(target.ref));
   removePaths(conflicted.filter(isDropped));
   checkoutPaths(

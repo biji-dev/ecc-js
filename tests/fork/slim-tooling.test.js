@@ -5,9 +5,9 @@
 const assert = require('assert');
 
 const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
-const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED } = require('../../fork/bin/lib/config');
+const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED, forkOwnedPatterns } = require('../../fork/bin/lib/config');
 const { diffInventory } = require('../../fork/bin/lib/inventory');
-const { pruneDecided } = require('../../fork/bin/lib/queue');
+const { pruneDecided, suggest } = require('../../fork/bin/lib/queue');
 
 let passed = 0;
 let failed = 0;
@@ -160,6 +160,60 @@ test('decided queue entries are pruned', () => {
     queue.entries.map(entry => entry.name),
     ['undecided']
   );
+});
+
+console.log('\n=== fork library tier and own items ===\n');
+
+const libSlim = {
+  ...slim,
+  skills: { ...slim.skills, library: ['postgres-patterns'] },
+  agents: { ...slim.agents, library: ['a11y-architect'] }
+};
+
+test('library items leave their upstream paths and mirrors, library/ stays', () => {
+  const isDropped = buildDropMatcher(libSlim, { entries: [] });
+  assert.ok(isDropped('skills/postgres-patterns/SKILL.md'));
+  assert.ok(isDropped('.agents/skills/postgres-patterns/SKILL.md'));
+  assert.ok(isDropped('agents/a11y-architect.md'));
+  assert.ok(!isDropped('library/skills/postgres-patterns/SKILL.md'));
+  assert.ok(!isDropped('library/agents/a11y-architect.md'));
+});
+
+test('library names are known, so they are never queued as new', () => {
+  const inventory = { skills: ['react-patterns', 'postgres-patterns'], agents: ['code-reviewer'], commands: ['plan'], rules: ['typescript'], hookIds: ['session:start'] };
+  const { added } = diffInventory(libSlim, { entries: [] }, inventory);
+  assert.deepStrictEqual(added.skills, []);
+});
+
+test('a library item gone upstream is reported apart from blocking GONE items', () => {
+  const inventory = { skills: ['react-patterns'], agents: ['code-reviewer', 'a11y-architect'], commands: ['plan'], rules: ['typescript'], hookIds: ['session:start'] };
+  const { gone, goneLibrary } = diffInventory(libSlim, { entries: [] }, inventory);
+  assert.deepStrictEqual(gone.skills, []);
+  assert.deepStrictEqual(goneLibrary.skills, [{ name: 'postgres-patterns' }]);
+  assert.deepStrictEqual(goneLibrary.agents, []);
+});
+
+test('a library decision prunes the queue entry', () => {
+  const queue = { entries: [{ kind: 'skills', name: 'postgres-patterns', status: 'pending' }] };
+  assert.strictEqual(pruneDecided(libSlim, queue), 1);
+});
+
+test('queueHints libraryRegex suggests the library tier', () => {
+  const hinted = { ...slim, queueHints: { dropRegex: '^django', libraryRegex: 'postgres', keepRegex: 'react' } };
+  assert.strictEqual(suggest(hinted, 'skills', 'postgres-tuning', 'tune queries').suggestion, 'library:stack');
+  assert.strictEqual(suggest(hinted, 'skills', 'django-admin', '').suggestion, 'drop:stack');
+});
+
+test('unprefixed own items are fork-owned and never dropped', () => {
+  const owned = { ...slim, skills: { ...slim.skills, own: ['skill-advisor'] }, paths: { ...slim.paths, drop: [...slim.paths.drop, 'skills/skill-advisor/**'] } };
+  const isForkOwned = createMatcher(forkOwnedPatterns(owned));
+  assert.ok(isForkOwned('skills/skill-advisor/SKILL.md'));
+  assert.ok(isForkOwned('skills/skill-advisor/scripts/collect.js'));
+  assert.ok(isForkOwned('.agents/skills/skill-advisor/SKILL.md'));
+  assert.ok(isForkOwned('library/skills/postgres-patterns/SKILL.md'));
+  assert.ok(!isForkOwned('skills/react-patterns/SKILL.md'));
+  assert.ok(!buildDropMatcher(owned, { entries: [] })('skills/skill-advisor/SKILL.md'));
+  assert.ok(FORK_OWNED.includes('library/**'));
 });
 
 console.log(`\nPassed: ${passed}`);

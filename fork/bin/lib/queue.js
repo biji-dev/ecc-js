@@ -61,6 +61,7 @@ function suggest(slim, kind, name, description) {
     }
   }
   if (hints.dropRegex && new RegExp(hints.dropRegex, 'i').test(name)) return { suggestion: 'drop:stack', overlapHint };
+  if (hints.libraryRegex && new RegExp(hints.libraryRegex, 'i').test(haystack)) return { suggestion: 'library:stack', overlapHint };
   if (hints.keepRegex && new RegExp(hints.keepRegex, 'i').test(haystack)) return { suggestion: 'keep:stack', overlapHint };
   return { suggestion: 'review', overlapHint };
 }
@@ -94,15 +95,19 @@ function queueNewItems({ slim, queue, added, fromRef, toRef }) {
   return queued;
 }
 
-/** Remove queue entries whose names now appear in slim keep/own/drop lists. */
+/** Remove queue entries whose names now appear in slim keep/own/library/drop lists. */
 function pruneDecided(slim, queue) {
   const before = queue.entries.length;
   queue.entries = queue.entries.filter(entry => {
     const section = slim[entry.kind] || {};
-    const decided = (section.keep || []).includes(entry.name) || (section.own || []).includes(entry.name) || entry.name in (section.drop || {});
+    const decided =
+      (section.keep || []).includes(entry.name) ||
+      (section.own || []).includes(entry.name) ||
+      (section.library || []).includes(entry.name) ||
+      entry.name in (section.drop || {});
     return !decided;
   });
   return before - queue.entries.length;
 }
 
-module.exports = { queueNewItems, pruneDecided, frontmatterDescription, ITEM_FILE };
+module.exports = { queueNewItems, pruneDecided, suggest, frontmatterDescription, ITEM_FILE };

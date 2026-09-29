@@ -48,10 +48,14 @@ function inventoryAt(ref) {
   return inventory;
 }
 
-/** Items present at the ref but unknown to slim.json (NEW), and kept items missing at the ref (GONE). */
+/**
+ * Items present at the ref but unknown to slim.json (NEW), kept items missing at the ref (GONE, blocking),
+ * and library items missing at the ref (goneLibrary, reported only).
+ */
 function diffInventory(slim, queue, inventory) {
   const added = {};
   const gone = {};
+  const goneLibrary = {};
   for (const kind of ITEM_KINDS) {
     const known = knownNames(slim, queue, kind);
     const present = new Set(inventory[kind]);
@@ -59,11 +63,12 @@ function diffInventory(slim, queue, inventory) {
     const section = slim[kind] || {};
     const pinned = new Set(section.pinned || []);
     gone[kind] = (section.keep || []).filter(name => !present.has(name)).map(name => ({ name, pinned: pinned.has(name) }));
+    goneLibrary[kind] = (section.library || []).filter(name => !present.has(name)).map(name => ({ name }));
   }
   const knownHooks = new Set([...(slim.hooks.keep || []), ...Object.keys(slim.hooks.drop || {})]);
   added.hooks = inventory.hookIds.filter(id => !knownHooks.has(id));
   gone.hooks = (slim.hooks.keep || []).filter(id => !inventory.hookIds.includes(id)).map(name => ({ name, pinned: true }));
-  return { added, gone };
+  return { added, gone, goneLibrary };
 }
 
 /** Upstream paths added between two refs that match a predicate (e.g. new scripts, lib dirs). */

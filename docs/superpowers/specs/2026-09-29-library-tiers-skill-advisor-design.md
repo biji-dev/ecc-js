@@ -185,7 +185,7 @@ environment variables. CommonJS, Node >= 18, no dependencies.
 
 Destinations:
 
-| Kind | Claude Code and ZCode | Codex |
+| Kind | Claude Code | Codex and ZCode |
 | --- | --- | --- |
 | Skill | `.claude/skills/<n>/` | `.agents/skills/<n>/` |
 | Agent | `.claude/agents/<n>.md` | not installed |
@@ -302,3 +302,19 @@ and a temp `library/`:
 - `npm test` and the drift check pass.
 - The pilot plan cites real evidence for every suggestion; add, refresh and
   remove work in `.claude/` and `.agents/`.
+
+## Check results (Task 0)
+
+Checked 2026-09-29 with ZCode CLI 0.16.9 (`zcode skills list --cwd`, `zcode commands list --cwd`).
+
+- Plugin caches contain the whole repo, including `library/`: yes (Codex cache and
+  ZCode marketplace clone both hold `fork/` and `FORK.md`).
+- ZCode loads project skills from `<project>/.agents/skills`, not from
+  `<project>/.claude/skills`. It does not list project commands from
+  `<project>/.claude/commands`, and no project-agent loader was found. Skills are
+  already installed into `.agents/skills`, so ZCode is covered for skills; project
+  agents and commands are Claude Code only.
+- ZCode transcripts: the session store is `~/.zcode/cli/db/db.sqlite` (SQLite).
+  `~/.zcode/cli/rollout/model-io-*.jsonl` holds only raw model I/O for a few
+  sessions, with no working folder. Reading SQLite needs a dependency, so ZCode
+  sessions stay unavailable (`UNAVAILABLE_TOOLS = ['zcode']`).

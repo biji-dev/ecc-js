@@ -9,6 +9,7 @@ const { inventoryAt, diffInventory, addedBetween, successorHints, showFile } = r
 const { queueNewItems, pruneDecided } = require('./queue');
 const { applyDecisions } = require('./apply');
 const { writeReport } = require('./report');
+const { ownCollisions, collisionMessage } = require('./library');
 
 const PROGRESS_PATH = path.join(REPO_ROOT, 'fork', '.sync-in-progress.json');
 
@@ -60,7 +61,7 @@ function analyze({ slim, state, queue, target }) {
   const head = inventoryAt('HEAD');
   const headSubHooks = new Set(head.subHookIds);
   const headLibDirs = new Set(head.libDirs);
-  const { added, gone } = diffInventory(slim, queue, inventory);
+  const { added, gone, goneLibrary } = diffInventory(slim, queue, inventory);
   const hints = {};
   for (const kind of Object.keys(ITEM_PATTERNS)) {
     for (const item of gone[kind]) {
@@ -96,6 +97,7 @@ function analyze({ slim, state, queue, target }) {
     target,
     added,
     gone,
+    goneLibrary,
     successorHints: hints,
     newScripts: addedBetween(fromRef, target.ref, ['scripts/']).filter(file => /^scripts\/[^/]+\.(?:js|mjs|cjs|sh)$/.test(file)),
     newLibDirs: inventory.libDirs.filter(dir => !headLibDirs.has(dir)),
@@ -155,6 +157,8 @@ function runMerge({ args, slim, state, queue, log }) {
     log(`${target.tag || target.ref} is already merged; nothing to do`);
     return 0;
   }
+  const collisions = ownCollisions(slim, listFiles(target.ref));
+  if (collisions.length) throw new Error(collisionMessage(collisions));
   const analysis = analyze({ slim, state, queue, target });
   const blocked = blockingGone(analysis);
 

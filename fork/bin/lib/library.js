@@ -45,4 +45,60 @@ function materialiseLibrary({ slim, refFiles, readBlob, root }) {
   return { written, missing };
 }
 
-module.exports = { LIBRARY_KINDS, itemPaths, materialiseLibrary };
+const TIER_KINDS = ['skills', 'agents', 'commands', 'rules'];
+
+/** Each item is in exactly one of keep/library/drop/own, and every pinned item is in keep. */
+function tierViolations(slim) {
+  const errors = [];
+  for (const kind of TIER_KINDS) {
+    const section = slim[kind] || {};
+    const tiers = { keep: section.keep || [], library: section.library || [], drop: Object.keys(section.drop || {}), own: section.own || [] };
+    const seen = new Map();
+    for (const [tier, names] of Object.entries(tiers)) {
+      for (const name of names) {
+        if (seen.has(name)) errors.push(`${kind}:${name} is in both ${seen.get(name)} and ${tier}`);
+        else seen.set(name, tier);
+      }
+    }
+    for (const name of section.pinned || []) {
+      if (seen.get(name) !== 'keep') errors.push(`pinned ${kind}:${name} must be in keep (is ${seen.get(name) || 'unlisted'})`);
+    }
+  }
+  return errors;
+}
+
+/** Own items whose name upstream also uses at the given ref. */
+function ownCollisions(slim, refFiles) {
+  const files = new Set(refFiles);
+  const hasDir = prefix => refFiles.some(file => file.startsWith(prefix));
+  const hits = [];
+  for (const name of (slim.skills && slim.skills.own) || []) if (hasDir(`skills/${name}/`)) hits.push(`skills:${name}`);
+  for (const name of (slim.agents && slim.agents.own) || []) if (files.has(`agents/${name}.md`)) hits.push(`agents:${name}`);
+  for (const name of (slim.commands && slim.commands.own) || []) if (files.has(`commands/${name}.md`)) hits.push(`commands:${name}`);
+  for (const name of (slim.rules && slim.rules.own) || []) if (hasDir(`rules/${name}/`)) hits.push(`rules:${name}`);
+  return hits;
+}
+
+function collisionMessage(hits) {
+  return `own items collide with upstream names: ${hits.join(', ')}; rename yours, or adopt upstream's by moving the name to keep and deleting yours`;
+}
+
+/** Every library item is materialised and library/ holds nothing else. */
+function libraryDrift(slim, trackedFiles) {
+  const errors = [];
+  const libraryFiles = trackedFiles.filter(file => file.startsWith('library/'));
+  const owned = new Set();
+  for (const kind of LIBRARY_KINDS) {
+    for (const name of (slim[kind] && slim[kind].library) || []) {
+      const { library } = itemPaths(kind, name);
+      const mine = filesOf(libraryFiles, library);
+      if (!mine.length) errors.push(`library ${kind}:${name} is not materialised at ${library} (gone upstream? move it to drop)`);
+      mine.forEach(file => owned.add(file));
+    }
+  }
+  const strays = libraryFiles.filter(file => !owned.has(file));
+  if (strays.length) errors.push(`library/ holds files of no library item (${strays.length}): ${strays.slice(0, 5).join(', ')}`);
+  return errors;
+}
+
+module.exports = { LIBRARY_KINDS, itemPaths, materialiseLibrary, tierViolations, ownCollisions, collisionMessage, libraryDrift };

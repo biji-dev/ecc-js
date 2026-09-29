@@ -6,7 +6,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { materialiseLibrary } = require('../../fork/bin/lib/library');
+const { materialiseLibrary, tierViolations, ownCollisions, libraryDrift } = require('../../fork/bin/lib/library');
 
 const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
 const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED, forkOwnedPatterns } = require('../../fork/bin/lib/config');
@@ -273,6 +273,33 @@ test('a prefix-sharing skill is not pulled into another library item', () => {
   materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => Buffer.from(blobs[file]), root });
   assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns-extra')));
   assert.deepStrictEqual(fs.readdirSync(path.join(root, 'library/skills/postgres-patterns')), ['SKILL.md']);
+});
+
+console.log('\n=== fork tier checks and collisions ===\n');
+
+test('an item in two tiers and an unkept pinned item are violations', () => {
+  assert.deepStrictEqual(tierViolations(libSlim), []);
+  const twice = { ...libSlim, skills: { ...libSlim.skills, keep: [...libSlim.skills.keep, 'postgres-patterns'] } };
+  assert.deepStrictEqual(tierViolations(twice), ['skills:postgres-patterns is in both keep and library']);
+  const unkeptPin = { ...libSlim, skills: { ...libSlim.skills, pinned: ['postgres-patterns'] } };
+  assert.deepStrictEqual(tierViolations(unkeptPin), ['pinned skills:postgres-patterns must be in keep (is library)']);
+});
+
+test('own items colliding with upstream names are reported', () => {
+  const owned = { ...slim, skills: { ...slim.skills, own: ['skill-advisor'] }, agents: { ...slim.agents, own: ['my-agent'] } };
+  assert.deepStrictEqual(ownCollisions(owned, ['skills/react-patterns/SKILL.md', 'agents/other.md']), []);
+  assert.deepStrictEqual(
+    ownCollisions(owned, ['skills/skill-advisor/SKILL.md', 'agents/my-agent.md', 'skills/skill-advisor-pro/SKILL.md']),
+    ['skills:skill-advisor', 'agents:my-agent']
+  );
+});
+
+test('library drift reports unmaterialised items and stray files', () => {
+  const tracked = ['library/skills/postgres-patterns/SKILL.md', 'library/skills/stray/SKILL.md', 'skills/react-patterns/SKILL.md'];
+  assert.deepStrictEqual(libraryDrift(libSlim, tracked), [
+    'library agents:a11y-architect is not materialised at library/agents/a11y-architect.md (gone upstream? move it to drop)',
+    'library/ holds files of no library item (1): library/skills/stray/SKILL.md'
+  ]);
 });
 
 console.log(`\nPassed: ${passed}`);

@@ -3,6 +3,10 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { materialiseLibrary } = require('../../fork/bin/lib/library');
 
 const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
 const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED, forkOwnedPatterns } = require('../../fork/bin/lib/config');
@@ -214,6 +218,61 @@ test('unprefixed own items are fork-owned and never dropped', () => {
   assert.ok(!isForkOwned('skills/react-patterns/SKILL.md'));
   assert.ok(!buildDropMatcher(owned, { entries: [] })('skills/skill-advisor/SKILL.md'));
   assert.ok(FORK_OWNED.includes('library/**'));
+});
+
+console.log('\n=== fork library materialise ===\n');
+
+function tempRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'fork-lib-'));
+}
+
+function writeFile(root, rel, content) {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), content);
+}
+
+test('library items are materialised from the ref and stale files removed', () => {
+  const root = tempRoot();
+  writeFile(root, 'library/skills/old-skill/SKILL.md', 'stale');
+  writeFile(root, 'library/skills/postgres-patterns/references/gone.md', 'stale');
+  const blobs = {
+    'skills/postgres-patterns/SKILL.md': 'pg',
+    'skills/postgres-patterns/references/a.md': 'ref',
+    'agents/a11y-architect.md': 'a11y',
+    'skills/react-patterns/SKILL.md': 'not library'
+  };
+  const result = materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => Buffer.from(blobs[file]), root });
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/SKILL.md'), 'utf8'), 'pg');
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/references/a.md'), 'utf8'), 'ref');
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/agents/a11y-architect.md'), 'utf8'), 'a11y');
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/old-skill')));
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns/references/gone.md')));
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/react-patterns')));
+  assert.deepStrictEqual(result.missing, []);
+  assert.strictEqual(result.written.length, 3);
+});
+
+test('binary files are materialised byte for byte', () => {
+  const root = tempRoot();
+  const bytes = Buffer.from([0xff, 0x00, 0x89, 0x50, 0x4e, 0x47]);
+  const blobs = { 'skills/postgres-patterns/SKILL.md': Buffer.from('pg'), 'skills/postgres-patterns/assets/diagram.png': bytes };
+  materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => blobs[file], root });
+  assert.ok(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/assets/diagram.png')).equals(bytes));
+});
+
+test('a library item missing at the ref is reported, not written', () => {
+  const root = tempRoot();
+  const result = materialiseLibrary({ slim: libSlim, refFiles: ['agents/a11y-architect.md'], readBlob: () => Buffer.from('a11y'), root });
+  assert.deepStrictEqual(result.missing, [{ kind: 'skills', name: 'postgres-patterns' }]);
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns')));
+});
+
+test('a prefix-sharing skill is not pulled into another library item', () => {
+  const root = tempRoot();
+  const blobs = { 'skills/postgres-patterns/SKILL.md': 'pg', 'skills/postgres-patterns-extra/SKILL.md': 'other' };
+  materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => Buffer.from(blobs[file]), root });
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns-extra')));
+  assert.deepStrictEqual(fs.readdirSync(path.join(root, 'library/skills/postgres-patterns')), ['SKILL.md']);
 });
 
 console.log(`\nPassed: ${passed}`);

@@ -310,7 +310,9 @@
       "design-system",
       "continuous-learning-v2"
     ],
-    "own": []
+    "own": [
+      "skill-advisor"
+    ]
   },
   "agents": {
     "keep": [

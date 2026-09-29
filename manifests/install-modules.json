@@ -667,6 +667,26 @@
       "defaultInstall": false,
       "cost": "heavy",
       "stability": "stable"
+    },
+    {
+      "id": "fork-own",
+      "kind": "skills",
+      "description": "Skills authored in the biji-dev/ecc-js fork.",
+      "paths": [
+        "skills/skill-advisor"
+      ],
+      "targets": [
+        "claude",
+        "claude-project",
+        "codex",
+        "kimi"
+      ],
+      "dependencies": [
+        "platform-configs"
+      ],
+      "defaultInstall": false,
+      "cost": "light",
+      "stability": "beta"
     }
   ]
 }

@@ -672,7 +672,8 @@
       "examples/eval-harness/**",
       "the-longform-guide.md",
       "the-shortform-guide.md",
-      "docs/ECC-JS.md"
+      "docs/ECC-JS.md",
+      "docs/superpowers/**"
     ]
   },
   "tests": {

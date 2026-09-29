@@ -111,3 +111,6 @@ assets/images/security/badrudi-exploit.mp4
 # Fork sync working files (biji-dev/ecc-js)
 fork/.sync-report.md
 fork/.sync-in-progress.json
+fork/pick.md
+fork/.pick-refs.json
+fork/.pick-prefill.json

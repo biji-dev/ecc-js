@@ -11,6 +11,7 @@ const path = require('path');
 const sessions = require('../../skills/skill-advisor/scripts/lib/sessions');
 const state = require('../../skills/skill-advisor/scripts/lib/state');
 const { collect } = require('../../skills/skill-advisor/scripts/collect');
+const { applyPlan } = require('../../skills/skill-advisor/scripts/install');
 
 let passed = 0;
 let failed = 0;
@@ -239,6 +240,104 @@ test('hashPath orders files by code point, independent of locale', () => {
   expected.update('a');
   expected.update('\0');
   assert.strictEqual(state.hashPath(dir), expected.digest('hex'));
+});
+
+console.log('\n=== skill-advisor install ===\n');
+
+function installFixture() {
+  return { lib: libraryFixture(), project: tmp('advisor-proj-') };
+}
+
+const PG = { kind: 'skill', name: 'postgres-patterns' };
+const A11Y = { kind: 'agent', name: 'a11y-architect' };
+
+test('add installs skills into both harness folders and agents into .claude', () => {
+  const { lib, project } = installFixture();
+  const result = applyPlan({ project, libraryRoot: lib, plan: { add: [PG, A11Y] }, today: '2026-09-29' });
+  assert.deepStrictEqual(result.warnings, []);
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'skills', 'postgres-patterns', 'SKILL.md')));
+  assert.ok(fs.readFileSync(path.join(project, '.agents', 'skills', 'postgres-patterns', 'assets', 'erd.png')).equals(Buffer.from([0xff, 0x00, 0x01])));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'agents', 'a11y-architect.md')));
+  const saved = state.readState(project);
+  assert.deepStrictEqual(saved.items.map(item => `${item.kind}:${item.name}`), ['skill:postgres-patterns', 'agent:a11y-architect']);
+  assert.strictEqual(saved.items[0].installedAt, '2026-09-29');
+  assert.strictEqual(saved.items[0].hash, state.hashPath(path.join(lib, 'skills', 'postgres-patterns')));
+});
+
+test('dry run changes nothing', () => {
+  const { lib, project } = installFixture();
+  const result = applyPlan({ project, libraryRoot: lib, plan: { add: [PG] }, dryRun: true, today: '2026-09-29' });
+  assert.ok(result.actions.length > 0);
+  assert.deepStrictEqual(fs.readdirSync(project), []);
+});
+
+test('an existing untracked destination is skipped, never overwritten', () => {
+  const { lib, project } = installFixture();
+  write(path.join(project, '.claude', 'agents', 'a11y-architect.md'), 'the project own agent');
+  const result = applyPlan({ project, libraryRoot: lib, plan: { add: [A11Y] }, today: '2026-09-29' });
+  assert.strictEqual(fs.readFileSync(path.join(project, '.claude', 'agents', 'a11y-architect.md'), 'utf8'), 'the project own agent');
+  assert.strictEqual(result.warnings.length, 1);
+  assert.deepStrictEqual(state.readState(project).items, []);
+});
+
+test('a partially present destination skips the whole item', () => {
+  const { lib, project } = installFixture();
+  write(path.join(project, '.agents', 'skills', 'postgres-patterns', 'SKILL.md'), 'codex own copy');
+  applyPlan({ project, libraryRoot: lib, plan: { add: [PG] }, today: '2026-09-29' });
+  assert.ok(!fs.existsSync(path.join(project, '.claude', 'skills', 'postgres-patterns')));
+  assert.deepStrictEqual(state.readState(project).items, []);
+});
+
+test('re-running an add is a no-op with a warning', () => {
+  const { lib, project } = installFixture();
+  applyPlan({ project, libraryRoot: lib, plan: { add: [PG] }, today: '2026-09-29' });
+  const again = applyPlan({ project, libraryRoot: lib, plan: { add: [PG] }, today: '2026-09-30' });
+  assert.strictEqual(again.warnings.length, 1);
+  assert.strictEqual(state.readState(project).items.length, 1);
+  assert.strictEqual(state.readState(project).items[0].installedAt, '2026-09-29');
+});
+
+test('refresh updates outdated copies and skips modified ones unless overwrite', () => {
+  const { lib, project } = installFixture();
+  applyPlan({ project, libraryRoot: lib, plan: { add: [A11Y] }, today: '2026-09-29' });
+  fs.writeFileSync(path.join(lib, 'agents', 'a11y-architect.md'), 'v2');
+  applyPlan({ project, libraryRoot: lib, plan: { refresh: [A11Y] }, today: '2026-09-30' });
+  const dest = path.join(project, '.claude', 'agents', 'a11y-architect.md');
+  assert.strictEqual(fs.readFileSync(dest, 'utf8'), 'v2');
+  fs.writeFileSync(dest, 'hand edit');
+  fs.writeFileSync(path.join(lib, 'agents', 'a11y-architect.md'), 'v3');
+  const skipped = applyPlan({ project, libraryRoot: lib, plan: { refresh: [A11Y] }, today: '2026-10-01' });
+  assert.strictEqual(fs.readFileSync(dest, 'utf8'), 'hand edit');
+  assert.strictEqual(skipped.warnings.length, 1);
+  applyPlan({ project, libraryRoot: lib, plan: { refresh: [{ ...A11Y, overwrite: true }] }, today: '2026-10-01' });
+  assert.strictEqual(fs.readFileSync(dest, 'utf8'), 'v3');
+});
+
+test('remove deletes only recorded paths; untrack keeps files', () => {
+  const { lib, project } = installFixture();
+  applyPlan({ project, libraryRoot: lib, plan: { add: [PG, A11Y] }, today: '2026-09-29' });
+  write(path.join(project, '.claude', 'skills', 'other', 'SKILL.md'), 'not ours');
+  applyPlan({ project, libraryRoot: lib, plan: { remove: [PG], untrack: [A11Y] }, today: '2026-09-30' });
+  assert.ok(!fs.existsSync(path.join(project, '.claude', 'skills', 'postgres-patterns')));
+  assert.ok(!fs.existsSync(path.join(project, '.agents', 'skills', 'postgres-patterns')));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'skills', 'other', 'SKILL.md')));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'agents', 'a11y-architect.md')));
+  assert.deepStrictEqual(state.readState(project).items, []);
+});
+
+test('declined items are remembered and cleared when later added', () => {
+  const { lib, project } = installFixture();
+  applyPlan({ project, libraryRoot: lib, plan: { decline: [PG, PG] }, today: '2026-09-29' });
+  assert.deepStrictEqual(state.readState(project).declined, [{ kind: 'skill', name: 'postgres-patterns', at: '2026-09-29' }]);
+  applyPlan({ project, libraryRoot: lib, plan: { add: [PG] }, today: '2026-09-30' });
+  assert.deepStrictEqual(state.readState(project).declined, []);
+});
+
+test('an unknown library item is a warning, and an invalid plan throws', () => {
+  const { lib, project } = installFixture();
+  const result = applyPlan({ project, libraryRoot: lib, plan: { add: [{ kind: 'skill', name: 'nope' }] }, today: '2026-09-29' });
+  assert.strictEqual(result.warnings.length, 1);
+  assert.throws(() => applyPlan({ project, libraryRoot: lib, plan: { add: [{ kind: 'rule', name: 'x' }] }, today: '2026-09-29' }), /invalid plan/);
 });
 
 console.log(`\nPassed: ${passed}`);

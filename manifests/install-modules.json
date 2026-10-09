@@ -673,6 +673,8 @@
       "kind": "skills",
       "description": "Skills authored in the biji-dev/ecc-js fork.",
       "paths": [
+        "skills/delegate-tasks",
+        "skills/harness-bootstrap",
         "skills/skill-advisor"
       ],
       "targets": [

@@ -4,7 +4,7 @@
 
 <!-- ecc-js:banner -->
 
-> **ECC-JS** is a slim fork of [affaan-m/ECC](https://github.com/affaan-m/ECC) for JavaScript/TypeScript, Bun, React, Next.js and React Native/Expo work: 141 skills, 36 agents, 66 commands and 5 rule packs. Install, scope and hooks: [docs/ECC-JS.md](docs/ECC-JS.md). Upstream sync and maintenance: [FORK.md](FORK.md). The rest of this README is upstream prose.
+> **ECC-JS** is a slim fork of [affaan-m/ECC](https://github.com/affaan-m/ECC) for JavaScript/TypeScript, Bun, React, Next.js and React Native/Expo work: 143 skills, 36 agents, 66 commands and 5 rule packs. Install, scope and hooks: [docs/ECC-JS.md](docs/ECC-JS.md). Upstream sync and maintenance: [FORK.md](FORK.md). The rest of this README is upstream prose.
 
 <!-- /ecc-js:banner -->
 
@@ -131,12 +131,12 @@ Instead of rebuilding that process in every prompt, you install it once and make
 
 ECC is MIT-licensed open source. It works best with Claude Code today, has a supported Codex sync path, and provides capability-limited adapters for Cursor, OpenCode, Gemini, Zed, GitHub Copilot, Antigravity, Qwen, and other harnesses. See the [support status matrix](#platform-support) before assuming feature parity.
 
-Access to 36 agents, 141 skills, and 66 legacy command shims, plus hooks, rules, memory, continuous learning, and AgentShield security scanning. The agents are specialized for planning, review, build repair, security, architecture, and domain work.
+Access to 36 agents, 143 skills, and 66 legacy command shims, plus hooks, rules, memory, continuous learning, and AgentShield security scanning. The agents are specialized for planning, review, build repair, security, architecture, and domain work.
 
 | Included         |       Count | What it gives you                                                                    |
 | ---------------- | ----------: | ------------------------------------------------------------------------------------ |
 | Agents           |   36 agents | Planning, review, build repair, security, architecture, and domain work              |
-| Skills           |  141 skills | TDD, research, security, docs, frontend, data, ML, operations, and more              |
+| Skills           |  143 skills | TDD, research, security, docs, frontend, data, ML, operations, and more              |
 | Commands         | 66 commands | Convenient entry points while ECC moves to a skills-first surface                    |
 | Hooks and memory |     Runtime | Enforcement, session summaries, continuous learning, instincts, and context controls |
 | Rules            |   Selective | Always-loaded standards you choose by language or project                            |
@@ -789,7 +789,7 @@ Stable graduation of the 2.0 line: control-pane substrate, worktree lifecycle se
 ```text
 ECC/
 |-- agents/           # 36 specialized subagents for delegation
-|-- skills/           # 141 reusable workflows loaded on demand
+|-- skills/           # 143 reusable workflows loaded on demand
 |-- commands/         # 66 maintained slash-command shims
 |-- rules/            # opt-in common and language standards
 |-- hooks/            # runtime automation and enforcement

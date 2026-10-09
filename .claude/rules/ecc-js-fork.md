@@ -20,11 +20,12 @@ where they differ. Maintainer guide: `FORK.md`. Scope and install: `docs/ECC-JS.
   `npm run fork:apply`.
 - Keep edits to upstream files small; every changed line can conflict on the
   next upstream sync. Prefer fork-owned files (`fork/`, `tests/fork/`, `ecc/`,
-  `FORK.md`, `docs/ECC-JS.md`, `biji-*` items).
+  `FORK.md`, `docs/ECC-JS.md`, own items).
 - Every change that ships (skills, agents, commands, rules, hooks, scripts,
   `ecc/`, MCP configs, plugin manifests) needs `npm run fork:bump`.
-- New own skills, agents, commands and rule packs use the `biji-` prefix and
-  are listed under `own` in `fork/slim.json`.
+- New own skills, agents, commands and rule packs are listed under `own` in
+  `fork/slim.json`. The `biji-` prefix is optional; the own-name collision check
+  refuses an upstream item with the same name.
 
 ## Git
 

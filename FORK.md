@@ -221,9 +221,11 @@ keeping it again restores both. Drop a name out of `pinned` as well, or
 
 ### Your own skills, agents and commands
 
-Prefix them with `biji-` so they never collide with upstream names, and list
-them under `own` in `fork/slim.json`. `biji-*` paths are fork-owned, and own
-skills are claimed by the `fork-own` install module automatically.
+List them under `own` in `fork/slim.json`. The `biji-` prefix is optional: every
+own name is fork-owned, and `verify.js` and the sync refuse an upstream item with
+the same name. Own skills are claimed by the `fork-own` install module
+automatically. Current own skills: `skill-advisor`, `harness-bootstrap`,
+`delegate-tasks`.
 
 ## Releases and versions
 

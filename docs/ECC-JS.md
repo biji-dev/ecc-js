@@ -185,7 +185,7 @@ Hook ids come from `hooks/hooks.metadata.json` (top-level entries) and from the
 ## Turning skills, agents, commands and rules on or off
 
 `fork/slim.json` is the switchboard: `keep` ships an item, `drop` removes it
-with a reason, `own` is for your own `biji-*` items.
+with a reason, `own` is for your own items.
 
 See what is off and why:
 
@@ -314,11 +314,20 @@ duplicates the plugin.
 
 ## Adding your own items
 
-Name your own skills, agents, commands and rule packs with the `biji-` prefix
-and list them under `<kind>.own` in `fork/slim.json`. `biji-*` paths are
-fork-owned: upstream syncs never touch them, and own skills are included in the
-Kimi install config automatically. Then run `npm run fork:apply` and
-`npm run fork:bump` (see [FORK.md](../FORK.md)).
+List your own skills, agents, commands and rule packs under `<kind>.own` in
+`fork/slim.json` (the `biji-` prefix is optional; a collision check refuses an
+upstream item with the same name). Own paths are fork-owned: upstream syncs never
+touch them, and own skills are included in the Kimi install config
+automatically. Then run `npm run fork:apply` and `npm run fork:bump` (see
+[FORK.md](../FORK.md)).
+
+Own skills shipped today:
+
+| Skill | What it does |
+| --- | --- |
+| `skill-advisor` | Recommends and installs library items per project |
+| `harness-bootstrap` | Assesses a plan-driven repo and installs a gated task harness: task runner, git commit guard, two human gates, conformance and claim auditors, harness log. Claude Code first (Opus for judgment, Sonnet for bounded work) |
+| `delegate-tasks` | Opus architect writes build, fix or check specs; Sonnet builders run them in waves behind command gates |
 
 ## Known limitations
 

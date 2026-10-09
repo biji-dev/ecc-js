@@ -3,12 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT, run, git, gitLines, revParse, isAncestor, listFiles, removePaths, checkoutPaths, stagePaths, mergeHead } = require('./git');
-const { ITEM_PATTERNS, FORK_OWNED, STATE_PATH, QUEUE_PATH, writeJson, buildDropMatcher } = require('./config');
+const { ITEM_PATTERNS, forkOwnedPatterns, STATE_PATH, QUEUE_PATH, writeJson, buildDropMatcher } = require('./config');
 const { createMatcher } = require('./glob');
 const { inventoryAt, diffInventory, addedBetween, successorHints, showFile } = require('./inventory');
 const { queueNewItems, pruneDecided } = require('./queue');
 const { applyDecisions } = require('./apply');
 const { writeReport } = require('./report');
+const { ownCollisions, collisionMessage } = require('./library');
 
 const PROGRESS_PATH = path.join(REPO_ROOT, 'fork', '.sync-in-progress.json');
 
@@ -60,7 +61,7 @@ function analyze({ slim, state, queue, target }) {
   const head = inventoryAt('HEAD');
   const headSubHooks = new Set(head.subHookIds);
   const headLibDirs = new Set(head.libDirs);
-  const { added, gone } = diffInventory(slim, queue, inventory);
+  const { added, gone, goneLibrary } = diffInventory(slim, queue, inventory);
   const hints = {};
   for (const kind of Object.keys(ITEM_PATTERNS)) {
     for (const item of gone[kind]) {
@@ -86,7 +87,7 @@ function analyze({ slim, state, queue, target }) {
   const forkChanged = new Set(git(['diff', '--name-only', fromRef, 'HEAD']).split('\n').filter(Boolean));
   const isDropped = buildDropMatcher(slim, queue);
   const isDerived = createMatcher(slim.derived || []);
-  const isForkOwned = createMatcher(FORK_OWNED);
+  const isForkOwned = createMatcher(forkOwnedPatterns(slim));
   const manualCandidates = upstreamChanged.filter(f => forkChanged.has(f) && !isDropped(f) && !isDerived(f) && !isForkOwned(f));
   const fromTopLevel = new Set(listFiles(fromRef).map(f => f.split('/')[0]));
   const targetFiles = listFiles(target.ref);
@@ -96,6 +97,7 @@ function analyze({ slim, state, queue, target }) {
     target,
     added,
     gone,
+    goneLibrary,
     successorHints: hints,
     newScripts: addedBetween(fromRef, target.ref, ['scripts/']).filter(file => /^scripts\/[^/]+\.(?:js|mjs|cjs|sh)$/.test(file)),
     newLibDirs: inventory.libDirs.filter(dir => !headLibDirs.has(dir)),
@@ -155,6 +157,8 @@ function runMerge({ args, slim, state, queue, log }) {
     log(`${target.tag || target.ref} is already merged; nothing to do`);
     return 0;
   }
+  const collisions = ownCollisions(slim, listFiles(target.ref));
+  if (collisions.length) throw new Error(collisionMessage(collisions));
   const analysis = analyze({ slim, state, queue, target });
   const blocked = blockingGone(analysis);
 
@@ -187,7 +191,7 @@ function runMerge({ args, slim, state, queue, log }) {
 
   const isDropped = buildDropMatcher(slim, queue);
   const isDerived = createMatcher(slim.derived || []);
-  const isForkOwned = createMatcher(FORK_OWNED);
+  const isForkOwned = createMatcher(forkOwnedPatterns(slim));
   const targetFiles = new Set(listFiles(target.ref));
   removePaths(conflicted.filter(isDropped));
   checkoutPaths(

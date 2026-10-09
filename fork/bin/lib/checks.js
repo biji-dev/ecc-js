@@ -5,6 +5,7 @@ const path = require('path');
 const { REPO_ROOT, listFiles, run } = require('./git');
 const { loadSlim, loadState, loadQueue, buildDropMatcher, removedNames, ITEM_KINDS } = require('./config');
 const { pluginVersion, VERSIONED_MANIFESTS } = require('../transforms/overlays');
+const { tierViolations, ownCollisions, collisionMessage, libraryDrift } = require('./library');
 
 const ALLOWED_WORKFLOWS = ['fork-ci.yml', 'fork-sync.yml'];
 
@@ -43,13 +44,12 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Kept prose that still names dropped catalog items: whole-word skill/agent/command names
- * (hyphenated or 6+ chars, to avoid common words) and rules/<pack> paths for rule packs.
- */
-function danglingReferences(slim, queue) {
-  const itemNames = ['skills', 'agents', 'commands'].flatMap(kind => removedNames(slim, queue, kind)).filter(name => name.includes('-') || name.length >= 6);
-  const ruleNames = removedNames(slim, queue, 'rules');
+function libraryNameSet(slim) {
+  return new Set(['skills', 'agents', 'commands'].flatMap(kind => (slim[kind] && slim[kind].library) || []));
+}
+
+/** Whole-word item names and rules/<pack> paths found in kept prose. */
+function proseHits(slim, itemNames, ruleNames) {
   const patterns = [];
   if (itemNames.length) patterns.push(`(?<![\\w-])(${itemNames.map(escapeRegex).join('|')})(?![\\w-])`);
   if (ruleNames.length) patterns.push(`rules/(${ruleNames.map(escapeRegex).join('|')})(?![\\w-])`);
@@ -66,10 +66,29 @@ function danglingReferences(slim, queue) {
   return [...new Set(hits)];
 }
 
+const isDistinctive = name => name.includes('-') || name.length >= 6;
+
+/**
+ * Kept prose that still names dropped catalog items: whole-word skill/agent/command names
+ * (hyphenated or 6+ chars, to avoid common words) and rules/<pack> paths for rule packs.
+ * Library items are reported separately by libraryReferences.
+ */
+function danglingReferences(slim, queue) {
+  const library = libraryNameSet(slim);
+  const itemNames = ['skills', 'agents', 'commands'].flatMap(kind => removedNames(slim, queue, kind)).filter(name => !library.has(name) && isDistinctive(name));
+  return proseHits(slim, itemNames, removedNames(slim, queue, 'rules'));
+}
+
+/** Kept prose that names library items (installable per project with skill-advisor). */
+function libraryReferences(slim) {
+  return proseHits(slim, [...libraryNameSet(slim)].filter(isDistinctive), []);
+}
+
 const SHIPPED_PREFIXES = [
   'skills/',
   'agents/',
   'commands/',
+  'library/',
   'rules/',
   'hooks/',
   'scripts/',
@@ -167,6 +186,12 @@ function runChecks({ drift = false, kimi = true, since = process.env.FORK_VERIFY
     const uncovered = listFiles(state.lastUpstreamRef).filter(file => !trackedSet.has(file) && !isDropped(file));
     if (uncovered.length) errors.push(`fork-deleted paths outside the drop set (${uncovered.length}): ${uncovered.slice(0, 10).join(', ')}`);
   }
+  errors.push(...tierViolations(slim));
+  errors.push(...libraryDrift(slim, tracked));
+  if (state.lastUpstreamRef) {
+    const collisions = ownCollisions(slim, listFiles(state.lastUpstreamRef));
+    if (collisions.length) errors.push(collisionMessage(collisions));
+  }
 
   const workflows = exists('.github/workflows') ? fs.readdirSync(path.join(REPO_ROOT, '.github/workflows')).sort() : [];
   if (JSON.stringify(workflows) !== JSON.stringify(ALLOWED_WORKFLOWS)) {
@@ -204,7 +229,9 @@ function runChecks({ drift = false, kimi = true, since = process.env.FORK_VERIFY
   errors.push(...bumpCheck(state, since));
   const dangling = danglingReferences(slim, queue);
   if (dangling.length) warnings.push(`kept prose names dropped items (${dangling.length}), e.g. ${dangling.slice(0, 5).join('; ')}`);
+  const libraryMentions = libraryReferences(slim);
+  if (libraryMentions.length) warnings.push(`kept prose names library items (${libraryMentions.length}), e.g. ${libraryMentions.slice(0, 5).join('; ')}`);
   return { errors, warnings };
 }
 
-module.exports = { runChecks, scriptReferences, danglingReferences, bumpCheck, ALLOWED_WORKFLOWS };
+module.exports = { runChecks, scriptReferences, danglingReferences, libraryReferences, bumpCheck, ALLOWED_WORKFLOWS };

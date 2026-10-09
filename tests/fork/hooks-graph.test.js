@@ -149,7 +149,7 @@ test('block-no-verify still blocks git commit --no-verify', () => {
   assert.ok(isDenied(result), `--no-verify was not blocked: ${result.stdout}${result.stderr}`);
 });
 
-test('stop:cost-tracker writes a cost row under the allowlist', () => {
+test('stop:cost-tracker writes a cost row exactly when allowlisted', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-hooks-'));
   const transcript = path.join(home, 'transcript.jsonl');
   fs.writeFileSync(transcript, `${JSON.stringify({ type: 'assistant', message: { model: 'claude-sonnet', usage: { input_tokens: 10, output_tokens: 5 } } })}\n`);
@@ -164,7 +164,8 @@ test('stop:cost-tracker writes a cost row under the allowlist', () => {
     timeout: 20000,
   });
   assert.strictEqual(result.status, 0, result.stderr);
-  assert.ok(fs.existsSync(path.join(home, '.claude', 'metrics', 'costs.jsonl')), 'costs.jsonl not written');
+  const allowed = setup.hooks.allow.includes('stop:cost-tracker');
+  assert.strictEqual(fs.existsSync(path.join(home, '.claude', 'metrics', 'costs.jsonl')), allowed, `costs.jsonl written=${!allowed} but allowlisted=${allowed}`);
 });
 
 console.log(`\nPassed: ${passed}`);

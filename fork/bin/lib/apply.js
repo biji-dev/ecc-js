@@ -2,7 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { REPO_ROOT, listFiles, removePaths, checkoutPaths, stagePaths } = require('./git');
+const { REPO_ROOT, listFiles, removePaths, checkoutPaths, stagePaths, showBlob } = require('./git');
+const { materialiseLibrary } = require('./library');
 const { buildDropMatcher, keptItemMatcher } = require('./config');
 const { createMatcher } = require('./glob');
 const { runTransforms } = require('../transforms');
@@ -35,7 +36,8 @@ function restoreSnapshot(saved) {
  *   1. reset derived files to the ref (they are regenerated below),
  *   2. remove every tracked path in the drop set,
  *   3. restore kept items and keep paths that are missing from the tree,
- *   4. regenerate derived files and stage every output.
+ *   4. rewrite library/ from the ref,
+ *   5. regenerate derived files and stage every output.
  * If a transform throws, derived and generated files are restored to their prior contents.
  */
 function applyDecisions({ ref, slim, state, queue, log = () => {} }) {
@@ -64,9 +66,14 @@ function applyDecisions({ ref, slim, state, queue, log = () => {} }) {
     checkoutPaths(ref, toRestore);
     log(`restored ${toRestore.length} kept item, keep path and test files from ${ref}`);
 
+    const library = materialiseLibrary({ slim, refFiles: [...refFiles], readBlob: file => showBlob(ref, file), root: REPO_ROOT });
+    stagePaths(['library']);
+    const gone = library.missing.map(item => `${item.kind}:${item.name}`);
+    log(`materialised ${library.written.length} library files${gone.length ? `; gone upstream (move to drop): ${gone.join(', ')}` : ''}`);
+
     const report = runTransforms(slim, state, log);
     stagePaths([...(slim.derived || []), ...GENERATED_EXTRA]);
-    return { removed: toRemove.length, restored: toRestore.length, derived: derived.length, transforms: report };
+    return { removed: toRemove.length, restored: toRestore.length, derived: derived.length, library, transforms: report };
   } catch (error) {
     restoreSnapshot(saved);
     stagePaths([...saved.keys()]);

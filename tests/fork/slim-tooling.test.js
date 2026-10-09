@@ -3,11 +3,15 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { materialiseLibrary, tierViolations, ownCollisions, libraryDrift } = require('../../fork/bin/lib/library');
 
 const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
-const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED } = require('../../fork/bin/lib/config');
+const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED, forkOwnedPatterns } = require('../../fork/bin/lib/config');
 const { diffInventory } = require('../../fork/bin/lib/inventory');
-const { pruneDecided } = require('../../fork/bin/lib/queue');
+const { pruneDecided, suggest } = require('../../fork/bin/lib/queue');
 
 let passed = 0;
 let failed = 0;
@@ -160,6 +164,142 @@ test('decided queue entries are pruned', () => {
     queue.entries.map(entry => entry.name),
     ['undecided']
   );
+});
+
+console.log('\n=== fork library tier and own items ===\n');
+
+const libSlim = {
+  ...slim,
+  skills: { ...slim.skills, library: ['postgres-patterns'] },
+  agents: { ...slim.agents, library: ['a11y-architect'] }
+};
+
+test('library items leave their upstream paths and mirrors, library/ stays', () => {
+  const isDropped = buildDropMatcher(libSlim, { entries: [] });
+  assert.ok(isDropped('skills/postgres-patterns/SKILL.md'));
+  assert.ok(isDropped('.agents/skills/postgres-patterns/SKILL.md'));
+  assert.ok(isDropped('agents/a11y-architect.md'));
+  assert.ok(!isDropped('library/skills/postgres-patterns/SKILL.md'));
+  assert.ok(!isDropped('library/agents/a11y-architect.md'));
+});
+
+test('library names are known, so they are never queued as new', () => {
+  const inventory = { skills: ['react-patterns', 'postgres-patterns'], agents: ['code-reviewer'], commands: ['plan'], rules: ['typescript'], hookIds: ['session:start'] };
+  const { added } = diffInventory(libSlim, { entries: [] }, inventory);
+  assert.deepStrictEqual(added.skills, []);
+});
+
+test('a library item gone upstream is reported apart from blocking GONE items', () => {
+  const inventory = { skills: ['react-patterns'], agents: ['code-reviewer', 'a11y-architect'], commands: ['plan'], rules: ['typescript'], hookIds: ['session:start'] };
+  const { gone, goneLibrary } = diffInventory(libSlim, { entries: [] }, inventory);
+  assert.deepStrictEqual(gone.skills, []);
+  assert.deepStrictEqual(goneLibrary.skills, [{ name: 'postgres-patterns' }]);
+  assert.deepStrictEqual(goneLibrary.agents, []);
+});
+
+test('a library decision prunes the queue entry', () => {
+  const queue = { entries: [{ kind: 'skills', name: 'postgres-patterns', status: 'pending' }] };
+  assert.strictEqual(pruneDecided(libSlim, queue), 1);
+});
+
+test('queueHints libraryRegex suggests the library tier', () => {
+  const hinted = { ...slim, queueHints: { dropRegex: '^django', libraryRegex: 'postgres', keepRegex: 'react' } };
+  assert.strictEqual(suggest(hinted, 'skills', 'postgres-tuning', 'tune queries').suggestion, 'library:stack');
+  assert.strictEqual(suggest(hinted, 'skills', 'django-admin', '').suggestion, 'drop:stack');
+});
+
+test('unprefixed own items are fork-owned and never dropped', () => {
+  const owned = { ...slim, skills: { ...slim.skills, own: ['skill-advisor'] }, paths: { ...slim.paths, drop: [...slim.paths.drop, 'skills/skill-advisor/**'] } };
+  const isForkOwned = createMatcher(forkOwnedPatterns(owned));
+  assert.ok(isForkOwned('skills/skill-advisor/SKILL.md'));
+  assert.ok(isForkOwned('skills/skill-advisor/scripts/collect.js'));
+  assert.ok(isForkOwned('.agents/skills/skill-advisor/SKILL.md'));
+  assert.ok(isForkOwned('library/skills/postgres-patterns/SKILL.md'));
+  assert.ok(!isForkOwned('skills/react-patterns/SKILL.md'));
+  assert.ok(!buildDropMatcher(owned, { entries: [] })('skills/skill-advisor/SKILL.md'));
+  assert.ok(FORK_OWNED.includes('library/**'));
+});
+
+console.log('\n=== fork library materialise ===\n');
+
+function tempRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'fork-lib-'));
+}
+
+function writeFile(root, rel, content) {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), content);
+}
+
+test('library items are materialised from the ref and stale files removed', () => {
+  const root = tempRoot();
+  writeFile(root, 'library/skills/old-skill/SKILL.md', 'stale');
+  writeFile(root, 'library/skills/postgres-patterns/references/gone.md', 'stale');
+  const blobs = {
+    'skills/postgres-patterns/SKILL.md': 'pg',
+    'skills/postgres-patterns/references/a.md': 'ref',
+    'agents/a11y-architect.md': 'a11y',
+    'skills/react-patterns/SKILL.md': 'not library'
+  };
+  const result = materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => Buffer.from(blobs[file]), root });
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/SKILL.md'), 'utf8'), 'pg');
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/references/a.md'), 'utf8'), 'ref');
+  assert.strictEqual(fs.readFileSync(path.join(root, 'library/agents/a11y-architect.md'), 'utf8'), 'a11y');
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/old-skill')));
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns/references/gone.md')));
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/react-patterns')));
+  assert.deepStrictEqual(result.missing, []);
+  assert.strictEqual(result.written.length, 3);
+});
+
+test('binary files are materialised byte for byte', () => {
+  const root = tempRoot();
+  const bytes = Buffer.from([0xff, 0x00, 0x89, 0x50, 0x4e, 0x47]);
+  const blobs = { 'skills/postgres-patterns/SKILL.md': Buffer.from('pg'), 'skills/postgres-patterns/assets/diagram.png': bytes };
+  materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => blobs[file], root });
+  assert.ok(fs.readFileSync(path.join(root, 'library/skills/postgres-patterns/assets/diagram.png')).equals(bytes));
+});
+
+test('a library item missing at the ref is reported, not written', () => {
+  const root = tempRoot();
+  const result = materialiseLibrary({ slim: libSlim, refFiles: ['agents/a11y-architect.md'], readBlob: () => Buffer.from('a11y'), root });
+  assert.deepStrictEqual(result.missing, [{ kind: 'skills', name: 'postgres-patterns' }]);
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns')));
+});
+
+test('a prefix-sharing skill is not pulled into another library item', () => {
+  const root = tempRoot();
+  const blobs = { 'skills/postgres-patterns/SKILL.md': 'pg', 'skills/postgres-patterns-extra/SKILL.md': 'other' };
+  materialiseLibrary({ slim: libSlim, refFiles: Object.keys(blobs), readBlob: file => Buffer.from(blobs[file]), root });
+  assert.ok(!fs.existsSync(path.join(root, 'library/skills/postgres-patterns-extra')));
+  assert.deepStrictEqual(fs.readdirSync(path.join(root, 'library/skills/postgres-patterns')), ['SKILL.md']);
+});
+
+console.log('\n=== fork tier checks and collisions ===\n');
+
+test('an item in two tiers and an unkept pinned item are violations', () => {
+  assert.deepStrictEqual(tierViolations(libSlim), []);
+  const twice = { ...libSlim, skills: { ...libSlim.skills, keep: [...libSlim.skills.keep, 'postgres-patterns'] } };
+  assert.deepStrictEqual(tierViolations(twice), ['skills:postgres-patterns is in both keep and library']);
+  const unkeptPin = { ...libSlim, skills: { ...libSlim.skills, pinned: ['postgres-patterns'] } };
+  assert.deepStrictEqual(tierViolations(unkeptPin), ['pinned skills:postgres-patterns must be in keep (is library)']);
+});
+
+test('own items colliding with upstream names are reported', () => {
+  const owned = { ...slim, skills: { ...slim.skills, own: ['skill-advisor'] }, agents: { ...slim.agents, own: ['my-agent'] } };
+  assert.deepStrictEqual(ownCollisions(owned, ['skills/react-patterns/SKILL.md', 'agents/other.md']), []);
+  assert.deepStrictEqual(
+    ownCollisions(owned, ['skills/skill-advisor/SKILL.md', 'agents/my-agent.md', 'skills/skill-advisor-pro/SKILL.md']),
+    ['skills:skill-advisor', 'agents:my-agent']
+  );
+});
+
+test('library drift reports unmaterialised items and stray files', () => {
+  const tracked = ['library/skills/postgres-patterns/SKILL.md', 'library/skills/stray/SKILL.md', 'skills/react-patterns/SKILL.md'];
+  assert.deepStrictEqual(libraryDrift(libSlim, tracked), [
+    'library agents:a11y-architect is not materialised at library/agents/a11y-architect.md (gone upstream? move it to drop)',
+    'library/ holds files of no library item (1): library/skills/stray/SKILL.md'
+  ]);
 });
 
 console.log(`\nPassed: ${passed}`);

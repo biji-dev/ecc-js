@@ -52,6 +52,13 @@ function checkoutPaths(ref, paths) {
   return unique.length;
 }
 
+/** Raw bytes of a file at a ref, or null when the ref has no such file. Binary safe. */
+function showBlob(ref, filePath) {
+  const result = spawnSync('git', ['show', `${ref}:${filePath}`], { cwd: REPO_ROOT, maxBuffer: 256 * 1024 * 1024 });
+  if (result.error) throw result.error;
+  return result.status === 0 ? result.stdout : null;
+}
+
 /**
  * Existence check against git-tracked paths (a file, or a directory with tracked files).
  * Untracked leftovers on disk (ignored node_modules, emptied dirs) do not count.
@@ -107,6 +114,7 @@ module.exports = {
   listFiles,
   removePaths,
   checkoutPaths,
+  showBlob,
   stagePaths,
   createTrackedExists,
   revParse,

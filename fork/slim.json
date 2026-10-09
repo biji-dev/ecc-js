@@ -310,7 +310,9 @@
       "design-system",
       "continuous-learning-v2"
     ],
-    "own": []
+    "own": [
+      "skill-advisor"
+    ]
   },
   "agents": {
     "keep": [
@@ -672,7 +674,8 @@
       "examples/eval-harness/**",
       "the-longform-guide.md",
       "the-shortform-guide.md",
-      "docs/ECC-JS.md"
+      "docs/ECC-JS.md",
+      "docs/superpowers/**"
     ]
   },
   "tests": {

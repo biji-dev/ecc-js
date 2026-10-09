@@ -21,12 +21,14 @@ const ITEM_PATTERNS = {
 
 /**
  * Fork-owned paths: never merged from upstream, restored from HEAD after merges.
- * Own catalog items use the biji- prefix so upstream can never add a same-named item.
+ * library/ is regenerated from upstream by fork:apply. Own items are fork-owned by name
+ * (see forkOwnedPatterns); the biji-* patterns remain for older own items.
  */
 const FORK_OWNED = [
   'fork/**',
   'tests/fork/**',
   'ecc/**',
+  'library/**',
   'FORK.md',
   'docs/ECC-JS.md',
   '.github/workflows/fork-*.yml',
@@ -87,14 +89,35 @@ function pendingNames(queue, kind) {
  */
 function removedNames(slim, queue, kind) {
   const section = slim[kind] || {};
-  const decided = new Set([...(section.keep || []), ...(section.own || []), ...Object.keys(section.drop || {})]);
+  const library = section.library || [];
+  const decided = new Set([...(section.keep || []), ...(section.own || []), ...library, ...Object.keys(section.drop || {})]);
   const pending = pendingNames(queue, kind).filter(name => !decided.has(name));
-  return [...new Set([...Object.keys(section.drop || {}), ...pending])];
+  return [...new Set([...Object.keys(section.drop || {}), ...library, ...pending])];
 }
 
 function knownNames(slim, queue, kind) {
   const section = slim[kind] || {};
-  return new Set([...(section.keep || []), ...(section.own || []), ...Object.keys(section.drop || {}), ...pendingNames(queue, kind)]);
+  return new Set([
+    ...(section.keep || []),
+    ...(section.own || []),
+    ...(section.library || []),
+    ...Object.keys(section.drop || {}),
+    ...pendingNames(queue, kind)
+  ]);
+}
+
+/** FORK_OWNED plus the item paths (and skill mirrors) of every own item in slim.json. */
+function forkOwnedPatterns(slim) {
+  const patterns = [...FORK_OWNED];
+  for (const kind of ITEM_KINDS) {
+    for (const name of (slim[kind] && slim[kind].own) || []) {
+      patterns.push(...ITEM_PATTERNS[kind](name));
+      if (kind === 'skills') {
+        for (const mirror of slim.mirrors || []) patterns.push(`${mirror.replace('{name}', name)}/**`);
+      }
+    }
+  }
+  return patterns;
 }
 
 /**
@@ -125,7 +148,7 @@ function buildDropMatcher(slim, queue = loadQueue()) {
     }
   }
   const isDropPattern = createMatcher(patterns);
-  const isKeepPattern = createMatcher([...((slim.paths && slim.paths.keep) || []), ...FORK_OWNED]);
+  const isKeepPattern = createMatcher([...((slim.paths && slim.paths.keep) || []), ...forkOwnedPatterns(slim)]);
   return filePath => isDropPattern(filePath) && !isKeepPattern(filePath);
 }
 
@@ -151,6 +174,7 @@ module.exports = {
   ITEM_KINDS,
   ITEM_PATTERNS,
   FORK_OWNED,
+  forkOwnedPatterns,
   readJson,
   writeJson,
   loadSlim,

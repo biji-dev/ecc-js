@@ -39,7 +39,7 @@ upgrade keeps an existing runner's name through the manifest's `roles`.
 
 ## Task type first — before the tier
 
-`[M]` Classify by **what will change** — `git status --porcelain` (staged,
+`[M]` Classify by **what will change** — `git status --porcelain -uall` (staged,
 unstaged and untracked) or `git diff --name-only <base>` plus untracked files —
 never by feel. Check in this order; unsure → the heavier type.
 

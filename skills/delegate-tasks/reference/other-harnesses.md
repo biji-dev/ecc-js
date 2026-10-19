@@ -91,14 +91,16 @@ const gateAll = async () => {
   for (const cmd of GATES) out.push({ cmd, r: await runGate(cmd) });
   return out;
 };
-const fence = results.flatMap((r) => r.files); // fixers stay inside what the builders were given
+// [B] the gated specs' Files lists, copied from the spec index — never the builders' reports,
+// which would widen the fence by exactly the files a builder strayed into
+const FENCE = ["src/orders/export.ts", "src/api/orders.ts"];
 let g = await gateAll();
 for (let round = 1; round <= 3 && g.some((x) => x.r.exitCode !== 0); round++) {
   const red = g.filter((x) => x.r.exitCode !== 0)
     .map((x) => `$ ${x.cmd}\n${(x.r.stdout + "\n" + x.r.stderr).slice(-4000)}`) // tsc and turbo print errors to stdout
     .join("\n\n");
   await agent(`fixer round ${round}`, { system: BUILDER }).ask(
-    `These gates failed:\n${red}\nFix the cause, editing only these files: ${fence.join(", ")}. ` +
+    `These gates failed:\n${red}\nFix the cause, editing only these files: ${FENCE.join(", ")}. ` +
       `If the fix belongs elsewhere, report that instead of editing. Do not commit.`,
   );
   g = await gateAll();

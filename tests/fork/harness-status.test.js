@@ -307,6 +307,23 @@ test('secrets in the settings files and the instruction files are found', () => 
   assert.ok(!run(repo, ['--text']).stdout.includes(v));
 });
 
+test('a Phase B draft (marked blocks, no manifest) is not an install, and its policy line is reported', () => {
+  const merge = 'Small merges locally when clean. Trivial lands on its own. Full waits for the owner (tier).';
+  const draft = [
+    '# Agents', '', 'Never-auto policy: DRAFT — owner has not reviewed', '',
+    '<!-- harness:begin policy -->', '- Access control', '<!-- harness:end policy -->', '',
+    '<!-- harness:begin merge -->', merge, '<!-- harness:end merge -->', '',
+  ].join('\n');
+  const r = report(mk({ 'AGENTS.md': draft, 'docs/spec.md': '# spec\n' }));
+  assert.strictEqual(r.lineage.verdict, 'none', JSON.stringify(r.lineage));
+  assert.deepStrictEqual(r.entries, []);
+  assert.ok(!ids(r).includes('lock-missing'), ids(r).join(','));
+  assert.deepStrictEqual(r.policy, [{ path: 'AGENTS.md', status: 'DRAFT' }]);
+  // the same tier text outside any marker block is still a legacy fingerprint
+  const legacy = report(mk({ 'AGENTS.md': `# Agents\n\n${merge}\n` }));
+  assert.strictEqual(legacy.lineage.verdict, 'change');
+});
+
 test('foundation stage: reported, and flagged once tests exist', () => {
   const manifest = (stage) => JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19', modes: ['plan'], ...(stage ? { stage } : {}), entries: [] });
   const docsOnly = mk({ '.agents/harness-manifest.json': manifest('foundation'), 'docs/spec.md': '# spec\n' });

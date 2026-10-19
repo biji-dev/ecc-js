@@ -102,7 +102,8 @@ back** (each rejected finding or recommendation: source, one line, reason).
 `[M]` **Ids:** `DEC-n`, numbered per unit; an open question is `Q-n` until answered,
 then becomes a `DEC` row. Outside the state file, cite it as `<unit>/DEC-n`.
 `[B]` Phase A lists the id prefixes the project already uses (`D-`, `DEC-`, `Q-`);
-pick a prefix that collides with none.
+pick one prefix for decisions and one for questions, each colliding with none — a
+specification often numbers its own open questions `Q-n`.
 > Origin: bare `D-n` ids collided three times across follow-up rows and design
 > decisions in the third project, and one adopting project already numbers its own
 > locked decisions `DEC-n`.

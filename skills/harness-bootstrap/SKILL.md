@@ -44,9 +44,9 @@ use the folder this `SKILL.md` was read from.
 
 | Phase | Read |
 |---|---|
-| 0 · detect, upgrade | `reference/upgrade.md`; run `scripts/harness-status.js`; then the reference each proposed row's fix names, and the Phase C core table (for `missing` rows) |
+| 0 · detect, upgrade | run `scripts/harness-status.js`; `reference/upgrade.md` when it reports an install; then the reference each proposed row's fix names, and the Phase C core table (for `missing` rows) |
 | A · assess, route | the table below; `harness-targets.md` (agents), `scope-guard.md` (id prefixes), `commit-guard.md` (`SCOPE`); `foundation.md` when nothing is built yet |
-| B · policy, risk map, merge policy | `reference/policy-derivation.md` only |
+| B · policy, risk map, merge policy | `reference/policy-derivation.md`; the merge default in `gate-design.md`; the marker syntax in `upgrade.md` |
 | C · generate | `templates/agents-rules.md`, `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
 | C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md` |
 | E · growth | `vendor-skill.md` |
@@ -112,10 +112,12 @@ node <skill dir>/scripts/harness-status.js <repo> --text
 It reports the lineage installed (plan, change, both or none, with the files that
 matched), every manifest entry's status (`unchanged`, `edited`, `reviewed`,
 `scaffold`, `missing`, or `legacy` with no manifest), markers, sizes, id prefixes
-in use, held registry rows, and hazards by id. **Quote it at the top of the
+in use, held registry rows, the policy status line, and hazards by id. **Quote it at the top of the
 decision sheet** — or of the Phase A assessment when nothing is installed.
 
 - **Nothing installed** → Phase A.
+- **Lineage `none`, no manifest, and a policy line** → a Phase B draft from an earlier
+  session: `DRAFT` → stop for the owner's review; `REVIEWED` → Phase C.
 - **Anything installed → stop for one decision sheet** before writing anything:
   `Path[#block] | Lineage | Status | Proposed | Default`. Unchanged generated
   files default to replace; edited, reviewed, scaffold and legacy entries default
@@ -208,7 +210,8 @@ Also list here:
   Phase C maps the harness onto them, by their names, instead of adding competing
   ones;
 - a **governed document set** (a register, versioned specifications): ask where the
-  harness's docs live — outside it, unless the owner registers them;
+  harness's docs live — default `harness/` at the root, outside the set, unless the
+  owner registers them;
 - whether units run in the main checkout or in worktrees (`git worktree list`; no
   units yet → the main checkout, `SCOPE=repo`, unless the owner says worktrees).
 
@@ -219,10 +222,13 @@ wrong and ships, can it be corrected forward?* — the output rules, two worked
 examples whose right answers differed, and how the same test yields the **risk
 map** (hot modules, critical code, cold modules, each entry citing its evidence)
 and the **merge policy** (the generated default: Small merges locally when clean;
-Full, never-auto and taste calls wait for the owner; push is always the owner's).
+Full, never-auto and taste calls — copy, naming, visual identity — wait for the
+owner; push is always the owner's).
 This is the piece that cannot be templated.
 
-Write all three into the harness file under one status line, placed directly above
+Write all three into the **harness file** — the instruction file every agent reads,
+`AGENTS.md` by default, created now if the project has only `CLAUDE.md`
+(`harness-targets.md`) — under one status line, placed directly above
 the `policy` block and outside its markers (so flipping it never edits a block):
 
 ```
@@ -230,7 +236,7 @@ Never-auto policy: DRAFT — owner has not reviewed
 ```
 
 **Do not commit it**, and stop. The owner reads it and changes the line to
-`REVIEWED <date>`. A policy adopted without being read is not a policy.
+`REVIEWED <YYYY-MM-DD>`. A policy adopted without being read is not a policy.
 
 ### Phase C — Generate
 
@@ -297,7 +303,8 @@ fresh clone is unguarded until it runs and the registry is recreated.
 
 **Project rules tighten the defaults, never loosen them.** Where the project's
 documents require more than a tier's default steps — every change reviewed by
-another agent, every merge by a human — the generated tiers and runner carry the
+another agent, every merge by a human, the owner's review of one kind of change
+(that kind is Full, its Gate 2 the owner's) — the generated tiers and runner carry the
 stricter rule, Trivial included. Units that are not plan items (harness work,
 vendor-trap skills, follow-ups no unit owns) run on `harness/<slug>` branches matched
 by the registry's `Branch` cell; write paths with `<unit>`, never the plan's id
@@ -363,17 +370,18 @@ contradicts.
 Outcome: refused. Add a test command that fails when the billing code is broken, then rerun.
 ```
 
-**New repository, documents only.** Twenty documents, a build plan with story ids
-`EP-nn.nn`, no code. Row 1 fails because nothing is built; rows 2 and 3 pass from
-the plan (postings, roles, migrations); row 6 is the plan's protected-areas list.
+**New repository, documents only.** A specification and a build plan with story
+ids, no code. Row 1 fails because nothing is built; rows 2 and 3 pass from the plan
+and its named owner; row 6 is whatever the documents say needs the owner's approval.
 The closing line offers the **foundation stage** (default) beside the readiness
-plan. The owner takes it: Phase B derives five never-auto categories and a risk map
-of planned paths from the documents; Phase C installs the guard bound to
-`EP-[0-9]+\.[0-9]+`, the runner, the auditors and `run-gates.sh` with lint and
-format only. The plan's first two foundation stories run as Full units merged by the
-owner — the skeleton, then the first package with tests, "done when the test command
-runs at least one test and was seen red once". A `harness/` unit then flips the
-stage: counted test gates, the first covered rows, Small unlocked.
+plan. The owner takes it: Phase B derives the never-auto categories and a risk map
+of planned paths from the documents, and asks which story is the pass-signal unit;
+Phase C installs the guard bound to the plan's own id shape, the runner, the
+auditors and `run-gates.sh` with the agent-docs lint, the only gate that exists yet.
+The plan's foundation stories run as Full units merged by the owner, up to the
+pass-signal unit — "done when the test command runs at least one test and was seen
+red once". A `harness/` unit then flips the stage: counted test gates, the first
+covered rows, Small unlocked.
 
 **Change-mode install.** A production repository with CI, change requests and no
 plan: Phase A routes to change mode with `SCOPE=checkout` (units run in worktrees);

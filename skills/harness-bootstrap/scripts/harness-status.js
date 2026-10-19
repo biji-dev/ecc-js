@@ -448,10 +448,12 @@ function buildReport() {
       if (t !== null && t.includes('Missed by harness')) plan.push(`${f}: contains "Missed by harness"`);
     }
   }
+  // a marked block is this skill's own output (a Phase B draft has no manifest yet), never a legacy fingerprint
   for (const f of docFiles()) {
-    const t = read(f);
-    if (t === null) continue;
-    const hasTierRow = norm(t).split('\n').some(l => /\b(Trivial|Hot-small)\b/.test(l));
+    const raw = read(f);
+    if (raw === null) continue;
+    const t = stripMarkerBlocks(raw);
+    const hasTierRow = t.split('\n').some(l => /\b(Trivial|Hot-small)\b/.test(l));
     if (hasTierRow && /\btier\b/i.test(t) && /\bFull\b/.test(t)) change.push(`${f}: tier table`);
   }
   let verdict = plan.length && change.length ? 'both' : plan.length ? 'plan' : change.length ? 'change' : 'none';
@@ -647,9 +649,13 @@ function buildReport() {
   }
 
   // never-auto policy status
+  const policy = [];
   for (const rel of docFiles()) {
     const t = read(rel);
-    if (t === null || !NEVER_AUTO.test(t) || POLICY_STATUS.test(t)) continue;
+    if (t === null) continue;
+    const status = t.match(POLICY_STATUS);
+    if (status) policy.push({ path: rel, status: status[1] });
+    if (!NEVER_AUTO.test(t) || status) continue;
     const heading = norm(t).split('\n').findIndex(l => /^#{1,6}\s/.test(l) && /never.?auto/i.test(l));
     haz('policy-no-status', 'has a never-auto section but no "Never-auto policy: DRAFT|REVIEWED" line', rel, heading >= 0 ? heading + 1 : lineOf(t, NEVER_AUTO));
   }
@@ -678,6 +684,7 @@ function buildReport() {
     sizes,
     ids,
     registry,
+    policy,
     hazards,
   };
 }
@@ -824,6 +831,7 @@ function renderText(r) {
   out.push(r.registry
     ? `registry: ${r.registry.held} held row(s)${r.registry.scope === 'whole-file' ? ' (no active markers: counted the whole file)' : ''}`
     : 'registry: absent');
+  out.push(`policy: ${r.policy.length ? r.policy.map(p => `${p.path} ${p.status}`).join(', ') : 'no status line'}`);
   out.push('');
   if (!r.hazards.length) {
     out.push('hazards: none');

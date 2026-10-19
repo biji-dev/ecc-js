@@ -4,9 +4,9 @@ A new repository often starts as documents only: a specification, a build plan, 
 owner. Phase A row 1 fails — there is no test to see red — and the older answer was
 to refuse with a readiness plan and install later. **Evidence:** one
 specification-only repository, refused that way, landed its first three units within
-eleven minutes of the refusal — the repository skeleton, the shared contract every
-screen depends on (critical code), and a change request touching posting logic (a
-never-auto category) — with no lock, no never-auto gate, no independent review and
+eleven minutes of the refusal — the repository skeleton, a shared module every
+later unit builds on (critical code), and a change touching a never-auto category —
+with no lock, no never-auto gate, no independent review and
 no log row. The policy, risk map and merge policy derived for it later needed no
 code: every entry came from its documents.
 
@@ -38,7 +38,8 @@ and a repository whose only work is trivial. Those keep the readiness plan.
 `[M]` **Offer both, default foundation.** The Phase A closing line names the choice:
 *foundation stage now* (default) — the harness gates the readiness units — or
 *readiness plan first* — the owner runs them as ordinary work and Phase A is rerun
-after. The owner's answer is recorded in the decision log.
+after. Record the owner's answer beside the Phase B status line; Phase C copies it
+into the decision log it creates.
 
 ## Phase B — unchanged
 
@@ -53,15 +54,15 @@ Phase C refuses while the line says `DRAFT`, as always.
 
 | Component | Foundation stage |
 |---|---|
-| `scripts/run-gates.sh` | installed with the gates that exist now — lint, format, type check, the agent-docs lint — and **no** counted test gate; every `gate_counted` line waits for the flip |
+| `scripts/run-gates.sh` | installed with the gates that exist now — the agent-docs lint at least; lint, format and type check only once the project has them — and **no** counted test gate; every `gate_counted` line waits for the flip |
 | coverage map (gate table) | one row: **uncovered — every path** |
 | tiers block | Trivial and Full only; Small is written in and marked *unlocked at the flip* |
 | merge block | first line: *Foundation stage: every merge is the owner's* |
 | `.agents/harness-manifest.json` | `"stage": "foundation"` and the pass-signal unit's id in `"flipAfter"` |
 
-Everything else ships as in any install — the registry and commit guard, the
-command guard, the runner, the three auditors, the implementer, the rules block,
-the harness docs, the context hook, the second-family wrapper. **This is not a
+Everything else follows the core table as in any install — the registry and commit
+guard, the command guard, the runner, the three auditors, the implementer, the rules
+block, the harness docs — and the optional rows as the owner answers them. **This is not a
 partial harness:** it is complete for what exists, and it can merge nothing on its
 own.
 
@@ -74,14 +75,18 @@ own.
 2. **No auto-merge.** Gate 2 is always the owner's, whatever the merge policy says
    for later.
 3. **The readiness units are the first units.** Take them from the plan's own
-   foundation stories — the skeleton, then the first package with tests — in the
-   plan's order. Gate 1 of the pass-signal unit approves its "Done when" as the
+   foundation stories — the skeleton, then the first story that can ship a test — in
+   the plan's order. When no story says which, Phase B asks the owner to name the
+   pass-signal unit, defaulting to the earliest story whose "Done when" can be a
+   counted test. Gate 1 of the pass-signal unit approves its "Done when" as the
    row-1 test: *`<test command>` runs at least one test, counted, and was seen red
    once*.
 4. **A unit that adds tests proves them.** The claim auditor re-counts them and runs
    the sabotage; a suite that runs nothing is a false claim, not a gap.
 5. **Planned paths become real ones.** When a planned risk-map path first gets code,
-   the re-derive trigger in the risk-map block fires (`policy-derivation.md`).
+   the re-derive trigger in the risk-map block fires (`policy-derivation.md`). When
+   the plan calls its paths working names, the skeleton unit fixes them, and the
+   risk map is renamed to match before the next unit claims a row.
 
 ## The flip — stage 2
 

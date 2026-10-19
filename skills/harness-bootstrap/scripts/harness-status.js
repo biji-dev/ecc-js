@@ -286,6 +286,57 @@ function registryHeld() {
   return { path: '.claude/registry.md', held, scope: scoped ? 'active-markers' : 'whole-file' };
 }
 
+/** The installed guard and its ID_PATTERN: { file, pattern } for the first candidate with an
+ *  ID_PATTERN='...' line (hooks dir, a guard named in husky / lefthook, .githooks, scripts), else null. */
+function guardIdPattern() {
+  const re = /^ID_PATTERN='([^']*)'/m;
+  const found = (file, text) => {
+    const m = text === null ? null : re.exec(norm(text));
+    return m ? { file, pattern: m[1] } : null;
+  };
+  const hookFile = path.join(hooksDir(), 'pre-commit');
+  const inRepo = path.relative(REPO, hookFile).split(path.sep).join('/');
+  const hit = found(inRepo && !inRepo.startsWith('..') && !path.isAbsolute(inRepo) ? inRepo : hookFile, readAbs(hookFile));
+  if (hit) return hit;
+  for (const src of ['.husky/pre-commit', 'lefthook.yml']) {
+    const text = read(src);
+    const named = text === null ? null : /[\w./-]*harness-guard\.sh/.exec(text);
+    const rel = named ? safeRel(named[0]) : null;
+    const got = rel ? found(rel, read(rel)) : null;
+    if (got) return got;
+  }
+  for (const rel of ['.githooks/harness-guard.sh', 'scripts/harness-guard.sh']) {
+    const got = found(rel, read(rel));
+    if (got) return got;
+  }
+  return null;
+}
+
+/** Cells of a registry data row: the trimmed text between its pipes. */
+function tableCells(line) {
+  const t = line.trim();
+  if (!t.startsWith('|')) return null;
+  return t.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+
+/** Registry table cells inside the active markers (else the whole file), header and separator rows left out. */
+function registryCells() {
+  const text = read('.claude/registry.md');
+  if (text === null) return [];
+  const ls = norm(text).split('\n');
+  const b = ls.findIndex(l => l.includes('<!-- harness:active -->'));
+  const e = ls.findIndex(l => l.includes('<!-- /harness:active -->'));
+  const rows = b >= 0 && e > b ? ls.slice(b + 1, e) : ls;
+  const isSep = l => /^\s*\|[\s|:-]*-[\s|:-]*$/.test(l);
+  const out = [];
+  rows.forEach((l, i) => {
+    const cells = tableCells(l);
+    if (!cells || isSep(l) || (i + 1 < rows.length && isSep(rows[i + 1]))) return;
+    out.push(...cells);
+  });
+  return out;
+}
+
 /** Section of a lefthook.yml below a top-level `key:` (up to the next top-level key). */
 function lefthookSection(text, key) {
   const ls = norm(text).split('\n');
@@ -492,6 +543,39 @@ function buildReport() {
     }
   } else if (verdict !== 'none' || manifest) {
     haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', '.claude/registry.md');
+  }
+
+  // the guard's ID_PATTERN must take whole task ids: it is cut short by '.' or a trailing alnum run
+  const guardId = guardIdPattern();
+  if (guardId && guardId.pattern !== '') {
+    let idRe = null;
+    try { idRe = new RegExp(guardId.pattern); } catch { idRe = null; }
+    if (!idRe) {
+      haz('id-pattern-invalid', `ID_PATTERN '${guardId.pattern}' is not a valid expression`, guardId.file);
+    } else {
+      const cut = [];
+      const continues = ch => ch !== undefined && /[A-Z0-9.]/.test(ch); // the id goes on past the match
+      const refs = gitOut(['for-each-ref', 'refs/heads', '--format=%(refname:short)']);
+      for (const name of refs ? refs.split('\n').filter(Boolean) : []) {
+        const s = name.toUpperCase();
+        const m = s.match(idRe);
+        if (m && m[0] !== '' && continues(s[m.index + m[0].length])) {
+          const run = /^[A-Z0-9.-]+/.exec(s.slice(m.index))[0];
+          cut.push(`branch '${name}': ID_PATTERN takes '${m[0]}' from '${run}'`);
+        }
+      }
+      for (const cell of registryCells()) {
+        if (!cell || /\s/.test(cell) || cell.includes('/')) continue;
+        const c = cell.toUpperCase();
+        const m = c.match(idRe);
+        if (m && m.index === 0 && m[0].length < c.length && continues(c[m[0].length])) {
+          cut.push(`registry id '${cell}': ID_PATTERN takes '${m[0]}'`);
+        }
+      }
+      if (cut.length) {
+        haz('id-pattern-truncates', `${cut.slice(0, 5).join('; ')} — the guard can match these rows only by their Branch cell, never by id; bind ID_PATTERN to the full id shape`, guardId.file);
+      }
+    }
   }
 
   // skills

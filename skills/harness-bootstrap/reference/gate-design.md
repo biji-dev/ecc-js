@@ -23,7 +23,7 @@ line. **Unsure → the heavier tier.**
 |---|---|
 | **Trivial** | a typo, a comment, a one-line config value, a rename with no semantic change |
 | **Small** | a local change outside critical code, no never-auto category, no new dependency, no shared contract |
-| **Full** | critical code, a never-auto category, more than one module, a new external dependency, a shared contract or schema, a migration, the owner's taste call, or the largest size in the plan |
+| **Full** | critical code, a never-auto category, more than one module, a new external dependency, a shared contract or schema, a migration, the owner's taste call, the largest size in the plan, or a path no gate covers yet (the coverage map, SKILL.md Phase A) |
 | *Hot-small* | `[B]` **empty slot, earned** — see below |
 
 `[M]` **One scale for both modes.** Plan mode's former Standard track is Small; its
@@ -81,7 +81,8 @@ generated default:
 - **Small merges locally on its own** when conformance has no blocking gap, no P0 or
   P1 is unresolved from reviewers or lane B, this round's FULL verify shows every
   gate PASS, every step the tier requires is `ran` in the ledger, nothing is
-  `degraded`, and the run re-verified if the mainline moved since.
+  `degraded`, the diff touches no path the coverage map leaves uncovered, and the run
+  re-verified if the mainline moved since.
 - **Full, any never-auto category, any taste call: the owner merges.**
 - **Push is always the owner's**, every tier.
 

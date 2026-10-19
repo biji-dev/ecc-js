@@ -137,34 +137,66 @@ decision sheet** — or of the Phase A assessment when nothing is installed.
 
 | # | Precondition | Look for | If absent |
 |---|---|---|---|
-| 1 | A **pass signal** that can fail | test scripts or CI config — **run it once** and read its count | **stop** — "done" is unfalsifiable |
+| 1 | A **pass signal** that can fail | test scripts or CI config — **run it once**, read its count, and **see it red once** (break one assertion, run, restore) | **stop** — "done" is unfalsifiable |
 | 2 | A reachable **owner** who answers gates | the person asking, code owners, recent commits | **stop** — gates with nobody behind them are decoration |
 | 3 | **Non-trivial work** | `git log --since=90.days --numstat` against the paths a policy would plainly cover (money, auth, schema, deploy, data deletion); or the plan's tasks; or the owner's stated scope | **stop** if every change was a typo, a config value or docs — the harness would cost more than it catches |
-| 4 | A **unit of work** | a plan with stable ids and dependencies → **plan mode**; change requests, issues, milestones, a change stream, or nothing yet → **change mode** | route, never stop |
-| 5 | A **risk signal** | a per-task size or risk column, or the paths of critical code | present: evidence for Phase B · absent: **Phase B** — the risk map |
-| 6 | A **written** never-auto-merge policy | a security section, locked decisions, a risk register | present: Phase B confirms it · absent: **Phase B** — the usual gap |
+| 4 | A **unit of work** | a plan with stable ids → **plan mode**, its order from a dependency column or else from the plan's phases and checkpoints (say which); code change requests, issues, milestones, a change stream, or nothing yet → **change mode** | route, never stop |
+| 5 | A **risk signal** | a per-task size or risk column, the paths of critical code, or the areas a document says need the owner's approval | present: evidence for Phase B · absent: **Phase B** — the risk map |
+| 6 | A **written** never-auto-merge policy | a security section, locked decisions, a risk register, a protected-areas list | present: Phase B confirms it · absent: **Phase B** — the usual gap |
 
 **Specify properties, not columns.** Never prescribe a plan shape; check the
-property. A pass signal that runs nothing — `exit 0`, no matching files, zero
-tests, every test skipped — is not one; a weak suite passes row 1 but goes into the
-report as a gap. A brand-new repository has no history for row 3: judge it from
-the plan or the owner's stated scope and say so; with neither, **ask** the owner
-for the scope, and stop if there is none. Plan mode also needs an exit condition
-per task; where the plan has none, each unit's Scope block supplies its "Done
-when" at claim (`scope-guard.md`).
+property. **A pass signal is at least one real test that runs and was seen red.**
+Lint, a type check and a format check can fail but test no behaviour: they are
+gates, not the signal. A command that runs nothing is not one either — `exit 0`, no
+matching files, a workspace runner that finds no package with tests
+(`pnpm -r --if-present run test`), zero tests, every test skipped. A weak suite
+passes row 1 but goes into the report as a gap. Plan mode also needs an exit
+condition per task; where the plan has none, each unit's Scope block supplies its
+"Done when" at claim (`scope-guard.md`). **Change requests against the
+specification** — documents the owner decides, not code to build — are not units;
+they stay the owner's, and a unit that hits one stops for it.
+
+**Coverage, per path.** Row 1 holds for the repository; the gates hold for paths.
+List each gate with the paths it exercises, and the paths nothing exercises yet —
+a backend whose tests need a service no runner has, a package with no tests. The
+generated gate table carries this map: a unit that touches an uncovered path is
+**Full and never auto-merges** until a gate covers it.
 
 **The assessment is a table, not prose:** `Precondition | Evidence (file, path or
-line) | Verdict (pass · route · Phase B · ask · stop)`, then one closing line: the
-mode when eligible, or what to write first when refused. A pass without cited
-evidence was not assessed. If 1, 2 or 3 fail, **stop and say what to write
-first.** Never install a partial harness.
+line) | Verdict (pass · route · Phase B · ask · stop)`, then the coverage map, then
+one closing line: the mode when eligible, or the readiness plan when refused. A
+pass without cited evidence was not assessed. **Never install a partial harness.**
 
-Also list here: the id prefixes already taken (the status script's `ids`, plus a
-search of the plan's own ids — `scope-guard.md`); the agents the project uses (a
-search; none found → ask, default Claude Code plus `AGENTS.md` —
-`harness-targets.md`); and whether units run in the main checkout or in worktrees
-(`git worktree list`; no units yet → the main checkout, `SCOPE=repo`, unless the
-owner says worktrees).
+**A refusal is a readiness plan.** If 1, 2 or 3 fail, write — in the report, not
+the repository — the smallest units that make each failed row pass. Take them from
+the project's own plan where it has one (its foundation stories), else name them.
+Each unit gets a "Done when" that is the row's own test (`pnpm test runs at least
+one test and was seen red once`), what it needs from the owner, and its order. The
+last line is always *rerun Phase A*. The owner runs the units as ordinary work —
+`delegate-tasks` can carry them — and the skill does not install until the rerun
+passes.
+
+**A new repository.** Row 3 has no history: judge it from the plan or the owner's
+stated scope and say so; with neither, **ask** the owner for the scope, and stop if
+there is none. The risk map can name only **planned** paths (`policy-derivation.md`).
+Install **between units**: a branch already in flight carries an id the new guard
+finds no row for, so it lands first or is claimed in the registry at install.
+
+Also list here:
+
+- the id prefixes already taken (the status script's `ids`, plus a search of the
+  plan's own ids — `scope-guard.md`) and the plan's id **shape**, which binds
+  `ID_PATTERN` (`EP-27.01` needs the dot);
+- the agents the project uses (a search; none found → ask, default Claude Code plus
+  `AGENTS.md` — `harness-targets.md`);
+- the **roles and working rules the project's documents already define** — an
+  agent table, review-by-another-agent, protected areas, "never edit the spec".
+  Phase C maps the harness onto them, by their names, instead of adding competing
+  ones;
+- a **governed document set** (a register, versioned specifications): ask where the
+  harness's docs live — outside it, unless the owner registers them;
+- whether units run in the main checkout or in worktrees (`git worktree list`; no
+  units yet → the main checkout, `SCOPE=repo`, unless the owner says worktrees).
 
 ### Phase B — Derive the policy, the risk map and the merge policy
 
@@ -205,7 +237,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `tools: Read, Grep, Glob, Bash`; states that it sabotages and restores |
 | `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
-| `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`. Test the shipped file |
+| `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`, and run the id self-test (`commit-guard.md`) against every plan id and branch. Test the shipped file |
 | `.claude/hooks/command-guard.mjs` + settings entry | `harness-targets.md`, `templates/command-guard.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR` |
 | `scripts/check-agent-docs.mjs` + `scripts/lib/check-agent-docs.test.mjs`, run as a gate | `harness-targets.md`, `templates/scripts/check-agent-docs.mjs`, `templates/scripts/lib/check-agent-docs.test.mjs` | budgets ratcheted from today's sizes · `--rules-for` for briefs · the test is slow: a `full`-level gate |
 | the harness log, `docs/harness/log.md` | `log-format.md` | **the engine** — headers only, no seeded medians |
@@ -232,6 +264,12 @@ answer when the owner just accepts:
 | `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
 | `.claude/workflows/review.workflow.js` | `harness-targets.md`, `templates/workflows/review.workflow.js` | Full-tier review fan-outs often enough to want them deterministic | no, until the log shows them |
 | phase preflight · workstream sweep · segment runner | `preflight.md`, `sweep.md`, `segment.md` | plan mode with phases, a question register, or several independent low-risk tasks; each states its own evidence count, none above two runs | no |
+
+**The project's own model wins on names.** Where its documents define agent roles
+and working rules, the generated runner, agents and gate table use those names and
+cite those rules; a harness role with no counterpart is added and said so. The
+harness's docs (`docs/harness/`, `docs/plans/`) move wherever Phase A agreed when
+`docs/` is a governed set.
 
 **Local skills, not global.** They live in the project so they can name its facts
 and grow from its runs. `.claude/skills/`, `.claude/agents/` and `.agents/skills/`
@@ -282,6 +320,16 @@ contradicts.
 | 6 never-auto policy | none | Phase B |
 Outcome: refused. Add a test command that fails when the billing code is broken, then rerun.
 ```
+
+**New repository, specification only.** Twenty documents, a build plan with story
+ids `EP-nn.nn`, no code. Row 1 fails; rows 2 and 3 pass from the plan (postings,
+roles, migrations); row 6 is the plan's protected-areas list. The readiness plan
+takes the plan's own first two foundation stories — the repository skeleton with
+its lint gate, then the first package with tests — each "done when `pnpm test`
+runs at least one test and was seen red once", then *rerun Phase A*. On the rerun
+the coverage map shows the frontend covered and the server apps uncovered until
+their CI exists, so any unit touching them is Full. `ID_PATTERN` is bound to
+`EP-[0-9]+\.[0-9]+`, and the install waits for the story branch in flight to land.
 
 **Change-mode install.** A production repository with CI, change requests and no
 plan: Phase A routes to change mode with `SCOPE=checkout` (units run in worktrees);

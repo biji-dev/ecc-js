@@ -419,6 +419,7 @@ function buildReport() {
         roles: parsed.roles,
         // a foundation-stage install (reference/foundation.md) until its flip; no stage means full
         stage: parsed.stage === 'foundation' ? 'foundation' : 'full',
+        flipAfter: typeof parsed.flipAfter === 'string' ? parsed.flipAfter : null,
       };
       entries = (parsed.entries || []).map(manifestEntry);
     }
@@ -488,7 +489,8 @@ function buildReport() {
   if (sizes['CLAUDE.md'] !== null && sizes['CLAUDE.md'] > 40000) {
     haz('claude-md-large', `CLAUDE.md is ${sizes['CLAUDE.md']} bytes; over 40000`, 'CLAUDE.md');
   }
-  for (const rel of [...walk('docs'), ...walk('.claude')]) {
+  // anywhere: the harness docs live in docs/ by default, elsewhere when docs/ is a governed set
+  for (const rel of walk('')) {
     if (!rel.endsWith('.state.md')) continue;
     const bytes = stat(rel).size;
     sizes.stateFiles.push({ path: rel, bytes });
@@ -499,7 +501,7 @@ function buildReport() {
   // text inside harness marker blocks (the keep-line template names DEC-1) is not an id in use;
   // D<digits> (no hyphen) is its own bucket, Dnum
   const idSets = { DEC: new Set(), D: new Set(), Q: new Set(), Dnum: new Set() };
-  for (const f of [...walk('', 0), ...walk('docs'), ...walk('.claude', 0), ...walk('.claude/plans')]) {
+  for (const f of [...walk('', 0), ...walk('docs'), ...walk('harness'), ...walk('.claude', 0), ...walk('.claude/plans')]) {
     if (!/\.md$/i.test(f)) continue;
     const raw = read(f);
     if (raw === null) continue;
@@ -671,7 +673,9 @@ function buildReport() {
   // foundation stage: the pass-signal unit landed and the flip did not run
   if (manifest && manifest.stage === 'foundation') {
     const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.(py|go)|[^/]+_spec\.rb)$/;
-    const found = walk('').find((rel) => TEST_FILE.test(rel));
+    // the harness's own template tests are manifest entries, not the project's first test
+    const own = new Set(entries.map((e) => e.path));
+    const found = walk('').find((rel) => TEST_FILE.test(rel) && !own.has(rel));
     if (found) haz('foundation-stage-has-tests', `manifest says foundation, and test files exist (e.g. ${found}): run the flip`, MANIFEST);
   }
 
@@ -794,7 +798,7 @@ function renderText(r) {
   const out = [];
   out.push(`harness-status: ${r.repo}`);
   out.push(r.manifest
-    ? `manifest: ${r.manifest.path} (schema ${r.manifest.schema}, skillVersion ${r.manifest.skillVersion}, generated ${r.manifest.generated}, stage ${r.manifest.stage})`
+    ? `manifest: ${r.manifest.path} (schema ${r.manifest.schema}, skillVersion ${r.manifest.skillVersion}, generated ${r.manifest.generated}, stage ${r.manifest.stage}${r.manifest.flipAfter ? `, flip after ${r.manifest.flipAfter}` : ''})`
     : 'manifest: no manifest');
   out.push('');
   out.push(`lineage: ${r.lineage.verdict}${r.lineage.source === 'manifest' ? ' (from manifest modes)' : ''}`);

@@ -30,7 +30,8 @@ when stated in the claim line. Every brief quotes it verbatim — a sub-agent th
 cannot see the block cannot tell scope from drift.
 
 `[M]` In plan mode the row's exit condition is "Done when", and the row's write set
-is "In scope". The block still gets written; it is where "Out of scope" lives.
+is "In scope". The block still gets written, in the unit's state file; it is where
+"Out of scope" lives.
 
 ## Classify every new item once
 

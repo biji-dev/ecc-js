@@ -139,7 +139,8 @@ as its own commit. Never reclaim a row you do not own.
   while this one waits on Gate 2; its step 2 waits.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
   worktree convention. **Every kind of unit has a branch form:** plan items carry
-  their id; the code half of an approved change request carries the request's id;
+  their id; the code half of an approved change request carries the request's id (or runs on
+  `change/<slug>`, matched by the Branch cell, when requests carry none);
   harness work, vendor-trap skills and follow-ups no unit owns run on
   `harness/<slug>`, matched by the Branch cell. Write the generated paths with
   `<unit>` (the id or the slug), never the plan's id shape alone.
@@ -309,7 +310,8 @@ installed).
 the owner's. A unit that finds a gap may *draft* a new request in the shape the
 project already uses and commit it on its branch; it never edits the specification
 or an existing request, and it stops if the gap blocks it. Once the owner approves
-one, its code half runs as a unit with the request's id.
+one, its code half runs as a unit with the request's id, or on `change/<slug>` when
+requests carry none.
 
 ## What is *not* in the sequence, deliberately
 

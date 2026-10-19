@@ -160,8 +160,9 @@ condition per task; where the plan has none, each unit's Scope block supplies it
 specification** are the owner's to decide: a unit may *draft* a new one when it finds
 a gap (in the shape the project already uses), never edit the specification or an
 existing request, and stops if the gap blocks it. The **code half of an approved
-request** is a unit with the request's own id, so `ID_PATTERN` covers every id shape
-that names a unit.
+request** is a unit with the request's own id — a request with no id runs on
+`change/<slug>`, matched by the `Branch` cell — so `ID_PATTERN` covers every id shape
+that names a unit, and never a prefix the documents use for something else.
 
 **Coverage, per path.** Row 1 holds for the repository; the gates hold for paths.
 List each gate with the paths it exercises, and the paths nothing exercises yet —
@@ -248,9 +249,9 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
-| `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks |
+| `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
 | `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `tools: Read, Grep, Glob`; states its bound |
 | `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B · `model: opus`, `tools: Read, Grep, Glob` |
@@ -293,7 +294,8 @@ harness's docs (`docs/harness/`, `docs/plans/`) move wherever Phase A agreed whe
 
 **Fit the project's tooling.** Run the project's own lint, format and type check over
 the generated files before hashing. Where the harness's Node scripts break its
-config (a strict TypeScript lint with no Node globals), add one block scoped to those
+config (a strict TypeScript lint with no Node globals; with nothing to run yet, the
+flip does this — `foundation.md`), add one block scoped to those
 paths; keep the template scripts out of the formatter (a reformat breaks their hash,
 and the agent-docs test reads its CONFIG block); add `.review-work/` and `.codex-runs/`
 to the linter's ignores; record each change under the manifest's `notTracked`. Bind
@@ -317,7 +319,9 @@ on the coverage map (uncovered until tested here).
 resolves; that `AGENTS.md`, the runner, the agents, the guard and `run-gates.sh`
 agree with one another; that no generated line contradicts the project's own rules or
 the reviewed policy; and that the core table is complete. One fix round, one
-re-review, both in the install report. On its first run this review found five P1
+re-review, both in the install report. The install then lands like a harness unit:
+its own `harness/<slug>` branch, `--no-ff` on the owner's word, a log row, push the
+owner's. On its first run this review found five P1
 defects the generator could not see in its own output.
 
 **Local skills, not global.** They live in the project so they can name its facts

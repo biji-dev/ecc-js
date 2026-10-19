@@ -324,6 +324,14 @@ test('a Phase B draft (marked blocks, no manifest) is not an install, and its po
   assert.strictEqual(legacy.lineage.verdict, 'change');
 });
 
+test('state files and decision ids outside docs/ (harness docs moved to harness/) are still seen', () => {
+  const big = `# EP-1 state\n\n| DEC-1 | x |\n| DEC-2 | y |\n${'z'.repeat(9000)}\n`;
+  const r = report(mk({ 'harness/plans/EP-1.state.md': big, 'docs/spec.md': '# spec\n' }));
+  assert.deepStrictEqual(r.sizes.stateFiles.map(s => s.path), ['harness/plans/EP-1.state.md']);
+  assert.ok(ids(r).includes('state-file-over-budget'), ids(r).join(','));
+  assert.strictEqual(r.ids.DEC, 2);
+});
+
 test('foundation stage: reported, and flagged once tests exist', () => {
   const manifest = (stage) => JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19', modes: ['plan'], ...(stage ? { stage } : {}), entries: [] });
   const docsOnly = mk({ '.agents/harness-manifest.json': manifest('foundation'), 'docs/spec.md': '# spec\n' });
@@ -338,6 +346,17 @@ test('foundation stage: reported, and flagged once tests exist', () => {
     assert.ok(h, 'expected the hazard for ' + testFile);
     assert.strictEqual(h.path, '.agents/harness-manifest.json');
   }
+  // the harness's own template tests are listed in the manifest; they are not the project's first test
+  const own = 'scripts/lib/check-agent-docs.test.mjs';
+  const withOwn = (extra) => mk({
+    '.agents/harness-manifest.json': JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19', modes: ['plan'], stage: 'foundation', flipAfter: 'EP-27.01', entries: [{ path: own, kind: 'generated', sha256: sha('x\n') }] }),
+    [own]: 'x\n', ...extra,
+  });
+  const stage1 = report(withOwn({}));
+  assert.ok(!ids(stage1).includes('foundation-stage-has-tests'), 'a manifest-listed test file is the harness, not the project');
+  assert.strictEqual(stage1.manifest.flipAfter, 'EP-27.01');
+  assert.match(run(withOwn({}), ['--text']).stdout, /flip after EP-27\.01/);
+  assert.ok(ids(report(withOwn({ 'packages/contract/a.test.ts': 'x\n' }))).includes('foundation-stage-has-tests'));
   const ignored = mk({ '.agents/harness-manifest.json': manifest('foundation'), 'node_modules/z/x.test.js': 'x\n' });
   assert.ok(!ids(report(ignored)).includes('foundation-stage-has-tests'), 'dependencies are not the project tests');
   const flipped = mk({ '.agents/harness-manifest.json': manifest('full'), 'src/a.test.js': 'x\n' });

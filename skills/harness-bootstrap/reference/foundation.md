@@ -38,8 +38,8 @@ and a repository whose only work is trivial. Those keep the readiness plan.
 `[M]` **Offer both, default foundation.** The Phase A closing line names the choice:
 *foundation stage now* (default) — the harness gates the readiness units — or
 *readiness plan first* — the owner runs them as ordinary work and Phase A is rerun
-after. Record the owner's answer beside the Phase B status line; Phase C copies it
-into the decision log it creates.
+after. Record the owner's answer on the line below the Phase B status line; Phase C
+copies it into the decision log it creates.
 
 ## Phase B — unchanged
 
@@ -54,7 +54,9 @@ Phase C refuses while the line says `DRAFT`, as always.
 
 | Component | Foundation stage |
 |---|---|
-| `scripts/run-gates.sh` | installed with the gates that exist now — the agent-docs lint at least; lint, format and type check only once the project has them — and **no** counted test gate; every `gate_counted` line waits for the flip |
+| `scripts/run-gates.sh` | installed with the gates that exist now — the agent-docs lint and the harness's own template tests (counted, at their pinned counts) at least; lint, format and type check only once the project has them — and **no** counted gate over the project's tests; those wait for the flip |
+| `scripts/check-agent-docs.mjs` CONFIG | `pathPrefixes` names only folders that exist; every planned path the harness file cites goes in `intentionallyAbsent` (an entry whose path later exists is harmless; the flip prunes them) |
+| setup | no `package.json` yet: the commands block gives `git config core.hooksPath .githooks` as the clone step; the flip adds the `prepare` line and fits the project's lint and format |
 | coverage map (gate table) | one row: **uncovered — every path** |
 | tiers block | Trivial and Full only; Small is written in and marked *unlocked at the flip* |
 | merge block | first line: *Foundation stage: every merge is the owner's* |
@@ -80,13 +82,19 @@ own.
    pass-signal unit, defaulting to the earliest story whose "Done when" can be a
    counted test. Gate 1 of the pass-signal unit approves its "Done when" as the
    row-1 test: *`<test command>` runs at least one test, counted, and was seen red
-   once*.
+   once*. That command counts **the project's tests only**: a bare runner
+   that also finds the harness's template tests (`scripts/lib/*.test.mjs`) reported
+   over a hundred passes with no product test in the repository. Until the flip binds
+   the gate, the pass-signal unit runs it by hand at verify and pastes the count and
+   the red line into the ledger; the claim auditor reruns it.
 4. **A unit that adds tests proves them.** The claim auditor re-counts them and runs
    the sabotage; a suite that runs nothing is a false claim, not a gap.
 5. **Planned paths become real ones.** When a planned risk-map path first gets code,
-   the re-derive trigger in the risk-map block fires (`policy-derivation.md`). When
-   the plan calls its paths working names, the skeleton unit fixes them, and the
-   risk map is renamed to match before the next unit claims a row.
+   the re-derive trigger in the risk-map block fires (`policy-derivation.md`). The
+   risk map is a reviewed block, so the re-derive is a harness unit between runs;
+   the product unit that created the path records it as a follow-up, and the flip
+   takes every one raised before it. When the plan calls its paths working names,
+   the skeleton fixes them and the same re-derive renames the map.
 
 ## The flip — stage 2
 
@@ -97,13 +105,17 @@ never during one. It:
 1. reruns Phase A row 1 and quotes the evidence: the command, its count, the
    sabotage that turned it red, the `cmp` that confirmed the restore;
 2. binds the counted test gates in `run-gates.sh` (`gate_counted`, so zero tests is
-   a FAIL), and any gate that reads another gate's output runs that gate first;
+   a FAIL) over the project's tests only, and any gate that reads another gate's
+   output runs that gate first; adds the `prepare` line and fits the lint and format
+   (SKILL.md, *Fit the project's tooling*);
 3. writes the coverage map's first covered rows and lists what is still uncovered;
 4. unlocks Small in the tiers block and drops the foundation line from the merge
    block — the merge policy the owner reviewed applies from here;
 5. sets the manifest's `"stage"` to `"full"`, rehashes the blocks it changed, and
    records the flip as a decision-log line;
-6. goes to Gate 2 as the owner's merge.
+6. goes to Gate 2 as the owner's merge. The flip edits two reviewed blocks — the
+   merge block's foundation line and the risk map's planned entries — and the
+   owner's merge is the review those edits need (`upgrade.md`).
 
 `[M]` **One flip per install.** A later unit that adds tests for another path moves
 that path to a covered row in its own commit — that is ordinary coverage-map upkeep,

@@ -194,6 +194,7 @@ ECC's agents where the plugin is installed:
 | schema, migration, a changed query shape | `database-reviewer` |
 | tests added or changed, Full tier | `pr-test-analyzer` |
 | mostly generic TypeScript or React, no repo invariant | `typescript-reviewer` / `react-reviewer` |
+| another language carries the change | that language's reviewer if one resolves; else the correctness reviewer with that lens in its brief, `degraded` |
 
 `[M]` On Full, the project's review workflow (`templates/workflows/review.workflow.js`,
 `delegate-tasks` check mode) may run this fan-out deterministically, with a verifier

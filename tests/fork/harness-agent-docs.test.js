@@ -107,6 +107,28 @@ test('the template test suite leaves no temp directories behind', () => {
   assert.deepStrictEqual(left, [], `left ${left.length} temp entries behind`);
 });
 
+test('the template test suite passes against a copy whose [B] CONFIG an install bound', () => {
+  // A new repository binds more than the budgets: its own state-file path and path prefixes.
+  const original = fs.readFileSync(SCRIPT, 'utf8');
+  const bindings = [
+    [/^  budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192 },"],
+    [/^  statePattern: .*$/m, "  statePattern: 'harness/units/**/*.state.md',"],
+    [/^  pathPrefixes: .*$/m, "  pathPrefixes: ['frontend/', 'tests/', 'harness/', '.claude/', '.agents/'],"],
+  ];
+  let bound = original;
+  for (const [from, to] of bindings) {
+    assert.match(bound, from, `binding line not found: ${from}`);
+    bound = bound.replace(from, () => to);
+  }
+  const copy = path.join(tmp('agent-docs-bound-'), 'check-agent-docs.mjs');
+  fs.writeFileSync(copy, bound);
+  const scratch = tmp('agent-docs-bound-scratch-');
+  const env = { ...GIT_ENV, TMPDIR: scratch, TEMP: scratch, TMP: scratch, CHECK_AGENT_DOCS_SCRIPT: copy };
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', TEMPLATE_TEST], { encoding: 'utf8', env });
+  assert.strictEqual(r.status, 0, `exit ${r.status}\n${r.stdout.slice(-2000)}\n${r.stderr}`);
+  assert.match(r.stdout, new RegExp(`^# pass ${EXPECTED_PASS}$`, 'm'));
+});
+
 console.log('\nharness agent-docs: mutation');
 
 test('mutant without the rule-index check misses the index mismatch the shipped file catches', () => {

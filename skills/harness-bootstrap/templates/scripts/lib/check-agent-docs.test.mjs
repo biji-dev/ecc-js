@@ -1,7 +1,7 @@
 // harness-bootstrap check-agent-docs tests (generated YYYY-MM-DD). Run: node --test <this file>
 // [M] mechanism: ships as-is next to check-agent-docs.mjs. Fixtures are temp git repos; the shipped
 // script runs with cwd = fixture. Only the CONFIG block ([B]) is ever substituted, never the checks.
-// The budgets are fixed here (BUDGETS), so the suite passes whatever budgets an install ratcheted the script to.
+// The whole CONFIG block is fixed here (CONFIG_BLOCK), so the suite passes whatever an install bound in it.
 // CHECK_AGENT_DOCS_SCRIPT=<path> points the suite at another copy of the script.
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +27,18 @@ const SHIPPED =
 // The [B] budgets the suite runs under. Small, so over-budget fixtures stay small; skillLines is the shipped default.
 const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024 };
 const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile} },`;
+// The rest is the shipped default, which the fixtures below are written against.
+const CONFIG_BLOCK = `export const CONFIG = {
+  ${BUDGETS_LINE}
+  rulesDir: '.claude/rules',
+  indexFile: 'AGENTS.md',
+  skillDirs: ['.claude/skills', '.agents/skills'],
+  agentDirs: ['.claude/agents'],
+  statePattern: 'docs/plans/**/*.state.md',
+  pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
+  intentionallyAbsent: [],
+  requireImport: true,
+};`;
 
 // Hermetic: no developer HOME, global or system git config reaches a fixture.
 const ENV = {
@@ -37,14 +49,14 @@ const ENV = {
 };
 for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX']) delete ENV[k];
 
-// The script under test: the shipped one with only the CONFIG `budgets` line set to BUDGETS (removed after the file).
+// The script under test: the shipped one with its CONFIG block replaced by CONFIG_BLOCK (removed after the file).
 const SCRIPT_DIR = realpathSync(mkdtempSync(join(tmpdir(), 'check-agent-docs-script-')));
 const SCRIPT = join(SCRIPT_DIR, 'check-agent-docs.mjs');
 {
   const text = readFileSync(SHIPPED, 'utf8');
-  const line = /^[ \t]*budgets: \{[^}\n]*\},?[ \t]*$/m;
-  assert.ok(line.test(text), 'the CONFIG budgets line was not found in the script');
-  writeFileSync(SCRIPT, text.replace(line, `  ${BUDGETS_LINE}`));
+  const block = /^export const CONFIG = \{\n[\s\S]*?\n\};$/m;
+  assert.ok(block.test(text), 'the CONFIG block was not found in the script');
+  writeFileSync(SCRIPT, text.replace(block, () => CONFIG_BLOCK));
 }
 
 // Every temp dir a test makes is removed after that test (and the HOME and script dirs after the file).

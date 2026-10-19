@@ -1,9 +1,11 @@
 # Rules, and what produced each one
 
 Every rule in §1 was written **after** a specific failure — in the origin project
-(a regulated rental platform, 21+ logged tasks) or in a second project that
-adopted the harness later (a multi-tenant agent platform, 10 logged tasks). None
-was reasoned into existence. That is the whole filter: §3 records rules that
+(a regulated rental platform, 21+ logged tasks), in a second project that adopted
+the harness later (a multi-tenant agent platform, 10 logged tasks), or in a third
+that grew the change-mode workflow independently (a production multi-tenant
+platform, about 120 sessions, with measured engineering notes). None was reasoned
+into existence. That is the whole filter: §3 records rules that
 *were* reasoned into existence, and they turned out wrong.
 
 When generating a harness, **ship §1 with its origin named.** A rule without its
@@ -79,13 +81,41 @@ names all assert; none verify.
 > checked, and a column named `hashed_token` held a plaintext value.
 
 **The record is written last, from the diff, as fields — and audited by someone
-who did not write it.** (`task-runner.md` 8b/8c, `claim-auditor.md`.)
+who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
 > Origin: *"a report is a claim — verify it before presenting it"* was a rule
 > addressed to the author. After it was written, one task shipped **eight** false
 > claims, and **nine of the first twenty-one** tasks shipped at least one. None
 > was caught by the author re-reading; every one by an external check. An author
 > checks a sentence against what they meant, not against the tree. So it became
 > a step and an agent instead of a paragraph.
+
+**A "done" report ends with the step ledger; a step missing from it did not run.**
+(`context.md`.)
+> Origin, the third project: across 88 audited "done" reports a fresh cross-check
+> found something in 87 and contradicted the report in 81. Most had skipped
+> verification steps without saying so.
+
+**Reproduce a finding before fixing it.** One that does not reproduce is
+*retracted*, never "fixed".
+> Origin, the third project: about 6% of claimed gaps were artefacts — a scaled
+> measurement, harness timing, another worktree's test run, a search over keys
+> built from templates.
+
+**Trust a wrapper's exit code, never the agent CLI's own.**
+> Origin, the third project: the second-family CLI exited 0 on runs that produced
+> no verdict (a usage limit, an interrupted review) and non-zero on a retry it had
+> recovered from. One wrapper now decides, from the verdict file and the log
+> (`cross-model.md`).
+
+**Verify a command, agent or skill resolves before naming it.** A step naming a
+missing tool never runs, and nobody notices.
+> Origin: one project's first routing table named eleven agents and ten did not
+> exist.
+
+**A fix commit is new code** — it gets reviewed like any other diff, and on
+critical code every fix round is reviewed (`gate-design.md`).
+> Origin, the third project: review-fix commits were where review rounds
+> introduced new defects, including money defects caught only by a later round.
 
 ### Gates
 
@@ -181,6 +211,29 @@ not something remembered.**
 
 **Harness changes land between runs, never during one.**
 
+**Never ask the owner for a new session or a hand-off.** State lives in files; past
+the budget, update the state file, offer a `/compact` and keep working
+(`context.md`).
+> Origin, the third project: 28 of 118 sessions ended in a hand-off, about 90% of
+> them triggered by a budget rule that said to start a new session (§3).
+
+**Read slices, not files; one slice per agent.** Grep first, then read with an
+offset and a limit; split a fix round by area.
+> Origin, the third project: two whole-plan reads cost about 170K tokens and ended
+> a session after one step; one agent handed a whole fix round ran 309 calls, to
+> 368K of context.
+
+**Run the full verification once per unit, not once per slice.** Slices run their
+targeted tests; the full run belongs to step 8 and to the merge.
+> Origin, the third project: one change request ran the full suite 39 times, 8.4
+> hours of wall time.
+
+**Stop processes by the PID you recorded, never by name**, and start the lightest
+form that answers the question. On a machine short of memory, hold and ask.
+> Origin, the third project: watch supervisors and their package-manager parents
+> outlived a kill by port, and a kill by pattern reaches every session's processes
+> on the machine, not only this one's.
+
 ### Documents
 
 **One canonical owner per fact.** Two files carrying the same rule drift, and then
@@ -242,12 +295,15 @@ This section exists so a generator does not repeat the pattern.
 | Claim | Fate |
 |---|---|
 | *"Size is a poor effort proxy"* | Written at n=2. At n=19 size ordered correctly at the median and the large bucket had the **tightest** spread of any. Retracted. |
-| *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Two tracks now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
+| *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Tiers now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
+| *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`). |
+| Two generic review commands on every diff by default | They reviewed one diff a third and fourth time — 92 and 31 agents on a single change request. Opt-in now, for a refactor-heavy slice or when the owner asks. |
+| The full verification after every slice | 39 full runs, 8.4 hours, on one change request. Once per unit now (§1). |
 | *"Preflight never edits the plan"* | Too absolute. Deciding and transcribing are different acts; transcribing an approved decision is fine, and must cite the decision id. |
 | A commit guard checking only that the branch is the mainline | Refused **every** commit while any run held the lock — including the owning run's own. Unusable as written. |
 | Elapsed measured first-commit-to-merge | Missed grounding entirely. Every figure recorded before the fix understates. |
 | *"A report is a claim"*, as a rule for the author | Necessary and not sufficient. False claims kept rising until the check moved to a separate agent (§1). |
-| Hooks that match keywords rather than effects | About thirty stalls, nothing caught. Gate on what a command does, not on words in it. |
+| Hooks that match keywords rather than effects | About thirty stalls, nothing caught. Gate on what a command does, not on words in it. A commit-message hook that checks for review tags the agent writes itself is the same mistake. A plugin's keyword hooks produced about 650 false-positive blocks across 80 sessions in the third project before they were turned off. |
 
 **The lesson for a generator: ship rules that cite an incident. Everything else
 is taste wearing a rule's clothes — and roughly one in five was wrong.**

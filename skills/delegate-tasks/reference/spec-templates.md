@@ -3,6 +3,21 @@
 One file per task, `NN-slug.md`, numbered in dispatch order. A file appears in
 exactly one spec's Files list.
 
+## The slicing table
+
+The run's index, written before any spec and approved at Gate 1 in a harness:
+
+```markdown
+| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk |
+|---|---|---|---|---|---|---|---|
+| 01 money service | src/refunds/service.ts, src/refunds/service.test.ts | build | Opus implementer | 1, serial | `npm test -- refunds` | 9 cases | critical |
+| 02 route | src/api/refunds.ts | build | Sonnet | 2, wave A | `npx tsc --noEmit` | — | cold |
+| 03 admin button | src/admin/RefundButton.tsx | build | Sonnet | 2, wave A | `npm test -- RefundButton` | 3 cases | cold |
+
+Coverage: AC1 → 01 · AC2 → 02 · AC3 → 03
+Kept by the session: src/api/router.ts (hub)
+```
+
 ## Build
 
 ```markdown
@@ -66,6 +81,32 @@ only — no throw.
 - `npx tsc --noEmit` — no errors
 ```
 
+## Control
+
+A test whose job is to prove that a protection works. Judged by someone other than
+its writer (in a harness: lane C, the claim auditor).
+
+```markdown
+# Control NN — prove <the protection>
+
+## Protection
+What must hold, and where it is enforced: `src/api/refunds.ts:41` refuses a refund
+above the captured amount.
+
+## Files
+- Create: `src/api/refunds.control.test.ts`
+
+## Acceptance
+- Commit first.
+- Write the test; run it; paste the green line.
+- Remove the protection (save the hunk as a patch, `git apply -R` it); run the test;
+  paste the **red** line. Its own assertion must fail — a compile or import error is
+  not a red.
+- Restore (`git apply` the patch); run it; paste the green line again.
+- `git status --porcelain` matches what it was before the control. Never
+  `git checkout -- <file>`.
+```
+
 ## Check
 
 ```markdown
@@ -73,11 +114,28 @@ only — no throw.
 
 ## Scope
 Exactly what to examine: `src/api/**` route handlers, or the snapshots this run
-produces.
+produces. In a review fan-out: the diff against `<base>`, working tree included,
+plus the Scope block and the Impact Analysis.
+
+## Lens
+The one question this check asks — e.g. "handlers missing the permission check", or
+for a blast-radius lane "readers OUTSIDE the diff of each changed export, field,
+route, column, config key or environment variable".
 
 ## Report
-Typed findings only — where (`path:line`) / what / evidence / severity. Edit
-nothing.
+Edit nothing. One row per finding:
+
+| Field | |
+|---|---|
+| severity | P0 · P1 · P2 · P3 |
+| where | `path:line` |
+| evidence | the quoted line or command output |
+| why | why it is wrong |
+| repro | how a reader re-runs it |
+| introduced | this diff · pre-existing |
+| scope class | IN · BLOCKER · CRITICAL · OUT (proposed; the session decides) |
+
+Then a **checked and clean** list, one line per item examined with nothing found.
 
 ## Patterns to imitate
 - An existing audit note showing what a good finding looks like.
@@ -85,6 +143,28 @@ nothing.
 ## Acceptance
 - Every item in scope examined, listed as checked even when clean.
 - Each finding carries evidence a reader can re-run.
+```
+
+## Plan
+
+Two of these from one brief, to two different models, neither seeing the other.
+
+```markdown
+# Plan — <the change>
+
+## Brief
+The problem, the evidence from investigation, the constraints, the Scope block, and
+the invariants the change must preserve. Identical for both planners.
+
+## Return
+- Files and functions to change, with line ranges.
+- Data flow and edge cases.
+- Impact Analysis: every caller, invariant and dependent flow, and how each is
+  preserved.
+- Tests that prove it.
+- Open questions, each with a proposed default.
+
+Read the code; do not edit it. Do not look for another plan of this change.
 ```
 
 ## Copy rows

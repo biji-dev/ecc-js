@@ -63,18 +63,28 @@ back to single-task mode.
 > work. That is an argument for the batched review that was not anticipated when
 > it was designed.
 
+## Segment runner versus the merge policy
+
+`[M]` Where the merge policy lets Small units merge locally on their own
+(`gate-design.md`), most of what a segment buys — several low-risk tasks without a
+human between them — the policy already gives, one unit at a time, with each
+unit's own checks. What a segment still adds is the **cumulative review** over the
+segment's whole diff before it is pushed (see *What one run proved*). Prefer the
+merge policy; install the segment runner only where that cumulative pass is wanted,
+and never let a segment's end gate stand in for a push the owner has not approved.
+
 ## Segment runner versus delegate-tasks
 
 `[M]` They are different layers; do not merge them.
 
 | | Segment runner | `delegate-tasks` |
 |---|---|---|
-| Unit | several **plan tasks**, each a full task-runner run | slices **inside one task's** implement step |
-| Gates | one human gate at the end of the segment | the task's own gates; Gate 1 approves the slicing |
-| Who works | one subagent per task, each running the task runner | Sonnet builders per spec, behind command gates |
-| Never for | never-auto categories, the largest tier | never-auto categories, migrations, auth diffs |
+| Unit | several **plan tasks**, each a full runner run | slices **inside one unit's** implement step |
+| Gates | one human gate at the end of the segment | the unit's own gates; Gate 1 approves the slicing |
+| Who works | one subagent per task, each running the runner | an executor per slice from the risk map, behind command gates |
+| Never for | never-auto categories, the largest tier | parallel waves on never-auto, migration or auth slices |
 
-`[M]` In Claude Code, dispatch each segment task with `model` set by its track
+`[M]` In Claude Code, dispatch each segment task with `model` set by its tier
 (`gate-design.md`) — never by inheritance.
 
 `[M]` Eligibility excludes every never-auto category **as currently written**.

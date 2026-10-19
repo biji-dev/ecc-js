@@ -1,4 +1,4 @@
-# Reference: deriving the never-auto-merge policy
+# Reference: deriving the never-auto-merge policy, the risk map and the merge policy
 
 **Phase B. The piece that cannot be templated, and the reason this skill is not
 a template.** It is also the precondition that actually fails: of four projects
@@ -20,10 +20,13 @@ sent, and a record that was supposed to prove what happened cannot.
 
 - **Every category cites an identifier from the project's own documents** — a
   locked decision, a numbered risk, a security requirement. A category you cannot
-  cite is one you invented. Drop it.
+  cite is one you invented. Drop it. A small repository with no such documents
+  cites the code instead (`path:line` of the invariant, a comment stating it) and
+  says so; the owner's review is then the only check, so flag it.
 - **Never import another project's categories.** They are one system's answer.
-- **Expect three to six.** Fewer means the risk register went unread; more means
-  correctable things crept in.
+- **Expect three to six** where the project has a risk register. Fewer means it
+  went unread; more means correctable things crept in. A small repository may
+  honestly have one or two — say which surfaces you looked at.
 - **Say which severe risks you excluded, and why.** That list is as informative
   as the policy, and it is where a reader will disagree with you if anywhere.
 
@@ -48,8 +51,49 @@ that sends things, so *what leaves the system* is a category the first does not
 need. The first holds scans of national identity cards, so identity storage is
 a category the second does not have.
 
+## The risk map — derived in the same pass
+
+The policy names categories. The risk map names **paths**, so a unit that has no
+plan row — a change, a hotfix — still gets a tier, a writer model and a reviewer.
+It is what lets a repository without a plan get gates at all. Same test, applied
+to code instead of change categories.
+
+| List | What goes on it | Evidence each entry cites |
+|---|---|---|
+| **Hot modules** | named paths where a defect cannot be corrected forward | the policy category, a risk id, or an incident |
+| **Critical code** | the hot modules + the code implementing each never-auto category + schema and migrations + any module imported by at least *N* files | the category, or the importer count |
+| **Cold modules** | named paths where a defect is visible and cheap — leaf UI, internal tools, test helpers | the reason it is cheap |
+| everything else | standard | — |
+
+- **Critical wins over cold.** A cold-looking component with many importers is
+  critical.
+- **Never put shared constants, formatters or date utilities on the cold list** —
+  their importers make them critical.
+- `[B]` *N* — **left empty at generation.** List the ten most-imported modules with
+  their counts as candidates in the draft; the owner sets *N* or strikes entries at
+  review.
+- Read the history too: `git log --since=90.days --numstat` names the modules that
+  change most and the fix commits that touched them. A hot module that never
+  changes still belongs on the list; a frequently fixed one is a candidate.
+
+## The merge policy
+
+Draft the default from `gate-design.md` — Small merges locally on its own when
+clean; Full, never-auto and taste calls wait for the owner; push is always the
+owner's — and state any tightening the documents imply (a regulated project may
+want no auto-merge at all). Never loosen push.
+
 ## Where it goes, and what not to do
 
-Write it into the project's harness file — **and do not commit it.** The
-categories are a judgment call the owner must check, and a policy adopted without
-being read is not a policy.
+Write all three — policy, risk map, merge policy — into the project's harness
+file, inside the `policy`, `risk-map` and `merge` markers (`upgrade.md`), under one
+status line:
+
+```
+Never-auto policy: DRAFT — owner has not reviewed
+```
+
+**And do not commit it.** The categories and paths are a judgment call the owner
+must check, and a policy adopted without being read is not a policy. The owner
+changes the line to `REVIEWED <date>`; the manifest records all three as
+`reviewed`.

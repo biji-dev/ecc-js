@@ -1,0 +1,192 @@
+# Reference: Phase 0 — detecting and upgrading an installed harness
+
+A harness is regenerated as the reference improves, and the project edits it in
+between. The upgrade must tell the three apart: a generated file nobody touched
+(replace it), a generated file someone edited (show the diff, the owner decides),
+and content the project earned or reviewed (keep it). **Evidence:** four installs
+on one machine, none stamped consistently — one plan install with its guard as a
+snippet in `CLAUDE.md`, one whose 118 KB `CLAUDE.md` had no `AGENTS.md`, two change
+installs that predated this skill.
+
+**`[M]` mechanism · `[B]` binding**
+
+## Step 1 — run the status script, read-only
+
+```
+node <skill dir>/scripts/harness-status.js <repo> --text
+```
+
+It never writes. It reports:
+
+- **lineage** — from the manifest's `modes` when there is one; otherwise from
+  fingerprints of a plan install (registry, task runner, conformance and claim
+  auditors, a log with `Missed by harness` — v1 was plan-only) and of a change
+  install (change-workflow, crosscheck and verify skills, a tier table), each with
+  the file that matched; verdict `none`, `plan`, `change` or `both`;
+- **entries** — every file and block in the manifest with its status, or, with no
+  manifest, every fingerprinted file as `legacy` (including lineage-neutral harness
+  files such as `codex-run.mjs`, `check-agent-docs.mjs`, `run-gates.sh`, the hooks,
+  the decision log and the follow-ups doc);
+- **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md` and
+  `CLAUDE.md`, and whether it balances;
+- **sizes**, **id prefixes** in use (`DEC-`, `D-`, `D<n>`, `Q-`, counted outside
+  harness blocks) and **held registry rows**;
+- **hazards** — by id, with the file and line.
+
+Run it without `--text` for JSON. `--hash <path>[#block]` prints the hash the
+manifest records for a file or block.
+
+`[M]` Quote its output at the top of the sheet. A lineage judged by eye misses the
+install that names its runner something else — and the script misses what it does
+not fingerprint, so read the repo too.
+
+## Step 2 — the decision sheet, before anything is written
+
+`[M]` **One table, one owner round:**
+
+```
+| Path[#block] | Lineage | Status | Proposed | Default |
+```
+
+`Lineage` is the mode the row belongs to (`plan`, `change`, or `core` for both);
+hazard rows carry `—`. `Default` is one of `replace · keep · generate · ask · wait`.
+
+| Status | Proposed | Default |
+|---|---|---|
+| `unchanged` (generated, hash matches) | replace with the newer template — a no-op when the manifest's `skillVersion` is current; say so | replace |
+| `edited` (generated, hash differs) | the edit, section by section — for a template-generated file against the template with this project's bindings; for a reference-generated block against the block as the manifest's commit wrote it (`git show <that commit>:AGENTS.md`), since only a hash is stored | **keep** |
+| `reviewed` (policy, risk map, earned rules) | nothing, or a section-level suggestion | keep |
+| `scaffold` (registry, log, follow-ups, decision log) | nothing; add a column only if the newer format needs it | keep |
+| `ignored` (a gitignored scaffold absent here, e.g. the registry in a fresh clone) | nothing | keep |
+| `legacy` (no manifest) | section-level proposals only | **keep** |
+| `missing` | the file, newly generated | generate — but **ask** for rows that depend on Phase B (policy, risk map, merge policy, `CODEOWNERS`) and route them there |
+
+`[M]` **Without a manifest, build the `missing` rows yourself:** compare the repo
+against the Phase C core table and the mode's set in `SKILL.md`. A component the
+project already wrote its own way (its own lint, its own verify runner) is a
+`legacy` keep row with a section-level proposal, not `missing`.
+
+Every hazard gets a row too, with its fix as the proposal and `ask` as the
+default. Anything that blocks applying — a held registry row, an open unit —
+gets a `wait` row.
+
+`[M]` **A legacy policy needs one owner confirmation** before it counts as
+reviewed; then its status line reads `REVIEWED <date> (adopted)`. Nobody can know
+whether an unstamped policy was ever read. Recognise one by what it governs, not
+its heading: a never-auto section, a hot-modules or critical-code table that keys
+review or merging, a locked-decisions list. Where it spans two files, the status
+line goes above the copy in the harness file and the other links to it. No policy
+at all → Phase B, its rows `ask`.
+
+`[M]` **Roles are kept by name.** The manifest maps each role to the project's
+existing name; the upgrade edits that file, never installs a second one beside it.
+Two files governing the same steps is the drift `rules.md` warns against. Role
+keys: `runner`, `lane-a` (conformance), `lane-b` (blast radius), `lane-c` (claim
+audit), `implementer`, `verify`, `rule-origins`, `log`, `follow-ups`,
+`decision-log`. A legacy auditor that covers several lanes maps to each
+(`"lane-b": "crosscheck-auditor", "lane-c": "crosscheck-auditor"`); when it holds
+`Bash` only for lane C, propose splitting the read-only lane out.
+
+`[M]` **The harness file is where the project keeps its process.** Generated blocks
+default to `AGENTS.md`; where the project keeps process in `CLAUDE.md` on purpose —
+another agent is its main runtime, or a test caps `AGENTS.md` — the blocks go there
+and the sheet says so.
+
+`[M]` **The owner's answer is the plan.** Write nothing the sheet did not approve.
+
+## Step 3 — apply, then write the manifest
+
+`[M]` **Only when no unit is in flight** — harness changes land between runs, never
+during one (`rules.md` §1). With a registry: the status script's held rows read 0.
+Without one: no linked worktree or open state file has uncommitted work; if any
+does, ask.
+
+`[M]` **Check the land order first.** A legacy runner that merges, flips a status
+or writes its log row on the mainline before releasing its row is refused by the
+guard the upgrade installs (`commit-guard.md` › Land order). Fix the runner in the
+same upgrade, or do not install the hook yet.
+
+`[M]` After applying, write `.agents/harness-manifest.json` and commit it with the
+change:
+
+```json
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 2, "generated": "<date>",
+  "modes": ["change"], "targets": ["claude", "codex"],
+  "roles": { "runner": "task-runner" },
+  "entries": [
+    { "path": "AGENTS.md", "block": "gates", "kind": "generated", "sha256": "<hex>" },
+    { "path": "AGENTS.md", "block": "policy", "kind": "reviewed" },
+    { "path": ".githooks/pre-commit", "kind": "generated",
+      "template": "templates/harness-guard.sh", "templateSha256": "<hex>", "sha256": "<hex>" },
+    { "path": "docs/harness/log.md", "kind": "scaffold" } ] }
+```
+
+| `kind` | Means | An upgrade may |
+|---|---|---|
+| `generated` | written by this skill from a template or a reference | replace it while its hash matches |
+| `scaffold` | created once, then the project's (registry, log, follow-ups, decision log) | add structure the newer format needs, never rows |
+| `reviewed` | owner-approved, earned, or a kept legacy file (policy, risk map, merge policy, earned rules, the project's own runner) | nothing without the owner |
+
+`[M]` **Hash after the formatter.** Take each hash from `harness-status.js --hash`
+**after** the project's formatter has run on the file, or the first formatting pass
+reads every file as edited. Hashes are over LF-normalised text; a block's hash
+covers the text strictly between its markers. `templateSha256` is the same command
+run on the skill itself: `node <skill dir>/scripts/harness-status.js <skill dir>
+--hash templates/<file>`.
+
+`[M]` **What is not an entry.** A symlink (record its real file); a shared JSON file
+the project also edits, such as `.claude/settings.json` — record the hook entries
+you added in the report, or the first permission change reads `edited`; the
+`prepare` line in `package.json`.
+
+## Markers in shared files
+
+`[M]` In files the project also writes (`AGENTS.md`, `CLAUDE.md`), generated
+sections sit between markers on their own lines, never nested:
+
+```
+<!-- harness:begin gates -->
+...
+<!-- harness:end gates -->
+```
+
+Ids: `rules`, `types`, `tiers`, `gates`, `policy`, `risk-map`, `merge`, `stops`,
+`scope`, `context`, `triggers`, `do-not-adopt`, `commands`, `models`, `claude`, and
+`earned` — the empty slots the log fills (Hot-small, tripwire numbers, the
+milestone cap), always of kind `reviewed`. Everything outside the markers is the
+project's, and an upgrade never touches it. **Wrap only blocks this skill writes**:
+legacy text the project wrote stays outside markers until the owner adopts it, and
+an adopted block is `reviewed`.
+
+`[M]` Files the harness owns outright — the runner skill, the auditors, the guard,
+the hooks, the scripts — are entries without a block. Never put a stamp comment in
+a `SKILL.md`: frontmatter must be the first line.
+
+## Hazards and their fixes
+
+| Hazard | Fix to propose |
+|---|---|
+| `registry-no-markers` | add `<!-- harness:active -->` / `<!-- /harness:active -->` around the active table (`commit-guard.md` › Migrating a legacy registry) |
+| `guard-missing`, `guard-snippet-only`, `lock-missing` | install the registry and the git hook; delete the snippet once the hook is tested |
+| `merge-unguarded` | install the same guard as `pre-merge-commit` (`commit-guard.md`) |
+| `skill-link-drift`, `skill-unlinked` | one real file under `.agents/skills/`, a committed relative symlink under `.claude/skills/` — unless the two copies are deliberate per-agent wrappers over one shared script (`harness-targets.md`); then keep both and say so |
+| `agents-md-codex-truncation`, `claude-md-large` | move rationale to `docs/harness/rule-origins.md` and area rules to path-scoped files (`harness-targets.md`). The script reads a raised `project_doc_max_bytes` from the Codex config |
+| `state-file-over-budget` | an open unit: move closed findings to the follow-ups doc (`scope-guard.md`); a closed unit: archive its state file (`docs/plans/archive/`) — the budget binds open units |
+| `readonly-agent-has-write-tools` | drop `Bash`, `Edit`, `Write` from `tools:`, or drop the claim. An auditor that needs a diff gets it written into its brief, so it needs no `Bash` |
+| `hook-undocumented-var` | rewrite the hook to read its stdin JSON — until then it acts on nothing |
+| `secret-in-agent-files` | move the value into the project's secret store, and rotate it if the file was ever committed: history keeps it. The report masks it; never repeat it |
+| `policy-no-status` | the one-time owner confirmation above |
+| `keyword-commit-hook` | remove it: a hook that checks for tags the agent writes itself is keyword matching (`rules.md` §3) |
+| `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
+| `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
+
+## Version table
+
+What each skill version changed, so an upgrade knows what is new since the
+manifest's `skillVersion`. An install with no manifest is v1 or earlier.
+
+| Version | Shipped in | Changed |
+|---|---|---|
+| 0 | before this skill | change installs written by hand (a tiered change workflow, cross-check lanes, a verify runner): everything in v2 is new to them except what the fingerprints show |
+| 1 | up to 2.2.1-js.4 | plan mode only: task runner, commit guard (repo-wide lock), two gates, conformance and claim auditors, registry, harness log, context-budget hook (Stop + UserPromptSubmit, recommended a new session), first-line stamps |
+| 2 | 2.2.1-js.5 | change mode beside plan mode; task types; tiers Trivial · Small · Full (Standard became Small); risk map and merge policy in Phase B; scope guard, decision log and committed state file; lane B `blast-radius-auditor`; test honesty in the claim auditor; guard `SCOPE=repo\|checkout` with Branch-cell matching, case-insensitive ids and a `pre-merge-commit` hook; context-budget v2 (PostToolUse, no hand-off); `run-gates.sh` with counted gates, `check-agent-docs.mjs`, `codex-run.mjs`, `command-guard.mjs`, the review workflow; manifest and markers replace stamps |

@@ -326,8 +326,8 @@ Own skills shipped today:
 | Skill | What it does |
 | --- | --- |
 | `skill-advisor` | Recommends and installs library items per project |
-| `harness-bootstrap` | Assesses a plan-driven repo and installs a gated task harness: task runner, git commit guard, two human gates, conformance and claim auditors, harness log. Claude Code first (Opus for judgment, Sonnet for bounded work) |
-| `delegate-tasks` | Opus architect writes build, fix or check specs; Sonnet builders run them in waves behind command gates |
+| `harness-bootstrap` | Assesses a repo, new or already bootstrapped, and installs or upgrades a gated harness: plan mode (task runner over a plan with stable ids) or change mode (task type, Trivial/Small/Full tiers), risk map and merge policy, commit and command guards, scope guard, three cross-check lanes, verify runner, harness log, upgrade manifest. Claude Code first (Opus for judgment, Sonnet for bounded work) |
+| `delegate-tasks` | Opus architect writes build, fix, control, check or plan specs; executors chosen per slice from the risk (Sonnet waves, Opus serial for critical code, a second model family) run them behind command gates, with a per-slice reviewer on another model. The dispatch engine for `harness-bootstrap` runs |
 
 ## Known limitations
 

@@ -1,169 +1,228 @@
 ---
 name: delegate-tasks
-description: "Delegate a batch of well-specified tasks to parallel Sonnet builders behind deterministic gates. The main session (Opus — architect and diagnostician) designs or diagnoses, writes one spec per task (build, fix with root cause and a red-to-green regression test, or check with typed findings and no edits), dispatches builders in waves, gates the result on the project's own commands, then integrates and reviews. Claude Code first; Codex and ZCode supported. Use when the user invokes /delegate-tasks, asks to delegate a batch of builds, fixes or checks, or names the architect-builder or spec-driven delegation pattern. Not for single or judgment-heavy tasks."
-when_to_use: "Deliberate invocation, for 2 or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
+description: "Use when a batch of well-specified work should go to subagents behind deterministic gates — two or more build slices, diagnosed fixes, control tests, check or review fan-outs with typed findings, or a blind second plan — while the main session (Opus) stays architect and diagnostician. Also the dispatch engine for a gated harness (harness-bootstrap): the implement, fix-round, cross-check and doc-sweep steps of a plan task or a change. Use when the user invokes /delegate-tasks, asks to delegate builds, fixes or checks, or names the architect-builder or spec-driven delegation pattern. Claude Code first; Codex, ZCode and Kimi supported. Not for a single bug, a design decision still open, or taste work."
+when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
+  version: 2
 ---
 
-# delegate-tasks — architect on Opus, builders on Sonnet
+# delegate-tasks — architect on Opus, executors by risk
 
 The main session is the **architect and diagnostician**: it understands the work,
 makes the design decisions, diagnoses defects, and writes one spec file per task.
-Builders — Sonnet subagents with the same tools as any agent — do the real work
-from those specs. **Commands decide, not claims:** the session gates the combined
-result on the project's own checks, and checks the builders' file scope with git
-rather than trusting their reports. Then it integrates and reviews.
+Executors do the work from those specs. **Commands decide, not claims:** the session
+gates the result on the project's own checks, and checks each executor's file scope
+with git rather than trusting its report. Then it integrates and reviews.
 
-One machinery, three kinds of task:
+**Evidence:** 23 delegated runs in one project (about 9 relaunched, every relaunch
+traced to a spec or gate defect, never to a builder's skill), and a third project's
+slice-per-agent workflow across about 120 sessions. Implementation was never the
+bottleneck: on one task review and claim audit took about 250 of 423 minutes.
 
-- **Build** — implement well-understood feature slices.
-- **Fix** — repair diagnosed defects; each spec carries the root cause and a
+Five kinds of spec, one machinery:
+
+- **Build** — implement a well-understood slice.
+- **Fix** — repair a diagnosed defect; the spec carries the root cause and a
   red→green regression test.
-- **Check** — examine many items and report typed findings, without editing.
+- **Control** — write the test that proves a protection: break the protection,
+  paste the red line, restore it, paste the green line.
+- **Check** — examine many items and report typed findings, without editing. Review
+  and audit fan-outs are check specs.
+- **Plan** — a blind second plan from the same brief, by another model, for the
+  session to compare.
 
-What never delegates: understanding, design, and **diagnosis**.
+What never delegates: understanding, design, **diagnosis**, triage and the commit.
 
 ## When to Use
 
-- Two or more tasks, each with acceptance decidable by commands (typecheck,
-  scoped tests, build, lint, count checks) or, for visual work, by a separate
-  reviewer reading a screenshot or an accessibility snapshot.
+- Two or more tasks, each with acceptance decidable by commands (typecheck, scoped
+  tests, build, lint, count checks) or, for visual work, by a separate reviewer
+  reading a screenshot or an accessibility snapshot. `[B]` Inside a harness, the
+  harness file may set a higher threshold; that number wins.
 - The contracts between tasks — routes, signatures, type names, file ownership —
-  can be fixed **before** any builder starts.
-- Inside a gated harness (`harness-bootstrap`): the task runner's implement step
-  on the **Standard** track. Gate 1 approves the slicing table, and that replaces
-  this skill's spec-index stop.
+  can be fixed **before** any executor starts.
+- **Inside a gated harness** (`harness-bootstrap`): the runner hands this skill
+  each bounded segment. Gate 1 approves the slicing table, which replaces this
+  skill's own spec-index stop.
 
-Handle directly instead, and say why: a single bug (diagnosis is most of the
-work); design decisions that must be made mid-flight; tasks that must edit the
-same files; judgment-heavy or taste work; **never-auto categories, migrations and
-auth changes**; and chains across plan tasks (the harness's segment runner).
+Handle directly instead, and say why: a single bug (diagnosis is most of the work);
+design decisions still open; tasks that must edit the same files; judgment-heavy or
+taste work.
 
 ## How It Works
 
-### Phase A — Triage (main session)
+### Phase A — Triage and slicing (main session)
 
-Read the request — feature doc, plan slice, bug backlog, audit findings — and the
-code. Delegate only when every condition above holds. State the decision and the
-model for each role in one line before going on.
+Read the request — feature doc, plan slice, change request, bug backlog, audit
+findings — and the code. Write the **slicing table**:
+
+```
+| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk |
+```
+
+Every acceptance criterion of the request maps to a slice, or the table is
+incomplete. **The executor comes from the risk** — the harness's risk map where one
+exists (the `harness-bootstrap` skill's gate design), else the project's own judgment:
+
+| Slice | Executor | How |
+|---|---|---|
+| copy, mechanical adoption with count gates, UI against a committed contract, docs | Sonnet builder | waves, in parallel when truly independent |
+| contract or domain logic | Opus implementer | serial |
+| critical code — never-auto categories, migrations, auth, money, widely imported modules | **Opus implementer only** | **serial, never in parallel** |
+| any cold slice where an independent model or a separate quota helps | the second family (`implement-cold`) | serial, reviewed by Opus |
+
+State the decision and the model for each role in one line before going on.
 
 ### Phase B — Specs (main session)
 
-1. **Decide and diagnose now.** For fixes, the root cause in a spec comes from the
-   main session's diagnosis, never from a builder's guess.
+1. **Decide and diagnose now.** A fix's root cause comes from the session's
+   diagnosis, never from an executor's guess.
 2. **One directory per run:** `.claude/tasks/<run-id>/NN-slug.md` (gitignored), or
-   `docs/tasks/<run-id>/` when the specs should be versioned. A shared directory
-   once let a glob pick up a previous run's leftover specs.
-3. **Spec rules** — what makes parallel builders safe:
-   - **Disjoint file sets.** Two builders never edit the same file. If two tasks
-     need one shared file, merge them or sequence them.
+   `docs/tasks/<run-id>/` when the specs should be versioned. A shared directory once
+   let a glob pick up a previous run's leftover specs.
+3. **Spec rules** — what makes parallel executors safe:
+   - **Disjoint file sets.** Each file appears in exactly one spec. Shared hub files
+     — a router, a registry, wiring — stay with the session.
    - **Contracts verbatim and identical** in every spec that touches them, citing
-     where they come from (a plan row, a decision id). Two strangers building from
-     these specs must produce parts that click together.
-   - **Acceptance = commands**, with what "green" means for each. Where a count is
-     the point — call sites migrated, rows copied — state the exact count and the
-     command that measures it.
-   - **Scoped acceptance only.** The full suite is the session's job, once.
-   - **Patterns to imitate** — existing files that already do it right.
-   - **Repo rules** — the handful of project rules this slice could break, quoted.
-   - **Copy and naming are decided, not delegated.** Owner-approved strings go in
-     the spec verbatim.
-   - **Fix mode:** the regression test is shown **red on the current code first**.
-   - **Check mode:** never authorises edits.
-4. **Waves.** Specs that create a contract or shared copy are **wave 0**; their
-   dependents wait for them. Everything else in a wave must be truly independent.
-5. **Show the spec index** — one line per spec, with its wave — and get a
-   go-ahead (or Gate 1, in a harness) before dispatching. This is the cheapest
-   place to veto the decomposition.
+     where they come from.
+   - **Acceptance = commands**, with what "green" means. Where a count is the point,
+     state the exact count — **measured now**, not estimated — and the command that
+     measures it.
+   - **Scoped acceptance only.** The full suite is the session's, once.
+   - **Pin and ratchet tests broken by design** are listed in the spec, with the
+     new expected value, or the gate reads them as regressions.
+   - **Patterns to imitate**, **repo rules** quoted (in a harness:
+     `node scripts/check-agent-docs.mjs --rules-for <files>`), and **copy decided,
+     not delegated**.
+   - **Fix and control specs:** the test is shown **red on the current code first**.
+   - **Check specs** never authorise edits, and their findings are typed.
+4. **Order.** Specs that create a contract or shared copy run first; dependents wait.
+   Parallel waves only for truly independent leaves.
+5. **Spec check before dispatch** — a check over the specs themselves, by the
+   session or one check spec: every file in exactly one spec; contracts identical
+   across specs; counts re-measured; tests broken by design listed; no hub file
+   assigned out.
+   > Origin: Gate 1 approved the slicing table but never saw the spec text, so every
+   > spec defect in those runs got past it.
+6. **Show the spec index** — one line per spec with its order — and get a go-ahead
+   (or Gate 1, in a harness) before dispatching.
 
-Templates for the three spec kinds are in `reference/spec-templates.md`.
+Templates for every kind are in `reference/spec-templates.md`.
 
 ### Phase C — Execution (Claude Code)
 
-1. **Dispatch one wave at a time.** For each spec in the wave, an Agent call with
-   **`model: "sonnet"` passed explicitly**, all of the wave's calls in **one
-   message** so they run in parallel. The builder brief:
+1. **Dispatch.** One Agent call per spec, with **`model` and `effort: "high"`
+   passed explicitly** — never inherited. Parallel waves go in **one message**;
+   serial slices go one at a time. The executor brief:
 
    > Read `<spec path>` and implement it exactly. Read every source file it
    > references before writing code, and follow the patterns it points to. Run each
-   > acceptance command in the spec and fix your work until they pass — never
-   > report a check you did not run. Edit only the files in the spec's Files list.
-   > Never modify a test to make it pass. Do not commit. No host-level operations
-   > (global installs, image pulls, restarting shared services) and no
-   > repository-wide suite. If the spec contradicts the code or is missing
-   > something you need, stop and report it as blocked instead of guessing. End
-   > with: `STATUS: done | blocked`, `FILES:` the files you changed, `COMMANDS:`
-   > each acceptance command with its last line of output, `BLOCKERS:` or `none`.
+   > acceptance command in the spec and fix your work until they pass — never report
+   > a check you did not run. Edit only the files in the spec's Files list. Never
+   > modify a test to make it pass. Do not commit. No host-level operations (global
+   > installs, image pulls, restarting shared services) and no repository-wide
+   > suite. If the spec contradicts the code or is missing something you need, stop
+   > and report it as blocked instead of guessing. End with: `STATUS: done |
+   > blocked`, `FILES:`, `COMMANDS:` each acceptance command with its last line of
+   > output, `BLOCKERS:` or `none`.
 
-2. **A blocked wave-0 spec stops the run.** Fix the spec, not the code, and
-   re-dispatch that builder alone.
+2. **Assert the exact number of specs selected** before dispatching a wave. A
+   filter that selects zero — or one fewer than the index — is an error, not an
+   empty wave. Character classes are the usual cause: a filter written
+   `/^[0678]-/` could never match `06-`, so a whole phase dispatched nothing and
+   reported green.
 3. **Check the fence with git, not the report.** `git status --porcelain` against
-   each spec's Files list. A file outside every list is a finding; revert it or
-   fold it into a spec deliberately.
-4. **Gate on commands, in the main session.** Run each spec's acceptance commands
-   and the run's combined gate (typecheck, lint, the scoped tests the specs
-   touch) as **separate commands, one result line each** — never one `&&` chain,
-   which hides every check after the first red. Keep output small (errors-only
-   reporter flags); a huge green log once broke a gate that had passed.
-5. **Fix rounds — at most three.** For a red gate, dispatch a Sonnet fixer with
-   the failing output, fenced to the specs' scope: *"if the fix belongs outside
-   these files, report that instead of editing."* Re-run the gate after each
-   round. Still red after three: stop and report.
-6. Builders that share state (one test database, one port) cannot run their
-   acceptance in parallel. Put them in sequential waves, or give each its own
-   resource.
-7. **The full suite stays with the session.** List it as not yet covered until
-   it has run once.
+   the spec's Files list. A file outside every list is a finding; revert it or fold
+   it into a spec deliberately.
+4. **Gate on commands, in the main session.** Each spec's acceptance commands and the
+   combined gate as **separate commands, one result line each** — never one `&&`
+   chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
+5. **Per-slice review, on a different model.** After a serial slice passes its gate,
+   one reviewer on a different model reads that slice's diff before the next slice
+   builds on it — Opus over a Sonnet or second-family slice; the second family or a
+   fresh Opus reviewer over an Opus slice. Then integrate. In a harness the session
+   commits here; standalone it commits at the end.
+6. **Escalation.** A blocked executor: answer it and continue the **same** agent
+   (`SendMessage`) while its context is small, or re-dispatch with a revision note in
+   the spec. The architect's ruling goes into the spec, the harness's state file and
+   the commit message — never only the chat.
+7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
+   code) **fenced to the current slice's listed files, never a folder** — a fixer
+   once wrote the next wave's strings. Give it the tail of **both stdout and
+   stderr**: type checkers and build orchestrators print errors to stdout. A finding
+   is `verified` only when the gate is green. Count maps come from the spec. Still
+   red after three: stop and report.
+8. Executors that share state (one test database, one port) run in sequence, or each
+   gets its own resource. **Pin the repository root** in every command.
+9. **Another session may be working in the same clone.** A file outside every list
+   may be theirs: look before reverting.
+10. **The full suite stays with the session.** List it as not yet covered until it
+    has run once.
 
-A Claude Code **Workflow** variant is possible only when the user explicitly asks
-for a workflow: load the `workflow-authoring` skill and keep the same waves,
-fence check, gates and three-round cap. Codex and ZCode forms are in
+**Check fan-outs** — reviewers, cross-check lanes, adversarial passes — dispatch in
+one message, one brief per reviewer, each with its own `.review-work/<name>/`
+directory. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
+reproduce, introduced by this diff or pre-existing, and a proposed scope class. Every
+P0 and P1 is then **verified** — reproduced or refuted — before anyone fixes it; an
+unverifiable one stays blocking. A harness's review workflow
+(`.claude/workflows/review.workflow.js`) runs the same fan-out deterministically.
+
+**Plan specs** dispatch two planners from one brief, blind to each other — Opus and
+the second family (`codex-run plan-blind` in a harness), or Opus and ECC's
+`planner` when no second family exists (recorded `degraded`). The session writes the
+comparison: agree · differ, with evidence · one side only, each one-sided item
+verified in code.
+
+A Claude Code **Workflow** variant of the build loop is possible only when the user
+explicitly asks for a workflow: load the `workflow-authoring` skill and keep the same
+order, fence check, gates and three-round cap — it cannot run the gates itself, so
+they stay in the session. Codex, ZCode and Kimi forms are in
 `reference/other-harnesses.md`.
 
 ### Phase D — Integration and review (main session)
 
-- Read the full diff. Check the seams: do parts built from different specs match
-  the contracts? Error handling on new paths? Tests asserting behaviour rather
-  than implementation? Nothing outside spec scope?
-- **Fix mode:** the regression test asserts the **reported symptom**, and the root
-  cause is addressed — no bare try/catch, no symptom-only patch.
-- **Check mode:** re-run any finding a command can decide; sample the rest before
-  anyone acts on them.
-- **Visual output:** a separate reviewer — never a builder — reads the
-  screenshots or the accessibility snapshot against the spec's visual contract.
-  **The actor that made a change never judges its own output.**
-- Blocked tasks: fix the **spec**, re-dispatch only that builder.
+- Read the full diff. Check the seams: do parts built from different specs match the
+  contracts? Error handling on new paths? Tests asserting behaviour rather than
+  implementation? Nothing outside spec scope?
+- **Fix and control specs:** the test asserts the **reported symptom** and was red
+  before; the root cause is addressed — no bare try/catch, no symptom-only patch.
+- **Check specs:** re-run every finding a command can decide; sample the rest.
+- **Visual output:** a separate reviewer — never a builder — reads the screenshots or
+  the accessibility snapshot against the spec's visual contract.
+- Blocked tasks: fix the **spec**, re-dispatch only that executor.
 - Run the project's strongest check once yourself.
 - **Commit gate.** Standalone: present the diff summary and proposed conventional
   commit messages, and commit only when the user confirms. Inside a harness: the
-  task runner's own commit points and Gate 2 apply instead.
-- Report what was built, fixed or checked; what each gate verified, with its
-  output line; and what remains.
+  runner's commit points and Gate 2 apply instead.
+- Report what was built, fixed or checked; what each gate verified, with its output
+  line; and what remains.
 
 ## Examples
 
-**Build, three slices.** A plan task adds a CSV export. Spec 01 (wave 0) fixes
-the contract — `serializeOrders(rows): string` and `GET /orders/export.csv`.
-Specs 02 (service) and 03 (route + UI button) are wave 1, disjoint files, each with
-`tsc --noEmit` and a scoped test as acceptance. The session dispatches 01, checks
-its fence and gate, then dispatches 02 and 03 in one message, gates, integrates.
+**Build, three slices, one critical.** A change adds a refund endpoint. Spec 01
+(Opus implementer, serial) changes the money service — critical code. Its gate
+passes; a second-family reviewer reads its diff; the session commits. Specs 02 (the
+route) and 03 (the admin button) are cold, disjoint and independent: one Sonnet wave,
+dispatched in one message, fence-checked and gated, then integrated.
 
-**Fix batch.** Four diagnosed defects from a bug list, each with its root cause
-and a regression test shown red first; one wave of four Sonnet builders; the
-session confirms each test was red before the fix and green after.
+**Fix batch.** Four diagnosed defects, each spec with its root cause and a
+regression test shown red first; one wave of four Sonnet fixers; the session
+confirms each test was red before the fix and green after.
 
-**Check.** One check spec per route file: "report handlers missing the
-permission check — where, evidence, severity; edit nothing." The session re-runs
-the findings a grep can decide before reporting.
+**Check.** One check spec per route file: "report handlers missing the permission
+check — P0–P3, `file:line`, evidence, repro; edit nothing." The session reproduces
+the P0 and P1 findings a grep can decide before anyone fixes them.
 
 ## Constraints
 
-- **Diagnose before delegating a fix.** A builder guessing a root cause is the
+- **Diagnose before delegating a fix.** An executor guessing a root cause is the
   failure this skill exists to prevent.
 - **The actor that made a change never judges its own output.**
-- **Builders and fixers never commit.**
-- **Pass `model` on every dispatch** — Sonnet for builders, fixers and check
-  specs; the main session stays on Opus.
-- Builders' scoped commands are the fast tier; the session's combined gate is the
+- **Executors never commit.**
+- **Pass `model` and `effort` on every dispatch** — the executor model from the
+  slice's risk; Sonnet for check specs unless the harness says otherwise; the main
+  session stays on Opus.
+- **Critical slices never run in parallel.**
+- Executors' scoped commands are the fast tier; the session's combined gate is the
   strong tier and runs at least once before the report.

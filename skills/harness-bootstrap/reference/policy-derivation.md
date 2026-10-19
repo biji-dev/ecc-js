@@ -76,6 +76,15 @@ to code instead of change categories.
   change most and the fix commits that touched them. A hot module that never
   changes still belongs on the list; a frequently fixed one is a candidate.
 
+**A new repository has planned paths only.** Take them from the documents that fix
+the layout (an architecture or repository-structure section) and from the areas the
+documents say need the owner's approval, and mark each entry **`planned`** with the
+document it comes from. A planned path is critical when its area is; there are no
+importer counts and no history yet, so *N* stays empty. Write the trigger into the
+draft: re-derive the map when a planned path first has code, and at the first
+checkpoint after that — the owner reviews the re-derived map like the first one.
+A path the map cannot place yet is **critical**, never cold.
+
 ## The merge policy
 
 Draft the default from `gate-design.md` — Small merges locally on its own when

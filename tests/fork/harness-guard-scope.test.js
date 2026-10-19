@@ -474,6 +474,26 @@ if (!hasGit) {
     } finally { cleanup(dir); }
   });
 
+  // ---- Dotted ids (EP-27.01): the default pattern cuts them; the bound one owns the row ----
+  test('dotted ids: the default pattern cuts EP-27.01 and refuses its owner; EP-[0-9]+\\.[0-9]+ allows it', () => {
+    const row = '| 1 | EP-27.01 | 1 | seg/other | 2026-10-19T09:00Z |'; // Branch cell elsewhere: only the id can match
+    const cut = guardedRepo(guardText('repo'));
+    try {
+      setRegistry(cut, row);
+      git(cut, ['switch', '-qc', 'ep-27.01-contract']);
+      assertRefused(tryCommit(cut)); // EP-27 holds no row: why the id self-test exists
+    } finally { cleanup(cut); }
+    const dir = guardedRepo(guardText('repo', { idPattern: 'EP-[0-9]+\\.[0-9]+' }));
+    try {
+      setRegistry(dir, row);
+      assertRefused(tryCommit(dir), /not its task branch/);
+      git(dir, ['switch', '-qc', 'ep-27.01-contract']);
+      assertAllowed(tryCommit(dir));
+      git(dir, ['switch', '-qc', 'ep-27.02-mock']);
+      assertRefused(tryCommit(dir), /Claim the lock first/); // a neighbouring dotted id: no row
+    } finally { cleanup(dir); }
+  });
+
   test('a tracked registry: the release commit on a lowercase branch is allowed, other commits are not', () => {
     const dir = guardedRepo(guardText('repo'), { tracked: true });
     try {

@@ -89,12 +89,29 @@ guard checked only "is this the mainline" and refused every commit while any run
 held the lock — including the owning run's own.
 
 `[M]` **The id pattern must match every id shape the plan has.** The default
-`[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]+[a-z]?` covers `P0-12`, `T-AB-12`,
+`[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]+[A-Za-z]?` covers `P0-12`, `T-AB-12`,
 `T-I18N-003` and `T-SEC-030b`, and takes only the **first** id from a segment
 branch named for a range (`P0-12-P0-11` → `P0-12`). A simpler pattern read
 `T-AB-12` as `AB-12` and refused its own run. Check the pattern against the real
 plan's ids before installing. Ids match **case-insensitively**: plans write
 `P2-20`, branches are usually `task/p2-20`.
+
+`[M]` **Self-test the bound pattern before installing.** It must take each id
+**whole**: for every plan id and every existing branch, the match must not stop
+in the middle of the id. Run it over the plan's ids (the extract command is `[B]`):
+
+```sh
+ID_PATTERN='EP-[0-9]+\.[0-9]+'   # the value about to be bound
+for id in $(grep -oE 'EP-[0-9]+\.[0-9]+' docs/plan.md | sort -u); do
+  [ "$(printf '%s' "$id" | grep -oE "$ID_PATTERN" | head -n 1)" = "$id" ] || echo "CUT $id"
+done
+```
+
+Any `CUT` line is a row the guard can match only through its `Branch` cell. A
+segment or renamed branch then holds no row and is refused, and a tracked
+registry's release check, which finds the row by id, accepts removing any row the
+cut id is a prefix of. The default pattern cuts `EP-27.01` to `EP-27`. After install,
+the status script reports a cut id as `id-pattern-truncates`.
 
 `[B]` **Change mode leaves `ID_PATTERN` empty** unless its changes carry ids. The
 plan default also matches tokens such as `UTF-8` or `ISO-8601`, and refused a

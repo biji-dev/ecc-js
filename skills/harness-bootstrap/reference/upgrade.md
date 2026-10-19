@@ -169,6 +169,7 @@ a `SKILL.md`: frontmatter must be the first line.
 | `registry-no-markers` | add `<!-- harness:active -->` / `<!-- /harness:active -->` around the active table (`commit-guard.md` › Migrating a legacy registry) |
 | `guard-missing`, `guard-snippet-only`, `lock-missing` | install the registry and the git hook; delete the snippet once the hook is tested |
 | `merge-unguarded` | install the same guard as `pre-merge-commit` (`commit-guard.md`) |
+| `id-pattern-truncates`, `id-pattern-invalid` | bind `ID_PATTERN` to the full id shape and run the self-test (`commit-guard.md`); until then the guard refuses the branches that own those rows |
 | `skill-link-drift`, `skill-unlinked` | one real file under `.agents/skills/`, a committed relative symlink under `.claude/skills/` — unless the two copies are deliberate per-agent wrappers over one shared script (`harness-targets.md`); then keep both and say so |
 | `agents-md-codex-truncation`, `claude-md-large` | move rationale to `docs/harness/rule-origins.md` and area rules to path-scoped files (`harness-targets.md`). The script reads a raised `project_doc_max_bytes` from the Codex config |
 | `state-file-over-budget` | an open unit: move closed findings to the follow-ups doc (`scope-guard.md`); a closed unit: archive its state file (`docs/plans/archive/`) — the budget binds open units |

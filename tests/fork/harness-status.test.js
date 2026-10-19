@@ -969,6 +969,130 @@ test('13. a gitignored scaffold that is absent reads ignored, not missing', () =
   assert.strictEqual(statusOf(report(g), 'x.sh'), 'missing');
 });
 
+// ── guard ID_PATTERN hazard ──────────────────────────────────────────────────
+
+console.log('\nharness-status: guard ID_PATTERN');
+
+const DEFAULT_ID_PATTERN = '[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]+[A-Za-z]?';
+const idRegistry = rows => [
+  '# Registry', '<!-- harness:active -->',
+  '| # | Task | Branch | Notes |', '|---|---|---|---|',
+  ...rows,
+  '<!-- /harness:active -->', '',
+].join('\n');
+
+/** A repo with a guard that carries <pattern>, a registry, one commit and the given local branches. */
+function patternFixture(pattern, rows, branches, guardRel = '.githooks/harness-guard.sh') {
+  const repo = mk({
+    [guardRel]: `#!/bin/sh\nREGISTRY='.claude/registry.md'\nID_PATTERN='${pattern}'  # [B]\nexit 0\n`,
+    '.claude/registry.md': idRegistry(rows),
+  });
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'init']);
+  for (const b of branches) git(repo, ['branch', b]);
+  return repo;
+}
+
+const idPatternIds = rep => ids(rep).filter(i => i.startsWith('id-pattern-'));
+const DOT_ROW = '| 1 | EP-27.01 | ep-27.01-contract | open |';
+
+test('id-pattern: the default pattern cuts EP-27.01 to EP-27 and the hazard names branch and id', () => {
+  const repo = patternFixture(DEFAULT_ID_PATTERN, [DOT_ROW], ['ep-27.01-contract']);
+  const rep = report(repo);
+  const h = rep.hazards.find(x => x.id === 'id-pattern-truncates');
+  assert.ok(h, `no id-pattern-truncates in ${ids(rep)}`);
+  assert.strictEqual(h.path, '.githooks/harness-guard.sh');
+  assert.ok(h.detail.includes("branch 'ep-27.01-contract'") && h.detail.includes('EP-27.01'), h.detail);
+  assert.ok(h.detail.includes("takes 'EP-27' from 'EP-27.01-CONTRACT'"), h.detail);
+  assert.ok(h.detail.includes("registry id 'EP-27.01'"), h.detail);
+  assert.ok(h.detail.includes('bind ID_PATTERN to the full id shape'), h.detail);
+});
+
+test('id-pattern: a pattern that covers the dotted id raises nothing', () => {
+  const repo = patternFixture('EP-[0-9]+\\.[0-9]+', [DOT_ROW], ['ep-27.01-contract']);
+  assert.deepStrictEqual(idPatternIds(report(repo)), []);
+});
+
+test('id-pattern: an empty ID_PATTERN is skipped', () => {
+  const repo = patternFixture('', [DOT_ROW], ['ep-27.01-contract']);
+  assert.deepStrictEqual(idPatternIds(report(repo)), []);
+});
+
+test('id-pattern: ids the default pattern takes whole raise nothing', () => {
+  const rows = ['| 1 | T-AB-12 | task/t-ab-12-thing | open |', '| 2 | T-AB-13 | task/t-ab-13-more | open |'];
+  const repo = patternFixture(DEFAULT_ID_PATTERN, rows, ['task/t-ab-12-thing', 'task/t-ab-13-more']);
+  assert.deepStrictEqual(idPatternIds(report(repo)), []);
+});
+
+test('id-pattern: a pattern that does not compile is id-pattern-invalid', () => {
+  const repo = patternFixture('EP-[0-9+', [DOT_ROW], ['ep-27.01-contract']);
+  const rep = report(repo);
+  const h = rep.hazards.find(x => x.id === 'id-pattern-invalid');
+  assert.ok(h, `no id-pattern-invalid in ${ids(rep)}`);
+  assert.strictEqual(h.path, '.githooks/harness-guard.sh');
+  assert.ok(h.detail.includes('EP-[0-9+'), h.detail);
+  assert.ok(!ids(rep).includes('id-pattern-truncates'));
+});
+
+test('id-pattern: no guard installed means no check', () => {
+  const repo = mk({ '.claude/registry.md': idRegistry([DOT_ROW]) });
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'init']);
+  git(repo, ['branch', 'ep-27.01-contract']);
+  assert.deepStrictEqual(idPatternIds(report(repo)), []);
+});
+
+test('id-pattern: the registry rows alone can show the hazard, header and separator rows are skipped', () => {
+  const repo = patternFixture(DEFAULT_ID_PATTERN, ['| 1 | EP-27.01 | ep-27.01-contract | open |', '| 2 | AB-7 | ab-7-x | open |'], []);
+  const h = report(repo).hazards.find(x => x.id === 'id-pattern-truncates');
+  assert.ok(h);
+  assert.ok(h.detail.includes("registry id 'EP-27.01'") && !h.detail.includes("registry id 'AB-7'"), h.detail);
+  assert.ok(!h.detail.includes("registry id '#'") && !h.detail.includes('---'), h.detail);
+});
+
+test('id-pattern: the detail lists at most five items', () => {
+  const rows = [];
+  const branches = [];
+  for (let i = 1; i <= 8; i += 1) { rows.push(`| ${i} | EP-${i}.01 | x | open |`); branches.push(`ep-${i}.01-c`); }
+  const h = report(patternFixture(DEFAULT_ID_PATTERN, rows, branches)).hazards.find(x => x.id === 'id-pattern-truncates');
+  assert.ok(h);
+  assert.strictEqual(h.detail.split('ID_PATTERN takes').length - 1, 5, h.detail);
+});
+
+test('id-pattern: the guard is found in the hooks dir, then through husky and lefthook', () => {
+  const body = `#!/bin/sh\nID_PATTERN='${DEFAULT_ID_PATTERN}'\n`;
+  const reg = { '.claude/registry.md': idRegistry([DOT_ROW]) };
+  const viaHooks = mk({ ...reg, '.git/hooks/pre-commit': body });
+  const viaHusky = mk({ ...reg, '.husky/pre-commit': 'sh tools/harness-guard.sh\n', 'tools/harness-guard.sh': body });
+  const viaLefthook = mk({ ...reg, 'lefthook.yml': 'pre-commit:\n  commands:\n    g:\n      run: sh scripts/x/harness-guard.sh\n', 'scripts/x/harness-guard.sh': body });
+  const escaping = mk({ ...reg, '.husky/pre-commit': 'sh ../harness-guard.sh\n' });
+  for (const repo of [viaHooks, viaHusky, viaLefthook]) {
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-q', '-m', 'init']);
+    git(repo, ['branch', 'ep-27.01-contract']);
+    assert.ok(ids(report(repo)).includes('id-pattern-truncates'));
+  }
+  assert.deepStrictEqual(idPatternIds(report(escaping)), []);
+});
+
+test('id-pattern: a run reads branches only and writes nothing', () => {
+  const repo = patternFixture(DEFAULT_ID_PATTERN, [DOT_ROW], ['ep-27.01-contract']);
+  const before = git(repo, ['for-each-ref']) + snapshot(repo);
+  report(repo);
+  assert.strictEqual(git(repo, ['for-each-ref']) + snapshot(repo), before);
+});
+
+test('id-pattern: mutant that drops the character-after-the-match test changes the outcome', () => {
+  const m = mutantOf('/[A-Z0-9.]/.test(ch)', 'true');
+  const whole = patternFixture(DEFAULT_ID_PATTERN, ['| 1 | T-AB-12 | task/t-ab-12-thing | open |'], ['task/t-ab-12-thing']);
+  assert.deepStrictEqual(idPatternIds(report(whole)), []);
+  assert.ok(ids(report(whole, m)).includes('id-pattern-truncates'), 'mutant still silent on whole ids');
+  const cut = patternFixture(DEFAULT_ID_PATTERN, [DOT_ROW], ['ep-27.01-contract']);
+  assert.ok(ids(report(cut)).includes('id-pattern-truncates'));
+  const mutantCut = mutantOf('/[A-Z0-9.]/.test(ch)', 'false');
+  assert.deepStrictEqual(idPatternIds(report(cut, mutantCut)), []);
+});
+
 // ── mutation ─────────────────────────────────────────────────────────────────
 
 console.log('\nharness-status: mutation');

@@ -86,7 +86,9 @@ State the decision and the model for each role in one line before going on.
      — a router, a registry, wiring — stay with the session.
    - **Contracts verbatim and identical** in every spec that touches them, citing
      where they come from.
-   - **Acceptance = commands**, with what "green" means. Where a count is the point,
+   - **Acceptance = commands**, with what "green" means and what each one covers: a
+     type check whose config leaves out the test files says nothing about them, so
+     name that gap or add the command that closes it. Where a count is the point,
      state the exact count — **measured now**, not estimated — and the command that
      measures it.
    - **Scoped acceptance only.** The full suite is the session's, once.

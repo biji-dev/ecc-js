@@ -1,8 +1,9 @@
 # delegate-tasks on other agents
 
-The method is the same everywhere — triage, specs, waves, fence check, command
-gates, at most three fix rounds, integration by the session that wrote the specs.
-Only the execution engine changes.
+The method is the same everywhere — triage, the slicing table, specs, the spec
+check, order and waves, fence check, command gates run separately, at most three
+fenced fix rounds, a per-slice reviewer on another model, integration by the session
+that wrote the specs. Only the execution engine changes.
 
 ## ZCode — dynamic workflow
 
@@ -25,8 +26,13 @@ Lessons from about a dozen real runs, already folded into the template below:
   cap and failed the step; use errors-only reporters.
 - **Count gates** where the spec promises counts: `grep -c` per file, compared
   to the expected map, one violation fails the gate.
-- Fixers are fenced: "if the fix belongs outside these files, report that
-  instead of editing."
+- **Run each gate command separately**, one result each — never `a && b`, which
+  hides every check after the first red (`SKILL.md` Phase C).
+- Fixers are fenced to **the failing wave's listed files**, never a folder, and see
+  the tail of **both** stdout and stderr — type checkers print errors to stdout.
+- **Fresh eyes before the commit.** A reviewer on a different model reads the
+  combined diff and returns typed findings; the session triages them before the
+  commit gate.
 
 ```ts
 interface TaskResult {
@@ -59,8 +65,11 @@ const all = await files.glob(`${RUN}/0*.md`);
 const wave = (re: RegExp) => all.filter((p) => re.test(p.split("/").pop() ?? ""));
 const waves = [wave(/^0[1]-/), wave(/^0[2-9]-/)]; // [B] wave 0 = contracts and copy
 
+const EXPECTED = [1, 2]; // [B] specs per wave, from the spec index
 for (const [i, specs] of waves.entries()) {
-  if (specs.length === 0) throw new Error(`wave ${i} selected no specs — check the filter`);
+  if (specs.length !== EXPECTED[i]) {
+    throw new Error(`wave ${i} selected ${specs.length} specs, expected ${EXPECTED[i]} — check the filter`);
+  }
 }
 
 const results: TaskResult[] = [];
@@ -74,16 +83,32 @@ for (const [i, specs] of waves.entries()) {
 }
 
 phase("Gate the combined result");
-const gate = () => world.run("sh", ["-c", `cd ${ROOT} && npm run -s typecheck && npm test -- --reporter=dot`], { timeoutMs: 600_000 }); // [B]
-let g = await gate();
-for (let round = 1; round <= 3 && g.exitCode !== 0; round++) {
+// [B] one command per gate, each run on its own — never `a && b`, which hides every gate after the first red
+const GATES = ["npm run -s typecheck", "npm test -- --reporter=dot"];
+const runGate = (cmd: string) => world.run("sh", ["-c", `cd ${ROOT} && ${cmd}`], { timeoutMs: 600_000 });
+const gateAll = async () => {
+  const out = [];
+  for (const cmd of GATES) out.push({ cmd, r: await runGate(cmd) });
+  return out;
+};
+const fence = results.flatMap((r) => r.files); // fixers stay inside what the builders were given
+let g = await gateAll();
+for (let round = 1; round <= 3 && g.some((x) => x.r.exitCode !== 0); round++) {
+  const red = g.filter((x) => x.r.exitCode !== 0)
+    .map((x) => `$ ${x.cmd}\n${(x.r.stdout + "\n" + x.r.stderr).slice(-4000)}`) // tsc and turbo print errors to stdout
+    .join("\n\n");
   await agent(`fixer round ${round}`, { system: BUILDER }).ask(
-    `The gate failed:\n${g.stderr.slice(-4000)}\nFix the cause within the specs' Files lists. ` +
+    `These gates failed:\n${red}\nFix the cause, editing only these files: ${fence.join(", ")}. ` +
       `If the fix belongs elsewhere, report that instead of editing. Do not commit.`,
   );
-  g = await gate();
+  g = await gateAll();
 }
-return { built: results.filter((r) => r.status === "done").length, total: all.length, gateGreen: g.exitCode === 0, results };
+return {
+  built: results.filter((r) => r.status === "done").length,
+  total: all.length,
+  gates: g.map((x) => ({ cmd: x.cmd, green: x.r.exitCode === 0 })),
+  results,
+};
 ```
 
 `world.run` command names are compile-time literals; runtime values go in the

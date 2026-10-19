@@ -3,17 +3,20 @@
 **This is the engine.** Every rule in `rules.md` came from a row here. Everything
 else in the harness is machinery; this is what improves it.
 
-One row per completed task, appended at land, **on the task branch, before the
-merge** — once on the mainline the commit guard refuses while the run holds its
-row. Append at the end of the table and check the neighbouring row survived.
+One row per landed **Small or Full** unit, in either mode, appended at land, **on
+the unit branch, before the merge** — under `SCOPE=repo` the commit guard refuses a
+mainline commit while the run holds its row. Append at the end of the table and
+check the neighbouring row survived. Trivial and Docs units get a ledger line in
+their report, not a row.
 
 | Column | Why it exists |
 |---|---|
-| Task · Size · Track | the tier and track the gates and models keyed on |
+| Unit · Mode · Type · Tier | what the gates and models keyed on — plan task id or change id; plan or change; the tier as finally run |
 | **Elapsed** | from the lock claim, cross-checked against `git log --format=%cI`. Owner-wait and machine-down time stated separately. Mark and exclude any row that cannot be reconciled |
-| **Defects** | CRITICAL/HIGH from reviewers, as `2C/6H`. Not from the auditors |
+| **Defects** | P0/P1 from reviewers, lane B and the second family, as `0/2`. Not from the conformance or claim auditors. A row written before the P0–P3 scale may say `2C/6H` |
+| Scope | admitted (BLOCKER/CRITICAL) · filed OUT · drift rejected, as counts |
 | Gate 1 · Gate 2 | as *actually* decided, including overrides and what they covered |
-| Verdicts | conformance per audit and re-audit; claim audit per round |
+| Verdicts | conformance per audit and re-audit; claim audit per round; any step `degraded` |
 | Retries | conformance loops · review rounds · fix passes |
 | Model | which model ran each role (implement · audit · review · claims), **as actually dispatched** |
 | **★ Missed by harness** | **the load-bearing column.** What *you* caught that the harness did not |
@@ -26,8 +29,8 @@ pattern question: if it will fire on every task deterministically, fix it on the
 first occurrence. Roughly half the rules in `rules.md` came from single
 occurrences of that kind.
 
-**Empty `Missed by harness` across five tasks** is evidence to loosen a gate.
-Non-empty is the reason not to.
+**Empty `Missed by harness` across five units** is evidence to loosen a gate — or
+to earn the Hot-small slot (`gate-design.md`). Non-empty is the reason not to.
 
 **Two of the same friction** means fix the machinery, not the habit. If the log
 says *"fix the machinery"* twice, the next run starts by fixing it.

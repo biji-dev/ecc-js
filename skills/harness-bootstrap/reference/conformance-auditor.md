@@ -9,9 +9,11 @@ is known** — state the bound in its own file so nobody expects otherwise.
 
 `[M]` **No `Edit` or `Write` tools.** It structurally cannot fix what it finds, so
 it cannot quietly resolve a gap instead of reporting it. Enforce at the tool
-level, not by instruction. Claude Code: `tools: Read, Grep, Glob`. Leave `Bash`
-out unless the audit genuinely needs `git diff` — and if it does, say in the file
-that it is read-only by discipline, not by construction.
+level, not by instruction. Claude Code: `tools: Read, Grep, Glob`. **The session
+writes the diff into the brief** (or a file under `.review-work/` the brief names),
+so the auditor needs no `Bash` for `git diff`. If a project keeps `Bash` anyway,
+the file must say it holds `Bash` and is **not** read-only — the agent-docs lint and
+the status script both flag an agent that claims read-only while holding it.
 
 `[M]` **Where no tool-level restriction exists** (`harness-targets.md`), bound the
 instruction-level guarantee: the orchestrator spot-checks two or three cited
@@ -68,6 +70,26 @@ flag their absence every round.
 
 `[B]` Where locked decisions live · the base branch · the plan path · the write-set
 column.
+
+## Lane A, in both modes
+
+`[M]` It is **lane A** of the three cross-checks (`blast-radius-auditor.md`). It
+audits against the plan **and the Scope block** (`scope-guard.md`): "In scope" is
+the write set, "Done when" is the checklist, "Out of scope" turns any change it
+names into a list-2 finding.
+
+- **Plan mode:** the plan row, its trace and the Scope block.
+- **Change mode, Full:** the written plan, verbatim, plus the Scope block. A change
+  request's milestone row and the sections it cites are the plan.
+- **Small:** the Scope block alone. It still runs — a Small unit with no audit is a
+  unit nobody checked against what it said it would do.
+
+`[M]` Each item comes back `DONE file:line` · `PARTIAL` (the paths, callers or
+platforms missing) · `MISSING` · `DIVERGED` (what differs, and whether the plan
+records it). Flag stubs, `TODO`s, skipped tests and dead branches.
+
+`[M]` **The second family may run this lane** (`cross-model.md`, kind `lane-a`) — a
+literal checklist is the one audit where the model family matters least.
 
 ## The bound, stated plainly
 

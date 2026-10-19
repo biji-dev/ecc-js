@@ -1,6 +1,6 @@
 # Reference: the claim auditor
 
-A separate agent, dispatched at task-runner step 8c. **Evidence:** introduced
+A separate agent, dispatched at runner step 8c. **Evidence:** introduced
 after the dominant recurring defect in the origin project's log — nine of its
 first twenty-one tasks shipped at least one false claim about their own work, one
 shipped eight — and run on every task since.
@@ -72,6 +72,27 @@ claim got in.
 red for the wrong reason; a green suite that ran nothing; a concurrency test whose
 race never ran.
 
+## Lane C — test honesty and the fix commits
+
+`[M]` It is also **lane C** of the cross-checks (`blast-radius-auditor.md`). A test
+title is a claim like any other.
+
+- **For each new or changed test:** would its own assertion fail if the behaviour it
+  names broke? Flag fixtures built from the implementation, assertions that only
+  check something is defined or was called, mocks that cannot reject, and
+  assertions that restate the code.
+- **Mutation-check the top suspects without losing work.** Commit first. Save the
+  fix as a patch (`git show <fix-sha> -- <file>`, or `git diff <base> -- <file>` for
+  uncommitted work), `git apply -R` it, run the one test — **its own assertion must
+  fail; a compile or import error is not a pass** — then `git apply` it back and
+  confirm `git status --porcelain` matches what it was before. Never
+  `git checkout -- <file>`.
+- **The fix commits are a fresh diff.** Every commit made after the step 8 review
+  is reviewed for correctness and regressions here, because nobody else saw it.
+
+`[M]` A test that stays green with its fix reverted is a failed claim: its fix is to
+rewrite the test.
+
 ## Output
 
 ```
@@ -92,7 +113,8 @@ conformance commentary.
 
 ## The two-round rule
 
-`[M]` `FALSE CLAIMS` is blocking on the Full track, advisory on Standard. **A
+`[M]` `FALSE CLAIMS` is blocking on Full. **Small skips the claim audit**, and in
+exchange its record is fields only — no sentence that would need auditing. **A
 second consecutive `FALSE CLAIMS` is a stop and the remedy changes**: do not write
 a third round of corrections. In the origin run that taught this, round one found
 six false sentences and the corrections for those six contained six more.

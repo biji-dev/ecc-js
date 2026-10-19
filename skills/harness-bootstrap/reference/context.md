@@ -1,62 +1,88 @@
 # Reference: context, sessions and reporting
 
-How a run keeps its context small, survives a compaction or a crash, and says what
-it actually did. **Evidence:** a third project that measured its token spend
-(calls above 400K tokens were 60% of it; tests were under 1%), plus the compaction
-and crash rows of the two harness projects.
+How a run keeps its context small, survives a compaction or a crash without a
+hand-off, and says what it actually did. **Evidence:** the third project measured
+its token spend (calls above 400K tokens were 60% of it; test output was under
+1%), and logged 28 hand-offs in 118 sessions before it reversed the rule that
+caused them; plus the compaction and crash rows of the two plan-mode projects.
 
 **`[M]` mechanism · `[B]` binding**
 
 ## Why context is the cost
 
 `[M]` Every API call re-reads the whole context. Spend tracks **context size**,
-not output: in the measured project, cache re-reads were 70% of spend and whole-
-file reads were the largest re-read cost. After a budget hook and the rules below
-landed, calls above 400K went from about three quarters of main-thread spend to
-about zero.
+not output: cache re-reads were 70% of spend and whole-file reads the largest
+re-read cost. After a budget hook and the rules below landed, calls above 400K
+went from about three quarters of main-thread spend to about zero.
 
 ## Rules for the harness file
 
-`[M]` **One session per task** (the runner already exits after one). For work
-split into slices, **one sub-agent per slice**; the main thread orchestrates and
-stays small — it does not read the plan or source files whole.
+`[M]` **One session for the work, one sub-agent per step or slice.** The main
+session coordinates and stays small: it does not read the plan or source files
+whole (`runner.md`).
 
 `[M]` **Read slices, not files** — search first, then read with an offset and a
-limit. Bulk exploration goes to a sub-agent that returns conclusions.
+limit. Bulk exploration goes to a search agent that returns locations and quoted
+evidence; on a bug it never decides the cause.
+
+`[M]` **Run-and-report goes to a Sonnet runner** — the verify run, re-runs, a smoke
+check, a cold UI walk. It quotes each PASS/FAIL or result line and the log path,
+and stops at the first red without attributing or fixing it. The main session
+attributes; an implementer fixes. The first red on a critical path, a live pass on
+a never-auto surface and deploys stay with Opus.
 
 `[M]` **A switch line before each step**, one line, then continue:
-`Step · Model · Effort · Context (figure + continue / compact / new session) · Reason`.
+`Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact offered) · Reason`.
 
-`[M]` **Compaction rule.**
-- Under the warning budget: continue. Between warning and limit: compact at the
-  next step boundary, or earlier if the next step is heavy. Past the limit, or for
-  a new task: a new session.
-- **Persist before compacting.** The run's state file — branch, track, base
-  commit, step done / next, owner decisions, open findings, ledger rows so far —
-  is written first, and work in progress is committed. A compaction replaces the
-  chat with a summary; files survive, the chat does not.
-- **Only at a step boundary**: after Gate 1, after implement is committed, after
-  findings are written down. Never mid-debug, mid-edit series, or with a decision
-  not yet written down.
-- Reviewer hand-backs live in files (`.review-work/<name>/`), not only in the
-  chat — a compaction lost them once and they were recovered from the transcript.
+## No hand-off — the compaction rule
+
+`[M]` **Never stop for a compact and never ask the owner to open a new session.** A
+new session is the owner's choice alone. The work never waits on a `/compact`.
+
+- **At every step boundary, from the hook's figure:** under the warning budget,
+  continue. Past it — or before a heavy step — **offer a `/compact`** with the
+  keep-line ready to paste, and keep working. If the owner compacts, the next turn
+  resumes from the state file; if they are away, carry on until the platform's
+  automatic compaction takes over.
+- **Persist first, every boundary.** The state file is current and work is
+  committed at **every** step boundary, not only when compacting — automatic
+  compaction can land on any turn. A compaction replaces the chat with a summary;
+  files survive, the chat does not.
+- **Offer only at a step boundary:** after Gate 1, after implementation is
+  committed, after findings are written down. Never mid-debug, mid-edit series, or
+  with a decision not yet written down.
+- **The keep-line:**
+  `/compact keep: unit <id>, branch <b>, worktree <path>, tier, plan <path>, state file <path>, step <n> done / next, the unit's decision ids, open findings, commands to rerun`.
+  A post-compaction turn starts from the state file and continues the next step
+  itself.
+- Reviewer hand-backs live in files (`.review-work/<name>/`), not only in the chat
+  — a compaction lost them once and they were recovered from the transcript.
 
 `[M]` **The registry `Step` plus the state file are the resume point** after a
-crash or a compaction. Both harness projects resumed from them after machine
+crash or a compaction. Both plan-mode projects resumed from them after machine
 crashes; a compaction summary that got a timestamp wrong by nine minutes was
 corrected from the transcript, never the other way round.
 
-`[B]` Warning and limit figures — start at 250K and 400K, then let the log move
-them. The state file's path (`.claude/plans/<task-id>.state.md`, gitignored).
+`[M]` **The state file has a byte budget** (`scope-guard.md`); the agent-docs lint
+enforces it. A state file that grows past it is being used as a log.
+
+`[B]` Warning and limit figures — start at 250K and 400K, and let the log move
+them. The state file's path. Where the platform's automatic compaction is
+configured (Claude Code: `autoCompactWindow` in `.claude/settings.json`).
 
 ## The budget hook — opt-in
 
-`templates/context-budget.mjs` — a Claude Code `Stop` + `UserPromptSubmit` hook.
-It reads the main thread's last `usage` record from the transcript tail and:
+`templates/context-budget.mjs` — a Claude Code hook on `Stop`, `UserPromptSubmit`
+and `PostToolUse`. It reads the main thread's last `usage` record from the
+transcript tail and:
 
-- below the warning budget, gives the model a one-line figure for the switch line;
-- past it, tells the user (on `Stop`) and the model (on `UserPromptSubmit`) to
-  compact or start a new session at the next step boundary;
+- below the warning budget, gives the model a one-line figure for the switch line
+  (on `UserPromptSubmit` only);
+- past it, tells the user on `Stop` and the model on the other two to offer a
+  `/compact` at the next step boundary and keep working — never to ask for a new
+  session;
+- on `PostToolUse`, speaks only when the context crosses into a new 25K band, so a
+  long tool loop hears about it without hearing it every call;
 - never blocks, and exits 0 on any error.
 
 Install only when the owner agrees: copy it to `.claude/hooks/context-budget.mjs`
@@ -66,13 +92,15 @@ and add to `.claude/settings.json`:
 {
   "hooks": {
     "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }]
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }]
   }
 }
 ```
 
 Merge into existing `hooks` arrays; never replace them. `CONTEXT_BUDGET_WARN` and
-`CONTEXT_BUDGET_LIMIT` override the figures. Other agents have no equivalent
+`CONTEXT_BUDGET_LIMIT` override the figures; `CONTEXT_BUDGET_STATE_DIR` moves the
+band state (default: the system temp directory). Other agents have no equivalent
 hook surface yet — the switch line and the compaction rule still apply there.
 
 `[M]` **No per-turn model-calling hooks.** A plugin that ran a model review on
@@ -80,13 +108,34 @@ every stop was 5–8% of spend in the measured project.
 
 ## Reporting — the step ledger
 
-`[M]` A task's final report ends with **one ledger row per required step**:
-`ran` with quoted evidence (the command and the line of output that matters), or
-`skipped` / `unavailable` / `degraded` with the reason. **A step missing from the
-ledger did not run.**
-> Origin: across 88 audited "done" reports in the measured project, an
-> independent cross-check found something in 87 and contradicted the report in
-> 81; most of those reports had skipped the verification steps without saying so.
+`[M]` A unit's final report ends with **one ledger row per step the tier
+requires**: `ran` with quoted evidence (the agent or command, and the line of
+output that matters), or `skipped` / `unavailable` / `degraded` with the reason.
+**A step missing from the ledger did not run.**
+> Origin: across 88 audited "done" reports in the third project, an independent
+> cross-check found something in 87 and contradicted the report in 81; most had
+> skipped verification steps without saying so.
+
+```
+| Step | Status | Evidence |
+|---|---|---|
+| 8 review — code-reviewer + security-reviewer | ran | 3 findings: 2 fixed (abc1234), 1 → follow-ups |
+| 8 second-family review | unavailable | `codex-run: unavailable kind=review … usage limit` — degraded, Opus stood in |
+| 8 lane B blast radius | ran | 2 readers outside the diff fixed (def5678) |
+| 8 verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
+```
+
+`[M]` Then five lists:
+
+- **fixed** — each with its commit;
+- **admitted** — each BLOCKER or CRITICAL scope change, with its decision id;
+- **deferred** — OUT items: count and the follow-ups link;
+- **retracted** — findings that did not reproduce, and why;
+- **not verified** — what nobody ran (a real device, a real gateway, production
+  data), stated plainly.
+
+`[M]` **Quote the result line; never paraphrase a gate or a background event you
+did not read.** "All green" only if this round's output showed every gate's PASS.
 
 ## Reporting — every gate, one line each
 
@@ -95,7 +144,29 @@ never stops at the first red**; its exit status is the number of failed gates.
 > Origin: an `&&` chain of suites stopped at the first failure, and four suites
 > behind it never ran — the report read as one failure, not five.
 
-`[M]` Quote this run's lines, not a previous run's. Attribute each red against the
-merge base before calling it pre-existing.
+`templates/run-gates.sh` is that runner — bash, so always `bash scripts/run-gates.sh`.
+Its gate list sits between `# >>> harness:gates` and `# <<< harness:gates` as one
+`gate <name> <always|full> '<command>'` line per gate; each gate's output goes to its
+own log; the last line is `SUMMARY <p> passed, <f> failed, <s> skipped (<mode>)`. It
+ships with every example gate commented out, and a run with none bound exits 99 —
+never a green summary of nothing.
 
-`[B]` The gate list — whatever the project's CI runs.
+`[M]` **A test gate counts its cases.** `gate_counted <name> <always|full> '<regex>'
+'<command>'` passes only when the command exits 0 **and** its output matches a
+regex that requires a non-zero count — `'pass [1-9]'` for `node --test`,
+`'Tests: +[1-9][0-9]* passed'` for Jest. `node --test` exits 0 having matched no
+files, and so does a run whose every test was skipped.
+
+- `bash scripts/run-gates.sh` — the FULL run.
+- `bash scripts/run-gates.sh --since <ref>` — the SCOPED run: it computes the
+  changed files itself, **untracked files included** (package-manager "changed
+  since" filters ignore uncommitted edits), skips `full` gates, and promotes itself
+  to FULL when a change falls outside `SCOPED_PATHS`. Gates read the list from
+  `$RUN_GATES_CHANGED_FILE`.
+- `bash scripts/run-gates.sh --list` — the gates and their modes.
+
+`[M]` Quote this run's lines, not a previous run's. **Attribute each red against the
+merge base, working tree included** (`git diff --quiet $(git merge-base <main> HEAD) -- <files>`)
+before calling it pre-existing — the mainline can be red.
+
+`[B]` The gate list — whatever the project's CI runs — and `SCOPED_PATHS`.

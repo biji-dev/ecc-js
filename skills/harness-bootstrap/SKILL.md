@@ -1,130 +1,183 @@
 ---
 name: harness-bootstrap
-description: Assess whether a plan-driven repository can sustain a gated task harness (task runner, commit guard, two human gates, conformance and claim auditors, harness log), derive its never-auto-merge policy from its own documents, and install it. Claude Code first (Opus for judgment, Sonnet for bounded work); Codex, ZCode and Kimi supported. Use when adopting the gated flow in a new repository, upgrading an installed one, or asking whether a project is ready for one. Refuses projects that do not meet the preconditions. Not for auditing agent config (that is harness-audit).
-when_to_use: Set up, audit, adopt, or upgrade a gated task harness in a repository — task runner, commit guard, gates, conformance auditor, claim auditor, harness log. Also when asked whether a project is ready for one.
+description: Use when setting up, adopting, auditing or upgrading a gated agent harness in any repository, new or already in production — a plan-driven task runner (registry lock, commit guard, two human gates, conformance and claim auditors, harness log) or a tiered change workflow (task type, Trivial/Small/Full tiers, risk map, scope guard, cross-check lanes, step ledger). Also when asking whether a project is ready for one, or when a repository already carries an older harness (a registry, a task-runner or change-workflow skill, crosscheck lanes, an agent-workflow guide) that should be brought up to date without losing what it earned. Claude Code first (Opus for judgment, Sonnet for bounded work); Codex, ZCode and Kimi supported. Not for tuning agent configuration (that is harness-audit).
+when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
+  version: 2
 ---
 
 # Harness bootstrap
 
-Six phases against a target repository (0, A–E). **Phase A can refuse, and
-refusing is the common outcome** — of four projects surveyed, three were refused
-for the same precondition: a never-auto-merge policy that existed only in
-someone's head. The fourth lacked one too, and derived it in Phase B. A harness
-installed on a project that cannot sustain it is ceremony; it gets abandoned
-inside a fortnight, and it burns the idea.
+Six phases against a target repository (0, A–E). The harness has **one core and
+two work-unit modes**:
+
+- **Plan mode** — the unit is a plan task with a stable id. Born in a regulated
+  rental platform (21+ logged tasks) and adopted by a multi-tenant agent platform
+  (10).
+- **Change mode** — the unit is a change, a change request or a milestone of one,
+  in a repository that ships continuously. Grown independently in a production
+  multi-tenant platform over about 120 sessions.
+
+Both may coexist. **Phase A routes; it refuses only what no harness can serve.** A
+harness installed on a project that cannot sustain it is ceremony: it gets
+abandoned inside a fortnight, and it burns the idea.
 
 ## When to Use
 
-- A repository works from a plan of identified, sequenced tasks and wants gated,
-  agent-driven delivery with two human gates.
-- A harness is already installed and the reference here is newer (Phase 0
-  upgrade path).
-- Someone asks whether a project is ready for this flow — Phase A answers it.
+- A repository — new, or years into production — wants gated, agent-driven
+  delivery: two human gates, everything between them checked by fresh agents.
+- A harness is already installed, from this skill or grown by hand, and should be
+  upgraded without losing its earned rules (Phase 0).
+- Someone asks whether a project is ready for this — Phase A answers it.
 
-Not for a maintenance repository with a change stream and no live plan (see
-**Out of scope**), and not for tuning agent configuration (`harness-audit`).
+Not for tuning agent configuration (`harness-audit`), and not for dispatching one
+batch of specs (`delegate-tasks`, which this harness uses as its engine).
 
 ## How It Works
 
 Run it from inside the target repository, in the main session on **Opus** — every
-phase here is judgment. `reference/` holds the pattern; read what each phase
-names rather than working from memory of how another project did it. In Claude
-Code the files are under `${CLAUDE_PLUGIN_ROOT}/skills/harness-bootstrap/`; in
-other agents, use the folder this `SKILL.md` was read from.
+phase is judgment. `reference/` holds the pattern; read what each phase names
+rather than working from memory of how another project did it. In Claude Code the
+files are under `${CLAUDE_PLUGIN_ROOT}/skills/harness-bootstrap/`; in other agents,
+use the folder this `SKILL.md` was read from.
 
 | Phase | Read |
 |---|---|
-| 0 · existing harness | the Phase C set, to diff against |
-| B · policy | `reference/policy-derivation.md` only |
-| C · generate | `rules.md`, `gate-design.md`, `task-runner.md`, `conformance-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
-| C · optional | `preflight.md`, `sweep.md`, `segment.md` |
+| 0 · detect, upgrade | `reference/upgrade.md`; run `scripts/harness-status.js`; then the reference each proposed row's fix names, and the Phase C core table (for `missing` rows) |
+| A · assess, route | the table below; `harness-targets.md` (agents), `scope-guard.md` (id prefixes), `commit-guard.md` (`SCOPE`) |
+| B · policy, risk map, merge policy | `reference/policy-derivation.md` only |
+| C · generate | `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
+| C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md` |
 | E · growth | `vendor-skill.md` |
 
 Every reference line is marked **`[M]` mechanism** — ship it — or **`[B]`
 binding** — re-derive it from this project. Generating means writing files that
 name **this** project's real paths, commands and column names inline. Never an
-indirection layer: the runners work partly because the format is literally in
-the instructions, and an adapter is a place to guess wrong.
+indirection layer: the runners work partly because the format is literally in the
+instructions, and an adapter is a place to guess wrong.
+
+### Who orchestrates
+
+The generated **runner skill** holds the sequence and the **main session** (Opus)
+coordinates it: tier, gates, plan, slicing, briefs, triage, scope guard, commits.
+It hands every bounded segment — slices, fixes, review and audit fan-outs,
+countable inventories — to the **`delegate-tasks`** skill, whose gates are commands,
+never claims. On Full, the review fan-out may run as the project's **review
+workflow** (Claude Code's Workflow tool, `templates/workflows/review.workflow.js`).
+No single engine runs all of it: the gates need the owner, and a workflow can
+neither ask the owner nor run a command.
 
 ### What ships as rules, and what does not
 
 Every rule in `reference/rules.md` §1 was produced by a specific failure and has
-held since. Ship them **verbatim, with their origin attached** — a rule without
-its incident reads as pedantry and is deleted just before it is needed. The
-short list, to orient:
+held since. Ship each into `AGENTS.md` as **the rule + one clause of why + a link**,
+and its full origin into the generated `docs/harness/rule-origins.md` — a rule
+without its incident reads as pedantry and is deleted just before it is needed. To
+orient:
 
 - **Guard every commit — refuse, do not merely check.** A hook, not a habit.
 - **Break the code and watch the suite stay green.** A control never seen failing
   is an assertion.
-- **A validation command that can report green having run nothing is not one.**
-- **The record is written last, from the diff, and audited by someone else.** A
-  rule asking the author to check their own claims was measured not to work.
-- **Gate 2 is not asked while a review is still running.**
-- **A conformance verdict is not evidence of correctness.**
+- **A "done" report ends with the step ledger; a step missing from it did not
+  run.**
+- **The record is written last, from the diff, and audited by someone else.**
+- **Reproduce a finding before fixing it.**
+- **Whatever one model family writes, the other reviews.**
+- **Never ask the owner for a new session or a hand-off.**
 - **An implementer may always raise a gate, never lower one.**
 
-**Left deliberately empty, to be earned:** the never-auto-merge categories (Phase
-B derives them), tier thresholds, tripwire numbers and medians. Importing them
-hands a team rules whose reasons they have not lived. The **model split** is the
-exception: Opus where a miss cannot be corrected forward, Sonnet for work bounded
-by an exit condition (`gate-design.md`) — it is mechanism, not a threshold.
+**Left deliberately empty, to be earned:** the never-auto categories and the risk
+map (Phase B derives them), the importer threshold, the Hot-small tier, tripwire
+numbers, medians, a milestone cap. Budgets on instruction files **ratchet from
+their current size**. Importing another project's numbers hands a team rules whose
+reasons they have not lived. The **model split** is the exception — Opus where a
+miss cannot be corrected forward, Sonnet for work bounded by an exit condition
+(`gate-design.md`) — because it is mechanism, not a threshold.
 
 **Project-specific skills are not generated.** They are the residue of a vendor
-behaving against its own documentation. Phase C wires the trigger; Phase E grows
-them.
+behaving against its own documentation. Phase C wires the trigger — a line in the
+runner's teardown step — and Phase E grows them.
 
-### Phase 0 — Check for an existing harness
+### Phase 0 — Detect, and upgrade what is there
 
-Look for one already installed: a harness file with a gate table, a
-`task-runner` skill, a conformance auditor, a registry, a harness log.
+Run the status script first. It is read-only:
 
-**If any exists, report what you found and stop for a decision.** Do not
-overwrite silently and do not install alongside — two files governing the same
-thing is the drift the rules warn about.
+```
+node <skill dir>/scripts/harness-status.js <repo> --text
+```
 
-| | |
-|---|---|
-| **Generated** — runner, auditors, guard, registry and log scaffolding | replaceable; the newer reference is probably better |
-| **Reviewed** — an approved never-auto policy, rules earned from the project's own log, tuned thresholds | **preserve.** An earned rule outranks a generated one |
+It reports the lineage installed (plan, change, both or none, with the files that
+matched), every manifest entry's status (`unchanged`, `edited`, `reviewed`,
+`scaffold`, `missing`, or `legacy` with no manifest), markers, sizes, id prefixes
+in use, held registry rows, and hazards by id. **Quote it at the top of the
+decision sheet** — or of the Phase A assessment when nothing is installed.
 
-**A log with rows in it is the strongest signal to preserve.** Every generated
-file carries a stamp — a first-line comment naming `harness-bootstrap` and the
-date. A later run compares stamps, regenerates the generated files and keeps the
-reviewed ones. Say file by file what you replace and what you keep, before
-writing.
+- **Nothing installed** → Phase A.
+- **Anything installed → stop for one decision sheet** before writing anything:
+  `Path[#block] | Lineage | Status | Proposed | Default`. Unchanged generated
+  files default to replace; edited, reviewed, scaffold and legacy entries default
+  to **keep**, with section-level proposals; every hazard gets a row.
+  `reference/upgrade.md` has the table, the manifest and the version history.
+- **Without a manifest the script lists only what it fingerprints.** Build the
+  `missing` rows by comparing the repo against the Phase C core table and the
+  mode's set, and read what each row's fix names before proposing it.
+- **Check the existing runner's land order** against `commit-guard.md` › Land
+  order. A runner that merges or flips status on the mainline before releasing its
+  row is refused by the guard the upgrade installs — that row is not optional.
+- The sheet also carries the three Phase A facts — agents used, id prefixes taken,
+  main checkout or worktrees — since the upgrade binds them.
+- **Never install alongside.** An existing runner keeps its name through the
+  manifest's `roles`; two files governing the same steps is the drift the rules
+  warn about. A log with rows in it is the strongest signal to preserve.
+- Apply only what the sheet approved, **only while no unit holds a registry row**,
+  then write `.agents/harness-manifest.json`.
 
-### Phase A — Assess, and be willing to refuse
+### Phase A — Assess, route, and be willing to refuse
 
 | # | Precondition | Look for | If absent |
 |---|---|---|---|
-| 1 | A task list with **stable IDs and dependencies** | a plan document, a tracker table, issue labels | **stop** — nothing can select or sequence work |
-| 2 | A **per-task risk signal** | a Size/Effort/Risk column or label | **stop** — gates and models have nothing to key on |
-| 3 | A **written** never-auto-merge policy | a security section, locked decisions, a risk register | **Phase B** — the usual failure |
-| 4 | A **per-task pass signal** | test scripts, CI config, per-task exit conditions | **stop** — "done" is unfalsifiable |
+| 1 | A **pass signal** that can fail | test scripts or CI config — **run it once** and read its count | **stop** — "done" is unfalsifiable |
+| 2 | A reachable **owner** who answers gates | the person asking, code owners, recent commits | **stop** — gates with nobody behind them are decoration |
+| 3 | **Non-trivial work** | `git log --since=90.days --numstat` against the paths a policy would plainly cover (money, auth, schema, deploy, data deletion); or the plan's tasks; or the owner's stated scope | **stop** if every change was a typo, a config value or docs — the harness would cost more than it catches |
+| 4 | A **unit of work** | a plan with stable ids and dependencies → **plan mode**; change requests, issues, milestones, a change stream, or nothing yet → **change mode** | route, never stop |
+| 5 | A **risk signal** | a per-task size or risk column, or the paths of critical code | present: evidence for Phase B · absent: **Phase B** — the risk map |
+| 6 | A **written** never-auto-merge policy | a security section, locked decisions, a risk register | present: Phase B confirms it · absent: **Phase B** — the usual gap |
 
-**Specify properties, not columns.** A table carrying `ID · Task · Writes ·
-Depends · Exit condition · Sz · Trace · St` satisfies 1, 2 and 4 more completely
-than one copied from elsewhere. Never prescribe a shape; check the property.
+**Specify properties, not columns.** Never prescribe a plan shape; check the
+property. A pass signal that runs nothing — `exit 0`, no matching files, zero
+tests, every test skipped — is not one; a weak suite passes row 1 but goes into the
+report as a gap. A brand-new repository has no history for row 3: judge it from
+the plan or the owner's stated scope and say so; with neither, **ask** the owner
+for the scope, and stop if there is none. Plan mode also needs an exit condition
+per task; where the plan has none, each unit's Scope block supplies its "Done
+when" at claim (`scope-guard.md`).
 
 **The assessment is a table, not prose:** `Precondition | Evidence (file, path or
-line) | Verdict (pass · Phase B · stop)`, then one closing line naming the
-outcome. A pass without cited evidence was not assessed. If 1, 2 or 4 fail,
-**stop and say what to write first.** Never install a partial harness.
+line) | Verdict (pass · route · Phase B · ask · stop)`, then one closing line: the
+mode when eligible, or what to write first when refused. A pass without cited
+evidence was not assessed. If 1, 2 or 3 fail, **stop and say what to write
+first.** Never install a partial harness.
 
-Two sizing notes worth saying at this point: ceremony is roughly fixed per task,
-so **prefer fewer, larger tasks**; and a plan whose tasks are all trivial does not
-need this harness.
+Also list here: the id prefixes already taken (the status script's `ids`, plus a
+search of the plan's own ids — `scope-guard.md`); the agents the project uses (a
+search; none found → ask, default Claude Code plus `AGENTS.md` —
+`harness-targets.md`); and whether units run in the main checkout or in worktrees
+(`git worktree list`; no units yet → the main checkout, `SCOPE=repo`, unless the
+owner says worktrees).
 
-### Phase B — Derive the never-auto-merge policy
+### Phase B — Derive the policy, the risk map and the merge policy
 
 **Read `reference/policy-derivation.md`.** It holds the single test — *if this is
-wrong and ships, can it be corrected forward?* — the output rules, and two worked
-examples whose right answers differed. This is the piece that cannot be
-templated.
+wrong and ships, can it be corrected forward?* — the output rules, two worked
+examples whose right answers differed, and how the same test yields the **risk
+map** (hot modules, critical code, cold modules, each entry citing its evidence)
+and the **merge policy** (the generated default: Small merges locally when clean;
+Full, never-auto and taste calls wait for the owner; push is always the owner's).
+This is the piece that cannot be templated.
 
-Write it into the harness file under a status line:
+Write all three into the harness file under one status line, placed directly above
+the `policy` block and outside its markers (so flipping it never edits a block):
 
 ```
 Never-auto policy: DRAFT — owner has not reviewed
@@ -135,100 +188,123 @@ Never-auto policy: DRAFT — owner has not reviewed
 
 ### Phase C — Generate
 
-**Refuse while the policy line says `DRAFT`.** Then read the Phase C references
-and write these into the project, naming every path in the report. Defaults are
-for Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms and
-how to tell which agents the project uses.
+**Refuse while the policy line says `DRAFT`.** Then read the Phase C references and
+write these into the project, naming every path in the report. Defaults are for
+Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
+
+**Core — every install:**
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — the shared harness file (or `CLAUDE.md` alone in a Claude-only project, if the owner prefers) | `rules.md` §1, `gate-design.md`, Phase B | rules **with their origin** · two tracks · gate table on this project's risk signal · the policy · **empty** tripwire and threshold slots |
-| `CLAUDE.md` | `harness-targets.md` | first line `@AGENTS.md`, then only Claude specifics: model map, agents, skills |
-| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `task-runner.md` | the sequence, bound to this plan. Edit the real file, never through the link |
-| `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | `model: sonnet`, `tools: Read, Grep, Glob`; states its bound |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | `model: opus`, `tools: Read, Grep, Glob, Bash`; states that it sabotages and restores |
-| `.claude/registry.md` | `task-runner.md` step 0 | the lock the guard reads; add it to `.prettierignore` |
-| `.githooks/pre-commit` + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/pre-commit` | or chain into husky/lefthook if present. Test the shipped file, not a copy |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `rules.md` §1, `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
+| `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks |
+| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
+| `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `tools: Read, Grep, Glob`; states its bound |
+| `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B · `model: opus`, `tools: Read, Grep, Glob` |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `tools: Read, Grep, Glob, Bash`; states that it sabotages and restores |
+| `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices |
+| `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
+| `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`. Test the shipped file |
+| `.claude/hooks/command-guard.mjs` + settings entry | `harness-targets.md`, `templates/command-guard.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR` |
+| `scripts/check-agent-docs.mjs` + `scripts/lib/check-agent-docs.test.mjs`, run as a gate | `harness-targets.md`, `templates/scripts/check-agent-docs.mjs`, `templates/scripts/lib/check-agent-docs.test.mjs` | budgets ratcheted from today's sizes · `--rules-for` for briefs · the test is slow: a `full`-level gate |
+| the harness log, `docs/harness/log.md` | `log-format.md` | **the engine** — headers only, no seeded medians |
+| the follow-ups doc and the decision log | `scope-guard.md` | scaffolds at their default paths |
+| `.gitignore` entries | `runner.md`, `commit-guard.md` | `.claude/registry.md`, `.review-work/`, and `.codex-runs/` with the wrapper |
 | `CODEOWNERS` + branch protection, where the platform supports it | Phase B | never-auto categories as required-review paths |
-| the harness log | `log-format.md` | **the engine** — headers only, no seeded medians |
-| a deferral queue | `task-runner.md` | rows carry an owning task, or they are notes |
-| `.gitignore` entries | `task-runner.md` | run plans and `.review-work/` — run state stays out of history |
-| `.claude/hooks/context-budget.mjs` + settings entry — **ask first** | `context.md`, `templates/context-budget.mjs` | opt-in; warns at a token budget so long runs hand off instead of degrading |
+| `.agents/harness-manifest.json` — **last** | `upgrade.md` | every entry with its kind, hashes taken after the formatter |
 
-**Local skills, not global.** They live in the project so they can name its
-facts and grow from its runs. The harness file is read every session, and
-`.claude/skills/`, `.claude/agents/` and `.agents/skills/` register on their own —
-no further wiring.
+**Per mode:** plan mode binds the runner to the plan's path, columns and id
+pattern (`ID_PATTERN`, checked against the plan's real ids). Change mode binds it
+to the change-request and milestone documents — the project's own home for them,
+else `docs/changes/<unit>.md` — puts each unit's plan and state file at
+`docs/plans/<unit>.md` and `docs/plans/<unit>.state.md`, matches registry rows by
+the `Branch` cell with `ID_PATTERN` empty (unless changes carry ids), and takes
+`SCOPE=checkout` when units run in worktrees, else `SCOPE=repo`.
 
-**Optional, only where the project's shape earns them** — each reference states
-its own evidence count, and none exceeds two runs:
+**Optional — ask first, each where the project earns it.** The default is the
+answer when the owner just accepts:
 
-| Component | From | Needs |
-|---|---|---|
-| phase preflight | `preflight.md` | phase-scoped work and a decision log |
-| workstream sweep | `sweep.md` | a register of open questions with a `blocks` relation |
-| segment runner | `segment.md` | several genuinely independent low-risk tasks |
+| Component | From | Needs | Default |
+|---|---|---|---|
+| `.claude/hooks/context-budget.mjs` + settings entry | `context.md`, `templates/context-budget.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
+| `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh` | `context.md`, `templates/run-gates.sh` | no existing runner that reports every gate and never bails; test gates bound with `gate_counted` so zero tests is a FAIL | yes, unless such a runner exists |
+| `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
+| `.claude/workflows/review.workflow.js` | `harness-targets.md`, `templates/workflows/review.workflow.js` | Full-tier review fan-outs often enough to want them deterministic | no, until the log shows them |
+| phase preflight · workstream sweep · segment runner | `preflight.md`, `sweep.md`, `segment.md` | plan mode with phases, a question register, or several independent low-risk tasks; each states its own evidence count, none above two runs | no |
 
-Batches of well-specified work **inside one task** are not a component: the
-task-runner's implement step may hand them to the `delegate-tasks` skill on the
-Standard track (`task-runner.md` step 2).
+**Local skills, not global.** They live in the project so they can name its facts
+and grow from its runs. `.claude/skills/`, `.claude/agents/` and `.agents/skills/`
+register on their own — no further wiring.
 
 ### Phase D — Calibrate, and let the project write its own rules
 
-Run one task — the lowest-risk one whose exit condition is fully specified; the
-first row exists for calibration. Read the log row. **The first failure writes the
-first rule.**
+Run one unit — the lowest-risk one whose "Done when" is fully specified. Read the
+log row and the ledger. **The first failure writes the first rule.** Have a fresh
+agent review the generated harness against `rules.md` (ECC's `loop-design-check`,
+where installed) before the second unit.
 
-Medians, tripwire numbers and tier boundaries are computed from the log once rows
-exist, never before. After about five tasks, read `Missed by harness`: empty
-across five is evidence to loosen a gate; non-empty is the reason not to.
+Medians, tripwire numbers, the Hot-small cap and the importer threshold come from
+the log once rows exist, never before. After about five units, read `Missed by
+harness`: empty across five is evidence to loosen a gate; non-empty is the reason
+not to.
 
-**Expect to be wrong.** The origin harness was corrected about fifteen times in
-its first 21 tasks, and five of its reasoned-from-first-principles rules were
-disproved by its own log (`rules.md` §3) — one of them twice.
+**Expect to be wrong.** The origin harness was corrected about fifteen times in its
+first 21 tasks, and about one in five of its reasoned-from-first-principles rules
+was disproved by a log (`rules.md` §3) — including two of this skill's own first
+version.
 
 ### Phase E — Growth
 
-**Vendor surprises.** When a library behaves contrary to its documentation, write
-a named skill **before the session exits** — it analyses that session. Format in
+**Vendor surprises.** When a library behaves contrary to its documentation, write a
+named skill **before the session moves on** — it analyses that session. Format in
 `reference/vendor-skill.md`. These are the highest-value artifacts the harness
 makes, and none could have been generated up front.
 
-**Rules from the log.** Each incident that produces a rule adds it to the harness
-file with its story. Over time earned rules outnumber generated ones — which is
-the point.
+**Rules from the log.** Each incident that produces a rule adds it to `AGENTS.md`
+(rule + why + link) and its story to `docs/harness/rule-origins.md`. Over time earned rules
+outnumber generated ones — which is the point. Optionally, once a quarter, a fresh
+agent audits every rule against the log: which fired, which never did, which the log
+contradicts.
 
 ## Examples
 
-**Refusal.** A repository has a README, tests, and work tracked as free-form
-issues with no IDs or dependencies:
+**Refusal.** A repository with a README and no tests:
 
 ```
 | Precondition | Evidence | Verdict |
 |---|---|---|
-| 1 task list with IDs + deps | issues have no stable id, no blocks relation | stop |
-| 2 per-task risk signal | no size/risk label on any issue | stop |
-| 3 written never-auto policy | SECURITY.md covers disclosure only | Phase B |
-| 4 per-task pass signal | `npm test`, CI on push | pass |
-Outcome: refused. Write a plan table with ID · Depends · Size · Exit condition first.
+| 1 pass signal | no test script, no CI config | stop |
+| 2 owner | the requester answers gates | pass |
+| 3 non-trivial work | 41 commits in 90 days, 12 touch src/billing | pass |
+| 4 unit of work | issues, no plan ids | route: change mode |
+| 5 risk signal | none written | Phase B |
+| 6 never-auto policy | none | Phase B |
+Outcome: refused. Add a test command that fails when the billing code is broken, then rerun.
 ```
 
-**Install.** A plan with `ID · Writes · Depends · Exit · Sz · St` columns and a
-risk register: Phase B drafts four categories citing risk ids, the owner flips
-the line to `REVIEWED`, Phase C writes the files above, and Phase D runs the
-smallest task end to end and reads its log row.
+**Change-mode install.** A production repository with CI, change requests and no
+plan: Phase A routes to change mode with `SCOPE=checkout` (units run in worktrees);
+Phase B drafts four never-auto categories, a risk map of nine hot modules and the
+default merge policy; the owner flips the line; Phase C writes the core set,
+`run-gates.sh` and `codex-run.mjs`; Phase D runs one Small change end to end.
 
-## Out of scope
-
-**A project already in production with no live plan** has a change stream, not a
-task list, and needs a different unit of work — do not force it into this shape.
+**Upgrade.** A plan install from the first version: `harness-status.js` reports
+`plan` lineage, `registry-no-markers`, `guard-snippet-only` and `policy-no-status`.
+The sheet proposes markers, the git hook, a one-time policy confirmation, lane B and
+the new context rule, and keeps the runner, the log and every earned rule. The owner
+approves; the upgrade lands between runs and writes the manifest.
 
 ## Constraints
 
-- Refusing is a valid and common outcome. Say so plainly and name what to write.
-- Never install a partial harness to be helpful.
-- Never copy a threshold, a tier boundary or a policy category from another
-  project.
-- Never commit the derived policy; never generate while it says `DRAFT`.
-- Pass `model` explicitly on every subagent dispatch — an agent file's pinned
-  model otherwise wins, and the riskiest task silently gets the cheapest reviewer.
+- Refusing is a valid outcome. Say so plainly and name what to write.
+- Never install a partial harness to be helpful, and never install alongside an
+  existing one.
+- Never copy a threshold, a tier boundary, a risk-map entry or a policy category
+  from another project.
+- Never commit the derived policy, and never generate, while its line says `DRAFT`.
+- Never write during Phase 0 before the owner answers the decision sheet.
+- Pass `model` and `effort` explicitly on every subagent dispatch — an agent file's
+  pinned model otherwise wins, and the riskiest unit silently gets the cheapest
+  reviewer.
+- Never ask the owner to open a new session or paste a hand-off.

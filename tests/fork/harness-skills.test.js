@@ -45,28 +45,51 @@ function frontmatter(file) {
   return fields;
 }
 
-/** Every `reference/<x>.md` or `templates/<x>` a skill's markdown names must exist, and every file must be named. */
+/** Every file under a skill's shipped folders, as paths relative to the skill. */
+function shippedFiles(skillDir) {
+  const out = [];
+  const walk = rel => {
+    for (const entry of fs.readdirSync(path.join(skillDir, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else out.push(child);
+    }
+  };
+  for (const sub of ['reference', 'templates', 'scripts']) {
+    if (fs.existsSync(path.join(skillDir, sub))) walk(sub);
+  }
+  return out;
+}
+
+/**
+ * Every `reference/…`, `templates/…` or `scripts/…` path a skill's markdown names must ship, and every
+ * shipped file must be named somewhere — by its path under `templates/`, or by its basename elsewhere.
+ */
 function checkReferences(skillDir) {
   const docs = [path.join(skillDir, 'SKILL.md')];
   const refDir = path.join(skillDir, 'reference');
   if (fs.existsSync(refDir)) for (const f of fs.readdirSync(refDir)) docs.push(path.join(refDir, f));
   const text = docs.map(f => fs.readFileSync(f, 'utf8')).join('\n');
 
-  const shipped = [];
-  for (const sub of ['reference', 'templates']) {
-    const dir = path.join(skillDir, sub);
-    if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) shipped.push(`${sub}/${f}`);
-  }
+  const shipped = shippedFiles(skillDir);
   for (const rel of shipped) {
-    assert.ok(text.includes(path.basename(rel)), `${rel} is never named — orphaned`);
+    const named = rel.startsWith('templates/') ? text.includes(rel) : text.includes(path.basename(rel));
+    assert.ok(named, `${rel} is never named — orphaned`);
   }
-  const named = new Set();
-  for (const m of text.matchAll(/`(?:reference\/|templates\/)?([a-z][a-z0-9-]*\.(?:md|sh|mjs))`/g)) named.add(m[1]);
-  for (const name of named) {
+  // A path under the skill's own folders must exist exactly.
+  for (const m of text.matchAll(/`((?:reference|templates)\/[a-z0-9./-]+\.(?:md|sh|mjs|js|json))`/g)) {
+    assert.ok(shipped.includes(m[1]), `${m[1]} is named but not shipped in ${path.basename(skillDir)}`);
+  }
+  // A bare file name must be shipped, or be a file the harness generates in a target project.
+  const generated = [
+    'context-budget.mjs', 'harness-guard.sh', 'registry.md', 'plan-conformance-auditor.md', 'claim-auditor.md',
+    'implementer.md', 'harness-manifest.json', 'command-guard.mjs', 'run-gates.sh', 'codex-run.mjs',
+    'check-agent-docs.mjs', 'review.workflow.js', 'settings.json', 'settings.local.json', 'package.json'
+  ];
+  for (const m of text.matchAll(/`([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:md|sh|mjs|js|json))`/g)) {
+    const name = m[1];
     if (name === 'SKILL.md' || /^(AGENTS|CLAUDE|README)\.md$/.test(name)) continue;
     const exists = shipped.some(rel => path.basename(rel) === name);
-    // Names of files the harness *generates* in a target project are not shipped here.
-    const generated = ['context-budget.mjs', 'harness-guard.sh', 'registry.md', 'plan-conformance-auditor.md', 'claim-auditor.md'];
     if (!exists && !generated.includes(name)) {
       assert.fail(`${name} is named but not shipped in ${path.basename(skillDir)}`);
     }
@@ -96,13 +119,11 @@ for (const [dir, name] of [[BOOTSTRAP, 'harness-bootstrap'], [DELEGATE, 'delegat
     checkReferences(dir);
   });
 
-  test(`${name}: names no machine path and no GLM default`, () => {
-    const files = [path.join(dir, 'SKILL.md')];
-    const refDir = path.join(dir, 'reference');
-    if (fs.existsSync(refDir)) for (const f of fs.readdirSync(refDir)) files.push(path.join(refDir, f));
+  test(`${name}: names no machine path in any shipped file, and no GLM default`, () => {
+    const files = [path.join(dir, 'SKILL.md'), ...shippedFiles(dir).map(rel => path.join(dir, rel))];
     for (const file of files) {
       const text = fs.readFileSync(file, 'utf8');
-      assert.ok(!/\/Users\/|\/home\/[a-z]/.test(text), `${path.basename(file)} names a machine path`);
+      assert.ok(!/\/Users\/|\/home\/[a-z]/.test(text), `${path.relative(dir, file)} names a machine path`);
     }
     const skill = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
     assert.ok(!/GLM|Flash/.test(skill), 'SKILL.md defaults to a non-Claude model');
@@ -281,9 +302,23 @@ test('past the warning budget: Stop tells the user to plan a compaction', () => 
   assert.match(out.systemMessage, /past 250K/);
 });
 
-test('past the limit: the model is told to finish the step and hand off', () => {
+test('past the limit: the model is told to persist state and keep working, never to hand off', () => {
   const { out } = runHook('UserPromptSubmit', transcript(401_000));
-  assert.match(out.hookSpecificOutput.additionalContext, /over the 400K budget/);
+  const text = out.hookSpecificOutput.additionalContext;
+  assert.match(text, /over the 400K budget/);
+  assert.doesNotMatch(text.replace(/never ask for a new session/gi, ''), /new session|hand ?off/i);
+});
+
+test('the skill references never tell a run to start a new session', () => {
+  for (const file of fs.readdirSync(path.join(BOOTSTRAP, 'reference'))) {
+    const text = fs.readFileSync(path.join(BOOTSTRAP, 'reference', file), 'utf8');
+    for (const line of text.split('\n')) {
+      if (/\b(start|open) a new session\b/i.test(line)) {
+        // Only allowed where the line records or forbids it.
+        assert.match(line, /never|origin|said|budget rule|reversed|recommended|"start a new session"/i, `${file}: ${line.trim()}`);
+      }
+    }
+  }
 });
 
 test('sidechain (subagent) usage is ignored — the main thread figure wins', () => {

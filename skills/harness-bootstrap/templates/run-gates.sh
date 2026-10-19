@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# harness-bootstrap run-gates (generated 2026-10-19)
+# harness-bootstrap run-gates (generated YYYY-MM-DD)
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
 #     format, exit status = number of failed gates, and the --since scoped mode.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers

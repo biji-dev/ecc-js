@@ -127,6 +127,10 @@ change:
 | `scaffold` | created once, then the project's (registry, log, follow-ups, decision log) | add structure the newer format needs, never rows |
 | `reviewed` | owner-approved, earned, or a kept legacy file (policy, risk map, merge policy, earned rules, the project's own runner) | nothing without the owner |
 
+`[M]` A foundation-stage install (`foundation.md`) adds `"stage": "foundation"` and
+`"flipAfter": "<the pass-signal unit's id>"`; the flip sets `"stage": "full"`. A
+manifest with no `stage` is `full`.
+
 `[M]` **Hash after the formatter.** Take each hash from `harness-status.js --hash`
 **after** the project's formatter has run on the file, or the first formatting pass
 reads every file as edited. Hashes are over LF-normalised text; a block's hash
@@ -180,6 +184,7 @@ a `SKILL.md`: frontmatter must be the first line.
 | `keyword-commit-hook` | remove it: a hook that checks for tags the agent writes itself is keyword matching (`rules.md` §3) |
 | `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
 | `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
+| `foundation-stage-has-tests` | the pass-signal unit landed and the flip did not run: claim the flip as a `harness/` unit (`foundation.md`) |
 
 ## Version table
 
@@ -191,3 +196,4 @@ manifest's `skillVersion`. An install with no manifest is v1 or earlier.
 | 0 | before this skill | change installs written by hand (a tiered change workflow, cross-check lanes, a verify runner): everything in v2 is new to them except what the fingerprints show |
 | 1 | up to 2.2.1-js.4 | plan mode only: task runner, commit guard (repo-wide lock), two gates, conformance and claim auditors, registry, harness log, context-budget hook (Stop + UserPromptSubmit, recommended a new session), first-line stamps |
 | 2 | 2.2.1-js.5 | change mode beside plan mode; task types; tiers Trivial · Small · Full (Standard became Small); risk map and merge policy in Phase B; scope guard, decision log and committed state file; lane B `blast-radius-auditor`; test honesty in the claim auditor; guard `SCOPE=repo\|checkout` with Branch-cell matching, case-insensitive ids and a `pre-merge-commit` hook; context-budget v2 (PostToolUse, no hand-off); `run-gates.sh` with counted gates, `check-agent-docs.mjs`, `codex-run.mjs`, `command-guard.mjs`, the review workflow; manifest and markers replace stamps |
+| 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |

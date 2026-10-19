@@ -68,6 +68,15 @@ Never impose a column the project does not have.
 | Retries exhausted, or a tripwire (`rules.md` §2) | — | escalate |
 | **Owner taste** — identity, copy, naming | ask | ask |
 | A re-tier during the run | re-ask | re-ask, at the new tier |
+| The foundation stage (`foundation.md`) — before the flip | every unit Full: ask | ask, **never auto** |
+
+`[M]` **The project's own rules tighten these rows, never loosen them.** A document
+that requires every change reviewed by another agent puts a reviewer on Trivial too;
+one that requires a human on every merge removes the Small auto-merge.
+
+`[M]` **A gate that reads another gate's output runs that gate first, on the same
+line** — a schema test reading an emitted file runs the emit before it, or a failed
+emit leaves it passing on a stale file.
 
 `[M]` **Ambiguous resolves to `ask`.** Auto-approval requires a clean **reviewer**
 result, not only a clean conformance verdict. **An override is scoped:** write in
@@ -185,6 +194,7 @@ ECC's agents where the plugin is installed:
 | schema, migration, a changed query shape | `database-reviewer` |
 | tests added or changed, Full tier | `pr-test-analyzer` |
 | mostly generic TypeScript or React, no repo invariant | `typescript-reviewer` / `react-reviewer` |
+| another language carries the change | that language's reviewer if one resolves; else the correctness reviewer with that lens in its brief, `degraded` |
 
 `[M]` On Full, the project's review workflow (`templates/workflows/review.workflow.js`,
 `delegate-tasks` check mode) may run this fan-out deterministically, with a verifier

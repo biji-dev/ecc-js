@@ -7,7 +7,7 @@ export const meta = {
   ]
 };
 
-// harness-bootstrap review workflow (generated 2026-10-19)
+// harness-bootstrap review workflow (generated YYYY-MM-DD)
 // [M] mechanism (ship as-is): meta, input validation, dimension selection, the prompts,
 //     schemas, dedup, fail-closed verification and the verdict.
 // [B] binding (re-derived per project): the MODELS, EFFORT, AGENTS and TRIGGERS block below.

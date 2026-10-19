@@ -137,6 +137,35 @@ test('both skills are listed as own skills in fork/slim.json', () => {
   }
 });
 
+// A rule is a bold span that opens a line (`**…**` or `- **…**`), wrapped lines joined.
+function boldRules(text) {
+  return [...text.matchAll(/^\s*(?:- )?\*\*([\s\S]+?)\*\*/gm)].map(m => m[1].replace(/\s+/g, ' ').trim());
+}
+
+function rulesBlockMismatch(rulesMd, template) {
+  const section = rulesMd.slice(rulesMd.indexOf('## 1 · Ship these'), rulesMd.indexOf('## 2 · '));
+  const begin = template.indexOf('<!-- harness:begin rules -->');
+  const end = template.indexOf('<!-- harness:end rules -->');
+  if (begin < 0 || end < begin) return ['rules markers missing'];
+  const want = boldRules(section);
+  const have = boldRules(template.slice(begin, end));
+  return [
+    ...want.filter(r => !have.includes(r)).map(r => `missing: ${r}`),
+    ...have.filter(r => !want.includes(r)).map(r => `not in rules.md §1: ${r}`),
+  ];
+}
+
+test('the rules-block template carries every rules.md §1 rule verbatim, and nothing else in bold', () => {
+  const rulesMd = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'rules.md'), 'utf8');
+  const template = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'agents-rules.md'), 'utf8');
+  assert.ok(boldRules(rulesMd).length >= 40, 'rule extraction found too few rules');
+  assert.deepStrictEqual(rulesBlockMismatch(rulesMd, template), []);
+  // mutant: a template that lost one rule must fail the check
+  const dropped = template.replace(/^- \*\*Taste is not a risk tier\.\*\*.*\n/m, '');
+  assert.notStrictEqual(dropped, template, 'mutation did not apply');
+  assert.deepStrictEqual(rulesBlockMismatch(rulesMd, dropped), ['missing: Taste is not a risk tier.']);
+});
+
 // ── the commit guard ────────────────────────────────────────────────────────
 
 console.log('\nharness skills: commit guard (the shipped file)');

@@ -117,7 +117,7 @@ test('template parses with bash -n', () => {
 test('template has header, markers, SCOPED_PATHS and default gates', () => {
   const lines = SOURCE.split('\n');
   assert.strictEqual(lines[0], '#!/usr/bin/env bash');
-  assert.ok(/^# harness-bootstrap run-gates \(generated \d{4}-\d{2}-\d{2}\)$/.test(lines[1]), 'header line');
+  assert.ok(/^# harness-bootstrap run-gates \(generated YYYY-MM-DD\)$/.test(lines[1]), 'header line');
   assert.ok(SOURCE.includes('# >>> harness:gates [B] — one line per gate: gate <name> <always|full> \'<command>\''));
   assert.ok(SOURCE.includes('# <<< harness:gates'));
   assert.ok(SOURCE.includes("SCOPED_PATHS='^(src|apps|packages|lib|docs|tests?)/|\\.md$'"));

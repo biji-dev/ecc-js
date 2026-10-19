@@ -417,6 +417,8 @@ function buildReport() {
         modes: parsed.modes,
         targets: parsed.targets,
         roles: parsed.roles,
+        // a foundation-stage install (reference/foundation.md) until its flip; no stage means full
+        stage: parsed.stage === 'foundation' ? 'foundation' : 'full',
       };
       entries = (parsed.entries || []).map(manifestEntry);
     }
@@ -660,6 +662,13 @@ function buildReport() {
     }
   }
 
+  // foundation stage: the pass-signal unit landed and the flip did not run
+  if (manifest && manifest.stage === 'foundation') {
+    const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.(py|go)|[^/]+_spec\.rb)$/;
+    const found = walk('').find((rel) => TEST_FILE.test(rel));
+    if (found) haz('foundation-stage-has-tests', `manifest says foundation, and test files exist (e.g. ${found}): run the flip`, MANIFEST);
+  }
+
   return {
     repo: REPO,
     manifest,
@@ -778,7 +787,7 @@ function renderText(r) {
   const out = [];
   out.push(`harness-status: ${r.repo}`);
   out.push(r.manifest
-    ? `manifest: ${r.manifest.path} (schema ${r.manifest.schema}, skillVersion ${r.manifest.skillVersion}, generated ${r.manifest.generated})`
+    ? `manifest: ${r.manifest.path} (schema ${r.manifest.schema}, skillVersion ${r.manifest.skillVersion}, generated ${r.manifest.generated}, stage ${r.manifest.stage})`
     : 'manifest: no manifest');
   out.push('');
   out.push(`lineage: ${r.lineage.verdict}${r.lineage.source === 'manifest' ? ' (from manifest modes)' : ''}`);

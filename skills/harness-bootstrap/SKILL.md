@@ -1,6 +1,6 @@
 ---
 name: harness-bootstrap
-description: Use when setting up, adopting, auditing or upgrading a gated agent harness in any repository, new or already in production — a plan-driven task runner (registry lock, commit guard, two human gates, conformance and claim auditors, harness log) or a tiered change workflow (task type, Trivial/Small/Full tiers, risk map, scope guard, cross-check lanes, step ledger). Also when asking whether a project is ready for one, or when a repository already carries an older harness (a registry, a task-runner or change-workflow skill, crosscheck lanes, an agent-workflow guide) that should be brought up to date without losing what it earned. Claude Code first (Opus for judgment, Sonnet for bounded work); Codex, ZCode and Kimi supported. Not for tuning agent configuration (that is harness-audit).
+description: Use when setting up, adopting, auditing or upgrading a gated agent harness in any repository — documents only, new, or already in production — a plan-driven task runner (registry lock, commit guard, two human gates, conformance and claim auditors, harness log) or a tiered change workflow (task type, Trivial/Small/Full tiers, risk map, scope guard, cross-check lanes, step ledger). Also when asking whether a project is ready for one, or when a repository already carries an older harness (a registry, a task-runner or change-workflow skill, crosscheck lanes, an agent-workflow guide) that should be brought up to date without losing what it earned. Claude Code first (Opus for judgment, Sonnet for bounded work); Codex, ZCode and Kimi supported. Not for tuning agent configuration (that is harness-audit).
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
@@ -45,9 +45,9 @@ use the folder this `SKILL.md` was read from.
 | Phase | Read |
 |---|---|
 | 0 · detect, upgrade | `reference/upgrade.md`; run `scripts/harness-status.js`; then the reference each proposed row's fix names, and the Phase C core table (for `missing` rows) |
-| A · assess, route | the table below; `harness-targets.md` (agents), `scope-guard.md` (id prefixes), `commit-guard.md` (`SCOPE`) |
+| A · assess, route | the table below; `harness-targets.md` (agents), `scope-guard.md` (id prefixes), `commit-guard.md` (`SCOPE`); `foundation.md` when nothing is built yet |
 | B · policy, risk map, merge policy | `reference/policy-derivation.md` only |
-| C · generate | `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
+| C · generate | `templates/agents-rules.md`, `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
 | C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md` |
 | E · growth | `vendor-skill.md` |
 
@@ -71,8 +71,10 @@ neither ask the owner nor run a command.
 ### What ships as rules, and what does not
 
 Every rule in `reference/rules.md` §1 was produced by a specific failure and has
-held since. Ship each into `AGENTS.md` as **the rule + one clause of why + a link**,
-and its full origin into the generated `docs/harness/rule-origins.md` — a rule
+held since. Ship each into `AGENTS.md` as **the rule + one clause of why + a link** —
+**copied from `templates/agents-rules.md`, never composed**: a why clause written from
+memory drifts from its incident and reads as invented — and its full origin into the
+generated `docs/harness/rule-origins.md` — a rule
 without its incident reads as pedantry and is deleted just before it is needed. To
 orient:
 
@@ -153,8 +155,11 @@ matching files, a workspace runner that finds no package with tests
 passes row 1 but goes into the report as a gap. Plan mode also needs an exit
 condition per task; where the plan has none, each unit's Scope block supplies its
 "Done when" at claim (`scope-guard.md`). **Change requests against the
-specification** — documents the owner decides, not code to build — are not units;
-they stay the owner's, and a unit that hits one stops for it.
+specification** are the owner's to decide: a unit may *draft* a new one when it finds
+a gap (in the shape the project already uses), never edit the specification or an
+existing request, and stops if the gap blocks it. The **code half of an approved
+request** is a unit with the request's own id, so `ID_PATTERN` covers every id shape
+that names a unit.
 
 **Coverage, per path.** Row 1 holds for the repository; the gates hold for paths.
 List each gate with the paths it exercises, and the paths nothing exercises yet —
@@ -164,8 +169,10 @@ generated gate table carries this map: a unit that touches an uncovered path is
 
 **The assessment is a table, not prose:** `Precondition | Evidence (file, path or
 line) | Verdict (pass · route · Phase B · ask · stop)`, then the coverage map, then
-one closing line: the mode when eligible, or the readiness plan when refused. A
-pass without cited evidence was not assessed. **Never install a partial harness.**
+one closing line: the mode when eligible, the foundation stage when nothing is
+built yet, or the readiness plan when refused. A pass without cited evidence was not
+assessed. **Never install a harness that can merge on its own without a pass
+signal.**
 
 **A refusal is a readiness plan.** If 1, 2 or 3 fail, write — in the report, not
 the repository — the smallest units that make each failed row pass. Take them from
@@ -176,9 +183,16 @@ last line is always *rerun Phase A*. The owner runs the units as ordinary work �
 `delegate-tasks` can carry them — and the skill does not install until the rerun
 passes.
 
-**A new repository.** Row 3 has no history: judge it from the plan or the owner's
-stated scope and say so; with neither, **ask** the owner for the scope, and stop if
-there is none. The risk map can name only **planned** paths (`policy-derivation.md`).
+**A new repository — documents only.** Row 3 has no history: judge it from the plan
+or the owner's stated scope and say so; with neither, **ask** the owner for the
+scope, and stop if there is none. When row 1 fails only because nothing is built yet
+and rows 2 and 3 pass, route to the **foundation stage** (`reference/foundation.md`)
+— the default, offered beside the readiness plan: Phase B runs from the documents, the
+install ships everything that needs no pass signal, every unit is Full and merged by
+the owner, and the unit that lands the first real test is followed by the flip that
+binds the test gates. Refusal stays for untested product code, a broken suite, no
+owner and trivial scope. The risk map can name only **planned** paths
+(`policy-derivation.md`).
 Install **between units**: a branch already in flight carries an id the new guard
 finds no row for, so it lands first or is claimed in the registry at install.
 
@@ -228,7 +242,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `rules.md` §1, `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks |
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
@@ -244,7 +258,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | the follow-ups doc and the decision log | `scope-guard.md` | scaffolds at their default paths |
 | `.gitignore` entries | `runner.md`, `commit-guard.md` | `.claude/registry.md`, `.review-work/`, and `.codex-runs/` with the wrapper |
 | `CODEOWNERS` + branch protection, where the platform supports it | Phase B | never-auto categories as required-review paths |
-| `.agents/harness-manifest.json` — **last** | `upgrade.md` | every entry with its kind, hashes taken after the formatter |
+| `.agents/harness-manifest.json` — **last** | `upgrade.md` | every entry with its kind, hashes taken after the formatter; `"stage": "foundation"` until the flip (`foundation.md`) |
 
 **Per mode:** plan mode binds the runner to the plan's path, columns and id
 pattern (`ID_PATTERN`, checked against the plan's real ids). Change mode binds it
@@ -270,6 +284,34 @@ and working rules, the generated runner, agents and gate table use those names a
 cite those rules; a harness role with no counterpart is added and said so. The
 harness's docs (`docs/harness/`, `docs/plans/`) move wherever Phase A agreed when
 `docs/` is a governed set.
+
+**Fit the project's tooling.** Run the project's own lint, format and type check over
+the generated files before hashing. Where the harness's Node scripts break its
+config (a strict TypeScript lint with no Node globals), add one block scoped to those
+paths; keep the template scripts out of the formatter (a reformat breaks their hash,
+and the agent-docs test reads its CONFIG block); add `.review-work/` and `.codex-runs/`
+to the linter's ignores; record each change under the manifest's `notTracked`. Bind
+the commit-message style from `git log`, never a default. Add the `prepare` (or
+equivalent) line that sets `core.hooksPath`, and say in the commands block that a
+fresh clone is unguarded until it runs and the registry is recreated.
+
+**Project rules tighten the defaults, never loosen them.** Where the project's
+documents require more than a tier's default steps — every change reviewed by
+another agent, every merge by a human — the generated tiers and runner carry the
+stricter rule, Trivial included. Units that are not plan items (harness work,
+vendor-trap skills, follow-ups no unit owns) run on `harness/<slug>` branches matched
+by the registry's `Branch` cell; write paths with `<unit>`, never the plan's id
+shape alone. The harness's own paths go on the risk map (the guard, the command
+guard and `run-gates.sh` are critical: a broken one silently allows everything) and
+on the coverage map (uncovered until tested here).
+
+**Review the install before committing it.** A fresh agent that did not write it
+(Opus, read-only) checks that every path, command, flag, agent and section reference
+resolves; that `AGENTS.md`, the runner, the agents, the guard and `run-gates.sh`
+agree with one another; that no generated line contradicts the project's own rules or
+the reviewed policy; and that the core table is complete. One fix round, one
+re-review, both in the install report. On its first run this review found five P1
+defects the generator could not see in its own output.
 
 **Local skills, not global.** They live in the project so they can name its facts
 and grow from its runs. `.claude/skills/`, `.claude/agents/` and `.agents/skills/`
@@ -321,15 +363,17 @@ contradicts.
 Outcome: refused. Add a test command that fails when the billing code is broken, then rerun.
 ```
 
-**New repository, specification only.** Twenty documents, a build plan with story
-ids `EP-nn.nn`, no code. Row 1 fails; rows 2 and 3 pass from the plan (postings,
-roles, migrations); row 6 is the plan's protected-areas list. The readiness plan
-takes the plan's own first two foundation stories — the repository skeleton with
-its lint gate, then the first package with tests — each "done when `pnpm test`
-runs at least one test and was seen red once", then *rerun Phase A*. On the rerun
-the coverage map shows the frontend covered and the server apps uncovered until
-their CI exists, so any unit touching them is Full. `ID_PATTERN` is bound to
-`EP-[0-9]+\.[0-9]+`, and the install waits for the story branch in flight to land.
+**New repository, documents only.** Twenty documents, a build plan with story ids
+`EP-nn.nn`, no code. Row 1 fails because nothing is built; rows 2 and 3 pass from
+the plan (postings, roles, migrations); row 6 is the plan's protected-areas list.
+The closing line offers the **foundation stage** (default) beside the readiness
+plan. The owner takes it: Phase B derives five never-auto categories and a risk map
+of planned paths from the documents; Phase C installs the guard bound to
+`EP-[0-9]+\.[0-9]+`, the runner, the auditors and `run-gates.sh` with lint and
+format only. The plan's first two foundation stories run as Full units merged by the
+owner — the skeleton, then the first package with tests, "done when the test command
+runs at least one test and was seen red once". A `harness/` unit then flips the
+stage: counted test gates, the first covered rows, Small unlocked.
 
 **Change-mode install.** A production repository with CI, change requests and no
 plan: Phase A routes to change mode with `SCOPE=checkout` (units run in worktrees);
@@ -346,8 +390,9 @@ approves; the upgrade lands between runs and writes the manifest.
 ## Constraints
 
 - Refusing is a valid outcome. Say so plainly and name what to write.
-- Never install a partial harness to be helpful, and never install alongside an
-  existing one.
+- Never install a harness that can merge on its own without a pass signal, and never
+  install alongside an existing one. The foundation stage is not partial: it merges
+  nothing on its own.
 - Never copy a threshold, a tier boundary, a risk-map entry or a policy category
   from another project.
 - Never commit the derived policy, and never generate, while its line says `DRAFT`.

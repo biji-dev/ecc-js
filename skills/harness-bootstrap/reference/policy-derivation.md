@@ -85,6 +85,11 @@ draft: re-derive the map when a planned path first has code, and at the first
 checkpoint after that — the owner reviews the re-derived map like the first one.
 A path the map cannot place yet is **critical**, never cold.
 
+**The harness's own paths are on the map too.** The commit guard, the command guard
+and the gate runner are critical — a broken one silently allows everything; the
+runner skill, the auditors and the harness docs are standard. Leaving them off is how
+a later session finds them unplaced and has to file it.
+
 ## The merge policy
 
 Draft the default from `gate-design.md` — Small merges locally on its own when

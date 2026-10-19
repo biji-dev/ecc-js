@@ -68,6 +68,15 @@ Never impose a column the project does not have.
 | Retries exhausted, or a tripwire (`rules.md` §2) | — | escalate |
 | **Owner taste** — identity, copy, naming | ask | ask |
 | A re-tier during the run | re-ask | re-ask, at the new tier |
+| The foundation stage (`foundation.md`) — before the flip | every unit Full: ask | ask, **never auto** |
+
+`[M]` **The project's own rules tighten these rows, never loosen them.** A document
+that requires every change reviewed by another agent puts a reviewer on Trivial too;
+one that requires a human on every merge removes the Small auto-merge.
+
+`[M]` **A gate that reads another gate's output runs that gate first, on the same
+line** — a schema test reading an emitted file runs the emit before it, or a failed
+emit leaves it passing on a stale file.
 
 `[M]` **Ambiguous resolves to `ask`.** Auto-approval requires a clean **reviewer**
 result, not only a clean conformance verdict. **An override is scoped:** write in

@@ -138,7 +138,14 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
   while this one waits on Gate 2; its step 2 waits.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
-  worktree convention.
+  worktree convention. **Every kind of unit has a branch form:** plan items carry
+  their id; the code half of an approved change request carries the request's id;
+  harness work, vendor-trap skills and follow-ups no unit owns run on
+  `harness/<slug>`, matched by the Branch cell. Write the generated paths with
+  `<unit>` (the id or the slug), never the plan's id shape alone.
+- `[M]` **In the foundation stage** (`foundation.md`) every Code unit is Full and
+  Gate 2 is the owner's; the unit that lands the first counted test is followed by
+  the flip, its own `harness/` unit.
 
 **Step 1 — ground, plan mode.**
 - `[M]` **Sync both directions.** Behind: pull before branching. **Ahead:** another
@@ -271,8 +278,8 @@ explicitly — `"sonnet"` for a cold slice. Its file says:
   change nothing further, and report it;
 - run only the targeted tests and the type check of what it touched; never the
   whole suite; never weaken a failing test;
-- commit the slice; never push, merge, rebase or touch another branch; start no
-  servers or watchers;
+- commit the slice in the project's own message style (read from `git log`, `[B]`);
+  never push, merge, rebase or touch another branch; start no servers or watchers;
 - a defect outside the slice is reported with a proposed scope class, never fixed;
 - write the report to the path the brief gives — commits, files, each command with
   its result line quoted, deviations, divergence, open questions — and return a
@@ -297,6 +304,12 @@ corrections, wrong claims struck through in place.
 
 `[M]` No request yet → writing it is the work (`superpowers:brainstorming`, where
 installed).
+
+`[M]` **A request against the specification** — documents the owner decides — is
+the owner's. A unit that finds a gap may *draft* a new request in the shape the
+project already uses and commit it on its branch; it never edits the specification
+or an existing request, and it stops if the gap blocks it. Once the owner approves
+one, its code half runs as a unit with the request's id.
 
 ## What is *not* in the sequence, deliberately
 

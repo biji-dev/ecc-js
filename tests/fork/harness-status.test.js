@@ -307,6 +307,29 @@ test('secrets in the settings files and the instruction files are found', () => 
   assert.ok(!run(repo, ['--text']).stdout.includes(v));
 });
 
+test('foundation stage: reported, and flagged once tests exist', () => {
+  const manifest = (stage) => JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19', modes: ['plan'], ...(stage ? { stage } : {}), entries: [] });
+  const docsOnly = mk({ '.agents/harness-manifest.json': manifest('foundation'), 'docs/spec.md': '# spec\n' });
+  const r1 = report(docsOnly);
+  assert.strictEqual(r1.manifest.stage, 'foundation');
+  assert.ok(!ids(r1).includes('foundation-stage-has-tests'), 'no tests yet: no hazard');
+  assert.match(run(docsOnly, ['--text']).stdout, /stage foundation/);
+
+  for (const testFile of ['packages/a/test/x.test.ts', 'tests/test_api.py', 'svc/handler_test.go', 'src/a.spec.js']) {
+    const withTests = mk({ '.agents/harness-manifest.json': manifest('foundation'), [testFile]: 'x\n' });
+    const h = report(withTests).hazards.find(x => x.id === 'foundation-stage-has-tests');
+    assert.ok(h, 'expected the hazard for ' + testFile);
+    assert.strictEqual(h.path, '.agents/harness-manifest.json');
+  }
+  const ignored = mk({ '.agents/harness-manifest.json': manifest('foundation'), 'node_modules/z/x.test.js': 'x\n' });
+  assert.ok(!ids(report(ignored)).includes('foundation-stage-has-tests'), 'dependencies are not the project tests');
+  const flipped = mk({ '.agents/harness-manifest.json': manifest('full'), 'src/a.test.js': 'x\n' });
+  assert.ok(!ids(report(flipped)).includes('foundation-stage-has-tests'));
+  const noStage = report(mk({ '.agents/harness-manifest.json': manifest(null), 'src/a.test.js': 'x\n' }));
+  assert.strictEqual(noStage.manifest.stage, 'full');
+  assert.ok(!ids(noStage).includes('foundation-stage-has-tests'));
+});
+
 test('lineage fingerprints: Missed by harness, codex-run, tier table, both', () => {
   const repo = mk({
     'docs/notes.md': 'Missed by harness: a thing\n',

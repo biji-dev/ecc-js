@@ -56,7 +56,7 @@ const GUARD_RUN = /harness[- ]guard|commit guard|pre-commit/i;
 const NEVER_AUTO = /never[- ]auto|never merged on agent output|manual review categories/i;
 const POLICY_STATUS = /Never-auto policy:\s*(DRAFT|REVIEWED)/;
 const SECRET_PATTERNS = [
-  [/(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['"]?[A-Za-z0-9_\-/+]{12,}/i, 'credential-like assignment'],
+  [/(api[_-]?key|secret|token|password|passwd)['"]?\s*[:=]\s*['"]?[A-Za-z0-9_\-/+]{12,}/i, 'credential-like assignment'],
   [/AKIA[0-9A-Z]{16}/, 'AWS access key id'],
   [/sk-[A-Za-z0-9]{20,}/, 'API key with sk- prefix'],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key header'],
@@ -631,8 +631,10 @@ function buildReport() {
   }
 
   // secrets
-  for (const root of ['.claude/skills', '.agents/skills', '.claude/agents', '.claude/rules']) {
-    for (const rel of walk(root)) {
+  // agent folders, plus the settings and instruction files every session reads
+  const secretFiles = ['.claude/settings.json', '.claude/settings.local.json', 'AGENTS.md', 'CLAUDE.md'];
+  for (const root of ['.claude/skills', '.agents/skills', '.claude/agents', '.claude/rules', ...secretFiles]) {
+    for (const rel of secretFiles.includes(root) ? [root] : walk(root)) {
       const t = read(rel);
       if (t === null || t.includes('\0')) continue;
       norm(t).split('\n').forEach((l, i) => {

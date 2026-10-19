@@ -68,12 +68,15 @@ refuses every commit, so a typo cannot disable the guard.
 
 `[M]` **Why two hooks.** A merge that needs no conflict resolution runs
 `pre-merge-commit`, never `pre-commit`: with only the first hook, a mainline
-`git merge --no-ff` went through while a run held a row.
+`git merge --no-ff` went through while a run held a row. **A fast-forward runs no
+hook at all**, so the runner merges with `--no-ff` and the harness file says
+never to fast-forward the mainline while a row is held.
 
 `[M]` If the repository already sets `core.hooksPath`, **chain into it**; never
 overwrite another hook manager's setting.
 
-`[M]` `git commit --no-verify` skips every hook. Say so in the harness file, and
+`[M]` `git commit --no-verify` skips every hook, and `git merge --no-verify` skips
+`pre-merge-commit`. Say so in the harness file, and
 install the project's command guard (`templates/command-guard.mjs`,
 `harness-targets.md`), which refuses that flag — and `HUSKY=0` or a `core.hooksPath`
 override — from an agent by parsing the command. Setting `core.hooksPath` to the

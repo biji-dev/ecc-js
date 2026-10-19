@@ -193,6 +193,12 @@ async function main() {
     ['git push -o ci.skip -f origin main', 'force-push-mainline'],
     ['git push --push-option ci.skip -f origin main', 'force-push-mainline'],
     ['git commit -m x # fine\ngit commit -nm y', 'no-verify'],
+    // merge and pull skip pre-merge-commit with --no-verify
+    ['git merge --no-verify feature/x', 'no-verify'],
+    ['git merge --no-ff --no-verify -m msg feature/x', 'no-verify'],
+    ['git checkout main && git merge --no-ff --no-verify feature/x', 'no-verify'],
+    ['git pull --no-verify origin main', 'no-verify'],
+    ['HUSKY=0 git merge feature/x', 'no-verify'],
   ];
   for (const [command, rule] of blocked) {
     test(`blocks: ${command.replace(/\n/g, '\\n')}`, () => {
@@ -384,6 +390,12 @@ async function main() {
     'git push --push-option -f origin main',
     'git commit -m x # -n',
     'git commit -m x # --no-verify\n# git commit -n',
+    // merge: -n is --no-stat; --no-verify-signatures is not a hook bypass; a message is text
+    'git merge -n feature/x',
+    'git merge --no-verify-signatures feature/x',
+    'git merge --no-ff -m "never use --no-verify" feature/x',
+    'git merge --no-ff -F .review-work/u/merge-msg.txt feature/x',
+    'git pull --rebase origin main',
   ];
   for (const command of allowed) {
     test(`allows: ${command.replace(/\n/g, '\\n') || '(empty)'}`, () => {

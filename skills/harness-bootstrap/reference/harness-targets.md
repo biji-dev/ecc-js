@@ -95,7 +95,8 @@ call it; never maintain the same sequence in three skill files.
   `Bash`, installed to `.claude/hooks/command-guard.mjs`. It parses the command
   (heredocs and quoted text removed, split on shell operators, wrappers such as
   `env`, `sudo`, `timeout`, `nice` and `xargs` stripped) and refuses
-  `git commit --no-verify` or `-n`, `HUSKY=0` on a commit, a `core.hooksPath`
+  `git commit --no-verify` or `-n`, `git merge` or `git pull --no-verify`, `HUSKY=0`
+  on a commit or merge, a `core.hooksPath`
   override or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
   stays allowed), and a force-push or delete of the mainline; `EXTRA_RULES` is `[B]`. A commit message that *mentions* `--no-verify` passes. It
   exits 2 to block and 0 on any error. It stops an agent's own mistakes and the

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap command-guard hook (generated YYYY-MM-DD). Claude Code, PreToolUse(Bash).
-// [M] mechanism (ship as-is): the command parser and the built-in rules - no-verify (also
-//   HUSKY=0), hooks-path-override (-c core.hooksPath, git config core.hooksPath),
+// [M] mechanism (ship as-is): the command parser and the built-in rules - no-verify (commit,
+//   and merge/pull --no-verify; also HUSKY=0), hooks-path-override (-c core.hooksPath, git config core.hooksPath),
 //   force-push-mainline, delete-mainline. [B] binding (re-derived per project): the MAINLINE,
 //   HOOKS_DIR and EXTRA_RULES lines below.
 // The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings
@@ -289,6 +289,18 @@ function gitParts(cmd) {
   return { sub: argv[i], rest: argv.slice(i + 1), config, cwd, unq };
 }
 
+/**
+ * True when a `git merge` or `git pull` argument list asks to skip pre-merge-commit. Only the exact
+ * --no-verify: an abbreviation is ambiguous with --no-verify-signatures, and -n is --no-stat.
+ */
+function mergeSkipsHooks(rest) {
+  for (const t of rest) {
+    if (t === '--') break;
+    if (t === '--no-verify') return true;
+  }
+  return false;
+}
+
 /** True when a `git commit` argument list asks to skip hooks (--no-verify or -n in a cluster). */
 function commitSkipsHooks(rest) {
   for (let j = 0; j < rest.length; j++) {
@@ -452,6 +464,15 @@ function builtinRule(cmd, opts) {
     return {
       rule: 'no-verify',
       reason: '`git commit --no-verify` (or -n, or HUSKY=0) skips the commit guard. Fix what the hook reports, or ask the owner to override.',
+    };
+  }
+  if (
+    (parts.sub === 'merge' || parts.sub === 'pull') &&
+    (mergeSkipsHooks(parts.rest) || (cmd.env ?? []).some((e) => /^HUSKY=0$/.test(parts.unq(e))))
+  ) {
+    return {
+      rule: 'no-verify',
+      reason: `\`git ${parts.sub} --no-verify\` (or HUSKY=0) skips the pre-merge-commit guard. Fix what the hook reports, or ask the owner to override.`,
     };
   }
   if (parts.sub === 'push') return pushHit(parts, opts.currentBranch);

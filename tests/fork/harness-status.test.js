@@ -294,6 +294,19 @@ test('other secret shapes are found', () => {
   assert.deepStrictEqual(found, ['.agents/skills/s/SKILL.md', '.claude/agents/a.md', '.claude/rules/a.md']);
 });
 
+test('secrets in the settings files and the instruction files are found', () => {
+  const v = 'Zx9' + 'Qw7Lm3Np5Rt8';
+  const repo = mk({
+    '.claude/settings.json': '{ "env": { "API_KEY": "' + v + '" } }\n',
+    '.claude/settings.local.json': '{ "permissions": { "allow": ["Bash(curl -H password=' + v + ')"] } }\n',
+    'CLAUDE.md': '# x\ntoken: ' + v + '\n',
+    'AGENTS.md': '# x\nsecret = ' + v + '\n',
+  });
+  const found = report(repo).hazards.filter(h => h.id === 'secret-in-agent-files').map(h => h.path).sort();
+  assert.deepStrictEqual(found, ['.claude/settings.json', '.claude/settings.local.json', 'AGENTS.md', 'CLAUDE.md']);
+  assert.ok(!run(repo, ['--text']).stdout.includes(v));
+});
+
 test('lineage fingerprints: Missed by harness, codex-run, tier table, both', () => {
   const repo = mk({
     'docs/notes.md': 'Missed by harness: a thing\n',

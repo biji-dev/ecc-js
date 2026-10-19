@@ -132,21 +132,26 @@ Templates for every kind are in `reference/spec-templates.md`.
    empty wave. Character classes are the usual cause: a filter written
    `/^[0678]-/` could never match `06-`, so a whole phase dispatched nothing and
    reported green.
-3. **Check the fence with git, not the report.** `git status --porcelain` against
-   the spec's Files list. A file outside every list is a finding; revert it or fold
-   it into a spec deliberately.
+3. **Check the fence with git, not the report.** `git status --porcelain -uall`
+   against the spec's Files list. Without `-uall`, a new directory shows as one
+   `?? src/ui/` line and hides the stray file inside it. A file outside every list
+   is a finding; revert it or fold it into a spec deliberately.
 4. **Gate on commands, in the main session.** Each spec's acceptance commands and the
    combined gate as **separate commands, one result line each** — never one `&&`
    chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
-5. **Per-slice review, on a different model.** After a serial slice passes its gate,
-   one reviewer on a different model reads that slice's diff before the next slice
-   builds on it — Opus over a Sonnet or second-family slice; the second family or a
-   fresh Opus reviewer over an Opus slice. Then integrate. In a harness the session
-   commits here; standalone it commits at the end.
-6. **Escalation.** A blocked executor: answer it and continue the **same** agent
-   (`SendMessage`) while its context is small, or re-dispatch with a revision note in
-   the spec. The architect's ruling goes into the spec, the harness's state file and
-   the commit message — never only the chat.
+5. **Per-slice review, by a fresh agent.** After a serial slice passes its gate,
+   one reviewer reads that slice's diff (written into its brief) before the next
+   slice builds on it — Opus over a Sonnet or second-family slice; the second family
+   over an Opus slice, or a fresh Opus reviewer where there is none. The session
+   reproduces each P0–P2 before acting on it. On critical code the fix is re-reviewed
+   by the same reviewer, continued, until it reports no P0–P2. Then integrate. In a
+   harness the session commits here; standalone it commits at the end.
+6. **Escalation.** A blocked executor, or a review finding that traces to the spec:
+   answer it and continue the **same** agent (`SendMessage`) while its context is
+   small, or re-dispatch with a revision note in the spec. The architect's ruling
+   goes into the spec — into **every** spec that carries the contract it changes, so
+   they stay identical — the harness's state file and the commit message, never only
+   the chat.
 7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
    code) **fenced to the current slice's listed files, never a folder** — a fixer
    once wrote the next wave's strings. Give it the tail of **both stdout and

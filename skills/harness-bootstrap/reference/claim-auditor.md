@@ -85,7 +85,7 @@ title is a claim like any other.
   fix as a patch (`git show <fix-sha> -- <file>`, or `git diff <base> -- <file>` for
   uncommitted work), `git apply -R` it, run the one test — **its own assertion must
   fail; a compile or import error is not a pass** — then `git apply` it back and
-  confirm `git status --porcelain` matches what it was before. Never
+  confirm `git status --porcelain -uall` matches what it was before. Never
   `git checkout -- <file>`.
 - **The fix commits are a fresh diff.** Every commit made after the step 8 review
   is reviewed for correctness and regressions here, because nobody else saw it.

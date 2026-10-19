@@ -103,7 +103,7 @@ above the captured amount.
   paste the **red** line. Its own assertion must fail — a compile or import error is
   not a red.
 - Restore (`git apply` the patch); run it; paste the green line again.
-- `git status --porcelain` matches what it was before the control. Never
+- `git status --porcelain -uall` matches what it was before the control. Never
   `git checkout -- <file>`.
 ```
 

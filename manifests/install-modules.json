@@ -12,6 +12,7 @@
         "claude",
         "claude-project",
         "cursor",
+        "copilot",
         "antigravity",
         "codebuddy",
         "joycode",
@@ -42,6 +43,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "codebuddy",
         "joycode",
         "qwen",
@@ -62,13 +64,19 @@
       "description": "Core slash-command library and command docs.",
       "paths": [
         "commands",
+        "scripts/astra-review.js",
         "scripts/harness-audit.js",
-        "scripts/skills-health.js"
+        "scripts/skills-health.js",
+        "scripts/lib/skill-evolution",
+        "scripts/lib/astra-review",
+        "scripts/ci/validate-skill-host-compat.js",
+        "scripts/ci/validate-skills.js"
       ],
       "targets": [
         "claude",
         "claude-project",
         "cursor",
+        "copilot",
         "antigravity",
         "opencode",
         "codebuddy",
@@ -80,7 +88,9 @@
         "kimi",
         "adal"
       ],
-      "dependencies": [],
+      "dependencies": [
+        "shared-script-utils"
+      ],
       "defaultInstall": true,
       "cost": "medium",
       "stability": "stable"
@@ -108,6 +118,22 @@
       "stability": "stable"
     },
     {
+      "id": "hermes-hooks",
+      "kind": "hooks",
+      "description": "Hermes-native guard hooks (config protection, console.log warning) plus install guide.",
+      "paths": [
+        "hooks/hermes"
+      ],
+      "targets": [
+        "hermes",
+        "openclaw"
+      ],
+      "dependencies": [],
+      "defaultInstall": true,
+      "cost": "light",
+      "stability": "stable"
+    },
+    {
       "id": "platform-configs",
       "kind": "platform",
       "description": "Baseline platform configs, package-manager setup, and MCP catalog.",
@@ -117,12 +143,14 @@
         "mcp-configs",
         "scripts/auto-update.js",
         "scripts/setup-package-manager.js",
+        "scripts/lib/package-manager.js",
         ".kimi"
       ],
       "targets": [
         "claude",
         "claude-project",
         "cursor",
+        "copilot",
         "antigravity",
         "codex",
         "gemini",
@@ -136,7 +164,9 @@
         "kimi",
         "adal"
       ],
-      "dependencies": [],
+      "dependencies": [
+        "shared-script-utils"
+      ],
       "defaultInstall": true,
       "cost": "light",
       "stability": "stable"
@@ -175,6 +205,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -187,6 +218,11 @@
         "agents-core",
         "commands-core",
         "platform-configs"
+      ],
+      "optionalDependencies": [
+        "rules-core",
+        "agents-core",
+        "commands-core"
       ],
       "defaultInstall": false,
       "cost": "medium",
@@ -210,6 +246,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -280,6 +317,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -290,7 +328,9 @@
         "kimi",
         "adal"
       ],
-      "dependencies": [],
+      "dependencies": [
+        "platform-configs"
+      ],
       "defaultInstall": true,
       "cost": "medium",
       "stability": "stable"
@@ -314,6 +354,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -348,6 +389,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -376,6 +418,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -404,6 +447,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -439,6 +483,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -491,6 +536,7 @@
         "claude-project",
         "cursor",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -527,6 +573,9 @@
       "dependencies": [
         "commands-core",
         "platform-configs"
+      ],
+      "optionalDependencies": [
+        "commands-core"
       ],
       "defaultInstall": false,
       "cost": "medium",
@@ -575,6 +624,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -607,6 +657,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -634,6 +685,7 @@
         "cursor",
         "antigravity",
         "codex",
+        "copilot",
         "opencode",
         "codebuddy",
         "joycode",
@@ -666,6 +718,38 @@
       "dependencies": [],
       "defaultInstall": false,
       "cost": "heavy",
+      "stability": "stable"
+    },
+    {
+      "id": "shared-script-utils",
+      "kind": "platform",
+      "description": "Shared utility files required by installed commands and platform tools.",
+      "paths": [
+        "scripts/lib/utils.js",
+        "scripts/lib/agent-data-home.js",
+        "scripts/lib/path-safety.js"
+      ],
+      "targets": [
+        "claude",
+        "claude-project",
+        "cursor",
+        "copilot",
+        "antigravity",
+        "opencode",
+        "codebuddy",
+        "joycode",
+        "qwen",
+        "zed",
+        "hermes",
+        "openclaw",
+        "kimi",
+        "adal",
+        "codex",
+        "gemini"
+      ],
+      "dependencies": [],
+      "defaultInstall": false,
+      "cost": "light",
       "stability": "stable"
     },
     {

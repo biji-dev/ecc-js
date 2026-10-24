@@ -169,6 +169,7 @@ function runTests() {
       assert.ok(fs.existsSync(path.join(claudeRoot, 'rules', 'ecc', 'typescript', 'testing.md')));
       assert.ok(fs.existsSync(path.join(claudeRoot, 'commands', 'plan.md')));
       assert.ok(fs.existsSync(path.join(claudeRoot, 'scripts', 'hooks', 'session-end.js')));
+      assert.ok(fs.existsSync(path.join(claudeRoot, 'scripts', 'hooks', 'hookify-runtime.js')));
       assert.ok(fs.existsSync(path.join(claudeRoot, 'scripts', 'lib', 'utils.js')));
       assert.ok(fs.existsSync(path.join(claudeRoot, 'skills', 'tdd-workflow', 'SKILL.md')));
       assert.ok(fs.existsSync(path.join(claudeRoot, 'skills', 'coding-standards', 'SKILL.md')));
@@ -344,6 +345,7 @@ function runTests() {
           'commands-core',
           'platform-configs',
           'workflow-quality',
+          'shared-script-utils',
         ]
       );
       assert.ok(
@@ -758,6 +760,31 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('commands-only install can execute skill health without hook automation', () => {
+    const homeDir = createTempDir('install-health-home-');
+    const projectDir = createTempDir('install-health-project-');
+    try {
+      const env = { CLAUDE_CONFIG_DIR: path.join(homeDir, '.claude') };
+      const installed = run(['--target', 'claude', '--modules', 'commands-core', '--no-hooks', '--json'], {
+        cwd: projectDir, homeDir, env,
+      });
+      assert.strictEqual(installed.code, 0, installed.stderr);
+      const health = spawnSync(process.execPath, [
+        path.join(homeDir, '.claude', 'scripts', 'skills-health.js'), '--json',
+        '--home', homeDir, '--skills-root', path.join(homeDir, 'empty-curated'),
+        '--learned-root', path.join(homeDir, 'empty-learned'),
+        '--imported-root', path.join(homeDir, 'empty-imported'),
+      ], { cwd: projectDir, env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, ...env }, encoding: 'utf8' });
+      assert.strictEqual(health.status, 0, health.stderr);
+      assert.deepStrictEqual(JSON.parse(health.stdout).skills, []);
+      const state = readJson(path.join(homeDir, '.claude', 'ecc', 'install-state.json'));
+      assert.ok(!state.operations.some(operation => operation.sourceRelativePath.startsWith('scripts/hooks/')));
+    } finally {
+      cleanup(homeDir);
+      cleanup(projectDir);
+    }
+  })) passed++; else failed++;
+
   if (test('preserves existing top-level Claude rules and skills during managed install', () => {
     const homeDir = createTempDir('install-apply-home-');
     const projectDir = createTempDir('install-apply-project-');
@@ -901,7 +928,8 @@ function runTests() {
           'agents-core',
           'commands-core',
           'platform-configs',
-          'workflow-quality'
+          'workflow-quality',
+          'shared-script-utils'
         ]
       );
       assert.ok(state.resolution.skippedModules.includes('hooks-runtime'));
@@ -918,7 +946,7 @@ function runTests() {
     const projectDir = createTempDir('install-apply-project-');
 
     try {
-      const result = run(['--target', 'cursor', '--modules', 'platform-configs', '--enable-hooks'], {
+      const result = run(['--target', 'cursor', '--modules', 'platform-configs'], {
         cwd: projectDir,
         homeDir,
       });
@@ -935,6 +963,7 @@ function runTests() {
       assert.deepStrictEqual(state.request.excludeComponents, []);
       assert.strictEqual(state.request.legacyMode, false);
       assert.ok(state.resolution.selectedModules.includes('platform-configs'));
+      assert.ok(!fs.existsSync(path.join(projectDir, '.cursor', 'hooks')));
       assert.ok(
         !state.operations.some(operation => operation.destinationPath.endsWith('ecc-install-state.json')),
         'Manifest copy operations should not include generated install-state files'
@@ -968,6 +997,9 @@ function runTests() {
       const settings = readJson(path.join(claudeRoot, 'settings.json'));
       assert.strictEqual(settings.includeCoAuthoredBy, false);
       assert.ok(settings.hooks.SessionStart.some(entry => entry.id === 'session:start'));
+      // Fork (biji-dev/ecc-js): the three *:hookify-runtime entries are in
+      // fork/slim.json hooks.drop, so nothing registers them here.
+      assert.ok(settings.hooks.Stop.some(entry => entry.id === 'stop:session-end'));
 
       const state = readJson(path.join(claudeRoot, 'ecc', 'install-state.json'));
       const settingsOperation = state.operations.find(operation => (
@@ -1062,7 +1094,7 @@ function runTests() {
       fs.writeFileSync(scriptsPackagePath, userScriptsPackage);
 
       const firstInstall = run(
-        ['--target', 'claude-project', '--profile', 'core', '--enable-hooks'],
+        ['--target', 'claude-project', '--modules', 'hooks-runtime', '--enable-hooks'],
         { cwd: projectDir, homeDir }
       );
       assert.strictEqual(firstInstall.code, 0, firstInstall.stderr);
@@ -1084,7 +1116,7 @@ function runTests() {
       assert.match(hookResult.stderr, /no-verify/i);
 
       const secondInstall = run(
-        ['--target', 'claude-project', '--profile', 'core', '--enable-hooks'],
+        ['--target', 'claude-project', '--modules', 'hooks-runtime', '--enable-hooks'],
         { cwd: projectDir, homeDir }
       );
       assert.strictEqual(secondInstall.code, 0, secondInstall.stderr);
@@ -1139,9 +1171,15 @@ function runTests() {
       assert.strictEqual(settings.includeCoAuthoredBy, false, 'Claude co-author attribution should be disabled by default');
       assert.deepStrictEqual(settings.env, { MY_VAR: '1' }, 'existing env should be preserved');
       assert.deepStrictEqual(
-        settings.hooks.UserPromptSubmit,
-        [{ matcher: '*', hooks: [{ type: 'command', command: 'echo custom-submit' }] }],
+        settings.hooks.UserPromptSubmit[0],
+        { matcher: '*', hooks: [{ type: 'command', command: 'echo custom-submit' }] },
         'unrelated existing hooks should be preserved'
+      );
+      // Fork (biji-dev/ecc-js): prompt:hookify-runtime is dropped; session:start is the
+      // managed entry that proves registration still happens alongside user hooks.
+      assert.ok(
+        settings.hooks.SessionStart.some(entry => entry.id === 'session:start'),
+        'managed hooks should be registered alongside user hooks'
       );
       assert.deepStrictEqual(
         settings.hooks.PreToolUse[0],

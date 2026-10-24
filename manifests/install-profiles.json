@@ -74,6 +74,7 @@
       "modules": [
         "rules-core",
         "agents-core",
+        "shared-script-utils",
         "commands-core",
         "hooks-runtime",
         "platform-configs",
@@ -91,6 +92,7 @@
         "agentic-patterns",
         "devops-infra",
         "machine-learning",
+        "hermes-hooks",
         "fork-own"
       ]
     }

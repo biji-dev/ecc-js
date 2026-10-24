@@ -672,8 +672,7 @@
       "scripts/build-pi-core.js",
       "manifests/pi-core.json",
       "scripts/dev/generate-skill-triggers.js",
-      ".qoder-plugin/**",
-      "scripts/qwen-adapt-agents.js"
+      ".qoder-plugin/**"
     ],
     "keep": [
       "docs/COMMAND-REGISTRY.json",
@@ -1176,6 +1175,73 @@
         "reason": "Requires skills/master-agreement-generator/scripts/build-agreement.js. That skill is in the fork/slim.json drop list.",
         "triggeredBy": [
           "skill:master-agreement-generator"
+        ]
+      },
+      "tests/ci/agent-payment-x402-doc.test.js": {
+        "reason": "All 54 cases execute the TypeScript payment boundary documented in skills/agent-payment-x402/SKILL.md and its ja-JP and zh-CN translations, all dropped. Nothing in the file runs without that skill.",
+        "triggeredBy": [
+          "skill:agent-payment-x402"
+        ]
+      },
+      "tests/docker/codex-auth-relay.test.js": {
+        "reason": "Requires docker/plugin-setup/codex-auth-relay.js and crashes with MODULE_NOT_FOUND; docker/** is dropped.",
+        "triggeredBy": [
+          "tree:docker"
+        ]
+      },
+      "tests/docker/gateguard-effectiveness.test.js": {
+        "reason": "Loads docker/gateguard-effectiveness/lib and crashes before any case; docker/** is dropped.",
+        "triggeredBy": [
+          "tree:docker"
+        ]
+      },
+      "tests/docker/gateguard-intent.test.js": {
+        "reason": "Loads docker/gateguard-effectiveness/user-sim and crashes before any case; docker/** is dropped.",
+        "triggeredBy": [
+          "tree:docker"
+        ]
+      },
+      "tests/docs/kiro-steering-inclusion.test.js": {
+        "reason": "Scans .kiro/steering and fails with ENOENT; the Kiro harness surface is dropped (the fork targets Claude Code, Codex, ZCode and Kimi).",
+        "triggeredBy": [
+          "tree:.kiro"
+        ]
+      },
+      "tests/hooks/cursor-hook-dispatchers.test.js": {
+        "reason": "Requires ../../.cursor/hooks/adapter and crashes before any case; .cursor/** is dropped.",
+        "triggeredBy": [
+          "tree:.cursor"
+        ]
+      },
+      "tests/hooks/ecc-statusline-late.test.js": {
+        "reason": "Every case reads examples/statusline.json, and examples/** is dropped apart from the eval-harness fixtures.",
+        "triggeredBy": [
+          "tree:examples (examples/statusline.json)"
+        ]
+      },
+      "tests/lib/opencode-script-boundary.test.js": {
+        "reason": "Requires scripts/build-opencode.js and crashes before any case; the OpenCode harness surface is dropped.",
+        "triggeredBy": [
+          "script:build-opencode.js"
+        ]
+      },
+      "tests/scripts/opencode-modular-telemetry.test.js": {
+        "reason": "Requires scripts/build-opencode.js and crashes before any case; the OpenCode harness surface is dropped.",
+        "triggeredBy": [
+          "script:build-opencode.js"
+        ]
+      },
+      "tests/qoder-plugin.test.js": {
+        "reason": "Checks the .qoder-plugin manifest and scripts/release.sh, both dropped. It fails with ENOENT before any case.",
+        "triggeredBy": [
+          "tree:.qoder-plugin",
+          "script:release.sh"
+        ]
+      },
+      "tests/scripts/build-pi-core.test.js": {
+        "reason": "Reads scripts/build-pi-core.js, dropped with the Pi harness package (pi/**, manifests/pi-core.json).",
+        "triggeredBy": [
+          "script:build-pi-core.js"
         ]
       }
     }

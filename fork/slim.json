@@ -662,7 +662,11 @@
       ".agents/skills/everything-claude-code/**",
       ".claude/ecc-tools.json",
       ".claude/identity.json",
-      ".claude/homunculus/**"
+      ".claude/homunculus/**",
+      "pi/**",
+      ".pr/**",
+      "scripts/build-pi-core.js",
+      "manifests/pi-core.json"
     ],
     "keep": [
       "docs/COMMAND-REGISTRY.json",

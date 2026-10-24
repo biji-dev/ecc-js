@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT, git } = require('./git');
+const { stripPictographs } = require('./config');
 
 const ITEM_FILE = {
   skills: name => `skills/${name}/SKILL.md`,
@@ -95,7 +96,9 @@ function writeReport({ analysis, state, queue, mode }) {
     securityDiffs(analysis.fromRef, target.ref),
     ''
   ].join('\n');
-  fs.writeFileSync(REPORT_PATH, body);
+  // Upstream diffs and commit subjects can carry emoji; the repo-wide unicode
+  // safety check walks gitignored files too, so keep the report clean.
+  fs.writeFileSync(REPORT_PATH, stripPictographs(body));
   return REPORT_PATH;
 }
 

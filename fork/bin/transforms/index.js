@@ -3,6 +3,7 @@
 const { run } = require('../lib/git');
 const { transformHooks } = require('./hooks');
 const { transformManifests } = require('./manifests');
+const { transformContextPacks } = require('./context-packs');
 const { transformPackage, transformAgentYaml } = require('./package');
 const { renderOverlays, writeInstallConfigs } = require('./overlays');
 
@@ -16,6 +17,8 @@ function runTransforms(slim, state, log = () => {}) {
   log(`hooks: kept ${report.hooks.kept.length}, removed ${report.hooks.removed.length}`);
   report.manifests = transformManifests(slim);
   log(`manifests: ${JSON.stringify(report.manifests)}`);
+  report.contextPacks = transformContextPacks();
+  log(`context packs: ${JSON.stringify(report.contextPacks)}`);
   report.package = transformPackage(slim);
   log(`package: removed files ${report.package.files.length}, bin ${report.package.bin.length}, scripts ${report.package.scripts.length}`);
   report.agentYaml = transformAgentYaml();

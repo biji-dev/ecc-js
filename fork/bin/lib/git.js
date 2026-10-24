@@ -101,8 +101,10 @@ function isAncestor(ancestor, descendant) {
   throw new Error(`git merge-base --is-ancestor ${ancestor} ${descendant} failed: ${(result.stderr || '').trim()}`);
 }
 
+// Upstream releases are annotated tags, and merging one records the tag object's
+// sha in MERGE_HEAD. Peel to the commit so callers can compare against revParse().
 function mergeHead() {
-  const result = run('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { allowFailure: true });
+  const result = run('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD^{commit}'], { allowFailure: true });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 

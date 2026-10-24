@@ -1,3 +1,20 @@
 {
-  "entries": []
+  "entries": [
+    {
+      "kind": "skills",
+      "name": "i18n-sync",
+      "file": "skills/i18n-sync/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "upstream/v2.2.3",
+      "introducedBy": {
+        "sha": "21cb5e73",
+        "subject": "feat(skills): add i18n-sync skill for agent-driven locale file translation"
+      },
+      "description": "Translate and synchronize application JSON locale files using source-key usage, project terminology, and focused validation. Use when adding keys or languages, updating source copy, or reviewing missing and stale translations.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    }
+  ]
 }

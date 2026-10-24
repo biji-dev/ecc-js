@@ -1,9 +1,9 @@
 {
-  "lastUpstreamRef": "8321021c54d670126ce3b2969d5deb880b4b0c2a",
-  "lastUpstreamTag": "v2.2.1",
-  "upstreamVersion": "2.2.1",
-  "pluginBuild": 11,
-  "syncedAt": "2026-09-14T00:00:00Z",
+  "lastUpstreamRef": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+  "lastUpstreamTag": "v2.2.3",
+  "upstreamVersion": "2.2.3",
+  "pluginBuild": 1,
+  "syncedAt": "2026-10-24T09:07:09.993Z",
   "counts": {
     "skills": 143,
     "agents": 36,

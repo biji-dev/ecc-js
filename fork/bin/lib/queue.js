@@ -1,7 +1,7 @@
 'use strict';
 
 const { git } = require('./git');
-const { ITEM_PATTERNS } = require('./config');
+const { ITEM_PATTERNS, stripPictographs } = require('./config');
 const { showFile } = require('./inventory');
 
 const ITEM_FILE = {
@@ -17,11 +17,11 @@ function frontmatterDescription(text) {
   if (!match) return '';
   const line = match[1].split('\n').find(entry => entry.startsWith('description:'));
   return line
-    ? line
+    ? stripPictographs(line
         .slice('description:'.length)
         .trim()
         .replace(/^["']|["']$/g, '')
-        .slice(0, 240)
+        .slice(0, 240))
     : '';
 }
 
@@ -29,7 +29,7 @@ function introducedBy(fromRef, toRef, filePath) {
   const out = git(['log', '--diff-filter=A', '-1', '--format=%h%x09%s', `${fromRef}..${toRef}`, '--', filePath]).trim();
   if (!out) return null;
   const [sha, subject] = out.split('\t');
-  return { sha, subject };
+  return { sha, subject: stripPictographs(subject) };
 }
 
 /** Tests that must never be quarantined automatically (they cover kept installer and hook code). */

@@ -18,6 +18,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '../..');
 const README_PATH = path.join(ROOT, 'README.md');
 const AGENTS_PATH = path.join(ROOT, 'AGENTS.md');
+const SOUL_PATH = path.join(ROOT, 'SOUL.md');
+const GEMINI_PATH = path.join(ROOT, '.gemini', 'GEMINI.md');
 const README_ZH_CN_PATH = path.join(ROOT, 'README.zh-CN.md');
 const DOCS_ZH_CN_README_PATH = path.join(ROOT, 'docs', 'zh-CN', 'README.md');
 const DOCS_ZH_CN_AGENTS_PATH = path.join(ROOT, 'docs', 'zh-CN', 'AGENTS.md');
@@ -59,6 +61,14 @@ function buildCatalog(root = ROOT) {
     commands: { count: commands.length, files: commands, glob: 'commands/*.md' },
     skills: { count: skills.length, files: skills, glob: 'skills/*/SKILL.md' }
   };
+}
+
+// Fork (biji-dev/ecc-js): catalog documents this fork does not ship at all.
+const OPTIONAL_DOCUMENT_SUFFIXES = ['SOUL.md', '.gemini/GEMINI.md'];
+
+function isOptionalDocument(filePath) {
+  const normalized = normalizePathSegments(filePath);
+  return OPTIONAL_DOCUMENT_SUFFIXES.some(suffix => normalized.endsWith(`/${suffix}`));
 }
 
 function readFileOrThrow(filePath) {
@@ -271,6 +281,30 @@ function parseAgentsDocExpectations(agentsContent) {
   }
 
   return expectations;
+}
+
+function parseCrossHarnessIdentityExpectations(content, source) {
+  const match = content.match(/with\s+(\d+)\s+specialized agents,\s+(\d+)\s+skills,\s+(?:and\s+)?(\d+)\s+commands/i);
+  if (!match) {
+    throw new Error(`${source} is missing the catalog summary line`);
+  }
+
+  return [
+    { category: 'agents', mode: 'exact', expected: Number(match[1]), source },
+    { category: 'skills', mode: 'exact', expected: Number(match[2]), source },
+    { category: 'commands', mode: 'exact', expected: Number(match[3]), source },
+  ];
+}
+
+function syncCrossHarnessIdentity(content, catalog, source) {
+  return replaceOrThrow(
+    content,
+    /(with\s+)(\d+)(\s+specialized agents,\s+)(\d+)(\s+skills,\s+(?:and\s+)?)(\d+)(\s+commands)/i,
+    (_, prefix, __, agentsSuffix, ___, skillsSuffix, ____, commandsSuffix) => (
+      `${prefix}${catalog.agents.count}${agentsSuffix}${catalog.skills.count}${skillsSuffix}${catalog.commands.count}${commandsSuffix}`
+    ),
+    source
+  );
 }
 
 function parseZhAgentsDocExpectations(agentsContent) {
@@ -563,6 +597,8 @@ function createDocumentSpecs(paths = {}) {
   const {
     readmePath = README_PATH,
     agentsPath = AGENTS_PATH,
+    soulPath = SOUL_PATH,
+    geminiPath = GEMINI_PATH,
     zhRootReadmePath = README_ZH_CN_PATH,
     zhDocsReadmePath = DOCS_ZH_CN_README_PATH,
     zhDocsAgentsPath = DOCS_ZH_CN_AGENTS_PATH,
@@ -580,6 +616,16 @@ function createDocumentSpecs(paths = {}) {
       filePath: agentsPath,
       parseExpectations: parseAgentsDocExpectations,
       syncContent: syncEnglishAgents,
+    },
+    {
+      filePath: soulPath,
+      parseExpectations: content => parseCrossHarnessIdentityExpectations(content, 'SOUL.md'),
+      syncContent: (content, catalog) => syncCrossHarnessIdentity(content, catalog, 'SOUL.md'),
+    },
+    {
+      filePath: geminiPath,
+      parseExpectations: content => parseCrossHarnessIdentityExpectations(content, '.gemini/GEMINI.md'),
+      syncContent: (content, catalog) => syncCrossHarnessIdentity(content, catalog, '.gemini/GEMINI.md'),
     },
     {
       filePath: zhRootReadmePath,
@@ -633,6 +679,8 @@ function createDocumentSpecsForRoot(root) {
   return createDocumentSpecs({
     readmePath: path.join(root, 'README.md'),
     agentsPath: path.join(root, 'AGENTS.md'),
+    soulPath: path.join(root, 'SOUL.md'),
+    geminiPath: path.join(root, '.gemini', 'GEMINI.md'),
     zhRootReadmePath: path.join(root, 'README.zh-CN.md'),
     zhDocsReadmePath: path.join(root, 'docs', 'zh-CN', 'README.md'),
     zhDocsAgentsPath: path.join(root, 'docs', 'zh-CN', 'AGENTS.md'),
@@ -686,8 +734,14 @@ function renderMarkdown(result) {
 function runCatalogCheck(options = {}) {
   const root = options.root || ROOT;
   const writeMode = options.writeMode ?? WRITE_MODE;
-  const documentSpecs = options.documentSpecs || (
+  const allSpecs = options.documentSpecs || (
     root === ROOT ? DOCUMENT_SPECS : createDocumentSpecsForRoot(root)
+  );
+  // Fork (biji-dev/ecc-js): this slim fork prunes these two documents entirely,
+  // so they are only synced and checked when present. Every other tracked
+  // document stays mandatory — a missing one is still a hard error.
+  const documentSpecs = allSpecs.filter(
+    spec => fs.existsSync(spec.filePath) || !isOptionalDocument(spec.filePath)
   );
   const catalog = buildCatalog(root);
 
@@ -742,6 +796,7 @@ module.exports = {
   formatExpectation,
   main,
   parseAgentsDocExpectations,
+  parseCrossHarnessIdentityExpectations,
   parseCatalogDescriptionExpectations,
   parseReadmeExpectations,
   parseZhAgentsDocExpectations,
@@ -751,6 +806,7 @@ module.exports = {
   syncCatalogDescription,
   syncEnglishAgents,
   syncEnglishReadme,
+  syncCrossHarnessIdentity,
   syncZhAgents,
   syncZhDocsReadme,
   syncZhRootReadme,

@@ -578,7 +578,10 @@
       "post:mcp-health-check": "pairs with dropped pre:mcp-health-check",
       "stop:plan-canvas-pending": "plan-canvas hooks off by default",
       "stop:check-console-log": "duplicates post:edit:console-warn",
-      "stop:evaluate-session": "continuous-learning v1 evaluator extracts nothing"
+      "stop:evaluate-session": "continuous-learning v1 evaluator extracts nothing",
+      "pre:hookify-runtime": "Runtime enforcement for hookify rules. The fork ships the hookify skill and commands (rules can still be written and listed) but keeps the agreed minimal hook set; move these to hooks.keep to turn enforcement on.",
+      "prompt:hookify-runtime": "Runtime enforcement for hookify rules. The fork ships the hookify skill and commands (rules can still be written and listed) but keeps the agreed minimal hook set; move these to hooks.keep to turn enforcement on.",
+      "stop:hookify-runtime": "Runtime enforcement for hookify rules. The fork ships the hookify skill and commands (rules can still be written and listed) but keeps the agreed minimal hook set; move these to hooks.keep to turn enforcement on."
     }
   },
   "mirrors": [
@@ -668,7 +671,9 @@
       ".pr/**",
       "scripts/build-pi-core.js",
       "manifests/pi-core.json",
-      "scripts/dev/generate-skill-triggers.js"
+      "scripts/dev/generate-skill-triggers.js",
+      ".qoder-plugin/**",
+      "scripts/qwen-adapt-agents.js"
     ],
     "keep": [
       "docs/COMMAND-REGISTRY.json",

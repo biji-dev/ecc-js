@@ -660,9 +660,15 @@
       ".vscode/**",
       "scripts/lib/harness-adapter-compliance.js",
       ".agents/skills/everything-claude-code/**",
+      ".agents/skills/ecc-conventions/**",
       ".claude/ecc-tools.json",
       ".claude/identity.json",
-      ".claude/homunculus/**"
+      ".claude/homunculus/**",
+      "pi/**",
+      ".pr/**",
+      "scripts/build-pi-core.js",
+      "manifests/pi-core.json",
+      "scripts/dev/generate-skill-triggers.js"
     ],
     "keep": [
       "docs/COMMAND-REGISTRY.json",
@@ -723,6 +729,12 @@
           "skill:ito-training",
           "script:ito.js",
           "skill:ito-compute"
+        ]
+      },
+      "tests/ci/locale-agent-frontmatter.test.js": {
+        "reason": "Compares translated agent docs under docs/<locale>/agents against agents/. Only docs/zh-CN/README.md and AGENTS.md are kept, so there are no locale agent docs and the suite asserts it found some.",
+        "triggeredBy": [
+          "tree:docs locale agents"
         ]
       },
       "tests/ci/mle-workflow-coverage.test.js": {
@@ -862,6 +874,24 @@
           "tree:.cursor"
         ]
       },
+      "tests/lib/context-profile-eval-corpus.test.js": {
+        "reason": "Covers the Docker-based AI eval and sandbox tooling under docker/context-profiles/ (ai-eval-lib, ai-corpus.json, run-sandbox). The docker/ tree is removed, so the suite cannot load its dependencies.",
+        "triggeredBy": [
+          "tree:docker/context-profiles"
+        ]
+      },
+      "tests/lib/context-profile-eval.test.js": {
+        "reason": "Covers the Docker-based AI eval and sandbox tooling under docker/context-profiles/ (ai-eval-lib, ai-corpus.json, run-sandbox). The docker/ tree is removed, so the suite cannot load its dependencies.",
+        "triggeredBy": [
+          "tree:docker/context-profiles"
+        ]
+      },
+      "tests/lib/context-profile-sandbox.test.js": {
+        "reason": "Covers the Docker-based AI eval and sandbox tooling under docker/context-profiles/ (ai-eval-lib, ai-corpus.json, run-sandbox). The docker/ tree is removed, so the suite cannot load its dependencies.",
+        "triggeredBy": [
+          "tree:docker/context-profiles"
+        ]
+      },
       "tests/lib/control-pane-proximity.test.js": {
         "reason": "Requires scripts/proximity-tick (removed) and tests the control-pane proximity lib that only the removed control-pane and proximity-tick scripts use.",
         "triggeredBy": [
@@ -881,6 +911,12 @@
         "triggeredBy": [
           "script:memory-mcp.mjs",
           "script:memory.js"
+        ]
+      },
+      "tests/lib/opencode-hook-consent-safety.test.js": {
+        "reason": "Every case hashes and rewrites .opencode/plugins/index.ts, the OpenCode plugin barrel. The whole OpenCode harness tree was removed, so there is no barrel to inspect.",
+        "triggeredBy": [
+          "tree:.opencode"
         ]
       },
       "tests/lib/opencode-legacy-migration.test.js": {
@@ -981,6 +1017,13 @@
         "triggeredBy": [
           "script:gemini-adapt-agents.js",
           "tree:.gemini"
+        ]
+      },
+      "tests/scripts/generate-skill-triggers.test.js": {
+        "reason": "Runs scripts/dev/generate-skill-triggers.js, which requires docker/context-profiles/ai-eval-lib and calls a paid LLM provider. Both the docker/ tree and that generator are removed; fork/bin/transforms/context-packs.js prunes the trigger manifest deterministically instead.",
+        "triggeredBy": [
+          "tree:docker/context-profiles",
+          "script:dev/generate-skill-triggers.js"
         ]
       },
       "tests/scripts/github-coordination.test.js": {
@@ -1168,7 +1211,10 @@
     "manifests/install-components.json",
     "docs/COMMAND-REGISTRY.json",
     "hooks/hooks.json",
-    "hooks/hooks.metadata.json"
+    "hooks/hooks.metadata.json",
+    "manifests/context-packs/skill-triggers@1.json",
+    "manifests/context-profiles/lean@1.json",
+    "manifests/context-profiles/full@1.json"
   ],
   "queueHints": {
     "keepRegex": "react|next|typescript|javascript|bun|node|vite|expo|react-native|prisma|drizzle|postgres|redis|tailwind|playwright|vitest|jest|docker|security|review|test|agent|llm|mcp|api",

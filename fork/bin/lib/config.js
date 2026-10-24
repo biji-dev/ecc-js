@@ -167,10 +167,35 @@ function keptItemMatcher(slim) {
   return createMatcher(patterns);
 }
 
+/**
+ * Strip the characters scripts/ci/check-unicode-safety.js rejects (emoji and flag
+ * sequences, plus any variation selector that trails them) from upstream text we
+ * copy into fork/review-queue.json and fork/.sync-report.md. Upstream commit
+ * subjects and skill descriptions sometimes carry emoji, and the safety check
+ * walks the whole tree, including gitignored generated files. Non-Latin scripts
+ * are left intact — the check allows them.
+ */
+const ALLOWED_SYMBOLS = new Set(['\u00A9', '\u00AE', '\u2122']);
+// Built from code points so this file stays free of literal invisible characters.
+const VARIATION_SELECTORS = `${String.fromCodePoint(0xFE0E)}${String.fromCodePoint(0xFE0F)}`;
+const PICTOGRAPH_RE = new RegExp(
+  `(?:\\p{Extended_Pictographic}|\\p{Regional_Indicator})[${VARIATION_SELECTORS}]?`,
+  'gu'
+);
+
+function stripPictographs(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(PICTOGRAPH_RE, match => (ALLOWED_SYMBOLS.has(match[0]) ? match : ''))
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
 module.exports = {
   SLIM_PATH,
   STATE_PATH,
   QUEUE_PATH,
+  stripPictographs,
   ITEM_KINDS,
   ITEM_PATTERNS,
   FORK_OWNED,

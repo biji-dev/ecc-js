@@ -1,6 +1,7 @@
 {
   "hooks": {
     "allow": [
+      "pre:bash:dispatcher",
       "pre:bash:block-no-verify",
       "pre:bash:gateguard-fact-force",
       "pre:bash:commit-quality",

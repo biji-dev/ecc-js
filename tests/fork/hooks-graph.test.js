@@ -168,6 +168,23 @@ test('stop:cost-tracker writes a cost row exactly when allowlisted', () => {
   assert.strictEqual(fs.existsSync(path.join(home, '.claude', 'metrics', 'costs.jsonl')), allowed, `costs.jsonl written=${!allowed} but allowlisted=${allowed}`);
 });
 
+test('every literal isHookEnabled id in scripts/hooks is a decided id', () => {
+  // Upstream v2.2.3 added a gate on pre-bash-dispatcher.js itself. Because that new
+  // id was not in ecc/setup.json hooks.allow, the allowlist silently switched the
+  // whole Bash preflight off: GateGuard and block-no-verify stopped denying anything.
+  // Any future literal gate id must be an explicit decision, not a silent default.
+  const decided = new Set([...setup.hooks.allow, ...Object.keys(slim.hooks.drop || {})]);
+  const hooksDir = path.join(REPO_ROOT, 'scripts', 'hooks');
+  const undecided = [];
+  for (const file of fs.readdirSync(hooksDir).filter(name => name.endsWith('.js'))) {
+    const source = fs.readFileSync(path.join(hooksDir, file), 'utf8');
+    for (const match of source.matchAll(/isHookEnabled\(\s*'([^']+)'/g)) {
+      if (!decided.has(match[1])) undecided.push(`${file}: ${match[1]}`);
+    }
+  }
+  assert.deepStrictEqual(undecided, [], 'add each id to ecc/setup.json hooks.allow or slim.hooks.drop');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

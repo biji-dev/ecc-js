@@ -505,7 +505,7 @@ async function runTests() {
         title: 'Add Qwen install target',
         status: 'merged',
         priority: 'normal',
-        url: 'https://github.com/affaan-m/everything-claude-code/pull/1738',
+        url: 'https://github.com/affaan-m/ECC/pull/1738',
         owner: 'maintainer',
         createdAt: '2026-03-15T08:14:00.000Z',
         updatedAt: '2026-03-15T08:17:00.000Z',

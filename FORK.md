@@ -17,7 +17,7 @@ upstream README/AGENTS edits merge without conflicts.
 
 | Surface | Count | Source of truth |
 | --- | --- | --- |
-| Skills | 140 | `fork/slim.json` `skills.keep` |
+| Skills | 140 upstream + 3 own | `fork/slim.json` `skills.keep`, `skills.own` |
 | Agents | 36 | `fork/slim.json` `agents.keep` |
 | Commands | 66 | `fork/slim.json` `commands.keep` |
 | Rule packs | 5 (common, typescript, web, react, react-native) | `fork/slim.json` `rules.keep` |

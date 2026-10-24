@@ -453,7 +453,13 @@ else failed++;
 // A case-folded spelling, because macOS resolves `$venv/bin/python` to a committed
 // `Python` while git matches index pathspecs case-sensitively. Skipped where the
 // filesystem is case-sensitive and the two names cannot collide.
-if (fs.existsSync(__filename.toUpperCase()) || fs.existsSync(__filename.toLowerCase())) {
+// Fork (biji-dev/ecc-js): only a *differently spelled* variant that still resolves
+// proves the filesystem folds case. This repository's checkout path is entirely
+// lower case, so `__filename.toLowerCase()` is the file itself and always exists,
+// which ran this case-folded case on case-sensitive Linux and failed there.
+const foldsCase = [__filename.toUpperCase(), __filename.toLowerCase()]
+  .some(variant => variant !== __filename && fs.existsSync(variant));
+if (foldsCase) {
   if (
     test('pre-push refuses a tracked interpreter committed under a folded case', () => {
       const { result, calls } = runHermeticPythonPrePush({

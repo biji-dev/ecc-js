@@ -34,7 +34,25 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run tests
-        run: npm test
+        shell: bash
+        run: |
+          # tests/run-all.js loops synchronously over every suite and then exits, so
+          # stdout queued for a pipe is discarded: a failing run shows only the first
+          # ~50 suites and no summary. Writing to a file keeps stdout synchronous,
+          # then the failing suites and the tail are printed explicitly.
+          log="$RUNNER_TEMP/test-output.log"
+          status=0
+          npm test > "$log" 2>&1 || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::failing suites"
+            grep -nE '^✗ |^  ✗ |^  FAIL |^  \[FAIL\] ' "$log" || true
+            echo "::endgroup::"
+            echo "::group::last 400 lines"
+            tail -n 400 "$log"
+            echo "::endgroup::"
+          fi
+          tail -n 12 "$log"
+          exit "$status"
 
       - name: Verify fork invariants
         shell: bash

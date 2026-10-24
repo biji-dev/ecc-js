@@ -64,11 +64,11 @@ Every removed item is listed with its reason code in `fork/slim.json`
 
 | Surface | Kept | Removed | Notes |
 | --- | --- | --- | --- |
-| Skills | 140 | 152 | lang 84, non-technical 47, ecc-product 11, paid-api 5, claw-harness 2, jira 1, unused-infra 1, broken-in-fork 1 |
+| Skills | 140 + 3 own | 152 | lang 84, non-technical 47, ecc-product 11, paid-api 5, claw-harness 2, jira 1, unused-infra 1, broken-in-fork 1 |
 | Agents | 36 | 32 | lang 30, non-technical 2 (chief-of-staff, marketing-agent) |
 | Commands | 66 | 28 | lang 19, ecc-product 7 (`epic-*`), jira 1, non-technical 1 |
 | Rule packs | 5 | 17 | common, typescript, web, react, react-native |
-| Hooks | 12 top-level entries | 12 | gated by an allowlist, see below |
+| Hooks | 12 top-level entries | 15 | gated by an allowlist, see below |
 
 Kept highlights: all reviewers used day to day (security, typescript, code,
 database, react, silent-failure-hunter), planner, architect, code-architect,
@@ -88,9 +88,9 @@ Removed repository surface: all docs translations and most of `docs/`
 anchors stay), `ecc2/`, `src/`, Python tooling, `integrations/`, `docker/`,
 `examples/` (except `examples/eval-harness`), `contexts/`, `scaffolds/`, the
 adapter dirs for Cursor, OpenCode, Kiro, Gemini, Qwen, Zed, Pi, Hermes,
-OpenClaw, AdaL, Trae and CodeBuddy, the 12 upstream GitHub workflows,
-operator/release scripts and 64 test files coupled to removed content.
-The repository went from 3,716 to about 1,100 tracked files.
+OpenClaw, AdaL, Trae, CodeBuddy and Qoder, the upstream GitHub workflows,
+operator/release scripts and 82 test files coupled to removed content.
+The repository went from 3,716 to about 1,400 tracked files.
 
 ## Hooks
 
@@ -103,7 +103,7 @@ list exists. Hooks that upstream adds later stay off until they are allowlisted.
 | --- | --- | --- |
 | Safety | `pre:bash:block-no-verify` | Blocks `git commit --no-verify` and similar bypasses |
 | Safety | `pre:config-protection` | Blocks edits to existing linter/formatter configs, so agents fix code instead of rules |
-| Safety | `pre:bash:gateguard-fact-force` | Destructive Bash commands only (`rm -rf`, `git reset --hard`, ...); the routine first-Bash gate and the Edit/Write gate are off |
+| Safety | `pre:bash:gateguard-fact-force` | Destructive Bash commands only (`rm -rf`, `git reset --hard`, ...); the Edit/Write gate is off, and upstream itself no longer gates a routine first Bash command |
 | Safety | `pre:bash:commit-quality` | Before `git commit`: lints staged files, flags console.log/TODO and checks the message format |
 | Quality | `post:edit:console-warn` | Warns about `console.log` in edited files |
 | Quality | `stop:format-typecheck` (+ `post:edit:accumulator`) | Formats and type-checks edited files at Stop; can take up to about 300s on large TS repos |
@@ -137,6 +137,9 @@ Upstream ships these; the fork removed them from `hooks/hooks.json`
 | `stop:plan-canvas-pending` | plan-canvas is off by default |
 | `stop:check-console-log` | Duplicates `post:edit:console-warn` |
 | `stop:evaluate-session` | Continuous-learning v1 evaluator; extracts nothing |
+| `pre:hookify-runtime` | Runtime enforcement of hookify rules on every tool call; the hookify skill and its four commands still ship |
+| `prompt:hookify-runtime` | Same, on every prompt |
+| `stop:hookify-runtime` | Same, at Stop |
 
 Anything upstream adds later is also off until you allowlist it.
 

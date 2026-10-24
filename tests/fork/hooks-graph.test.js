@@ -124,16 +124,37 @@ test('GateGuard lets a routine first Bash command through', () => {
   assert.ok(!isDenied(result), `routine command was denied: ${result.stdout}${result.stderr}`);
 });
 
-test('control: without the fork allowlist the routine first-Bash gate returns', () => {
+// Upstream main removed the routine first-Bash gate (the "fewer round-trips" work),
+// so a routine command is no longer a control. commit-quality still is: the fork
+// allowlists it, while upstream's default profile leaves it to `strict` only.
+test('control: the fork allowlist is what turns pre:bash:commit-quality on', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-hooks-'));
-  const result = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts', 'hooks', 'pre-bash-dispatcher.js')], {
+  spawnSync('git', ['init', '-q', '.'], { cwd: home });
+  fs.writeFileSync(path.join(home, 'a.txt'), 'hi\n');
+  spawnSync('git', ['add', 'a.txt'], { cwd: home });
+
+  const runCommitQuality = extra => spawnSync(process.execPath, [
+    path.join(REPO_ROOT, 'scripts', 'hooks', 'run-with-flags.js'),
+    'pre:bash:commit-quality', 'scripts/hooks/pre-bash-commit-quality.js', 'strict',
+  ], {
     cwd: home,
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls -la' }, session_id: 'fork-control', cwd: home }),
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m "wip"' }, session_id: 'fork-commit-quality', cwd: home }),
     encoding: 'utf8',
-    env: forkEnv({ HOME: home, USERPROFILE: home, GATEGUARD_STATE_DIR: path.join(home, '.gateguard'), CLAUDE_PROJECT_DIR: home, ECC_HOOK_ALLOWLIST: 'off' }),
+    env: forkEnv({ HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: home, ...extra }),
     timeout: 20000,
   });
-  assert.ok(isDenied(result), 'expected upstream routine gate to deny the first Bash command');
+
+  const gated = runCommitQuality();
+  assert.ok(
+    /conventional commit format/.test(gated.stdout + gated.stderr),
+    `allowlisted commit-quality should report the message issue: ${gated.stdout}${gated.stderr}`
+  );
+
+  const upstream = runCommitQuality({ ECC_HOOK_ALLOWLIST: 'off' });
+  assert.ok(
+    !/conventional commit format/.test(upstream.stdout + upstream.stderr),
+    'upstream profile gating should leave commit-quality off outside strict'
+  );
 });
 
 test('GateGuard still blocks destructive Bash commands', () => {

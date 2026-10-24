@@ -15,6 +15,425 @@
       "overlapHint": null,
       "coupledTests": [],
       "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "agent-runtime-gateway-smoke-test",
+      "file": "skills/agent-runtime-gateway-smoke-test/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "849456d5",
+        "subject": "feat(skills): add agent runtime gateway smoke test"
+      },
+      "description": "Verify a local agent API, temporary gateway tunnel, and remote sandbox callback with a tool-free task, then restore the original app connection.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "agent-security-hardening",
+      "file": "skills/agent-security-hardening/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "c837459e",
+        "subject": "feat(skills): add agent security hardening"
+      },
+      "description": "Security hardening guidance for AI agent frameworks that process untrusted content, invoke tools, write workspace files, manage runtime identifiers, or handle credentials. Use when building or reviewing an agent runtime, autonomous worker,",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/ci/agent-security-hardening-skill.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "bengali-nlp",
+      "file": "skills/bengali-nlp/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "bc88a6a4",
+        "subject": "feat: add Bengali (বাংলা) language support — translation, NLP skill, and reviewer agent"
+      },
+      "description": "Bengali (Bangla) text processing patterns including Unicode normalization, script detection, tokenization, conjunct handling, and Bangla-specific NLP best practices for AI applications.",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/ci/bengali-language-surface.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "brownfield-retrospective",
+      "file": "skills/brownfield-retrospective/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "f65a9697",
+        "subject": "feat(skills): add brownfield-retrospective workflow for mid-project ECC adoption"
+      },
+      "description": "Run the ECC engineering process retroactively against an existing project slice. Audit current state, reconstruct past decisions, produce a four-axis gap register (thinking, coding practice, missing features, technology selection), then exe",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "change-impact",
+      "file": "skills/change-impact/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "4f08958d",
+        "subject": "feat(skills): add change impact"
+      },
+      "description": ">-",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "context-and-decisions",
+      "file": "skills/context-and-decisions/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "2d829c04",
+        "subject": "feat(skills): add context and decisions"
+      },
+      "description": ">-",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "conventional-commit-review",
+      "file": "skills/conventional-commit-review/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "9f1e52b1",
+        "subject": "feat(skills): add conventional-commit-review skill and commit-reviewer agent"
+      },
+      "description": "Reviews staged changes and drafts a Conventional Commits-compliant commit message with the right type, scope, and length. Use before committing, or when the user asks to write, fix, or review a commit message.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "deepseek-harness-setup",
+      "file": "skills/deepseek-harness-setup/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "85dd4888",
+        "subject": "feat: add DeepSeek Harness guide, hooks generator, and setup skill"
+      },
+      "description": "Install and operate Everything Claude Code (ECC) on the DeepSeek Harness (DSH): native skill roots (~/.dsh/skills, .agents/skills), the @deepseek-ai/dsh-hooks-claude-code bridge for command hooks, bare-insert patch mounting, generator usage",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "docs-governance",
+      "file": "skills/docs-governance/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "1ea94397",
+        "subject": "feat(skills): add read-only docs governance audit"
+      },
+      "description": "Route broad documentation-governance requests to existing ECC skills and run an opt-in, read-only audit of mapped documentation roles, links, ADR indexes, and evidence references. Use when a user asks for documentation governance, project-k",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/skills/docs-governance.test.js",
+        "tests/test_docs_governance_audit.py"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "mcp-dependency-review",
+      "file": "skills/mcp-dependency-review/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "7fbdc55f",
+        "subject": "feat(skills): add MCP dependency review skill"
+      },
+      "description": "Statically review MCP configuration for mutable package references before approval or CI, without executing discovered MCP servers. Use when reviewing .mcp.json, Cursor, VS Code, Claude, Windsurf, or other repo-scoped MCP config.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/skills/mcp-dependency-review.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "module-regression",
+      "file": "skills/module-regression/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "9e672444",
+        "subject": "feat(skills): add test regression workflows"
+      },
+      "description": ">-",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "mybatis-patterns",
+      "file": "skills/mybatis-patterns/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "d516259b",
+        "subject": "feat(skills): add MyBatis persistence patterns"
+      },
+      "description": "MyBatis and MyBatis-Spring patterns for mapper design, XML and annotation SQL, result mapping, dynamic SQL safety, transactions, batching, pagination, and query performance. Use when building or reviewing Java persistence code with MyBatis,",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "osint-investigation",
+      "file": "skills/osint-investigation/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "559c295c",
+        "subject": "feat(skills): add adaptive OSINT investigation toolkit"
+      },
+      "description": "Sparse-clue OSINT investigation methodology for extracting overlooked leads, connecting fragmented evidence, and testing explanations across sources. Use for multi-step CTF challenges, image/video geolocation, event reconstruction, public-a",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "prompt-caching-strategy",
+      "file": "skills/prompt-caching-strategy/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "8abdfde0",
+        "subject": "feat: add prompt-caching-strategy skill"
+      },
+      "description": ">-",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/skills/prompt-caching-strategy.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "skill-host-compat",
+      "file": "skills/skill-host-compat/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "0895f0d8",
+        "subject": "feat(ci): lint skills for Codex-safe frontmatter and Claude substitutions"
+      },
+      "description": "Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill PR.",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/ci/validate-skill-host-compat.test.js",
+        "tests/lib/command-plugin-root.test.js",
+        "tests/scripts/npm-publish-surface.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "story-lifecycle",
+      "file": "skills/story-lifecycle/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "24916207",
+        "subject": "feat(skills): add story-lifecycle skill — file-based epic→story→sprint loop"
+      },
+      "description": "Manage a file-based epic → story → sprint development loop without requiring an external project management tool. Creates and tracks epics, breaks them into user stories, assigns them to sprints, and drives implementation story by story. Us",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/docs/dev-team-skill.test.js",
+        "tests/docs/story-lifecycle-errors.test.js",
+        "tests/docs/story-lifecycle-ledger.test.js",
+        "tests/docs/story-lifecycle-skill.test.js",
+        "tests/docs/story-lifecycle-table-projection.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "test-collaboration",
+      "file": "skills/test-collaboration/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "9e672444",
+        "subject": "feat(skills): add test regression workflows"
+      },
+      "description": "Inventory and govern a project's test assets. Connect requirements, business rules, risks, bugs, and cross-boundary contracts to stable TEST-IDs and executable evidence in the repository's existing test registry or TESTS.md. Use for test in",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "skills",
+      "name": "token-card",
+      "file": "skills/token-card/SKILL.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "51fe0e91",
+        "subject": "Move token-card to a skill, pin the CLI, and fix three doc contradictions"
+      },
+      "description": "Render a token-usage stat card from local Claude Code, Codex, Gemini CLI, and OpenCode session logs and commit it into the repository as a file. Use when someone wants a current usage figure in a README, or asks for a shareable card of thei",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "agents",
+      "name": "bengali-reviewer",
+      "file": "agents/bengali-reviewer.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "bc88a6a4",
+        "subject": "feat: add Bengali (বাংলা) language support — translation, NLP skill, and reviewer agent"
+      },
+      "description": "Reviews code handling Bengali (Bangla) text for Unicode correctness, proper normalization, script-aware processing, and internationalization best practices. Use when code processes, displays, or stores Bengali text.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/ci/bengali-language-surface.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "agents",
+      "name": "commit-reviewer",
+      "file": "agents/commit-reviewer.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "9f1e52b1",
+        "subject": "feat(skills): add conventional-commit-review skill and commit-reviewer agent"
+      },
+      "description": "Reviews a staged diff and drafts a Conventional Commits-compliant message matching the repository's actual history norms. Use before committing, or when asked to write or check a commit message.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "agents",
+      "name": "ruby-reviewer",
+      "file": "agents/ruby-reviewer.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "a7c6b4b3",
+        "subject": "feat(agents): add ruby-reviewer"
+      },
+      "description": "Expert Ruby and Rails code reviewer specializing in idiomatic Ruby, Active Record query safety, Rails security defaults, and RSpec/Minitest quality. Use for all Ruby code changes. MUST BE USED for Ruby and Rails projects.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
+    },
+    {
+      "kind": "commands",
+      "name": "astra-review",
+      "file": "commands/astra-review.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "946b8019",
+        "subject": "feat: add /astra-review cross-provider code review via Codex CLI"
+      },
+      "description": "Send Claude-written code to GPT-6-Astra (ChatGPT, via Codex CLI) for an independent cross-provider review, then fix what it finds.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/lib/astra-review-codex.test.js",
+        "tests/lib/astra-review-fix.test.js",
+        "tests/lib/astra-review-prompt.test.js",
+        "tests/lib/astra-review-scope.test.js",
+        "tests/scripts/astra-review.test.js",
+        "tests/scripts/command-runtime.test.js",
+        "tests/scripts/npm-publish-surface.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "commands",
+      "name": "skill-host-compat",
+      "file": "commands/skill-host-compat.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "0895f0d8",
+        "subject": "feat(ci): lint skills for Codex-safe frontmatter and Claude substitutions"
+      },
+      "description": "Lint ECC skills for Codex/Cursor-safe frontmatter and Claude-only substitutions before a skill PR.",
+      "suggestion": "review",
+      "overlapHint": null,
+      "coupledTests": [
+        "tests/ci/validate-skill-host-compat.test.js",
+        "tests/lib/command-plugin-root.test.js",
+        "tests/scripts/npm-publish-surface.test.js"
+      ],
+      "blockingTests": []
+    },
+    {
+      "kind": "commands",
+      "name": "token-card",
+      "file": "commands/token-card.md",
+      "status": "pending",
+      "firstSeenRef": "ecc-upstream/main",
+      "introducedBy": {
+        "sha": "10525231",
+        "subject": "feat(commands): add token-card command"
+      },
+      "description": "Render a token-usage stat card from local agent session logs and commit it to the repo. Invokes the token-card skill.",
+      "suggestion": "keep:stack",
+      "overlapHint": null,
+      "coupledTests": [],
+      "blockingTests": []
     }
   ]
 }

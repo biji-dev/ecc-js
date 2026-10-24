@@ -84,19 +84,24 @@ function transformManifests(slim) {
     });
   }
 
-  // 3. Drop empty modules, then strip dependencies on removed modules (fix-point).
+  // 3. Drop empty modules. Dependents inherit a dropped module's own dependencies, so a
+  //    transitive edge survives the middle module being pruned: upstream has
+  //    workflow-quality -> skill-unified-memory -> platform-configs, and platform-configs
+  //    carries the package-manager helpers that installed skills call.
+  const droppedDependencies = new Map(modulesFile.modules
+    .filter(mod => mod.paths.length === 0)
+    .map(mod => [mod.id, mod.dependencies]));
   modulesFile.modules = modulesFile.modules.filter(mod => mod.paths.length > 0);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const live = new Set(modulesFile.modules.map(mod => mod.id));
-    for (const mod of modulesFile.modules) {
-      const next = dedupe(mod.dependencies.filter(dep => live.has(dep) && dep !== mod.id));
-      if (next.length !== mod.dependencies.length) {
-        mod.dependencies = next;
-        changed = true;
-      }
-    }
+  const liveModuleIds = new Set(modulesFile.modules.map(mod => mod.id));
+  const resolveDependencies = (ids, seen) => ids.flatMap(id => {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    if (liveModuleIds.has(id)) return [id];
+    return resolveDependencies(droppedDependencies.get(id) || [], seen);
+  });
+  for (const mod of modulesFile.modules) {
+    mod.dependencies = dedupe(resolveDependencies(mod.dependencies, new Set()))
+      .filter(dep => dep !== mod.id);
   }
   const liveIds = new Set(modulesFile.modules.map(mod => mod.id));
 

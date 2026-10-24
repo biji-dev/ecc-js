@@ -43,7 +43,12 @@ function coupledTestsAt(ref, kind, name) {
     .split('\n')
     .filter(Boolean)
     .map(line => line.slice(ref.length + 1))
-    .filter(file => !file.startsWith('tests/fork/'));
+    .filter(file => !file.startsWith('tests/fork/'))
+    // Fixtures are shared data, not test entrypoints. A kept suite can load a fixture
+    // that merely names a queued item (tests/lib/context-selection.test.js loads
+    // tests/fixtures/context-selection/routing-prompts.json, which names several skills),
+    // and quarantining the fixture with the item breaks that suite.
+    .filter(file => !file.startsWith('tests/fixtures/'));
   return {
     coupledTests: files.filter(file => !PROTECTED_TESTS.test(file)),
     blockingTests: files.filter(file => PROTECTED_TESTS.test(file))

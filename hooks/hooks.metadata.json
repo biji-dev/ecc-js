@@ -5,72 +5,72 @@
       {
         "id": "pre:bash:dispatcher",
         "description": "Consolidated Bash preflight dispatcher for quality, tmux, push, and GateGuard checks",
-        "fingerprint": "0d30f37d2148"
+        "fingerprint": "7cb7b18bf466"
       },
       {
         "id": "pre:observe:continuous-learning",
         "description": "Capture tool use observations for continuous learning",
-        "fingerprint": "17f73ac2a883"
+        "fingerprint": "50e21a8e420d"
       },
       {
         "id": "pre:config-protection",
         "description": "Block modifications to linter/formatter config files. Steers agent to fix code instead of weakening configs.",
-        "fingerprint": "2b2be80bbeb3"
+        "fingerprint": "a0259d293ded"
       }
     ],
     "SessionStart": [
       {
         "id": "session:start",
         "description": "Load previous context and detect package manager on new session",
-        "fingerprint": "3bbe414382a5"
+        "fingerprint": "bba15355d598"
       }
     ],
     "PostToolUse": [
       {
         "id": "post:dispatcher:sync",
         "description": "Run synchronous PostToolUse hooks in one process while preserving per-hook controls",
-        "fingerprint": "69422cb651aa"
+        "fingerprint": "c717dcc9b73b"
       },
       {
         "id": "post:dispatcher:async",
         "description": "Run background PostToolUse hooks in one process while preserving per-hook controls",
-        "fingerprint": "01af98da6841"
+        "fingerprint": "deb48a18b282"
       }
     ],
     "PostToolUseFailure": [
       {
         "id": "post:skill:track",
         "description": "Record hard Skill tool failures for skill-health telemetry",
-        "fingerprint": "a4dbe0729f30"
+        "fingerprint": "4faf4e303862"
       }
     ],
     "Stop": [
       {
         "id": "stop:format-typecheck",
         "description": "Batch format (Biome/Prettier) and typecheck (tsc) all JS/TS files edited this response — runs once at Stop instead of after every Edit",
-        "fingerprint": "a9d9bb04e060"
+        "fingerprint": "4d1e44223b8a"
       },
       {
         "id": "stop:session-end",
         "description": "Persist session state after each response (Stop carries transcript_path)",
-        "fingerprint": "d094692bee01"
+        "fingerprint": "e6ce566612a8"
       },
       {
         "id": "stop:cost-tracker",
         "description": "Track token and cost metrics per session",
-        "fingerprint": "5c5fe7253e20"
+        "fingerprint": "e9ede0496acc"
       },
       {
         "id": "stop:desktop-notify",
         "description": "Send desktop notification (macOS/WSL) with task summary when Claude responds",
-        "fingerprint": "7a492e898bf6"
+        "fingerprint": "f98005a071bc"
       }
     ],
     "SessionEnd": [
       {
         "id": "session:end:marker",
         "description": "Session end lifecycle marker (non-blocking)",
-        "fingerprint": "9270863f2935"
+        "fingerprint": "4ab026fcc7fc"
       }
     ]
   }

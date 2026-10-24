@@ -33,6 +33,16 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Install ripgrep
+        shell: bash
+        run: |
+          # tests/scripts/codex-hooks.test.js drives the real pre-commit secret scanner,
+          # which needs a ripgrep binary with PCRE2 on PATH; without one those cases skip.
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ripgrep
+          rg --version
+          printf 'ecc-pcre2-probe\n' | rg --pcre2 -- '^ecc-pcre2-probe$'
+
       - name: Run tests
         shell: bash
         run: |

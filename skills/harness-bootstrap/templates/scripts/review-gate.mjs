@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+// harness-bootstrap review-gate (generated YYYY-MM-DD). Which review is this diff owed?
+// [M] mechanism (ships as-is): this whole file; the bindings [B] live at the top of
+// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, TRIGGERS, FIX_LINES).
+/**
+ * Decides from facts (paths, production lines, what a fix round fixed) which reviewers a diff is
+ * owed, so the main thread does not guess: nothing, the second model family, one Opus
+ * code-reviewer over the whole unit, or an adversarial pass. The rules are in the core's header.
+ *
+ *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix [--head <ref>]
+ *        [--tier small|full] [--writer claude|codex] [--max-fixed P0|P1|P2|P3] [--round N] [--json]
+ *
+ *   --kind slice   after a slice passes its gate, before the next builds on it
+ *   --kind unit    step 8, once, over the whole unit diff from the merge base
+ *   --kind fix     once per fix round, over <sha-before-the-fixes>.. (pass the whole round once,
+ *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
+ *                  --round counts fix rounds on this area (1, 2, 3 ...)
+ *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
+ *                  against <base> (committed, staged, unstaged and untracked changes; a review is
+ *                  often owed before the commit; binary files count 0 lines)
+ *
+ * Prints exactly one line (`--json`: the result object instead):
+ *   review-gate: <decision> — <reason> → <reviewers joined by ' + ' or 'none'> [<n> production files, <n> lines; not checked: ...]
+ *
+ * exit: 0 for ANY decision (a decision is not an error) | 2 on a usage error or a git failure
+ * (message on stderr). Read-only: it never writes into the repository.
+ */
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { decide, formatLine, parseArgs, parseNumstat } from './lib/review-gate-core.mjs';
+
+const USAGE =
+  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix [--head <ref>] [--tier small|full] [--writer claude|codex] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
+
+function fail(msg, withUsage) {
+  process.stderr.write(`review-gate: ${msg}\n${withUsage ? `${USAGE}\n` : ''}`);
+  process.exit(2);
+}
+
+const git = (cwd, ...a) =>
+  execFileSync('git', ['-c', 'core.quotepath=false', ...a], {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+let args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (e) {
+  fail(e.message, true);
+}
+
+let files;
+try {
+  const top = git(process.cwd(), 'rev-parse', '--show-toplevel').trim();
+  if (args.head) {
+    files = parseNumstat(git(top, 'diff', '--numstat', '--no-renames', `${args.base}..${args.head}`));
+  } else {
+    files = parseNumstat(git(top, 'diff', '--numstat', '--no-renames', args.base));
+    // Untracked files count by lines (binary = 0): `git diff` does not list them.
+    for (const path of git(top, 'ls-files', '--others', '--exclude-standard')
+      .split('\n')
+      .filter(Boolean)) {
+      let lines = 0;
+      try {
+        const buf = readFileSync(join(top, path));
+        if (!buf.includes(0))
+          lines = buf.toString('utf8').split('\n').length - (buf.at(-1) === 10 ? 1 : 0);
+      } catch {
+        // unreadable (a broken symlink): counts 0 lines
+      }
+      files.push({ path, lines });
+    }
+  }
+} catch (e) {
+  fail(`git failed: ${String(e.stderr || e.message).trim().split('\n')[0]}`, false);
+}
+
+let result;
+try {
+  result = decide({
+    files,
+    kind: args.kind,
+    tier: args.tier,
+    writer: args.writer,
+    maxFixed: args.maxFixed,
+    round: args.round,
+  });
+} catch (e) {
+  fail(e.message, true);
+}
+
+console.log(args.json ? JSON.stringify(result, null, 2) : formatLine(result));

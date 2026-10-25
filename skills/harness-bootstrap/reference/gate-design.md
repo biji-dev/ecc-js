@@ -58,7 +58,7 @@ session dispatches what it names, with `model` and `effort` passed.
 | Layer | When | Reviews |
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
-| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
+| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
 | **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the generic language lens is in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
 
@@ -69,6 +69,13 @@ session dispatches what it names, with `model` and `effort` passed.
 > between them. Security (on its trigger), claim audits and plan conformance were the
 > cheapest per unique P0/P1 and stay. **Track it:** the log's *Yield by source*
 > (`log-format.md`) says which source to drop or restore next.
+
+`[M]` **What `review-gate.mjs` names, and what the session dispatches:**
+`second-family-review` → `codex-run.mjs review`; `second-family-adversarial` →
+`codex-run.mjs adversarial --prompt <brief>` (`--critical` on critical code);
+`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on that
+model; every other name → the agent of that name (`pr-test-analyzer` on Sonnet). Each
+dispatch passes `model` and `effort: "high"`.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on

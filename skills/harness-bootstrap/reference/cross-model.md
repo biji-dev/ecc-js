@@ -43,7 +43,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 1 plan check | **blind dual plan** — the second family writes its own plan from the same brief while the session writes one; the session compares (agree · differ, with evidence · one side only) and merges | Full |
 | 4 conform | lane A may run on the second family — it is a literal checklist | Small, Full |
 | 2 per slice | the second family's **review** over each slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts | Full |
-| 8 review | the second family's review over the unit diff — **the** review of a Small unit, carrying the change surface | Small |
+| 8 review | the second family's review over the unit diff — **the** review of a Small unit. It takes no brief, so lane B's change surface rides in an `adversarial` pass when the Impact Analysis lists a reader outside the diff (`blast-radius-auditor.md`) | Small |
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
 | 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass for a third round the owner orders | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |

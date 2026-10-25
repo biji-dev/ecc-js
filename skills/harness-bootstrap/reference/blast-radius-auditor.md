@@ -87,8 +87,11 @@ dispatches.
 > four unique P2s and no P0/P1; the second family's review and adversarial passes
 > found 67 unique P0/P1 over the same units.
 
-`[M]` On **Small** the second family's review brief carries the change surface too —
-a Small unit's blast radius is where its surprises live.
+`[M]` On **Small** the second family's review takes no brief (`codex-run.mjs review`
+refuses one), so lane B rides in a `codex-run.mjs adversarial --prompt <this brief>`
+(no `--critical`) whenever the Impact Analysis lists a reader outside the diff — a
+Small unit's blast radius is where its surprises live. No reader outside the diff:
+the review alone.
 
 `[M]` The main session **reproduces each finding before fixing it** — read the code
 at the cited line or run the single test. A finding that does not reproduce is

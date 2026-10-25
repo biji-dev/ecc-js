@@ -220,12 +220,14 @@ DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
-  <tier>` and dispatch exactly the reviewers it names, with `model` and `effort`
+  <tier>` (`--writer codex` for a unit the second family wrote) and dispatch exactly
+  the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
   change surface (`blast-radius-auditor.md` › The brief), each triggered specialist,
   and `pr-test-analyzer` on Sonnet when tests changed — independent, in **one message**. Small: the
-  second family's review alone. The second family unavailable → the fallbacks in
+  second family's review, plus the adversarial pass with lane B's brief when the
+  Impact Analysis lists a reader outside the diff. The second family unavailable → the fallbacks in
   `gate-design.md`, `degraded`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.
   Briefs forbid host-level operations and repository-wide suite runs.
@@ -261,7 +263,9 @@ rule file updates every document that repeats the rule (`rules.md` §1).
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
 <state file> --gates <the FULL verify output>` prints commits, diffstat, the gate
 SUMMARY line, finding counts by severity and by source, elapsed, the ledger and the
-draft log row from git and the state file — true by construction, never retyped.
+draft log row from git and the state file, never retyped. The git-derived fields
+are true by construction; the ledger and findings rows are copied as the session
+wrote them.
 The session writes only what no command knows: the deviations, the controls
 evidence, the `<fill: …>` cells of the log row. Delete any sentence you cannot point
 at a line for. **The record has a byte budget** like the state file
@@ -272,7 +276,8 @@ at a line for. **The record has a byte budget** like the state file
 **Step 8c — claim audit.** `[M]` Dispatch `claim-auditor` with `model: "opus"`,
 `effort: "high"` (`claim-auditor.md`), over **product claims** — code comments,
 docstrings, test titles, commit messages, controls evidence and the deviations. The
-generated record fields are not re-audited. Blocking on Full. A second consecutive
+git-derived record fields are not re-audited; the ledger's evidence cells are
+checked against the saved returns. Blocking on Full. A second consecutive
 `FALSE CLAIMS` switches to quote-or-delete.
 > Origin, the cost study: 79 of the claim auditor's 105 P1s were about record
 > prose, not product code.

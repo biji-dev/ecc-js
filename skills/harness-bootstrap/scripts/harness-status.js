@@ -49,6 +49,7 @@ const CODEX_DEFAULT_BYTES = 32768;
 const V2_CORE_SKILLS = new Set(['task-runner']);
 const NEUTRAL_FILES = [
   'scripts/codex-run.mjs', 'scripts/lib/codex-run-core.mjs', 'scripts/check-agent-docs.mjs', 'scripts/run-gates.sh',
+  'scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs',
   '.claude/hooks/context-budget.mjs', '.claude/hooks/command-guard.mjs', 'docs/plans/decision-log.md',
   'docs/harness/follow-ups.md', 'docs/follow-ups.md', 'docs/guides/agent-workflow.md',
 ];
@@ -620,6 +621,28 @@ function buildReport() {
     }
     const bad = tools.map(x => x.replace(/\(.*$/, '')).filter(x => WRITE_TOOLS.has(x));
     if (bad.length) haz('readonly-agent-has-write-tools', `says read-only but tools include ${[...new Set(bad)].join(', ')}`, rel);
+  }
+
+  // effort: every agent pins its own (frontmatter beats the session level), and nothing sits above high
+  const ABOVE_HIGH = /^(xhigh|max)$/i;
+  for (const rel of walk('.claude/agents')) {
+    if (!rel.endsWith('.md')) continue;
+    const t = read(rel);
+    const fm = t === null ? null : t.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) continue;
+    const effort = fm[1].match(/^effort:\s*["']?([A-Za-z]+)/m);
+    if (!effort) haz('agent-effort-unpinned', 'no effort: in its frontmatter, so it inherits the session level (a session at max reaches it)', rel);
+    else if (ABOVE_HIGH.test(effort[1])) haz('effort-above-high', `effort: ${effort[1]} in its frontmatter`, rel, lineOf(t, /^effort:/m));
+  }
+  for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
+    const t = read(rel);
+    if (t === null) continue;
+    let cfg;
+    try { cfg = JSON.parse(t); } catch { continue; }
+    const levels = [['effortLevel', cfg && cfg.effortLevel], ['env.CLAUDE_CODE_EFFORT_LEVEL', cfg && cfg.env && cfg.env.CLAUDE_CODE_EFFORT_LEVEL]];
+    for (const [key, value] of levels) {
+      if (typeof value === 'string' && ABOVE_HIGH.test(value)) haz('effort-above-high', `${key} is ${value}: every session and subagent starts there`, rel);
+    }
   }
 
   // hooks

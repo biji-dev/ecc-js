@@ -277,6 +277,36 @@ test('legacy change install: verdict change and the five hazards', () => {
   assert.deepStrictEqual(rep.sizes.stateFiles, [{ path: 'docs/plans/x.state.md', bytes: 9000 }]);
 });
 
+test('an agent with no effort: is agent-effort-unpinned; xhigh or max is effort-above-high', () => {
+  const repo = mk({
+    '.claude/agents/pinned.md': '---\nname: pinned\nmodel: sonnet\neffort: high\n---\nBody.\n',
+    '.claude/agents/unpinned.md': '---\nname: unpinned\nmodel: opus\n---\nBody.\n',
+    '.claude/agents/maxed.md': '---\nname: maxed\nmodel: opus\neffort: max\n---\nBody.\n',
+  });
+  const rep = report(repo);
+  const at = id => rep.hazards.filter(h => h.id === id).map(h => h.path).sort();
+  assert.deepStrictEqual(at('agent-effort-unpinned'), ['.claude/agents/unpinned.md']);
+  assert.deepStrictEqual(at('effort-above-high'), ['.claude/agents/maxed.md']);
+  // mutant: pinning the unpinned agent clears its hazard
+  write(repo, '.claude/agents/unpinned.md', '---\nname: unpinned\nmodel: opus\neffort: high\n---\nBody.\n');
+  assert.ok(!ids(report(repo)).includes('agent-effort-unpinned'));
+});
+
+test('project settings above high effort are effort-above-high; high is not', () => {
+  const repo = mk({ '.claude/settings.json': JSON.stringify({ effortLevel: 'high', env: { CLAUDE_CODE_EFFORT_LEVEL: 'xhigh' } }) });
+  const found = report(repo).hazards.filter(h => h.id === 'effort-above-high');
+  assert.strictEqual(found.length, 1);
+  assert.match(found[0].detail, /CLAUDE_CODE_EFFORT_LEVEL is xhigh/);
+  write(repo, '.claude/settings.json', JSON.stringify({ effortLevel: 'high' }));
+  assert.ok(!ids(report(repo)).includes('effort-above-high'));
+});
+
+test('the layer-0 scripts are fingerprinted as legacy harness files without a manifest', () => {
+  const repo = mk({ 'scripts/review-gate.mjs': '// x\n', 'scripts/docs-drift.mjs': '// x\n', 'scripts/unit-record.mjs': '// x\n' });
+  const paths = report(repo).entries.map(e => e.path);
+  for (const p of ['scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs']) assert.ok(paths.includes(p), `${p} not listed; got ${paths}`);
+});
+
 test('the secret value never appears in stdout (json or text)', () => {
   const repo = legacyChange();
   assert.ok(!run(repo).stdout.includes(SECRET));

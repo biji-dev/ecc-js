@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 2
+  version: 3
 ---
 
 # delegate-tasks — architect on Opus, executors by risk
@@ -67,10 +67,14 @@ exists (the `harness-bootstrap` skill's gate design), else the project's own jud
 
 | Slice | Executor | How |
 |---|---|---|
-| copy, mechanical adoption with count gates, UI against a committed contract, docs | Sonnet builder | waves, in parallel when truly independent |
+| copy, mechanical adoption with count gates, UI against a committed contract, docs | the second family (`implement-cold`) when it is available and under its budget, else a Sonnet builder | waves, in parallel when truly independent — twins over a landed contract (web and mobile) included |
 | contract or domain logic | Opus implementer | serial |
 | critical code — never-auto categories, migrations, auth, money, widely imported modules | **Opus implementer only** | **serial, never in parallel** |
-| any cold slice where an independent model or a separate quota helps | the second family (`implement-cold`) | serial, reviewed by Opus |
+
+The second family's quota is separate from Claude's: a cold slice there costs the
+Claude quota nothing, and its review comes from Claude (a Sonnet reviewer, or the
+unit's one Opus review in a harness). In one measured milestone, cold UI slices ran on
+the Opus implementer while the second family sat at a quarter of its weekly quota.
 
 State the decision and the model for each role in one line before going on.
 
@@ -119,7 +123,9 @@ Templates for every kind are in `reference/spec-templates.md`.
    serial slices go one at a time. The executor brief:
 
    > Read `<spec path>` and implement it exactly. Read every source file it
-   > references before writing code, and follow the patterns it points to. Run each
+   > references before writing code, and follow the patterns it points to. Batch
+   > independent reads and searches as parallel tool calls in one message; read
+   > files whole or in 150+ line ranges, never small slices. Run each
    > acceptance command in the spec and fix your work until they pass — never report
    > a check you did not run. Edit only the files in the spec's Files list. Never
    > modify a test to make it pass. Do not commit. No host-level operations (global
@@ -141,13 +147,16 @@ Templates for every kind are in `reference/spec-templates.md`.
 4. **Gate on commands, in the main session.** Each spec's acceptance commands and the
    combined gate as **separate commands, one result line each** — never one `&&`
    chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
-5. **Per-slice review, by a fresh agent.** After a serial slice passes its gate,
-   one reviewer reads that slice's diff (written into its brief) before the next
-   slice builds on it — Opus over a Sonnet or second-family slice; the second family
-   over an Opus slice, or a fresh Opus reviewer where there is none. The session
-   reproduces each P0–P2 before acting on it. On critical code the fix is re-reviewed
-   by the same reviewer, continued, until it reports no P0–P2. Then integrate. In a
-   harness the session commits here; standalone it commits at the end.
+5. **Per-slice review, by the other family.** After a serial slice passes its gate,
+   one reviewer reads that slice's diff before the next slice builds on it — the
+   **second family's review** over a Claude-written slice (in the background, while
+   the next independent slice starts); a Sonnet reviewer over a cold second-family
+   slice, or none until the unit review where a harness's `review-gate.mjs` says
+   `defer`. **Never an Opus reviewer per slice** — in one measured milestone 63 of
+   them found no P0 or P1. Without a second family: a Sonnet reviewer on cold code,
+   Opus on critical code, recorded `degraded`. The session reproduces each P0–P2
+   before acting on it. Then integrate. In a harness the session commits here, and
+   `review-gate.mjs` names the reviewer; standalone the session commits at the end.
 6. **Escalation.** A blocked executor, or a review finding that traces to the spec:
    answer it and continue the **same** agent (`SendMessage`) while its context is
    small, or re-dispatch with a revision note in the spec. The architect's ruling
@@ -156,7 +165,12 @@ Templates for every kind are in `reference/spec-templates.md`.
    the chat.
 7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
    code) **fenced to the current slice's listed files, never a folder** — a fixer
-   once wrote the next wave's strings. Give it the tail of **both stdout and
+   once wrote the next wave's strings. **Review findings:** P3s never open a fix
+   round — they wait for one batched Sonnet sweep, with no re-review; fix groups
+   whose files do not overlap go in one brief per area; the re-review reads the fix
+   diff only, by the reviewer whose finding was fixed — the second family first,
+   Opus again only on critical code with a P1 fixed (a harness's `review-gate.mjs`
+   decides). Give it the tail of **both stdout and
    stderr**: type checkers and build orchestrators print errors to stdout. A finding
    is `verified` only when the gate is green. Count maps come from the spec. Still
    red after three: stop and report.
@@ -229,7 +243,9 @@ the P0 and P1 findings a grep can decide before anyone fixes them.
 - **Executors never commit.**
 - **Pass `model` and `effort` on every dispatch** — the executor model from the
   slice's risk; Sonnet for check specs unless the harness says otherwise; the main
-  session stays on Opus.
+  session stays on Opus. Effort `high`; `xhigh` only with the reason in the brief,
+  `max` never for a whole session — it reaches every dispatch that does not pass its
+  own.
 - **Critical slices never run in parallel.**
 - Executors' scoped commands are the fast tier; the session's combined gate is the
   strong tier and runs at least once before the report.

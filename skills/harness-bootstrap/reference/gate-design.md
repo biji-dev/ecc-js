@@ -48,6 +48,46 @@ cheaper path would have missed.
 `[M]` **Re-tier at both gates.** A re-tier into a never-auto category discards the
 reviews already run.
 
+## Review lineup — what each tier runs
+
+`[M]` The review is **risk-proportional**: scripts first, the second family where it
+finds the most for the least, Opus once per unit where a miss cannot be corrected
+forward. `scripts/review-gate.mjs` names the reviewers for each review point; the
+session dispatches what it names, with `model` and `effort` passed.
+
+| Layer | When | Reviews |
+|---|---|---|
+| **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
+| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. A slice the second family wrote gets a Sonnet code-reviewer instead. Lane A against the Scope block. |
+| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the generic language lens is in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
+| **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
+
+> Origin, the cost study (14 days, 1,094 review runs, 2,961 ledger findings): the
+> second family found 43% of all valid P0/P1 at no Claude cost; the per-slice Opus
+> code-reviewer found none in a 50-slice milestone; a generic language reviewer, a
+> separate blast-radius auditor and an Opus docs lane found 1, 0 and 3 unique P0/P1
+> between them. Security (on its trigger), claim audits and plan conformance were the
+> cheapest per unique P0/P1 and stay. **Track it:** the log's *Yield by source*
+> (`log-format.md`) says which source to drop or restore next.
+
+`[M]` **When the second family is unavailable** (quota, login, outage — never block
+the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
+cold code and an Opus one on critical code; the adversarial pass becomes the Opus
+`blast-radius-auditor` plus an Opus adversarial brief; every row is `degraded`.
+
+## Milestone size — split before it outgrows a session
+
+`[M]` **A unit whose slicing table will not fit one session splits at Gate 1** into
+sub-milestones. Each has its own slicing table, its own step 8 over its own diff and
+its own `/clear` boundary (`context.md`); the state file keeps only the current
+sub-milestone, and closed ones move to the decision log and the follow-ups doc.
+> Origin, the cost study: one milestone of 59.6k lines and 50 slices ran in one main
+> session — 20 compactions, a 211K average context and a 493 KB state file.
+
+`[B]` The cap — **start at 15 slices or 10k changed production lines** (tests
+excluded, `git diff --numstat`), whichever comes first, and let the log move it. It
+goes in the `earned` block with the other slots.
+
 ## The gate table
 
 `[B]` Rows key on the **risk map** and the **never-auto policy** from Phase B
@@ -124,24 +164,46 @@ announce the next step in one line and start it.
 | **P0** | data loss, a security or isolation breach, wrong money, an outage | always |
 | **P1** | a correctness defect the unit introduces, or a blocker for its "Done when" | always |
 | **P2** | a robustness gap, an edge case, a missing test for a real path | if IN scope |
-| **P3** | a nit, a style point | follow-ups, unless on a line the round already changes |
+| **P3** | a nit, a style point | **never opens one** — the batched sweep, or rides along on a line the round already changes |
 
 `[M]` Agents that report CRITICAL / HIGH / MEDIUM / LOW map to P0 / P1 / P2 / P3.
 Severity decides whether a finding enters a fix round; the scope class decides
 whether it belongs on this branch (`scope-guard.md`).
 
-## Fix rounds — bounded by what the fix touches
+## Fix rounds — bounded by severity and by what the fix touches
 
-`[M]` **Critical code:** every fix round is re-reviewed — the reviewer over
-`git diff <sha-before-the-fixes>`, plus the specialist whose trigger the fix hits —
-until a round produces no P0–P2 finding against the fix.
-> Origin: in the third project, review-fix commits on critical code kept
-> introducing defects; the later rounds there caught real money defects.
+`[M]` **`scripts/review-gate.mjs` decides, from facts** — the paths and production
+lines the round changed, whether they are critical (the risk map, bound in its `[B]`
+block), the highest severity the round fixed and the round number. Run it once per
+round over `<sha-before-the-fixes>..`, after the last fix group, and quote its result
+line in the ledger. Its rules:
 
-`[M]` **Everything else:** **one** re-review of the fix round; its findings are
-fixed and proven by their regression tests, not by another review round.
-> Origin: fixes and reviews of fixes were 29% of one change request's sub-agent
-> spend.
+| Round fixed | Cold code | Critical code |
+|---|---|---|
+| P3 only | **no fix round** — `sweep` | **no fix round** — `sweep` |
+| P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
+| P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
+| any, round 3 or later | — | `escalate-adversarial`: the second family's adversarial pass, never a third Opus round |
+
+`[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
+set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
+P3 still IN scope, with no re-review; a P3 on a line the round already changes rides
+along in that round.
+> Origin: in one 50-slice milestone, 20 of 50 fix rounds were opened by P3s alone,
+> each re-reviewed by Opus (`rules.md` §1 › Cost).
+
+`[M]` **A re-review reads the fix diff, by the reviewer whose finding was fixed** —
+never the whole lineup again over the whole unit. The specialist whose trigger the
+fix hits joins it. **At most two Opus rounds** on one area; then the adversarial pass.
+> Origin, the third project: review-fix commits on critical code kept introducing
+> defects, and the later rounds caught real money defects — which is why critical
+> fixes are still re-reviewed. Origin, the cost study: re-reviews were 50 of 174
+> review spawns, and one round 2 re-ran four reviewers over the full scope; 42 of
+> 200 valid P0/P1 came from fix rounds, so re-reviews are scoped, never skipped.
+
+`[M]` **One fix brief per area, not per finding.** Fix groups whose files do not
+overlap go to one executor in one brief; groups that share files run in sequence.
+Fix groups on critical code go to Opus; the rest to Sonnet.
 
 `[M]` **A P0 or P1 introduced by the fix itself trips the stop** (`rules.md` §2). A
 pre-existing finding seen for the first time does not.
@@ -154,14 +216,20 @@ that left the building cannot.
 
 | Role | Claude Code default |
 |---|---|
-| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus** |
-| Implementer of critical code and its fixes · reviewers on Full and critical code · the claim auditor · the blast-radius auditor | **Opus** |
-| Implementer of cold slices and delegated builders · fixers outside critical code · the conformance auditor · doc scans · a run-and-report runner | **Sonnet** |
-| The decorrelated pass | the second family (`cross-model.md`) |
+| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor | **Opus** |
+| Implementer of cold slices and delegated builders · fixers outside critical code · the P3 sweep · the conformance auditor · `pr-test-analyzer` · doc rewrites · a run-and-report runner · release runbooks | **Sonnet** |
+| Per-slice review · the review of a Small unit · re-reviews of fixes · the adversarial pass (carrying lane B) · cold slices where it has quota (`implement-cold`) | the second family (`cross-model.md`) |
+| The blast-radius auditor (lane B) | **Opus**, only when the second family is unavailable (`degraded`) |
 
 `[M]` **Pass the model explicitly on every dispatch.** Agent files often pin their
 own model, which beats the session's — without an override, the highest-risk unit
 silently gets the cheapest reviewer.
+
+`[M]` **Every generated agent file pins `effort: high` in its frontmatter.** An agent
+file's `effort:` beats the session's level; without it, a session raised to `max`
+reaches every reviewer. **Never leave the main session at `xhigh` or `max`**: raise it
+for one hard question, then lower it (`rules.md` §1 › Cost).
 
 `[M]` **Effort floor `high`** on every dispatch and the main session; never `low` or
 `medium` on the Claude side. **`xhigh` only with the reason in the brief** — an
@@ -188,13 +256,16 @@ ECC's agents where the plugin is installed:
 
 | Trigger in the diff | Add |
 |---|---|
-| always | a correctness reviewer — `code-reviewer` |
+| Full, once over the unit diff | a correctness reviewer — `code-reviewer`, with the language lens (types, async correctness, unsafe casts, error handling) in its brief |
 | money, settlement, webhooks, notifications, a discarded result | `silent-failure-hunter` |
 | auth, sessions, tenancy, permissions, a public route | `security-reviewer` |
-| schema, migration, a changed query shape | `database-reviewer` |
-| tests added or changed, Full tier | `pr-test-analyzer` |
-| mostly generic TypeScript or React, no repo invariant | `typescript-reviewer` / `react-reviewer` |
+| **a migration or schema file changed** | `database-reviewer` — not for a query edit alone |
+| tests added or changed, Full tier | `pr-test-analyzer`, on **Sonnet** |
+| React components carry the change, with no repo invariant | `react-reviewer` only when the owner opts in; a separate generic `typescript-reviewer` found 1 unique P0/P1 in 14 days and is folded into the code-reviewer's brief |
 | another language carries the change | that language's reviewer if one resolves; else the correctness reviewer with that lens in its brief, `degraded` |
+
+`[B]` The same triggers, as path patterns, are the `TRIGGERS` block of
+`review-gate.mjs` — one canonical list; the table here names the agents.
 
 `[M]` On Full, the project's review workflow (`templates/workflows/review.workflow.js`,
 `delegate-tasks` check mode) may run this fan-out deterministically, with a verifier

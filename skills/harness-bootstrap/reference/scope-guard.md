@@ -126,6 +126,32 @@ owner, the Scope block's "Done when", slices or steps done and next, the decisio
 log, open findings, ledger rows so far, and the last gate lines. A resume, a post-compaction turn or a fresh session
 reads **this file** — the plan stops collecting resume notes and progress rows.
 
+`[M]` **Its shape is a contract** — `unit-record.mjs` reads it, so the record is
+generated rather than retyped:
+
+```
+Unit: <id>
+Mode: <plan | change>
+Type: <type>
+Tier: <tier>
+Branch: <b>
+Base: <merge-base sha>
+Claimed: <ISO time from the registry row>
+Owner wait: <e.g. 1h20m>
+
+## Scope            the block, verbatim
+## Ledger           | Step | Status | Evidence |
+## Findings         | ID | Sev | Source | Also | Status | Note |
+## Decisions        the decision log
+## Next             the step done and the step next
+```
+
+Header lines come before the first `##`, one `Key: value` each. `Source` is the
+reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,
+`security-reviewer`, …), `Also` the others that reported it, `Status` one of `open`
+· `fixed <sha>` · `follow-up` · `retracted`. Columns are read by header name, so a
+project may add its own.
+
 `[M]` **Committed on the unit branch at step boundaries**, never per fix.
 > Origin: one change request spent 49 commits on progress rows, state and
 > hand-off notes.
@@ -134,7 +160,9 @@ reads **this file** — the plan stops collecting resume notes and progress rows
 closed findings move to the follow-ups doc, decisions with lasting value to the
 decision log, and the state file keeps only what the next step needs.
 
-`[B]` Path (default `docs/plans/<unit>.state.md`) and budget (default 8 KB).
+`[B]` Path (default `docs/plans/<unit>.state.md`) and budget (default 8 KB). The
+same budget binds a written record; an existing file over it is ratcheted at its
+current size, never grandfathered upward.
 
 ## The follow-ups doc
 

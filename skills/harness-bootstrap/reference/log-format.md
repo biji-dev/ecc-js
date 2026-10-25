@@ -20,6 +20,7 @@ their report, not a row.
 | Retries | conformance loops · review rounds · fix passes |
 | Model | which model ran each role (implement · audit · review · claims), **as actually dispatched** |
 | **★ Missed by harness** | **the load-bearing column.** What *you* caught that the harness did not |
+| **Yield by source** | unique valid P0/P1/P2 per reviewer source (`codex-review 0/1/2 · opus-code-reviewer 0/0/1 · …`), from `unit-record.mjs` — "unique" means no other source reported it, "valid" means fixed or filed, not retracted |
 | Friction | anything that wasted time — a wrong port, a stale env file, a reviewer firing on nothing |
 
 ## How to read it
@@ -31,6 +32,10 @@ occurrences of that kind.
 
 **Empty `Missed by harness` across five units** is evidence to loosen a gate — or
 to earn the Hot-small slot (`gate-design.md`). Non-empty is the reason not to.
+
+**A source with no unique P0–P2 across five units** is a candidate to drop or to
+move to a cheaper model — and one whose removal shows up in `Missed by harness` comes
+back. This is how the review lineup in `gate-design.md` was set; keep measuring it.
 
 **Two of the same friction** means fix the machinery, not the habit. If the log
 says *"fix the machinery"* twice, the next run starts by fixing it.

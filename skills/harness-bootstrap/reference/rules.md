@@ -4,8 +4,9 @@ Every rule in §1 was written **after** a specific failure — in the origin pro
 (a regulated rental platform, 21+ logged tasks), in a second project that adopted
 the harness later (a multi-tenant agent platform, 10 logged tasks), or in a third
 that grew the change-mode workflow independently (a production multi-tenant
-platform, about 120 sessions, with measured engineering notes). None was reasoned
-into existence. That is the whole filter: §3 records rules that
+platform, about 120 sessions, with measured engineering notes) — or, under
+**Cost**, in a 14-day cost study across those installs (1,094 review runs, 2,961
+ledger findings, every transcript priced). None was reasoned into existence. That is the whole filter: §3 records rules that
 *were* reasoned into existence, and they turned out wrong.
 
 When generating a harness, **ship §1 with its origin named.** A rule without its
@@ -182,6 +183,46 @@ machine-down time separately.
 **The log append must be idempotent.** A resumed run reaches that step twice.
 > Origin: byte-identical rows, doubling one task's weight in every median.
 
+### Cost
+
+**P3s never start a fix round.** They wait for one batched sweep per slice set,
+with no re-review; a P3 on a line the round already changes rides along.
+> Origin, the cost study: in one 50-slice milestone, 20 of the 50 fix rounds were
+> opened by P3 findings alone, each followed by an Opus re-review — about four hours
+> of serial wall time and a tenth of the milestone's spend.
+
+**A re-review reads the fix diff, by the reviewer whose finding was fixed** — the
+second family first; Opus again only on critical code with a P1 fixed, at most two
+Opus rounds (`gate-design.md`, `review-gate.mjs`).
+> Origin, the cost study: 50 of 174 review spawns in 30 hours were re-reviews, and
+> one round 2 re-ran all four reviewers over the full scope. Re-reviews still found
+> real defects — 42 of 200 valid P0/P1 were introduced by fix rounds — so the rule
+> scopes them; it does not skip them.
+
+**Never leave a session or a dispatch at `max` effort.** Raise effort for one hard
+question, then lower it; every generated agent pins `effort: high`.
+> Origin, the cost study: a session set to `max` passed it to every subagent. The
+> same reviewers cost 5–8× their `high` runs, the session compacted 22 times in 10.6
+> hours, and no finding showed what the extra effort bought.
+
+**One turn, many tool calls.** Independent reads, searches and checks go out
+together in one message; several patterns go in one search (`rg -e a -e b`).
+> Origin, the cost study: 96% of implementer and reviewer turns made a single tool
+> call, and every turn re-reads the whole context — about 100K tokens in a subagent.
+
+**Split a milestone that will not fit one session.** At Gate 1 a slicing table past
+the cap becomes sub-milestones, each with its own step 8 and its own `/clear`
+boundary.
+> Origin, the cost study: one milestone of 59.6k lines and 50 slices ran in one main
+> session — 20 compactions, a 211K average context, and a state file that grew to
+> 493 KB.
+
+**Wait on a completion notice, never a sleep loop; shrink a screenshot before
+reading it.**
+> Origin, the cost study: one release session ran 41 sleep-or-poll commands while a
+> build ran and read 18 full-resolution device screenshots; each poll re-read about
+> 200K of context.
+
 ### Sessions and the working tree
 
 **Hold edits until every reviewer has reported**, and never stage with
@@ -212,16 +253,21 @@ not something remembered.**
 **Harness changes land between runs, never during one.**
 
 **Never ask the owner for a new session or a hand-off.** State lives in files; past
-the budget, update the state file, offer a `/compact` and keep working
+the budget, update the state file, offer a `/compact` — or, at a gate that waits on
+the owner, `/clear` and the runner's resume command — and keep working
 (`context.md`).
 > Origin, the third project: 28 of 118 sessions ended in a hand-off, about 90% of
 > them triggered by a budget rule that said to start a new session (§3).
 
-**Read slices, not files; one slice per agent.** Grep first, then read with an
-offset and a limit; split a fix round by area.
+**Search, then read once; one slice per agent.** Grep first, then read what you
+need in one call — the file whole, or a range of 150 lines or more — never page it
+in small slices. The main session reads no plan or source file whole. Split a fix
+round by area.
 > Origin, the third project: two whole-plan reads cost about 170K tokens and ended
 > a session after one step; one agent handed a whole fix round ran 309 calls, to
-> 368K of context.
+> 368K of context. The cost study then found the opposite failure: about 4,500
+> `sed -n` slice reads, 2,137 of them under 40 lines, each a turn that re-read the
+> whole context.
 
 **Run the full verification once per unit, not once per slice.** Slices run their
 targeted tests; the full run belongs to step 8 and to the merge.
@@ -297,6 +343,9 @@ This section exists so a generator does not repeat the pattern.
 | *"Size is a poor effort proxy"* | Written at n=2. At n=19 size ordered correctly at the median and the large bucket had the **tightest** spread of any. Retracted. |
 | *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Tiers now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
 | *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`). |
+| An Opus code-reviewer over every slice | 63 per-slice runs in one milestone found no P0 or P1; both of its P1s came from the silent-failure lens and the second family. Across 14 days the code-reviewer cost the most of any Opus reviewer and found 8 unique P0/P1. The second family reviews each slice now; one Opus reviewer reads the whole unit diff at step 8 (`gate-design.md`). |
+| Fix every finding at once, nits included | 20 of one milestone's 50 fix rounds were opened by P3s alone, each re-reviewed. P3s wait for one sweep now (§1). |
+| A generic language reviewer, a blast-radius auditor and a docs lane as separate Opus reviewers on every Full unit | Over 14 days they found 1, 0 and 3 unique P0/P1 between them; the docs lane's findings were mostly P3 drift. The language lens folds into the code-reviewer's brief, lane B rides in the second family's adversarial pass, and docs drift is a script (`docs-drift.mjs`). |
 | Two generic review commands on every diff by default | They reviewed one diff a third and fourth time — 92 and 31 agents on a single change request. Opt-in now, for a refactor-heavy slice or when the owner asks. |
 | The full verification after every slice | 39 full runs, 8.4 hours, on one change request. Once per unit now (§1). |
 | *"Preflight never edits the plan"* | Too absolute. Deciding and transcribing are different acts; transcribing an approved decision is fine, and must cite the decision id. |

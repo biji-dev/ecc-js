@@ -15,9 +15,16 @@ gets its decorrelated pass from Codex; Codex-written code (a cold slice, a doc
 sweep) gets an Opus reviewer over its diff.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
-makes the pass `unavailable`: a fresh Opus agent takes the same prompt, and the
-ledger says **degraded**, quoting the wrapper's reason. The owed pass runs at the
-next unit's equivalent step over both diffs.
+makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
+a per-slice review of cold code, Opus for critical code, the adversarial pass and
+lane B — and the ledger says **degraded**, quoting the wrapper's reason. The owed
+pass runs at the next unit's equivalent step over both diffs.
+
+`[M]` **Use it where it finds the most.** In the cost study the second family found
+43% of all valid P0/P1 — half of them in re-reviews — at no cost to the Claude quota,
+yet sat at 5–28% of its own weekly quota while Opus reviewed every slice. Its quota
+is real but finite: the wrapper's budget guard (below) keeps the essential kinds
+running when it runs low.
 > Origin: one change request in the third project waited on a five-day Codex
 > outage.
 
@@ -33,8 +40,10 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 |---|---|---|
 | 1 plan check | **blind dual plan** — the second family writes its own plan from the same brief while the session writes one; the session compares (agree · differ, with evidence · one side only) and merges | Full |
 | 4 conform | lane A may run on the second family — it is a literal checklist | Small, Full |
-| 8 review | the second family's diff review beside the Claude reviewers | Full |
-| 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus; the frontier model too when the diff touches a never-auto category | Full |
+| 2 per slice | the second family's **review** over each slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts | Full |
+| 8 review | the second family's review over the unit diff — **the** review of a Small unit, carrying the change surface | Small |
+| 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
+| 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass from round 3 | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |
 | 2 implement | **cold slices** may go to the second family (`implement-cold`, `docs`), reviewed by Opus | any |
 

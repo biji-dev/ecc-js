@@ -328,7 +328,9 @@ fixed or filed and counted under Defects.
 > its own; the table had no arm for that, and the log said *"fix the machinery."*
 
 **A third round the owner asks for is not the tripwire.** Run it, log it as the
-owner's, present Gate 2 again, and never open a fourth unasked.
+owner's, present Gate 2 again, and never open a fourth unasked. On critical code
+that round is the second family's adversarial pass, never a third Opus review
+(`review-gate.mjs` says `escalate-adversarial`).
 
 **Do not ship the thresholds.** *"3× the tier median"* is mechanism; *"90
 minutes"* is a number that project earned. Generate the slot empty. If you carry

@@ -242,6 +242,8 @@ DOM snapshot; send screenshots to a model that reads images.
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n>` names the re-review, which reads the fix diff only.
+  `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
+  and run the adversarial pass only for the round the owner orders.
 - `[M]` **The P3 sweep** runs once per slice set, after the fix rounds: one Sonnet
   fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
   targeted tests, no re-review.

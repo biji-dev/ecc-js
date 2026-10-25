@@ -40,8 +40,11 @@ brief**, under a `## Tool discipline` heading (it is mechanism, so never reworde
 > `sleep`. Shrink a screenshot before reading it (`sips -Z 1000 <file>` on macOS),
 > and prefer a text snapshot — an accessibility tree, a DOM query, `uiautomator
 > dump` — when the question is about text or structure.
-> Origin: the cost study (`rules.md` §1 › Cost) — 96% of agent turns made one tool
+> Origin: the cost study (the rule origins › Cost) — 96% of agent turns made one tool
 > call, about 4,500 small slice reads, 41 sleep polls in one session.
+
+`[B]` The origin pointer is the one bound word: it names the project's rule-origins
+file (default `docs/harness/rule-origins.md`), never a skill file the project lacks.
 
 `[M]` **Run-and-report goes to a Sonnet runner** — the verify run, re-runs, a smoke
 check, a cold UI walk. It quotes each PASS/FAIL or result line and the log path,

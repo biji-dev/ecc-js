@@ -45,7 +45,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 2 per slice | the second family's **review** over each slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts | Full |
 | 8 review | the second family's review over the unit diff — **the** review of a Small unit, carrying the change surface | Small |
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
-| 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass from round 3 | Small, Full |
+| 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass for a third round the owner orders | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |
 | 2 implement | **cold slices** may go to the second family (`implement-cold`, `docs`), reviewed by Claude as `review-gate.mjs --writer codex` says | any |
 

@@ -183,7 +183,7 @@ line in the ledger. Its rules:
 | P3 only | **no fix round** — `sweep` | **no fix round** — `sweep` |
 | P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
-| any, round 3 or later | — | `escalate-adversarial`: the second family's adversarial pass, never a third Opus round |
+| any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
 
 `[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
@@ -194,7 +194,8 @@ along in that round.
 
 `[M]` **A re-review reads the fix diff, by the reviewer whose finding was fixed** —
 never the whole lineup again over the whole unit. The specialist whose trigger the
-fix hits joins it. **At most two Opus rounds** on one area; then the adversarial pass.
+fix hits joins it. **At most two Opus rounds** on one area; a third round is the
+owner's to order, and it is the adversarial pass.
 > Origin, the third project: review-fix commits on critical code kept introducing
 > defects, and the later rounds caught real money defects — which is why critical
 > fixes are still re-reviewed. Origin, the cost study: re-reviews were 50 of 174

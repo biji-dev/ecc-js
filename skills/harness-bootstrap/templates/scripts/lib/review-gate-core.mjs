@@ -205,7 +205,7 @@ function fixRound({ critical, maxFixed, round, prodLines }) {
     return d(
       'escalate-adversarial',
       ['second-family-adversarial'],
-      `fix round ${round} on critical code: a third review round is a stop (rules.md §2) -- ask the owner; the round the owner orders is an adversarial pass, never another Opus review`,
+      `fix round ${round} on critical code: a third review round is the owner-stop tripwire -- ask the owner; the round the owner orders is an adversarial pass, never another Opus review`,
     );
   if (maxFixed === 'P2')
     return d('second-family', ['second-family-review'], 'critical code, P2 fixed: the second family re-reviews');

@@ -59,7 +59,7 @@ Run each and fix until green; never report a check you did not run:
 ```
 
 Every kind of spec — build, fix, control, check, plan — carries the **Tool
-discipline** section verbatim (in a harness: `context.md`'s copy). Each turn re-reads
+discipline** section verbatim (in a harness, the copy in harness-bootstrap's context reference). Each turn re-reads
 the executor's whole context, and in the measured projects 96% of executor turns made
 a single tool call.
 

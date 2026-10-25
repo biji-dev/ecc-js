@@ -58,7 +58,7 @@ session dispatches what it names, with `model` and `effort` passed.
 | Layer | When | Reviews |
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
-| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. A slice the second family wrote gets a Sonnet code-reviewer instead. Lane A against the Scope block. |
+| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
 | **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the generic language lens is in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
 

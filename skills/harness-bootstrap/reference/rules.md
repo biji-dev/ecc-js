@@ -81,14 +81,17 @@ names all assert; none verify.
 > properties that did not hold, three test titles claimed more than their bodies
 > checked, and a column named `hashed_token` held a plaintext value.
 
-**The record is written last, from the diff, as fields — and audited by someone
-who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
+**The record is written last, from the diff — its fields generated, its prose
+audited by someone who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
 > Origin: *"a report is a claim — verify it before presenting it"* was a rule
 > addressed to the author. After it was written, one task shipped **eight** false
 > claims, and **nine of the first twenty-one** tasks shipped at least one. None
 > was caught by the author re-reading; every one by an external check. An author
 > checks a sentence against what they meant, not against the tree. So it became
-> a step and an agent instead of a paragraph.
+> a step and an agent instead of a paragraph. Origin, the cost study: 79 of the
+> claim auditor's 105 P1s were about record prose, so the fields a script can
+> produce (`unit-record.mjs`) are generated, true by construction, and the audit
+> reads only what a person wrote.
 
 **A "done" report ends with the step ledger; a step missing from it did not run.**
 (`context.md`.)

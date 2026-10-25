@@ -157,8 +157,11 @@ project may add its own.
 > hand-off notes.
 
 `[M]` **Byte budget**, enforced by the agent-docs lint (`check-agent-docs.mjs`):
-closed findings move to the follow-ups doc, decisions with lasting value to the
-decision log, and the state file keeps only what the next step needs.
+decisions with lasting value move to the decision log, and the state file keeps
+only what the next step needs. A closed finding stays in `## Findings` as a one-line
+row — its `Note` emptied — until step 8b's record has counted it, because
+`unit-record.mjs` reads only this table; after the record, closed rows may move to
+the follow-ups doc. A sub-milestone's step 8b runs before its rows leave.
 
 `[B]` Path (default `docs/plans/<unit>.state.md`) and budget (default 8 KB). The
 same budget binds a written record; an existing file over it is ratcheted at its

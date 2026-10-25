@@ -47,7 +47,8 @@ brief**, under a `## Tool discipline` heading (it is mechanism, so never reworde
 check, a cold UI walk. It quotes each PASS/FAIL or result line and the log path,
 and stops at the first red without attributing or fixing it. The main session
 attributes; an implementer fixes. The first red on a critical path, a live pass on
-a never-auto surface and deploys stay with Opus.
+a never-auto surface and the decision to deploy stay with Opus; the runbook that
+carries out an approved deploy runs on Sonnet (below).
 
 `[M]` **A switch line before each step**, one line, then continue:
 `Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact or clear offered) · Reason`.

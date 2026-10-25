@@ -102,8 +102,11 @@ title is a claim like any other.
   fail; a compile or import error is not a pass** — then `git apply` it back and
   confirm `git status --porcelain -uall` matches what it was before. Never
   `git checkout -- <file>`.
-- **The fix commits are a fresh diff.** Every commit made after the step 8 review
-  is reviewed for correctness and regressions here, because nobody else saw it.
+- **The fix commits are a fresh diff.** Every fix commit made after the step 8
+  review that no fix-round re-review read (`review-gate.mjs --kind fix` said `skip`)
+  is reviewed for correctness and regressions here, because nobody else saw it. The
+  P3 sweep is the exception: its targeted tests prove it, and this lane checks only
+  that those tests are honest (`gate-design.md` › Fix rounds).
 
 `[M]` A test that stays green with its fix reverted is a failed claim: its fix is to
 rewrite the test.

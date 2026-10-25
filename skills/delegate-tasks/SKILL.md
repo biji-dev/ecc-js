@@ -150,13 +150,15 @@ Templates for every kind are in `reference/spec-templates.md`.
 5. **Per-slice review, by the other family.** After a serial slice passes its gate,
    one reviewer reads that slice's diff before the next slice builds on it — the
    **second family's review** over a Claude-written slice (in the background, while
-   the next independent slice starts); a Sonnet reviewer over a cold second-family
-   slice, or none until the unit review where a harness's `review-gate.mjs` says
-   `defer`. **Never an Opus reviewer per slice** — in one measured milestone 63 of
-   them found no P0 or P1. Without a second family: a Sonnet reviewer on cold code,
-   Opus on critical code, recorded `degraded`. The session reproduces each P0–P2
-   before acting on it. Then integrate. In a harness the session commits here, and
-   `review-gate.mjs` names the reviewer; standalone the session commits at the end.
+   the next independent slice starts). A cold second-family slice waits for the
+   unit review (a harness's `review-gate.mjs` says `defer`; standalone, a Sonnet
+   reviewer reads it). **Never an Opus reviewer per Claude-written slice** — in one
+   measured milestone 63 of them found no P0 or P1; Opus reads a slice only when
+   critical code went to the second family anyway. Without a second family: a
+   Sonnet reviewer on cold code, Opus on critical code, recorded `degraded`. The
+   session reproduces each P0–P2 before acting on it. Then integrate. In a harness
+   the session commits here, and `review-gate.mjs` names the reviewer; standalone
+   the session commits at the end.
 6. **Escalation.** A blocked executor, or a review finding that traces to the spec:
    answer it and continue the **same** agent (`SendMessage`) while its context is
    small, or re-dispatch with a revision note in the spec. The architect's ruling

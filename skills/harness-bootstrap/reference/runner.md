@@ -224,7 +224,7 @@ DOM snapshot; send screenshots to a model that reads images.
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
   change surface (`blast-radius-auditor.md` › The brief), each triggered specialist,
-  and `pr-test-analyzer` on Sonnet — independent, in **one message**. Small: the
+  and `pr-test-analyzer` on Sonnet when tests changed — independent, in **one message**. Small: the
   second family's review alone. The second family unavailable → the fallbacks in
   `gate-design.md`, `degraded`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.

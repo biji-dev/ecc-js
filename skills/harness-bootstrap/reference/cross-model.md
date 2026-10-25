@@ -12,7 +12,9 @@ cleared, and the wrapper exists because Codex's own exit code lied both ways.
 
 `[M]` **Whatever one model family writes, the other reviews.** Claude-written code
 gets its decorrelated pass from Codex; Codex-written code (a cold slice, a doc
-sweep) gets an Opus reviewer over its diff.
+sweep) gets a Claude reviewer — Opus on critical code at once, and on cold code the
+unit review covers it (a Sonnet `code-reviewer` for a Small unit), as
+`review-gate.mjs` says.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
@@ -45,7 +47,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
 | 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass from round 3 | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |
-| 2 implement | **cold slices** may go to the second family (`implement-cold`, `docs`), reviewed by Opus | any |
+| 2 implement | **cold slices** may go to the second family (`implement-cold`, `docs`), reviewed by Claude as `review-gate.mjs --writer codex` says | any |
 
 `[M]` The **blind** in blind dual plan is the point: the second plan is written
 without seeing the first. Every item only one side has is verified in code before

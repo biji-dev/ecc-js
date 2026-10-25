@@ -28,7 +28,7 @@ Each rule was produced by a failure in another project; the incident behind each
   - **Mutate operands, anchors and call arguments, not only branches.** One pass over call arguments found 18 survivors the branch mutants missed.
   - **A kill belongs to the tree it was measured on.** Re-run the standing mutants after a change that reads the guarded value.
 - **Nothing merely asserted survives.** Docstrings, reports, test titles and column names assert; none verify — five false ones in a single task.
-- **The record is written last, from the diff, as fields — and audited by someone who did not write it.** Nine of the first twenty-one tasks shipped a false claim after the author-facing rule existed.
+- **The record is written last, from the diff — its fields generated, its prose audited by someone who did not write it.** Nine of the first twenty-one tasks shipped a false claim after the author-facing rule existed.
 - **A "done" report ends with the step ledger; a step missing from it did not run.** A fresh cross-check contradicted 81 of 88 "done" reports.
 - **Reproduce a finding before fixing it.** About 6% of claimed gaps were artefacts; one that does not reproduce is retracted.
 - **Trust a wrapper's exit code, never the agent CLI's own.** The CLI exited 0 on runs with no verdict and non-zero on a recovered retry.

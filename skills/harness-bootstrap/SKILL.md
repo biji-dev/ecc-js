@@ -83,7 +83,7 @@ orient:
   is an assertion.
 - **A "done" report ends with the step ledger; a step missing from it did not
   run.**
-- **The record is written last, from the diff, and audited by someone else.**
+- **The record is written last, from the diff — fields generated, prose audited by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
 - **Never ask the owner for a new session or a hand-off.**
@@ -93,8 +93,9 @@ orient:
 
 **Left deliberately empty, to be earned:** the never-auto categories and the risk
 map (Phase B derives them), the importer threshold, the Hot-small tier, tripwire
-numbers, medians, a milestone cap. Budgets on instruction files **ratchet from
-their current size**. Importing another project's numbers hands a team rules whose
+numbers, medians. The milestone cap **starts** at 15 slices or 10k changed production
+lines (`gate-design.md` › Milestone size) and the log moves it. Budgets on
+instruction files **ratchet from their current size**. Importing another project's numbers hands a team rules whose
 reasons they have not lived. The **model split** is the exception — Opus where a
 miss cannot be corrected forward, Sonnet for work bounded by an exit condition, the second family where it finds the
 most for the least (`gate-design.md`) — because it is mechanism, not a threshold.
@@ -251,7 +252,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |

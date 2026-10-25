@@ -44,7 +44,7 @@ function readFile(file, what) {
   try {
     return fs.readFileSync(file, 'utf8');
   } catch (e) {
-    throw new Error(`cannot read ${what} ${file}: ${e.code ?? e.message}`);
+    throw new Error(`cannot read ${what} ${file}: ${e.code ?? e.message}`, { cause: e });
   }
 }
 
@@ -58,7 +58,7 @@ function git(args, cwd) {
     });
   } catch (e) {
     const detail = String(e.stderr ?? e.message).trim().split('\n')[0];
-    throw new Error(`git ${args[0]} failed: ${detail}`);
+    throw new Error(`git ${args[0]} failed: ${detail}`, { cause: e });
   }
 }
 

@@ -331,8 +331,9 @@ already shipped): requests go stale both ways. Its impact section is step 1's
 Impact Analysis — verify and extend it, never derive a parallel list.
 
 `[M]` **The steps run per milestone**, not per request. A risky milestone lands
-alone; split pure moves from interface changes. `[B]` A milestone cap in
-production lines, empty until the log earns one.
+alone; split pure moves from interface changes. `[B]` A milestone cap — it
+starts at 15 slices or 10k changed production lines and the log moves it
+(`gate-design.md` › Milestone size).
 
 `[M]` Close out in the document itself: the milestone row marked shipped with scope
 corrections, wrong claims struck through in place.

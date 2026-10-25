@@ -160,7 +160,7 @@ function selectDimensions(files, tier, hasPlanOrScope, secondFamily) {
   if (any(TRIGGERS.security)) picked.push('security');
   if (any(TRIGGERS.database)) picked.push('database');
   if (any(TRIGGERS.silentFailure)) picked.push('silentFailure');
-  if (tier === 'full' || any(/(^|\/)(tests?|__tests__|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i)) picked.push('tests');
+  if (tier === 'full' && any(/(^|\/)(tests?|__tests__|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i)) picked.push('tests'); // review-gate: pr-test-analyzer on Full when tests changed
   if (hasPlanOrScope) picked.push('conformance');
   if (secondFamily === 'unavailable') picked.push('blastRadius'); // lane B otherwise rides in the adversarial pass
   return picked;

@@ -17,7 +17,7 @@
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
  *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
  *                  against <base> (committed, staged, unstaged and untracked changes; a review is
- *                  often owed before the commit; binary files count 0 lines)
+ *                  often owed before the commit; a binary file counts 0 lines but is a changed file)
  *
  * Prints exactly one line (`--json`: the result object instead):
  *   review-gate: <decision> — <reason> → <reviewers joined by ' + ' or 'none'> [<n> production files, <n> lines; not checked: ...]
@@ -53,16 +53,27 @@ try {
   fail(e.message, true);
 }
 
+/** Throws unless `rev` names a commit (a file name would otherwise become a path filter). */
+function commitOf(top, rev) {
+  try {
+    return git(top, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}^{commit}`).trim();
+  } catch {
+    throw new Error(`${rev} is not a commit`);
+  }
+}
+
 let files;
 try {
   const top = git(process.cwd(), 'rev-parse', '--show-toplevel').trim();
+  const base = commitOf(top, args.base);
   if (args.head) {
-    files = parseNumstat(git(top, 'diff', '--numstat', '--no-renames', `${args.base}..${args.head}`));
+    const head = commitOf(top, args.head);
+    files = parseNumstat(git(top, 'diff', '--numstat', '-z', '--no-renames', `${base}..${head}`, '--'));
   } else {
-    files = parseNumstat(git(top, 'diff', '--numstat', '--no-renames', args.base));
+    files = parseNumstat(git(top, 'diff', '--numstat', '-z', '--no-renames', base, '--'));
     // Untracked files count by lines (binary = 0): `git diff` does not list them.
-    for (const path of git(top, 'ls-files', '--others', '--exclude-standard')
-      .split('\n')
+    for (const path of git(top, 'ls-files', '-z', '--others', '--exclude-standard')
+      .split('\0')
       .filter(Boolean)) {
       let lines = 0;
       try {

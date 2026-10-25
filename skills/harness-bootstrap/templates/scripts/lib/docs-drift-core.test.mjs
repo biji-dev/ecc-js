@@ -162,6 +162,25 @@ test('exportedNames ignores the +++ and --- file headers and non-export lines', 
   assert.deepEqual(exportedNames(diff), { added: [], removed: [] });
 });
 
+test('exportedNames: a name removed from a multi-line export list is a removed export', () => {
+  const diff = [
+    'diff --git a/src/index.ts b/src/index.ts',
+    '--- a/src/index.ts',
+    '+++ b/src/index.ts',
+    '@@ -1,6 +1,5 @@',
+    ' export {',
+    '-  getUser,',
+    '   type Session,',
+    '+  fetchUser as loadUser,',
+    '   listUsers',
+    ' } from "./users";',
+    '-const notExported = 1;',
+    '@@ -40,3 +40,3 @@',
+    '-  orphanedInHunk,',
+  ].join('\n');
+  assert.deepEqual(exportedNames(diff), { added: ['loadUser'], removed: ['getUser'] });
+});
+
 test('tokensFor: code paths and REMOVED exports only, GENERIC and MIN_IDENT filtered', () => {
   assert.ok(GENERIC.includes('index') && MIN_IDENT === 4, 'the test reads the binding it filters on');
   const diff = [

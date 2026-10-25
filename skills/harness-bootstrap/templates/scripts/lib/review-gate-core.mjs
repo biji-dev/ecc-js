@@ -44,18 +44,24 @@ export const isProduction = (path) => !NON_PRODUCTION.some((re) => re.test(path)
 export const isCritical = (path) => CRITICAL.some((re) => re.test(path));
 export const isTest = (path) => TESTS.some((re) => re.test(path));
 
-/** `git diff --numstat --no-renames` output → [{ path, lines }] (binary files count 0 lines). */
+/**
+ * `git diff --numstat --no-renames` output → [{ path, lines }]. Takes the `-z` form (records end
+ * in NUL, paths never quoted) or the plain one; a binary file (`-\t-`) counts 0 lines but still
+ * counts as a changed file.
+ */
 export function parseNumstat(text) {
-  return String(text)
-    .split('\n')
+  const s = String(text);
+  return s
+    .split(s.includes('\0') ? '\0' : '\n')
     .filter(Boolean)
     .map((line) => {
-      const [added, deleted, ...rest] = line.split('\t');
+      const [added, deleted, ...rest] = line.replace(/^\n/, '').split('\t');
       return {
         path: rest.join('\t'),
         lines: (Number(added) || 0) + (Number(deleted) || 0),
       };
-    });
+    })
+    .filter((f) => f.path);
 }
 
 /**
@@ -79,6 +85,8 @@ export function parseArgs(argv) {
     else if (names[t]) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
+      if ((t === '--base' || t === '--head') && v.startsWith('-'))
+        throw new Error(`${t} must be a revision, not an option`);
       a[names[t]] = v;
     } else throw new Error(`unknown option ${t}`);
   }
@@ -125,9 +133,12 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
     notChecked,
   };
   const out = (decision, reviewers, reason) => ({ decision, reviewers, reason, ...facts });
+  const specialists = Object.keys(TRIGGERS).filter((name) =>
+    prod.some((f) => TRIGGERS[name].some((re) => re.test(f.path))),
+  );
 
   if (kind === 'slice') {
-    if (prodLines === 0) return out('skip', [], 'no production code: tests or docs only');
+    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
     if (writer === 'codex' && critical.length === 0)
       return out(
         'defer',
@@ -148,10 +159,7 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
   }
 
   if (kind === 'unit') {
-    if (prodLines === 0) return out('skip', [], 'no production code: tests or docs only');
-    const specialists = Object.keys(TRIGGERS).filter((name) =>
-      prod.some((f) => TRIGGERS[name].some((re) => re.test(f.path))),
-    );
+    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
     if (tier === 'small') {
       const base = writer === 'claude' ? 'second-family-review' : 'sonnet-code-reviewer';
       return out(
@@ -176,27 +184,38 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
       [],
       'P3s never open a fix round: batch them into one sweep per slice set, no re-review',
     );
-  if (prodLines === 0) return out('skip', [], 'no production code: tests or docs only');
+  if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
+  const r = fixRound({ critical, maxFixed, round, prodLines });
+  // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)
+  if (specialists.length === 0) return out(r.decision, r.reviewers, r.reason);
+  if (r.decision === 'skip')
+    return out('review', specialists, `${r.reason}; the triggered specialist re-reads the fix`);
+  return out(r.decision, [...r.reviewers, ...specialists], r.reason);
+}
+
+/** A fix round's decision before triggered specialists join it. */
+function fixRound({ critical, maxFixed, round, prodLines }) {
+  const d = (decision, reviewers, reason) => ({ decision, reviewers, reason });
   if (critical.length === 0) {
     if (round === 1)
-      return out('second-family', ['second-family-review'], 'cold fix round 1: the second family re-reviews the fix');
-    return out('skip', [], 'cold fix round: its regression tests prove it, not another review');
+      return d('second-family', ['second-family-review'], 'cold fix round 1: the second family re-reviews the fix');
+    return d('skip', [], 'cold fix round: its regression tests prove it, not another review');
   }
   if (round >= 3)
-    return out(
+    return d(
       'escalate-adversarial',
       ['second-family-adversarial'],
       `fix round ${round} on critical code: an adversarial pass instead of another review`,
     );
   if (maxFixed === 'P2')
-    return out('second-family', ['second-family-review'], 'critical code, P2 fixed: the second family re-reviews');
+    return d('second-family', ['second-family-review'], 'critical code, P2 fixed: the second family re-reviews');
   if (prodLines <= FIX_LINES)
-    return out(
+    return d(
       'second-family',
       ['second-family-review'],
       `critical code, P1 fixed in ${prodLines} <= ${FIX_LINES} production lines: the second family re-reviews, no Opus pass`,
     );
-  return out(
+  return d(
     'second-family+opus',
     ['second-family-review', 'opus-code-reviewer'],
     `critical code, P1 fixed in ${prodLines} > ${FIX_LINES} production lines: Opus re-reviews only critical code with a P1 fixed; at most two Opus rounds`,

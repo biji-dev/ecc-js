@@ -15,7 +15,7 @@ const TEST_REL = path.join('lib', 'docs-drift-core.test.mjs');
 const CORE_REL = path.join('lib', 'docs-drift-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 28;
+const EXPECTED_TESTS = 29;
 
 let passed = 0;
 let failed = 0;

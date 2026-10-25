@@ -630,9 +630,12 @@ function buildReport() {
     const t = read(rel);
     const fm = t === null ? null : t.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!fm) continue;
-    const effort = fm[1].match(/^effort:\s*["']?([A-Za-z]+)/m);
-    if (!effort) haz('agent-effort-unpinned', 'no effort: in its frontmatter, so it inherits the session level (a session at max reaches it)', rel);
-    else if (ABOVE_HIGH.test(effort[1])) haz('effort-above-high', `effort: ${effort[1]} in its frontmatter`, rel, lineOf(t, /^effort:/m));
+    // `effort: high`, `"effort": 'high'`, indented or with a comment; a key with no value is unpinned
+    const EFFORT_KEY = /^[ \t]*["']?effort["']?[ \t]*:[ \t]*(.*)$/m;
+    const key = fm[1].match(EFFORT_KEY);
+    const value = key ? key[1].replace(/[ \t]+#.*$/, '').trim().replace(/^["']|["']$/g, '') : '';
+    if (!value || /^(null|~)$/i.test(value)) haz('agent-effort-unpinned', 'no effort: in its frontmatter, so it inherits the session level (a session at max reaches it)', rel);
+    else if (ABOVE_HIGH.test(value)) haz('effort-above-high', `effort: ${value} in its frontmatter`, rel, lineOf(t, EFFORT_KEY));
   }
   for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
     const t = read(rel);

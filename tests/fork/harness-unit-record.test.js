@@ -113,6 +113,23 @@ mutantFails('dropping the first-heading fallback for the unit', "header.unit ===
 mutantFails('reading a two-column header table as nothing', 'kvTable = cells.length === 2;', 'kvTable = false;');
 mutantFails('listing every commit instead of capping the list', 'commits.slice(0, MAX_COMMITS)', 'commits');
 
+test('the draft log row has log-format.md\'s columns, in its order (Yield before Friction)', () => {
+  const doc = fs.readFileSync(path.join(ROOT, 'skills', 'harness-bootstrap', 'reference', 'log-format.md'), 'utf8');
+  const columns = [];
+  for (const line of doc.slice(doc.indexOf('| Unit · Mode · Type · Tier')).split('\n')) {
+    if (!line.startsWith('| ')) break;
+    columns.push(line.split(' | ')[0].replace(/^\| /, '').replace(/[*★]/g, '').trim());
+  }
+  const core = fs.readFileSync(path.join(SCRIPTS, CORE_REL), 'utf8');
+  const row = /`\| \$\{cell\(unit\)\}.*\|`/.exec(core);
+  assert.ok(row, 'the draft row template is in the core');
+  const cells = row[0].slice(2, -2).split(' | ');
+  assert.strictEqual(cells.length, columns.length, `${cells.length} cells for ${columns.length} columns`);
+  assert.strictEqual(cells[columns.indexOf('Yield by source')], '${yieldCompact}');
+  assert.match(cells[columns.indexOf('Friction')], /friction/);
+  assert.match(cells[columns.indexOf('Missed by harness')], /missed by harness/);
+});
+
 test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) leaves that repo untouched', () => {
   const decoy = tmp('unit-record-decoy-');
   cleanup.push(decoy);

@@ -390,7 +390,7 @@ test('buildRecord prints every field with its exact label, in order', () => {
     '| 8 review — code-reviewer | ran | 3 findings |',
     '',
     'Draft log row:',
-    '| EP-27.04 · plan · Code · Full | 3h12m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: missed by harness> | <fill: friction> | codex-review 0/1/0 |',
+    '| EP-27.04 · plan · Code · Full | 3h12m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |',
     '',
   ]);
   // An explicit base and head win over the state file and the newest commit.
@@ -426,7 +426,7 @@ test('buildRecord degrades loudly: no gates, no Claimed, no ledger, no findings,
   );
   assert.match(rec, /^\| — \| missing \| no ## Ledger section \|$/m);
   assert.match(rec, /^\| U-2 · \? · \? · \? \| unknown \| 0\/0 \|/m);
-  assert.match(rec, /\| none \|$/m);
+  assert.match(rec, /\| none \| <fill: friction> \|$/m);
   assert.match(buildRecord({ state: parseState(''), commits: [], diffstat: '', gatesSummary: null, now: NOW }), /^## Record — unit \(/);
 });
 
@@ -476,7 +476,7 @@ test('buildRecord escapes a pipe inside a ledger cell, a source name and the uni
   const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW });
   assert.match(rec, /^\| a \\\| b \| ran \| c \\\| d \|$/m);
   assert.match(rec, /^\| A \\\| B · \? · \? · \? \|/m);
-  assert.match(rec, /\| x \\\| y 0\/1\/0 \|$/m);
+  assert.match(rec, /\| x \\\| y 0\/1\/0 \| <fill: friction> \|$/m);
   // The escaped row splits back into the same three cells.
   assert.deepEqual(splitRow('| a \\| b | ran | c \\| d |'), ['a | b', 'ran', 'c | d']);
 });

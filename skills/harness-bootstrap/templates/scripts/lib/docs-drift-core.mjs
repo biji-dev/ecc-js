@@ -118,14 +118,11 @@ const DECL =
   /^export\s+(?:default\s+)?(?:async\s+)?(?:function\s*\*?|const|let|var|class|type|interface|enum)\s+(?!extends\b|implements\b)([A-Za-z_$][\w$]*)/;
 const NAMED = /^export\s*(?:type\s*)?\{([^}]*)\}/;
 
-/** The names one source line exports (declaration form or `export { a, b as c }`). */
-function exportsOfLine(line) {
-  const text = line.trim();
-  const decl = DECL.exec(text);
-  if (decl) return [decl[1]];
-  const named = NAMED.exec(text);
-  if (!named) return [];
-  return named[1]
+const LIST_OPEN = /^export\s*(?:type\s*)?\{([^}]*)$/; // `export {` whose list continues on later lines
+
+/** The exported names in part of an export list: `a, type b, c as d` → [a, b, d]. */
+function namesOfList(list) {
+  return list
     .split(',')
     .map((part) => part.trim().replace(/^type\s+/, ''))
     .filter(Boolean)
@@ -136,6 +133,15 @@ function exportsOfLine(line) {
     .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
 }
 
+/** The names one source line exports (declaration form or `export { a, b as c }`). */
+function exportsOfLine(line) {
+  const text = line.trim();
+  const decl = DECL.exec(text);
+  if (decl) return [decl[1]];
+  const named = NAMED.exec(text);
+  return named ? namesOfList(named[1]) : [];
+}
+
 /**
  * Every export the diff touches, in order: `{ side: 'added'|'removed', name, path }`, where
  * `path` is the file whose hunk declared it (tracked from the `diff --git` / `+++ b/` headers).
@@ -143,10 +149,14 @@ function exportsOfLine(line) {
 function scanExports(diffText) {
   const found = [];
   let current = null;
+  // Inside a multi-line `export {` list: a name on its own line is an export too. Context lines
+  // keep the state; a hunk that starts inside a list it cannot see does not know it (a known gap).
+  let inList = false;
   for (const line of diffText.split('\n')) {
     const header = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
     if (header) {
       current = header[2];
+      inList = false;
       continue;
     }
     if (line.startsWith('+++ ')) {
@@ -154,9 +164,26 @@ function scanExports(diffText) {
       continue;
     }
     if (line.startsWith('--- ')) continue;
+    if (line.startsWith('@@')) {
+      inList = false;
+      continue;
+    }
     const side = line[0] === '+' ? 'added' : line[0] === '-' ? 'removed' : null;
+    const text = line.slice(1).trim();
+    let names;
+    if (inList) {
+      const end = text.indexOf('}');
+      names = namesOfList(end === -1 ? text : text.slice(0, end));
+      if (end !== -1) inList = false;
+    } else {
+      const open = LIST_OPEN.exec(text);
+      if (open) {
+        inList = true;
+        names = namesOfList(open[1]);
+      } else names = exportsOfLine(text);
+    }
     if (!side) continue;
-    for (const name of exportsOfLine(line.slice(1))) found.push({ side, name, path: current });
+    for (const name of names) found.push({ side, name, path: current });
   }
   return found;
 }

@@ -292,6 +292,20 @@ test('an agent with no effort: is agent-effort-unpinned; xhigh or max is effort-
   assert.ok(!ids(report(repo)).includes('agent-effort-unpinned'));
 });
 
+test('effort parsing: quoted keys and values, indentation and comments count; an empty value is unpinned', () => {
+  const repo = mk({
+    '.claude/agents/quoted.md': '---\nname: quoted\n"effort": \'high\'\n---\nBody.\n',
+    '.claude/agents/indented.md': '---\n  name: indented\n  effort: max # left from a spike\n---\nBody.\n',
+    '.claude/agents/empty.md': '---\nname: empty\neffort:\nmodel: opus\n---\nBody.\n',
+    '.claude/agents/null.md': '---\nname: nulled\neffort: null\n---\nBody.\n',
+  });
+  const rep = report(repo);
+  const at = id => rep.hazards.filter(h => h.id === id).map(h => h.path).sort();
+  assert.deepStrictEqual(at('agent-effort-unpinned'), ['.claude/agents/empty.md', '.claude/agents/null.md']);
+  assert.deepStrictEqual(at('effort-above-high'), ['.claude/agents/indented.md']);
+  assert.strictEqual(rep.hazards.find(h => h.id === 'effort-above-high').line, 3);
+});
+
 test('project settings above high effort are effort-above-high; high is not', () => {
   const repo = mk({ '.claude/settings.json': JSON.stringify({ effortLevel: 'high', env: { CLAUDE_CODE_EFFORT_LEVEL: 'xhigh' } }) });
   const found = report(repo).hazards.filter(h => h.id === 'effort-above-high');

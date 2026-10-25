@@ -175,10 +175,10 @@ test('prompts carry plan, scope, impact and the lane B outside-the-diff instruct
 
 console.log('\nreview workflow: dimension selection');
 
-test('src/app.tsx routes to quality only (tests added for tier full); typescript and react are never auto-selected', async () => {
+test('src/app.tsx routes to quality only, at either tier; typescript and react are never auto-selected', async () => {
   assert.deepStrictEqual(await dimsOf(['src/app.tsx']), ['quality']);
   const { calls } = await run({ diff: diffFor('src/app.tsx'), tier: 'full' });
-  assert.deepStrictEqual(calls.map(c => c.opts.label.replace(/^review:/, '')), ['quality', 'tests']);
+  assert.deepStrictEqual(calls.map(c => c.opts.label.replace(/^review:/, '')), ['quality']);
   // even with every trigger and a plan, they stay out unless named
   const busy = await dimsOf(['src/auth/app.tsx', 'db/migrations/0001.sql', 'src/util.test.ts'], { plan: 'p', secondFamily: 'unavailable' });
   assert.ok(!busy.includes('typescript') && !busy.includes('react'), `got ${busy.join(',')}`);
@@ -238,11 +238,12 @@ test('trigger words in the diff text do not select security; changedFiles overri
   assert.ok((await dimsOf(['src/util.ts'], { changedFiles: ['src/session.ts'] })).includes('security'));
 });
 
-test('a plan or a scope adds conformance; a test path adds tests; explicit dimensions override', async () => {
+test('a plan or a scope adds conformance; a test path adds tests on Full only; explicit dimensions override', async () => {
   assert.ok((await dimsOf(['src/util.ts'], { plan: 'p' })).includes('conformance'));
   assert.ok((await dimsOf(['src/util.ts'], { scope: 's' })).includes('conformance'));
   assert.ok(!(await dimsOf(['src/util.ts'])).includes('conformance'));
-  assert.ok((await dimsOf(['src/util.test.ts'])).includes('tests'));
+  assert.ok(!(await dimsOf(['src/util.test.ts'])).includes('tests'), 'small: the second family covers the tests');
+  assert.ok((await dimsOf(['src/util.test.ts'], { tier: 'full' })).includes('tests'));
   assert.deepStrictEqual(await dimsOf(['src/app.tsx'], { dimensions: ['security'] }), ['security']);
 });
 

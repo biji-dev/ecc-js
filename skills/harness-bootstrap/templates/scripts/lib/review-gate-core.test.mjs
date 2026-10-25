@@ -78,10 +78,22 @@ test('parseNumstat sums added and deleted, binary files count 0, tabs in a path 
   assert.deepEqual(parseNumstat(''), []);
 });
 
+test('parseNumstat reads the -z form, where git never quotes a path', () => {
+  assert.deepEqual(
+    parseNumstat('2\t1\tsrc/core/odd\tname.ts\0-\t-\tsrc/core/runtime.wasm\x000\t1\tsrc/a "q".ts\0'),
+    [f('src/core/odd\tname.ts', 3), f('src/core/runtime.wasm', 0), f('src/a "q".ts', 1)],
+  );
+  // so a critical path with an odd name stays critical
+  const r = bound(() =>
+    decide({ files: parseNumstat('2\t1\tsrc/core/odd\tname.ts\0'), kind: 'fix', maxFixed: 'P1', round: 3 }),
+  );
+  assert.equal(r.decision, 'escalate-adversarial');
+});
+
 // ---- kind slice
 
-test('slice 1: no production lines is skipped', () => {
-  for (const files of [[], [f('docs/x.md', 90), f(TEST_FILE, 40)], [f('src/a.ts', 0)]]) {
+test('slice 1: no production file is skipped', () => {
+  for (const files of [[], [f('docs/x.md', 90), f(TEST_FILE, 40)]]) {
     const r = bound(() => decide({ files, kind: 'slice' }));
     assert.equal(r.decision, 'skip');
     assert.deepEqual(r.reviewers, []);
@@ -119,9 +131,19 @@ test('slice 4: otherwise the slice review goes to the second family, cold or cri
 
 // ---- kind unit
 
-test('unit 1: no production lines is skipped, at either tier', () => {
+test('unit 1: no production file is skipped, at either tier', () => {
   for (const tier of ['small', 'full'])
     assert.equal(decide({ files: [f('docs/a.md', 50)], kind: 'unit', tier }).decision, 'skip');
+});
+
+test('a binary or mode-only production file (0 lines) is still a change to review', () => {
+  const bin = [f('src/core/runtime.wasm', 0)];
+  assert.equal(bound(() => decide({ files: bin, kind: 'slice' })).decision, 'second-family');
+  assert.equal(bound(() => decide({ files: bin, kind: 'unit' })).decision, 'review');
+  const r = bound(() => decide({ files: bin, kind: 'fix', maxFixed: 'P1', round: 3 }));
+  assert.equal(r.decision, 'escalate-adversarial');
+  assert.equal(r.prodFiles, 1);
+  assert.equal(r.prodLines, 0);
 });
 
 test('unit 2: a small unit is reviewed by the OTHER family, plus matching specialists', () => {
@@ -219,6 +241,23 @@ test('fix 3: a cold fix round is reviewed by the second family once, never again
     assert.equal(r.decision, 'skip', `round ${round}`);
     assert.match(r.reason, /regression tests prove it/);
   }
+});
+
+test('fix 8: the specialist whose trigger the fix hits joins its re-review', () => {
+  const auth = [f('src/auth/login.ts', 5)];
+  const r1 = decide({ files: auth, kind: 'fix', maxFixed: 'P1', round: 1 });
+  assert.equal(r1.decision, 'second-family');
+  assert.deepEqual(r1.reviewers, ['second-family-review', 'security-reviewer']);
+  // a cold round 2 is otherwise skipped; with a trigger hit, the specialist alone re-reads it
+  const r2 = decide({ files: auth, kind: 'fix', maxFixed: 'P2', round: 2 });
+  assert.equal(r2.decision, 'review');
+  assert.deepEqual(r2.reviewers, ['security-reviewer']);
+  assert.match(r2.reason, /triggered specialist/);
+  // critical, round 3: adversarial plus the specialist; P3 stays a sweep
+  const hot = [f('src/core/migrations/0002.sql', 90)];
+  const r3 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P1', round: 3 }));
+  assert.deepEqual(r3.reviewers, ['second-family-adversarial', 'database-reviewer']);
+  assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'sweep');
 });
 
 test('fix 4: round 3+ on critical code escalates to the adversarial pass', () => {
@@ -345,6 +384,8 @@ test('parseArgs: defaults, values, and the usage errors', () => {
   assert.throws(() => parseArgs(['--base']), /--base needs a value/);
   assert.throws(() => parseArgs(['--base', '--kind']), /--base needs a value/);
   assert.throws(() => parseArgs(['--base', 'a', '--fix']), /unknown option --fix/);
+  assert.throws(() => parseArgs(['--base', '-R', '--kind', 'unit']), /--base must be a revision/);
+  assert.throws(() => parseArgs(['--base', 'a', '--head', '-p']), /--head must be a revision/);
   assert.ok(Number.isNaN(parseArgs(['--base', 'a', '--round', 'x']).round), 'decide rejects it');
 });
 
@@ -436,4 +477,10 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   res = gate('--base', 'no-such-ref', '--kind', 'slice');
   assert.equal(res.status, 2);
   assert.match(res.stderr, /review-gate: git failed/);
+  // A base that names a file, not a revision, is the same failure -- never a path filter.
+  res = gate('--base', 'README.md', '--kind', 'unit');
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /review-gate: git failed: README\.md is not a commit/);
+  res = gate('--base', base, '--head', 'README.md', '--kind', 'unit');
+  assert.equal(res.status, 2);
 });

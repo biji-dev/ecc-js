@@ -288,7 +288,7 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
     ...ledgerRows,
     '',
     'Draft log row:',
-    `| ${cell(unit)} · ${kind.join(' · ')} | ${elapsed ?? 'unknown'} | ${sum.defects} | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: missed by harness> | <fill: friction> | ${yieldCompact} |`,
+    `| ${cell(unit)} · ${kind.join(' · ')} | ${elapsed ?? 'unknown'} | ${sum.defects} | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: missed by harness> | ${yieldCompact} | <fill: friction> |`,
     '',
   ].join('\n');
 }

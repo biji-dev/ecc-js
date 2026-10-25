@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 23;
+const EXPECTED_TESTS = 26;
 
 let passed = 0;
 let failed = 0;

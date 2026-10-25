@@ -21,18 +21,47 @@ went from about three quarters of main-thread spend to about zero.
 session coordinates and stays small: it does not read the plan or source files
 whole (`runner.md`).
 
-`[M]` **Read slices, not files** — search first, then read with an offset and a
-limit. Bulk exploration goes to a search agent that returns locations and quoted
-evidence; on a bug it never decides the cause.
+`[M]` **Search, then read once.** Grep first, then read what you need in one call —
+the file whole, or a range of 150 lines or more. Never page a file in small
+`sed -n` slices: each slice is a turn, and each turn re-reads the whole context. The
+main session reads no plan or source file whole, and never `Read`s a generated or
+large file (a lockfile, a bundle, a snapshot, a 260 KB fixture once cost 65K tokens
+re-read on every turn): code reading goes to a search agent that returns locations
+and quoted evidence; on a bug it never decides the cause.
+
+`[M]` **Tool discipline — copied verbatim into every generated agent file and every
+brief**, under a `## Tool discipline` heading (it is mechanism, so never reworded):
+
+> Each turn re-reads your whole context, so a turn is the unit of cost. Send
+> independent reads, searches and checks as parallel tool calls in one message. Read
+> a file whole with `Read`, or in ranges of 150 lines or more — never in small
+> `sed -n` slices. Put several patterns in one search (`rg -e a -e b`). Run a long
+> command in the background and wait for its completion notice; never poll it with
+> `sleep`. Shrink a screenshot before reading it (`sips -Z 1000 <file>` on macOS),
+> and prefer a text snapshot — an accessibility tree, a DOM query, `uiautomator
+> dump` — when the question is about text or structure.
+> Origin: the cost study (the rule origins › Cost) — 96% of agent turns made one tool
+> call, about 4,500 small slice reads, 41 sleep polls in one session.
+
+`[B]` The origin pointer is the one bound word: it names the project's rule-origins
+file (default `docs/harness/rule-origins.md`), never a skill file the project lacks.
 
 `[M]` **Run-and-report goes to a Sonnet runner** — the verify run, re-runs, a smoke
 check, a cold UI walk. It quotes each PASS/FAIL or result line and the log path,
 and stops at the first red without attributing or fixing it. The main session
 attributes; an implementer fixes. The first red on a critical path, a live pass on
-a never-auto surface and deploys stay with Opus.
+a never-auto surface and the decision to deploy stay with Opus; the runbook that
+carries out an approved deploy runs on Sonnet (below).
 
 `[M]` **A switch line before each step**, one line, then continue:
-`Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact offered) · Reason`.
+`Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact or clear offered) · Reason`.
+The main session runs at `high`. An `Effort` above `high` with no reason in the line
+is itself a finding: say so and ask the owner to lower it (`/effort high`) — a
+session left at `max` passes it to every subagent (`gate-design.md`).
+
+`[M]` **Release and deploy runbooks go to a Sonnet runner** at `high` — build,
+upload, smoke, report. Judgment calls inside them (a wire-skew check against the
+deployed API, a red on a never-auto surface) come back to the Opus session.
 
 ## No hand-off — the compaction rule
 
@@ -51,10 +80,16 @@ new session is the owner's choice alone. The work never waits on a `/compact`.
 - **Offer only at a step boundary:** after Gate 1, after implementation is
   committed, after findings are written down. Never mid-debug, mid-edit series, or
   with a decision not yet written down.
+- **At a gate that waits on the owner, or at a sub-milestone boundary, offer
+  `/clear` instead** — with the resume command ready to paste (`/task-runner <unit>`).
+  The state file is the resume point, so a cleared context resumes from about 8 KB
+  instead of a 200–400K compaction summary, and it never waits out a cache expiry.
+  It is an offer, like `/compact`; the work never stops for it, and nothing needs
+  pasting but the command.
 - **The keep-line:**
   `/compact keep: unit <id>, branch <b>, worktree <path>, tier, plan <path>, state file <path>, step <n> done / next, the unit's decision ids, open findings, commands to rerun`.
-  A post-compaction turn starts from the state file and continues the next step
-  itself.
+  A post-compaction or post-clear turn starts from the state file and continues the
+  next step itself.
 - Reviewer hand-backs live in files (`.review-work/<name>/`), not only in the chat
   — a compaction lost them once and they were recovered from the transcript.
 
@@ -79,7 +114,8 @@ transcript tail and:
 - below the warning budget, gives the model a one-line figure for the switch line
   (on `UserPromptSubmit` only);
 - past it, tells the user on `Stop` and the model on the other two to offer a
-  `/compact` at the next step boundary and keep working — never to ask for a new
+  `/compact` at the next step boundary — or `/clear` and the runner's resume command
+  when the run is waiting on the owner — and keep working, never to ask for a new
   session;
 - on `PostToolUse`, speaks only when the context crosses into a new 25K band, so a
   long tool loop hears about it without hearing it every call;

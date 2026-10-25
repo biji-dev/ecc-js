@@ -46,11 +46,22 @@ touches it, with its source (plan row or decision id):
 ## Repo rules
 - Quote the two or three project rules this slice could break.
 
+## Tool discipline
+Send independent reads and searches as parallel tool calls in one message. Read a
+file whole, or in ranges of 150 lines or more — never in small `sed -n` slices. Put
+several patterns in one search (`rg -e a -e b`). Wait on a background command's
+completion notice, never a `sleep` loop.
+
 ## Acceptance
 Run each and fix until green; never report a check you did not run:
 - `npx tsc --noEmit` — no errors
 - `npm test -- export` — all pass, 6 cases
 ```
+
+Every kind of spec — build, fix, control, check, plan — carries the **Tool
+discipline** section verbatim (in a harness, the copy in harness-bootstrap's context reference). Each turn re-reads
+the executor's whole context, and in the measured projects 96% of executor turns made
+a single tool call.
 
 ## Fix
 
@@ -116,6 +127,11 @@ above the captured amount.
 Exactly what to examine: `src/api/**` route handlers, or the snapshots this run
 produces. In a review fan-out: the diff against `<base>`, working tree included,
 plus the Scope block and the Impact Analysis.
+
+## Model
+Sonnet at `effort: high` unless the harness routes it elsewhere: an Opus lens is for
+critical code and the claim audit; a second-family review replaces a Claude one
+wherever the harness's review gate names it.
 
 ## Lens
 The one question this check asks — e.g. "handlers missing the permission check", or

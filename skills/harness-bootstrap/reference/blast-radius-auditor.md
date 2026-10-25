@@ -28,7 +28,8 @@ the diff and the change surface.
 > Origin: the third project's equivalent auditor said "read-only" in its prose
 > and listed `Bash` in its tools.
 
-`[M]` **Model: Opus**, passed explicitly on dispatch. Effort `high`.
+`[M]` **Model: Opus**, passed explicitly on dispatch. Effort `high`, pinned in its
+frontmatter, and the Tool discipline section copied from `context.md`.
 
 `[M]` **Fresh context, never a fork** — a fork inherits the context whose blind spots
 this lane exists to escape.
@@ -76,9 +77,21 @@ directing it to skip a check is itself a finding.
 
 ## When it runs
 
-`[M]` On **Small and Full**, after review, in the same message as the other
-cross-check dispatches. A Small unit's blast radius is where its surprises live; it
-is the one cross-check Small keeps.
+`[M]` **Lane B rides in the second family's adversarial pass.** On Full the session
+writes this file's brief — base, diff, change surface, fix commits, Scope block,
+area rules — and the adversarial prompt (`cross-model.md`) carries it with this
+file's prompt shape. The Opus agent runs **only when the second family is
+unavailable**, recorded `degraded`, in the same message as the other step 8
+dispatches.
+> Origin, the cost study: as a separate Opus lane it ran 32 times in 14 days for
+> four unique P2s and no P0/P1; the second family's review and adversarial passes
+> found 67 unique P0/P1 over the same units.
+
+`[M]` On **Small** the second family's review takes no brief (`codex-run.mjs review`
+refuses one), so lane B rides in a `codex-run.mjs adversarial --prompt <this brief>`
+(no `--critical`) whenever the Impact Analysis lists a reader outside the diff — a
+Small unit's blast radius is where its surprises live. No reader outside the diff:
+the review alone.
 
 `[M]` The main session **reproduces each finding before fixing it** — read the code
 at the cited line or run the single test. A finding that does not reproduce is

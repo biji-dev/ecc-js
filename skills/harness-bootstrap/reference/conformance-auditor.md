@@ -25,6 +25,13 @@ because it remembers intending each part.
 
 `[M]` **Model: Sonnet**, passed explicitly on dispatch. Its misses are
 architectural, not capability — a stronger model would not have caught them.
+> Origin, the cost study: a project's tier table said "reviewers: Opus", the
+> dispatch passed it, and this auditor ran as Opus at `max` — 4.01 dollars a run
+> against 0.61 on Sonnet at `high`, for the same checklist.
+
+`[M]` **Frontmatter `effort: high`, and the Tool discipline section** copied verbatim
+from `context.md` — an agent file without its own `effort:` inherits the session's,
+and one session at `max` passed it to every auditor (`rules.md` §1 › Cost).
 
 `[M]` **It reads both instruction files.** A plain file read does not expand
 `@AGENTS.md`, so an auditor that reads only `CLAUDE.md` misses the shared rules.
@@ -67,6 +74,10 @@ a finding. Self-reported deviations are **claims to verify**, not facts.
 
 `[M]` Tell it which columns are written at land (status, evidence) so it does not
 flag their absence every round.
+
+`[M]` **Once per unit**, plus a re-audit scoped to the fix commits only when a fix
+round touched a plan item. It reads the sections of the instruction files it needs
+by search, never a large `CLAUDE.md` whole.
 
 `[B]` Where locked decisions live · the base branch · the plan path · the write-set
 column.

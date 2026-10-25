@@ -77,13 +77,13 @@ export function budgetMessage(event, ctx, warn = WARN, limit = LIMIT) {
     return {
       systemMessage: over
         ? `Context ${k} - over the ${limit / 1000}K budget; every turn re-reads ~${k} tokens. /compact at a step boundary if you are here; otherwise the session continues and auto-compaction takes over.`
-        : `Context ${k} - past ${warn / 1000}K. A /compact at the next step boundary helps if you are here; the work does not wait for it.`,
+        : `Context ${k} - past ${warn / 1000}K. A /compact at the next step boundary helps if you are here (or /clear and the runner's resume command while it waits on you at a gate); the work does not wait for it.`,
     };
   }
   if (event === 'UserPromptSubmit' || event === 'PostToolUse') {
     const additionalContext = over
       ? `[context-budget] Main-thread context is ~${k} tokens, over the ${limit / 1000}K budget (harness file, "Context budget"). Auto-compaction is imminent: make sure the state file is current (decision log, step done / next, open findings) and keep working. Do not stop, and never ask for a new session.`
-      : `[context-budget] Main-thread context is ~${k} tokens, past the ${warn / 1000}K mark (harness file, "Context budget"). At the next step boundary, update the state file and offer the owner a /compact with the keep-line ready to paste, then continue without waiting. Never ask for a new session; delegate bulk reading to subagents.`;
+      : `[context-budget] Main-thread context is ~${k} tokens, past the ${warn / 1000}K mark (harness file, "Context budget"). At the next step boundary, update the state file and offer the owner a /compact with the keep-line ready to paste - or, when the run is waiting on the owner at a gate, /clear and the runner's resume command - then continue without waiting. Never ask for a new session; delegate bulk reading to subagents.`;
     return { hookSpecificOutput: { hookEventName: event, additionalContext } };
   }
   return null;

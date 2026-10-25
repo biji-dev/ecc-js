@@ -114,7 +114,7 @@ test('source avoids nondeterministic APIs that break resume', () => {
 
 test('every agent() call receives model, effort and agentType', async () => {
   const { calls } = await run(
-    { diff: diffFor('src/app.tsx'), tier: 'full', plan: 'do the thing' },
+    { diff: diffFor('src/app.tsx'), tier: 'full', plan: 'do the thing', secondFamily: 'unavailable' },
     { review: dim => ({ findings: dim === 'quality' ? [finding()] : [], checkedClean: [] }) }
   );
   assert.ok(calls.length >= 3);
@@ -130,7 +130,7 @@ test('every agent() call receives model, effort and agentType', async () => {
   assert.ok(calls.some(c => c.opts.phase === 'Verify'), 'a verifier ran');
 });
 
-test('every dimension gets its own agentType, effort high and the right model per tier', async () => {
+test('every dimension gets its own agentType, effort high and the right model per tier (tests runs on sonnet in both)', async () => {
   const all = ['quality', 'typescript', 'react', 'security', 'database', 'silentFailure', 'tests', 'conformance', 'blastRadius'];
   const expectedAgent = {
     quality: 'code-reviewer', conformance: 'plan-conformance-auditor', blastRadius: 'blast-radius-auditor',
@@ -149,7 +149,7 @@ test('every dimension gets its own agentType, effort high and the right model pe
     for (const dim of all) {
       const opts = reviews.find(c => c.opts.label === `review:${dim}`).opts;
       assert.strictEqual(opts.agentType, expectedAgent[dim], `${dim} agentType (${tier})`);
-      const model = dim === 'conformance' ? 'sonnet' : dim === 'blastRadius' ? 'opus' : standard;
+      const model = dim === 'conformance' || dim === 'tests' ? 'sonnet' : dim === 'blastRadius' ? 'opus' : standard;
       assert.strictEqual(opts.model, model, `${dim} model (${tier})`);
     }
     const verifiers = calls.filter(c => c.opts.phase === 'Verify');
@@ -160,7 +160,7 @@ test('every dimension gets its own agentType, effort high and the right model pe
 });
 
 test('prompts carry plan, scope, impact and the lane B outside-the-diff instruction', async () => {
-  const { calls } = await run({ diff: diffFor('src/app.tsx'), tier: 'small', plan: 'PLAN-TEXT', scope: 'SCOPE-TEXT', impact: 'IMPACT-TEXT' });
+  const { calls } = await run({ diff: diffFor('src/app.tsx'), tier: 'small', plan: 'PLAN-TEXT', scope: 'SCOPE-TEXT', impact: 'IMPACT-TEXT', secondFamily: 'unavailable' });
   const prompt = label => calls.find(c => c.opts.label === label).prompt;
   assert.ok(prompt('review:conformance').includes('PLAN-TEXT'));
   assert.ok(!prompt('review:quality').includes('PLAN-TEXT'));
@@ -175,17 +175,54 @@ test('prompts carry plan, scope, impact and the lane B outside-the-diff instruct
 
 console.log('\nreview workflow: dimension selection');
 
-test('src/app.tsx routes to quality, typescript, react, blastRadius (tests added for tier full)', async () => {
-  assert.deepStrictEqual(await dimsOf(['src/app.tsx']), ['quality', 'typescript', 'react', 'blastRadius']);
+test('src/app.tsx routes to quality only, at either tier; typescript and react are never auto-selected', async () => {
+  assert.deepStrictEqual(await dimsOf(['src/app.tsx']), ['quality']);
   const { calls } = await run({ diff: diffFor('src/app.tsx'), tier: 'full' });
-  assert.deepStrictEqual(
-    calls.map(c => c.opts.label.replace(/^review:/, '')),
-    ['quality', 'typescript', 'react', 'tests', 'blastRadius']
+  assert.deepStrictEqual(calls.map(c => c.opts.label.replace(/^review:/, '')), ['quality']);
+  // even with every trigger and a plan, they stay out unless named
+  const busy = await dimsOf(['src/auth/app.tsx', 'db/migrations/0001.sql', 'src/util.test.ts'], { plan: 'p', secondFamily: 'unavailable' });
+  assert.ok(!busy.includes('typescript') && !busy.includes('react'), `got ${busy.join(',')}`);
+});
+
+test('typescript and react run when named in dimensions', async () => {
+  assert.deepStrictEqual(await dimsOf(['src/app.tsx'], { dimensions: ['typescript', 'react'] }), ['typescript', 'react']);
+});
+
+test('secondFamily unavailable adds blastRadius; available or unset does not', async () => {
+  assert.deepStrictEqual(await dimsOf(['src/app.tsx'], { secondFamily: 'unavailable' }), ['quality', 'blastRadius']);
+  assert.deepStrictEqual(await dimsOf(['src/app.tsx'], { secondFamily: 'available' }), ['quality']);
+  assert.ok(!(await dimsOf(['src/app.tsx'])).includes('blastRadius'));
+});
+
+test('secondFamily other than available/unavailable throws', async () => {
+  await assert.rejects(
+    () => run({ diff: diffFor('src/app.tsx'), tier: 'small', secondFamily: 'bogus' }),
+    /harness-review: args\.secondFamily must be 'available' or 'unavailable'/
   );
 });
 
 test('a migration .sql path adds database', async () => {
   assert.ok((await dimsOf(['db/migrations/0003.sql'])).includes('database'));
+});
+
+test('database is triggered by migration and schema paths, not by a query-only file', async () => {
+  assert.ok(!(await dimsOf(['src/db/query.ts'])).includes('database'), 'query.ts is not a schema change');
+  assert.ok((await dimsOf(['db/migrations/0003.sql'])).includes('database'));
+  assert.ok((await dimsOf(['src/db/migrations/0003.ts'])).includes('database'));
+  assert.ok((await dimsOf(['drizzle/0003_x.ts'])).includes('database'));
+  assert.ok((await dimsOf(['src/db/schema.ts'])).includes('database'));
+  assert.ok(!(await dimsOf(['src/schema-utils.ts'])).includes('database'));
+});
+
+test('every review and verify prompt contains a Tool discipline line', async () => {
+  const { calls } = await run(
+    { diff: diffFor('src/app.tsx'), tier: 'full', plan: 'p', secondFamily: 'unavailable', dimensions: ['quality', 'typescript', 'react', 'security', 'database', 'silentFailure', 'tests', 'conformance', 'blastRadius'] },
+    { review: dim => ({ findings: dim === 'quality' ? [finding()] : [], checkedClean: [] }) }
+  );
+  assert.ok(calls.some(c => c.opts.phase === 'Review') && calls.some(c => c.opts.phase === 'Verify'), 'both phases ran');
+  for (const { opts, prompt } of calls) {
+    assert.ok(prompt.split('\n').some(line => line.startsWith('Tool discipline:')), `${opts.label} has a Tool discipline line`);
+  }
 });
 
 test('src/util.ts with tier small has no security reviewer; trigger paths add security and silentFailure', async () => {
@@ -201,17 +238,18 @@ test('trigger words in the diff text do not select security; changedFiles overri
   assert.ok((await dimsOf(['src/util.ts'], { changedFiles: ['src/session.ts'] })).includes('security'));
 });
 
-test('a plan or a scope adds conformance; a test path adds tests; explicit dimensions override', async () => {
+test('a plan or a scope adds conformance; a test path adds tests on Full only; explicit dimensions override', async () => {
   assert.ok((await dimsOf(['src/util.ts'], { plan: 'p' })).includes('conformance'));
   assert.ok((await dimsOf(['src/util.ts'], { scope: 's' })).includes('conformance'));
   assert.ok(!(await dimsOf(['src/util.ts'])).includes('conformance'));
-  assert.ok((await dimsOf(['src/util.test.ts'])).includes('tests'));
+  assert.ok(!(await dimsOf(['src/util.test.ts'])).includes('tests'), 'small: the second family covers the tests');
+  assert.ok((await dimsOf(['src/util.test.ts'], { tier: 'full' })).includes('tests'));
   assert.deepStrictEqual(await dimsOf(['src/app.tsx'], { dimensions: ['security'] }), ['security']);
 });
 
 test('changedFiles is unioned with the paths parsed from the diff', async () => {
-  const dims = await dimsOf(['src/util.ts'], { changedFiles: ['db/migrations/0001.sql'] });
-  assert.ok(dims.includes('typescript'), 'parsed path kept');
+  const dims = await dimsOf(['src/auth/login.ts'], { changedFiles: ['db/migrations/0001.sql'] });
+  assert.ok(dims.includes('security'), 'parsed path kept');
   assert.ok(dims.includes('database'), 'changedFiles path added');
 });
 
@@ -219,13 +257,14 @@ console.log('\nreview workflow: diff path parsing');
 
 const gitHeader = (a, b, extra = '') => `diff --git ${a} ${b}\n${extra}`;
 const pathCases = [
-  ['mnemonic i/ w/', gitHeader('i/src/app.tsx', 'w/src/app.tsx', '--- i/src/app.tsx\n+++ w/src/app.tsx\n@@ -1 +1 @@\n-a\n+b\n'), ['react']],
-  ['mnemonic c/ o/', gitHeader('c/src/app.tsx', 'o/src/app.tsx', '--- c/src/app.tsx\n+++ o/src/app.tsx\n@@ -1 +1 @@\n-a\n+b\n'), ['react']],
-  ['--no-prefix', gitHeader('src/app.tsx', 'src/app.tsx', '--- src/app.tsx\n+++ src/app.tsx\n@@ -1 +1 @@\n-a\n+b\n'), ['react']],
-  ['quoted non-ASCII path', gitHeader('"a/src/caf\\303\\251/auth.ts"', '"b/src/caf\\303\\251/auth.ts"', 'index 1..2 100644\n'), ['typescript', 'security']],
-  ['rename-only entry', gitHeader('a/src/old.txt', 'b/src/session.ts', 'similarity index 100%\nrename from src/old.txt\nrename to src/session.ts\n'), ['typescript', 'security']],
+  // paths contain a trigger word (auth/session) or a migrations/ directory so the parsed path decides the auto-selected dimension
+  ['mnemonic i/ w/', gitHeader('i/src/auth/login.ts', 'w/src/auth/login.ts', '--- i/src/auth/login.ts\n+++ w/src/auth/login.ts\n@@ -1 +1 @@\n-a\n+b\n'), ['security']],
+  ['mnemonic c/ o/', gitHeader('c/src/auth/login.ts', 'o/src/auth/login.ts', '--- c/src/auth/login.ts\n+++ o/src/auth/login.ts\n@@ -1 +1 @@\n-a\n+b\n'), ['security']],
+  ['--no-prefix', gitHeader('src/auth/login.ts', 'src/auth/login.ts', '--- src/auth/login.ts\n+++ src/auth/login.ts\n@@ -1 +1 @@\n-a\n+b\n'), ['security']],
+  ['quoted non-ASCII path', gitHeader('"a/src/caf\\303\\251/auth.ts"', '"b/src/caf\\303\\251/auth.ts"', 'index 1..2 100644\n'), ['security']],
+  ['rename-only entry', gitHeader('a/src/old.txt', 'b/src/session.ts', 'similarity index 100%\nrename from src/old.txt\nrename to src/session.ts\n'), ['security']],
   ['binary-only entry', gitHeader('a/db/migrations/0003.sql', 'b/db/migrations/0003.sql', 'Binary files a/db/migrations/0003.sql and b/db/migrations/0003.sql differ\n'), ['database']],
-  ['path with spaces', gitHeader('a/src/my file.tsx', 'b/src/my file.tsx', 'index 1..2 100644\n'), ['react']]
+  ['path with spaces', gitHeader('a/src/my auth file.ts', 'b/src/my auth file.ts', 'index 1..2 100644\n'), ['security']]
 ];
 for (const [name, diff, expected] of pathCases) {
   test(`path parsing: ${name}`, async () => {
@@ -281,8 +320,8 @@ test('path parsing fails closed: unparseable diff without changedFiles throws, w
   const diff = 'this is not a unified diff, just some text\n';
   await assert.rejects(() => run({ diff, tier: 'small' }), /changedFiles/);
   await assert.rejects(() => run({ diff, tier: 'small', changedFiles: [] }), /changedFiles/);
-  const dims = await dimsOf([], { diff, changedFiles: ['src/app.tsx'] });
-  assert.ok(dims.includes('react'));
+  const dims = await dimsOf([], { diff, changedFiles: ['src/auth/login.ts'] });
+  assert.ok(dims.includes('security'));
 });
 
 // ── verification and verdict ─────────────────────────────────────────────────
@@ -338,8 +377,8 @@ test('verdicts are paired with their finding, not by position', async () => {
 test('a finding with an unknown severity fails its dimension', async () => {
   for (const bad of [finding({ severity: 'P9' }), finding({ severity: 'constructor' }), finding({ severity: undefined }), null]) {
     const { result } = await run(
-      { diff: diffFor('src/app.tsx'), tier: 'small' },
-      { review: dim => ({ findings: dim === 'react' ? [bad, finding({ severity: 'P3', evidence: 'ok' })] : [], checkedClean: [] }) }
+      { diff: diffFor('src/app.tsx'), tier: 'small', dimensions: ['quality', 'react'] },
+      { review: dim => ({ findings: dim === 'react' ? [bad,finding({ severity: 'P3', evidence: 'ok' })] : [], checkedClean: [] }) }
     );
     assert.deepStrictEqual(result.failedDimensions, ['react'], `severity ${bad && bad.severity}`);
     assert.strictEqual(result.incomplete, true);
@@ -360,8 +399,8 @@ test('P2 and P3 are advisory without verification', async () => {
 
 test('a failed dimension makes the run incomplete and CHANGES_REQUESTED', async () => {
   const { result } = await run(
-    { diff: diffFor('src/app.tsx'), tier: 'small' },
-    { review: dim => (dim === 'react' ? null : { findings: [], checkedClean: ['ok'] }) }
+    { diff: diffFor('src/app.tsx'), tier: 'small', dimensions: ['quality', 'react'] },
+    { review: dim => (dim === 'react' ? null :{ findings: [], checkedClean: ['ok'] }) }
   );
   assert.strictEqual(result.incomplete, true);
   assert.strictEqual(result.verdict, 'CHANGES_REQUESTED');
@@ -371,16 +410,16 @@ test('a failed dimension makes the run incomplete and CHANGES_REQUESTED', async 
 });
 
 test('a clean run approves and reports checkedClean per dimension', async () => {
-  const { result } = await run({ diff: diffFor('src/util.ts'), tier: 'small' });
+  const { result } = await run({ diff: diffFor('src/util.ts'), tier: 'small', secondFamily: 'unavailable' });
   assert.strictEqual(result.verdict, 'APPROVE');
   assert.strictEqual(result.incomplete, false);
-  assert.deepStrictEqual(result.dimensionsRun, ['quality', 'typescript', 'blastRadius']);
+  assert.deepStrictEqual(result.dimensionsRun, ['quality', 'blastRadius']);
   assert.deepStrictEqual(result.checkedClean.blastRadius, ['blastRadius ok']);
 });
 
 test('same evidence but different claims are not merged: both are verified', async () => {
   const { result, calls } = await run(
-    { diff: diffFor('src/app.tsx'), tier: 'small' },
+    { diff: diffFor('src/app.tsx'), tier: 'small', dimensions: ['quality', 'react'] },
     {
       review: dim => {
         if (dim === 'quality') return { findings: [finding({ title: 'Style nit about the line', evidence: 'db.query(sql + id)' })], checkedClean: [] };
@@ -399,7 +438,7 @@ test('same evidence but different claims are not merged: both are verified', asy
 
 test('titles that differ only by case or whitespace still dedup; empty evidence keys on file, line and title', async () => {
   const { result } = await run(
-    { diff: diffFor('src/app.tsx'), tier: 'small' },
+    { diff: diffFor('src/app.tsx'), tier: 'small', dimensions: ['quality', 'react', 'typescript'] },
     { review: dim => {
       if (dim === 'quality') return { findings: [finding({ severity: 'P3', title: 'Unchecked   INPUT' })], checkedClean: [] };
       if (dim === 'react') return { findings: [finding({ severity: 'P3', title: 'unchecked input' })], checkedClean: [] };
@@ -430,7 +469,7 @@ test('FINDINGS_SCHEMA rejects whitespace-only title, file and evidence (they fee
 
 test('the same finding from two dimensions dedups to one at the strictest severity', async () => {
   const { result } = await run(
-    { diff: diffFor('src/app.tsx'), tier: 'small' },
+    { diff: diffFor('src/app.tsx'), tier: 'small', dimensions: ['quality', 'react'] },
     {
       review: dim => {
         if (dim === 'quality') return { findings: [finding({ severity: 'P2', evidence: '  const X =   req.body.id ' })], checkedClean: [] };
@@ -459,6 +498,7 @@ test('missing or empty diff, bad tier, or malformed optional args throw', async 
     { diff: diffFor('a.ts'), tier: 'medium' },
     { diff: diffFor('a.ts'), tier: 'small', changedFiles: 'a.ts' },
     { diff: diffFor('a.ts'), tier: 'small', plan: 5 },
+    { diff: diffFor('a.ts'), tier: 'small', secondFamily: 'bogus' },
     { diff: diffFor('a.ts'), tier: 'small', dimensions: ['nonsense'] },
     { diff: diffFor('a.ts'), tier: 'small', dimensions: [] },
     null

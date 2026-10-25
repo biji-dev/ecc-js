@@ -77,9 +77,12 @@ call it; never maintain the same sequence in three skill files.
 ## Claude Code — the default
 
 - **Models:** from the risk map (`gate-design.md`) — Opus for the main session,
-  gates, critical code, Full review and the claim and blast-radius auditors; Sonnet
-  for cold slices, delegated builders, the conformance auditor, doc scans and
-  runners. Pass `model` and `effort` on every Agent dispatch.
+  gates, critical code, the one unit code review on Full, the triggered specialists
+  and the claim auditor; Sonnet for cold slices, delegated builders, the conformance
+  auditor, `pr-test-analyzer`, doc rewrites and runners; the second family for
+  per-slice review, Small review, fix re-reviews and the adversarial pass. Pass
+  `model` and `effort` on every Agent dispatch, and pin `effort: high` in every
+  agent file.
 - **Agents:** `.claude/agents/*.md` with `model:` and `tools:` frontmatter —
   `tools` is enforced, so the conformance and blast-radius auditors' read-only
   bound is real. Generated: `plan-conformance-auditor.md`, `blast-radius-auditor.md`,

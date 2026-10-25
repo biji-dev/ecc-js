@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 2
+  version: 3
 ---
 
 # Harness bootstrap
@@ -83,19 +83,22 @@ orient:
   is an assertion.
 - **A "done" report ends with the step ledger; a step missing from it did not
   run.**
-- **The record is written last, from the diff, and audited by someone else.**
+- **The record is written last, from the diff — fields generated, prose audited by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
 - **Never ask the owner for a new session or a hand-off.**
 - **An implementer may always raise a gate, never lower one.**
+- **P3s never start a fix round; a re-review reads the fix diff.** Review cost goes
+  where the risk is (`gate-design.md` › Review lineup).
 
 **Left deliberately empty, to be earned:** the never-auto categories and the risk
 map (Phase B derives them), the importer threshold, the Hot-small tier, tripwire
-numbers, medians, a milestone cap. Budgets on instruction files **ratchet from
-their current size**. Importing another project's numbers hands a team rules whose
+numbers, medians. The milestone cap **starts** at 15 slices or 10k changed production
+lines (`gate-design.md` › Milestone size) and the log moves it. Budgets on
+instruction files **ratchet from their current size**. Importing another project's numbers hands a team rules whose
 reasons they have not lived. The **model split** is the exception — Opus where a
-miss cannot be corrected forward, Sonnet for work bounded by an exit condition
-(`gate-design.md`) — because it is mechanism, not a threshold.
+miss cannot be corrected forward, Sonnet for work bounded by an exit condition, the second family where it finds the
+most for the least (`gate-design.md`) — because it is mechanism, not a threshold.
 
 **Project-specific skills are not generated.** They are the residue of a vendor
 behaving against its own documentation. Phase C wires the trigger — a line in the
@@ -249,14 +252,18 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The **empty** earned slots — Hot-small, tripwire numbers, the milestone cap — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
-| `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `tools: Read, Grep, Glob`; states its bound |
-| `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B · `model: opus`, `tools: Read, Grep, Glob` |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `tools: Read, Grep, Glob, Bash`; states that it sabotages and restores |
-| `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices |
+| `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `effort: high`, `tools: Read, Grep, Glob`; states its bound |
+| `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B's fallback when the second family is unavailable · `model: opus`, `effort: high`, `tools: Read, Grep, Glob` |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages and restores |
+| `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices, `effort: high` |
+| every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
+| `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line |
+| `scripts/docs-drift.mjs` + `scripts/lib/docs-drift-core.mjs` + its test | `templates/scripts/docs-drift.mjs`, `templates/scripts/lib/docs-drift-core.mjs`, `templates/scripts/lib/docs-drift-core.test.mjs` | step 8a's stale-doc list; bind `DOC_GLOBS` to the doc tree |
+| `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields, from git and the state file (`scope-guard.md` › the state file's shape) |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
 | `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`, and run the id self-test (`commit-guard.md`) against every plan id and branch. Test the shipped file |
 | `.claude/hooks/command-guard.mjs` + settings entry | `harness-targets.md`, `templates/command-guard.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR` |
@@ -411,5 +418,6 @@ approves; the upgrade lands between runs and writes the manifest.
 - Never write during Phase 0 before the owner answers the decision sheet.
 - Pass `model` and `effort` explicitly on every subagent dispatch — an agent file's
   pinned model otherwise wins, and the riskiest unit silently gets the cheapest
-  reviewer.
+  reviewer. Every generated agent pins `effort: high`; never leave a session at
+  `max` (`rules.md` §1 › Cost).
 - Never ask the owner to open a new session or paste a hand-off.

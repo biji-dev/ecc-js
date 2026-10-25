@@ -28,7 +28,7 @@ Each rule was produced by a failure in another project; the incident behind each
   - **Mutate operands, anchors and call arguments, not only branches.** One pass over call arguments found 18 survivors the branch mutants missed.
   - **A kill belongs to the tree it was measured on.** Re-run the standing mutants after a change that reads the guarded value.
 - **Nothing merely asserted survives.** Docstrings, reports, test titles and column names assert; none verify — five false ones in a single task.
-- **The record is written last, from the diff, as fields — and audited by someone who did not write it.** Nine of the first twenty-one tasks shipped a false claim after the author-facing rule existed.
+- **The record is written last, from the diff — its fields generated, its prose audited by someone who did not write it.** Nine of the first twenty-one tasks shipped a false claim after the author-facing rule existed.
 - **A "done" report ends with the step ledger; a step missing from it did not run.** A fresh cross-check contradicted 81 of 88 "done" reports.
 - **Reproduce a finding before fixing it.** About 6% of claimed gaps were artefacts; one that does not reproduce is retracted.
 - **Trust a wrapper's exit code, never the agent CLI's own.** The CLI exited 0 on runs with no verdict and non-zero on a recovered retry.
@@ -52,6 +52,15 @@ Each rule was produced by a failure in another project; the incident behind each
 - **Measure elapsed from the lock claim, not the first commit**, with `git log --format=%cI`, and record owner-wait separately.
 - **The log append must be idempotent.** A resumed run reaches that step twice; duplicate rows doubled one unit's weight in every median.
 
+### Cost
+
+- **P3s never start a fix round.** In one milestone 20 of 50 fix rounds were opened by P3s alone, each re-reviewed by Opus.
+- **A re-review reads the fix diff, by the reviewer whose finding was fixed** — one round 2 re-ran four reviewers over the full scope.
+- **Never leave a session or a dispatch at `max` effort.** Every subagent inherited it and the same reviewers cost 5–8× their `high` runs.
+- **One turn, many tool calls.** 96% of agent turns made one tool call, each re-reading the whole context.
+- **Split a milestone that will not fit one session.** 50 slices in one session meant 20 compactions and a 493 KB state file.
+- **Wait on a completion notice, never a sleep loop; shrink a screenshot before reading it.** Each poll re-read about 200K of context.
+
 ### Sessions and the working tree
 
 - **Hold edits until every reviewer has reported**, and never stage with `git add -A`: reviewer probe files were swept into commits six times.
@@ -60,8 +69,8 @@ Each rule was produced by a failure in another project; the incident behind each
 - **Chain an edit script to its commit with `&&`** — a half-applied script was committed under a message describing the whole change.
 - **A check whose result a commit message asserts is a precondition of the commit, not something remembered.** Lint failed, and the next commit said "eslint clean".
 - **Harness changes land between runs, never during one.**
-- **Never ask the owner for a new session or a hand-off.** 28 of 118 sessions ended in one, most triggered by a budget rule.
-- **Read slices, not files; one slice per agent.** Two whole-plan reads ended a session after one step.
+- **Never ask the owner for a new session or a hand-off.** 28 of 118 sessions ended in one, most triggered by a budget rule; offer `/compact`, or `/clear` and the resume command at a gate wait.
+- **Search, then read once; one slice per agent.** Two whole-plan reads ended a session after one step, and about 4,500 small `sed -n` reads each re-read the whole context.
 - **Run the full verification once per unit, not once per slice.** One change request ran the full suite 39 times: 8.4 hours.
 - **Stop processes by the PID you recorded, never by name** — a kill by pattern reaches every session's processes on the machine.
 

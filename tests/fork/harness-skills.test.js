@@ -84,7 +84,8 @@ function checkReferences(skillDir) {
   const generated = [
     'context-budget.mjs', 'harness-guard.sh', 'registry.md', 'plan-conformance-auditor.md', 'claim-auditor.md',
     'implementer.md', 'harness-manifest.json', 'command-guard.mjs', 'run-gates.sh', 'codex-run.mjs',
-    'check-agent-docs.mjs', 'review.workflow.js', 'settings.json', 'settings.local.json', 'package.json'
+    'check-agent-docs.mjs', 'review.workflow.js', 'settings.json', 'settings.local.json', 'package.json',
+    'review-gate.mjs', 'docs-drift.mjs', 'unit-record.mjs'
   ];
   for (const m of text.matchAll(/`([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:md|sh|mjs|js|json))`/g)) {
     const name = m[1];

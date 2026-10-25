@@ -26,8 +26,10 @@ paste a hand-off note or say what is next.
 the plan text, the slicing, every brief, the critique of every report, triage, the
 scope guard, the decision log, the commits and the merge. Above Small it writes no
 feature code and reads no file whole: it reads reports, `git diff --stat`, hunks
-of critical files and gate result lines. **A report is a claim** it checks against
-the plan, the diff and the Scope block before acting on it.
+of critical files and gate result lines. Code reading goes to a search agent; a
+generated or large file is never `Read` in the main session (`context.md`). **A
+report is a claim** it checks against the plan, the diff and the Scope block before
+acting on it.
 
 `[M]` Short, pointing at the harness file rather than restating it. Production
 runners grew to about 250 lines; past that, move rules into the harness file and
@@ -45,7 +47,7 @@ never by feel. Check in this order; unsure → the heavier type.
 
 | Type | Test | Runs |
 |---|---|---|
-| **Ops** | a deploy, migration run, production data fix or credential rotation, even with no repo change | its runbook, owner approval first |
+| **Ops** | a deploy, migration run, production data fix or credential rotation, even with no repo change | its runbook, owner approval first; the runbook's mechanical steps on a Sonnet runner, judgment calls in the Opus session (`context.md`) |
 | **Answer** | nothing changes — a question, an investigation, a review, a status, a plan only | no steps; the answer quotes its evidence. **A bug's cause, even with no fix, takes step 1's root-cause route** |
 | **Docs-light** | every changed path is prose, and no test or script reads it | write, format, lint, commit; one ledger row |
 | **Docs-heavy** | the same, but a rule file, a runbook, a change request, or ~200+ lines others act on | Docs-light + one review by the other model family + one fix pass |
@@ -103,14 +105,15 @@ regression → 5–8 · doc sweep → 8a · ship → 9.
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
 | Gate 1 | — | **auto** unless the risk map or the policy is hit | owner |
 | 2 implement | the session | the session or one executor | one executor per slice |
-| 4 conform | — | against the Scope block | against plan + Scope block, and re-audit |
+| 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
+| 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
-| 8 review | — | one reviewer + language reviewer; lane B | all routed + second family; lane B; adversarial |
-| 8 fix rounds | — | one re-review | per `gate-design.md` |
+| 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
+| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the sweep | the same (`gate-design.md`) |
 | 8 verify | scoped | FULL once before merge | FULL |
-| 8a docs | in the same commit | in the same commit | a separate sweep |
-| 8b record | ledger line | fields | fields |
-| 8c claims | — | **skipped; the record is fields only** | blocking |
+| 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
+| 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
+| 8c claims | — | **skipped; the record is generated** | blocking, **product claims** |
 | Gate 2 | by the merge policy | by the merge policy | owner |
 
 `[M]` **A P0 or P1 from review promotes Small to Full** — the unit then runs the
@@ -172,7 +175,10 @@ as its own commit. Never reclaim a row you do not own.
 **Gate 1 — one decision sheet.** `[M]` Every open question, once, with a default
 (`scope-guard.md`). Its slicing table is approved here too: slice · files ·
 executor · order · gate · expected counts · risk. Every acceptance criterion maps to
-a slice, or the table is incomplete.
+a slice, or the table is incomplete. **A table past the milestone cap splits here**
+into sub-milestones (`gate-design.md` › Milestone size). Cold slices name the second
+family's `implement-cold` or a Sonnet builder — never the Opus implementer.
+Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`).
 
 **Step 2 — implement.**
 - `[M]` **An executor per slice, from the risk map** (`gate-design.md`): critical
@@ -182,9 +188,15 @@ a slice, or the table is incomplete.
 - `[M]` **One slice per agent.** A fix round is split by area into several.
   > Origin: one agent handed a whole fix round ran 309 calls, to 368K of context.
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
-  check, and on critical code send one reviewer **on a different model** over that
-  slice's diff before the next slice builds on it. A follow-up goes to the same
-  agent while its context is small. Update the state file.
+  check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
+  [--writer codex]` and dispatch what it names — the **second family's review** over
+  that slice's diff before the next slice builds on it (`codex-run review`); a cold
+  slice the second family wrote is deferred to the unit review. **Never an Opus
+  code-reviewer per slice.** The review runs in the background while the next
+  independent slice starts. A follow-up goes to the same agent while its context is
+  small. Update the state file.
+- `[M]` **Independent twins run in parallel** — a web and a mobile screen over a
+  contract that has already landed, for example — each a cold slice of its own.
 - `[M]` **Tests land with their slice**: a bug's regression test fails without the
   fix; a feature's golden path and Impact Analysis edge cases. Prove each with a
   control (`delegate-tasks` control specs): break the protection, paste the red line,
@@ -197,9 +209,9 @@ a slice, or the table is incomplete.
 - `[M]` Mutation runs follow `rules.md` §1.
 
 **Step 4 — conform.** `[M]` Dispatch `plan-conformance-auditor` with
-`model: "sonnet"`. A fix round that introduces a new blocking finding is a stop
-(`rules.md` §2). A scoped re-audit after every fix round. Tell it which columns are
-written at land.
+`model: "sonnet"`, `effort: "high"`. A fix round that introduces a new blocking
+finding is a stop (`rules.md` §2). A scoped re-audit only after a fix round that
+touches a plan item. Tell it which columns are written at land.
 
 **Steps 5–7.** `[M]` Every validation line follows `rules.md` §1. Live pass: drive
 the real surface, including refusal and empty states, and follow one figure across
@@ -207,11 +219,16 @@ every surface that states it. Visual: assert against the accessibility tree or a
 DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
-- `[M]` Route reviewers by what the diff touched, from the specialist trigger table
-  (`gate-design.md`); pass `model` and `effort` on every dispatch. Full runs the
-  second family's review beside them, then lane B (`blast-radius-auditor.md`) and the
-  adversarial pass (`cross-model.md`) — independent, in **one message**. Small runs
-  its reviewers and lane B.
+- `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
+  <tier>` (`--writer codex` for a unit the second family wrote) and dispatch exactly
+  the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
+  passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
+  over the whole unit diff, the second family's adversarial pass carrying lane B's
+  change surface (`blast-radius-auditor.md` › The brief), each triggered specialist,
+  and `pr-test-analyzer` on Sonnet when tests changed — independent, in **one message**. Small: the
+  second family's review, plus the adversarial pass with lane B's brief when the
+  Impact Analysis lists a reader outside the diff. The second family unavailable → the fallbacks in
+  `gate-design.md`, `degraded`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.
   Briefs forbid host-level operations and repository-wide suite runs.
 - `[M]` **Hold edits until every reviewer has reported.**
@@ -221,33 +238,54 @@ DOM snapshot; send screenshots to a model that reads images.
   > Origin: about 6% of claimed gaps in the third project were artefacts — a
   > scaled measurement, harness timing, another worktree's test run.
 - `[M]` **Triage by scope class, then severity**: OUT → follow-ups whatever its
-  severity; P3 → follow-ups unless on a line this round already changes.
+  severity; P3 → **the sweep**, never a fix round, unless on a line this round already
+  changes.
 - `[M]` **Fix rounds** are bounded by `gate-design.md`, and each fix gets a
-  regression test proven to fail without it. Fix groups on critical code go to Opus.
+  regression test proven to fail without it. One brief per area; fix groups on
+  critical code go to Opus. After the round, `review-gate.mjs --kind fix
+  --max-fixed <P> --round <n>` names the re-review, which reads the fix diff only.
+  `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
+  and run the adversarial pass only for the round the owner orders.
+- `[M]` **The P3 sweep** runs once per slice set, after the fix rounds: one Sonnet
+  fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
+  targeted tests, no re-review.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
   attributed against the merge base, working tree included.
 
 **Step 8a — docs.** `[M]` Only when the diff changes a public behaviour, a named
-invariant, a module description or user-visible output. List stale docs with a
-search over the doc tree; rewrite the stale sections, never append. A change to a
+invariant, a module description or user-visible output. List stale docs with
+`node scripts/docs-drift.mjs --since <merge base>` — a script, not an Opus lane — and
+hand the candidates to a Sonnet runner or the second family's `docs` kind to
+rewrite the stale sections, never append. A change to a
 rule file updates every document that repeats the rule (`rules.md` §1).
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
-not from memory — write the deviations, the controls evidence, the Gate 2 brief and
-the draft log row, with the final diff open. **As fields, not prose:** verdicts,
-finding counts by severity, commit hashes, test counts with the command that
-produced them, follow-up rows, elapsed. Delete any sentence you cannot point at a
-line for.
+not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
+<state file> --gates <the FULL verify output>` prints commits, diffstat, the gate
+SUMMARY line, finding counts by severity and by source, elapsed, the ledger and the
+draft log row from git and the state file, never retyped. The git-derived fields
+are true by construction; the ledger and findings rows are copied as the session
+wrote them.
+The session writes only what no command knows: the deviations, the controls
+evidence, the `<fill: …>` cells of the log row. Delete any sentence you cannot point
+at a line for. **The record has a byte budget** like the state file
+(`scope-guard.md`).
 > Origin: two tasks took three and five claim-audit rounds; every false claim was
 > in the record or a commit message, not the code.
 
-**Step 8c — claim audit.** `[M]` Dispatch `claim-auditor` with `model: "opus"`
-(`claim-auditor.md`). Blocking on Full. A second consecutive `FALSE CLAIMS` switches
-to quote-or-delete.
+**Step 8c — claim audit.** `[M]` Dispatch `claim-auditor` with `model: "opus"`,
+`effort: "high"` (`claim-auditor.md`), over **product claims** — code comments,
+docstrings, test titles, commit messages, controls evidence and the deviations. The
+git-derived record fields are not re-audited; the ledger's evidence cells are
+checked against the saved returns. Blocking on Full. A second consecutive
+`FALSE CLAIMS` switches to quote-or-delete.
+> Origin, the cost study: 79 of the claim auditor's 105 P1s were about record
+> prose, not product code.
 
 **Gate 2.** `[M]` Brief: verdicts · unresolved findings · diffstat · what is still
 running · **the step ledger and its lists** (`context.md`). Never presented while a
-review round is outstanding. Decided by the merge policy (`gate-design.md`).
+review round is outstanding. Decided by the merge policy (`gate-design.md`). When it
+waits on the owner, offer `/clear` with the resume command (`context.md`).
 
 **Step 9 — land.**
 - `[M]` **Order:** run the guard → land commit **on the unit branch** (status,
@@ -259,7 +297,9 @@ review round is outstanding. Decided by the merge policy (`gate-design.md`).
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file; `git merge` does not read stdin.
 
-**Step 10 — teardown.** `[M]` Stop everything started, by recorded PID only, and
+**Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
+— ran in the background and were awaited by their completion notice, never a sleep
+loop. Stop everything started, by recorded PID only, and
 confirm nothing still listens on the claimed ports. If a library behaved contrary to
 its documentation, write the vendor skill now (`vendor-skill.md`). Close out the
 follow-ups doc (`scope-guard.md`), then the no-hand-off close above.
@@ -270,8 +310,9 @@ version or release step · where artifacts live.
 ## The implementer agent
 
 `[M]` Generated to `.claude/agents/implementer.md`: `model: opus`, `effort: high`,
-`tools: Read, Edit, Write, Grep, Glob, Bash`. Dispatched with `model` passed
-explicitly — `"sonnet"` for a cold slice. Its file says:
+`tools: Read, Edit, Write, Grep, Glob, Bash`. Dispatched with `model` and `effort`
+passed explicitly — `"sonnet"` for a cold slice. Its file carries the **Tool
+discipline** section verbatim (`context.md`) and says:
 
 - work only in the worktree the brief names, by absolute path;
 - read `AGENTS.md` and every rule file the brief lists (`--rules-for`);
@@ -297,8 +338,9 @@ already shipped): requests go stale both ways. Its impact section is step 1's
 Impact Analysis — verify and extend it, never derive a parallel list.
 
 `[M]` **The steps run per milestone**, not per request. A risky milestone lands
-alone; split pure moves from interface changes. `[B]` A milestone cap in
-production lines, empty until the log earns one.
+alone; split pure moves from interface changes. `[B]` A milestone cap — it
+starts at 15 slices or 10k changed production lines and the log moves it
+(`gate-design.md` › Milestone size).
 
 `[M]` Close out in the document itself: the milestone row marked shipped with scope
 corrections, wrong claims struck through in place.

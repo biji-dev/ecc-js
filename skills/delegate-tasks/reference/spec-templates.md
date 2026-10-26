@@ -8,12 +8,14 @@ exactly one spec's Files list.
 The run's index, written before any spec and approved at Gate 1 in a harness:
 
 ```markdown
-| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk |
-|---|---|---|---|---|---|---|---|
-| 01 money service | src/refunds/service.ts, src/refunds/service.test.ts | build | Opus implementer | 1, serial | `npm test -- refunds` | 9 cases | critical |
-| 02 route | src/api/refunds.ts | build | Sonnet | 2, wave A | `npx tsc --noEmit` | — | cold |
-| 03 admin button | src/admin/RefundButton.tsx | build | Sonnet | 2, wave A | `npm test -- RefundButton` | 3 cases | cold |
+| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk | Deliverable |
+|---|---|---|---|---|---|---|---|---|
+| 01 money service | src/refunds/service.ts, src/refunds/service.test.ts | build | opus | 1, serial | `npm test -- refunds` | 9 cases | critical | D1 |
+| 02 route | src/api/refunds.ts | build | sonnet | 2, wave A | `npx tsc --noEmit` | — | cold | D1 |
+| 03 admin button | src/admin/RefundButton.tsx | build | codex | 2, wave A | `npm test -- RefundButton` | 3 cases | cold | D1 |
 
+Deliverable D1 — refund from the admin order page. Demo: open an order paid
+yesterday → Refund → the order shows "refunded" and the ledger a reversing row.
 Coverage: AC1 → 01 · AC2 → 02 · AC3 → 03
 Kept by the session: src/api/router.ts (hub)
 ```
@@ -24,6 +26,11 @@ Kept by the session: src/api/router.ts (hub)
 # Task NN — <imperative title>
 
 Wave: 0 | 1 | …
+
+## Executor
+
+<codex | opus | sonnet> — from the slicing table's Executor cell; `codex` runs through
+`codex-run implement-cold`, the others as `Agent(model: …, effort: "high")`.
 
 ## Goal
 One sentence: what this task delivers.
@@ -67,6 +74,11 @@ a single tool call.
 
 ```markdown
 # Fix NN — <imperative summary of the symptom>
+
+## Executor
+
+<codex | opus | sonnet> — `codex` runs through `codex-run fix-cold`; a fix on critical
+code is `opus` unless the user's override says otherwise.
 
 ## Symptom
 What goes wrong, as reported (ticket quote or repro steps).

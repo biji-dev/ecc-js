@@ -116,8 +116,9 @@ test('slice 3: critical code written by the second family gets a Claude reviewer
   );
   assert.equal(r.decision, 'required');
   assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
-  assert.match(r.reason, /critical code written by the second family: a Claude reviewer now/);
-  assert.match(r.reason, /should not go to the second family/);
+  assert.match(r.reason, /critical code written by the second family \(an owner override, executor: codex\): Opus reviews it now/);
+  assert.doesNotMatch(r.reason, /should not go/);
+  assert.ok(r.reason.endsWith(`now (${HOT})`), r.reason);
   assert.deepEqual(r.critical, [HOT]);
 });
 
@@ -298,6 +299,73 @@ test('fix 7: critical code with a P1 fixed in more than FIX_LINES lines adds Opu
     assert.deepEqual(r.reviewers, ['second-family-review', 'opus-code-reviewer']);
     assert.match(r.reason, /at most two Opus rounds/);
   }
+});
+
+// ---- a fix written by the second family is re-read by Claude
+
+const codexFix = (files, maxFixed, round = 1) =>
+  bound(() => decide({ files, kind: 'fix', writer: 'codex', maxFixed, round }));
+
+test('fix codex 1: a cold round 1 fix by the second family goes to a Sonnet reviewer', () => {
+  const r = codexFix([f(COLD, 80)], 'P1');
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer']);
+  assert.match(r.reason, /cold fix round 1 written by the second family: a Claude reviewer \(Sonnet\) re-reads the fix/);
+});
+
+test('fix codex 2: a cold round 2+ fix by the second family is still skipped', () => {
+  for (const round of [2, 3, 7]) {
+    const r = codexFix([f(COLD, 80)], 'P1', round);
+    assert.equal(r.decision, 'skip', `round ${round}`);
+    assert.deepEqual(r.reviewers, []);
+    assert.match(r.reason, /regression tests prove it/);
+  }
+});
+
+test('fix codex 3: critical P2 fixed by the second family is re-read by Opus, however big', () => {
+  const r = codexFix([f(HOT, FIX_LINES * 5)], 'P2', 2);
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, /P2 fixed: the fix was written by the second family, so Opus reads it/);
+});
+
+test('fix codex 4: critical P1 fixed in at most FIX_LINES lines is re-read by Opus, no second family', () => {
+  for (const maxFixed of ['P1', 'P0']) {
+    const r = codexFix([f(HOT, FIX_LINES)], maxFixed);
+    assert.equal(r.decision, 'review', maxFixed);
+    assert.deepEqual(r.reviewers, ['opus-code-reviewer'], maxFixed);
+    assert.match(r.reason, new RegExp(`<= ${FIX_LINES} production lines: the fix was written by the second family`));
+  }
+});
+
+test('fix codex 5: critical P1 fixed in more than FIX_LINES lines is re-read by Opus alone', () => {
+  const r = codexFix([f(HOT, FIX_LINES + 1)], 'P1');
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, new RegExp(`> ${FIX_LINES} production lines: the fix was written by the second family`));
+  assert.match(r.reason, /at most two Opus rounds/);
+});
+
+test('fix codex 6: critical round 3+ by the second family is an Opus adversarial pass, same tripwire wording', () => {
+  for (const round of [3, 5]) {
+    const r = codexFix([f(HOT, 5)], 'P1', round);
+    assert.equal(r.decision, 'escalate-adversarial', `round ${round}`);
+    assert.deepEqual(r.reviewers, ['opus-adversarial']);
+    const claude = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round }));
+    assert.equal(r.reason, claude.reason);
+  }
+});
+
+test('fix codex 7: triggered specialists still join a codex fix re-review', () => {
+  const r = decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', writer: 'codex', maxFixed: 'P1' });
+  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer', 'security-reviewer']);
+});
+
+test('unit codex: a full unit written by the second family keeps Opus first and says it is the cross-family review', () => {
+  const r = decide({ files: [f(COLD, 20)], kind: 'unit', writer: 'codex' });
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer', 'second-family-adversarial']);
+  assert.match(r.reason, /; the unit was written by the second family, so the Opus code-reviewer is the cross-family review$/);
+  assert.doesNotMatch(decide({ files: [f(COLD, 20)], kind: 'unit' }).reason, /second family/);
 });
 
 // ---- result shape and notChecked

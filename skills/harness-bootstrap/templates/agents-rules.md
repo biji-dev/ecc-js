@@ -44,6 +44,7 @@ Each rule was produced by a failure in another project; the incident behind each
 - **A re-tier into a never-auto category invalidates the reviews already run.** A unit added an authorization layer mid-run and merged reviewed at the lower tier.
 - **A conformance verdict is not evidence of correctness.** Conformance returned CLEAN on code with a CRITICAL nine tasks running.
 - **An implementer may always raise a gate, never lower one.**
+- **Ask the owner only what only the owner can decide.** Of 373 owner questions in 14 days, 81% were process or technical; the owner took the recommendation 89% of the time.
 - **Taste is not a risk tier.** Copy, naming and visual identity are the owner's call however clean every check is.
 
 ### Sizing and measurement
@@ -59,6 +60,7 @@ Each rule was produced by a failure in another project; the incident behind each
 - **Never leave a session or a dispatch at `max` effort.** Every subagent inherited it and the same reviewers cost 5–8× their `high` runs.
 - **One turn, many tool calls.** 96% of agent turns made one tool call, each re-reading the whole context.
 - **Split a milestone that will not fit one session.** 50 slices in one session meant 20 compactions and a 493 KB state file.
+- **Never re-run a gate on a tree it already passed.** 33 full-suite runs repeated on an unchanged tree in 14 days.
 - **Wait on a completion notice, never a sleep loop; shrink a screenshot before reading it.** Each poll re-read about 200K of context.
 
 ### Sessions and the working tree

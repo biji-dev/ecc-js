@@ -58,7 +58,7 @@ Read the request — feature doc, plan slice, change request, bug backlog, audit
 findings — and the code. Write the **slicing table**:
 
 ```
-| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk |
+| Slice | Files | Kind | Executor | Order / wave | Gate | Expected counts | Risk | Deliverable |
 ```
 
 Every acceptance criterion of the request maps to a slice, or the table is
@@ -67,7 +67,7 @@ exists (the `harness-bootstrap` skill's gate design), else the project's own jud
 
 | Slice | Executor | How |
 |---|---|---|
-| copy, mechanical adoption with count gates, UI against a committed contract, docs | the second family (`implement-cold`) when it is available and under its budget, else a Sonnet builder | waves, in parallel when truly independent — twins over a landed contract (web and mobile) included |
+| copy, mechanical adoption with count gates, UI against a committed contract, tests for cold code, fixes outside critical code, docs | **the second family first** (`implement-cold`, `fix-cold`, `docs`) while it is available and under its budget, else a Sonnet builder — and a Sonnet builder when the slice needs a browser, a service the sandbox cannot reach, or steering mid-run | waves, in parallel when truly independent — twins over a landed contract (web and mobile) included |
 | contract or domain logic | Opus implementer | serial |
 | critical code — never-auto categories, migrations, auth, money, widely imported modules | **Opus implementer only** | **serial, never in parallel** |
 
@@ -75,6 +75,12 @@ The second family's quota is separate from Claude's: a cold slice there costs th
 Claude quota nothing, and its review comes from Claude (a Sonnet reviewer, or the
 unit's one Opus review in a harness). In one measured milestone, cold UI slices ran on
 the Opus implementer while the second family sat at a quarter of its weekly quota.
+
+**An `executor:` cell overrides the table** — `codex | opus | sonnet | auto`, per
+slice or unit-wide; the user's word beats the risk routing, which beats the default.
+Handing critical code to the second family or Sonnet is the user's call alone, and
+its review is then an Opus reviewer per slice. Each Build and Fix spec states its
+executor in `## Executor`.
 
 State the decision and the model for each role in one line before going on.
 
@@ -214,7 +220,9 @@ they stay in the session. Codex, ZCode and Kimi forms are in
 - **Visual output:** a separate reviewer — never a builder — reads the screenshots or
   the accessibility snapshot against the spec's visual contract.
 - Blocked tasks: fix the **spec**, re-dispatch only that executor.
-- Run the project's strongest check once yourself.
+- Run the project's strongest check once yourself — **standalone only.** Inside a
+  harness the runner's step 8 FULL verify is that check; run nothing extra on the
+  same tree.
 - **Commit gate.** Standalone: present the diff summary and proposed conventional
   commit messages, and commit only when the user confirms. Inside a harness: the
   runner's commit points and Gate 2 apply instead.
@@ -250,4 +258,5 @@ the P0 and P1 findings a grep can decide before anyone fixes them.
   own.
 - **Critical slices never run in parallel.**
 - Executors' scoped commands are the fast tier; the session's combined gate is the
-  strong tier and runs at least once before the report.
+  strong tier and runs at least once before the report — in a harness, as the
+  runner's FULL verify, once.

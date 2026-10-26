@@ -15,6 +15,8 @@
  *   --kind fix     once per fix round, over <sha-before-the-fixes>.. (pass the whole round once,
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
+ *   --writer       who wrote the diff (for --kind fix: who wrote the fix); the other family reviews it,
+ *                  so a codex fix is re-read by Claude
  *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
  *                  against <base> (committed, staged, unstaged and untracked changes; a review is
  *                  often owed before the commit; a binary file counts 0 lines but is a changed file)

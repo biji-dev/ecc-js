@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 3
+  version: 4
 ---
 
 # Harness bootstrap
@@ -90,6 +90,12 @@ orient:
 - **An implementer may always raise a gate, never lower one.**
 - **P3s never start a fix round; a re-review reads the fix diff.** Review cost goes
   where the risk is (`gate-design.md` › Review lineup).
+- **Ask the owner only what only the owner can decide.** Product and confirmation
+  decisions as decision cards; technical ones decided, logged and listed at Gate 2
+  (`gate-design.md` › Who decides).
+- **One deliverable per coordinator context, each with a `Demo:` line** the owner
+  can open and check (`gate-design.md` › Milestone size).
+- **Never re-run a gate on a tree it already passed** (`run-gates.sh` reuses it).
 
 **Left deliberately empty, to be earned:** the never-auto categories and the risk
 map (Phase B derives them), the importer threshold, the Hot-small tier, tripwire
@@ -98,7 +104,8 @@ lines (`gate-design.md` › Milestone size) and the log moves it. Budgets on
 instruction files **ratchet from their current size**. Importing another project's numbers hands a team rules whose
 reasons they have not lived. The **model split** is the exception — Opus where a
 miss cannot be corrected forward, Sonnet for work bounded by an exit condition, the second family where it finds the
-most for the least (`gate-design.md`) — because it is mechanism, not a threshold.
+most for the least and as the first builder of cold work (`gate-design.md`) — because it is mechanism, not a threshold.
+Any slice's executor can be overridden (`runner.md` › Executor override).
 
 **Project-specific skills are not generated.** They are the residue of a vendor
 behaving against its own documentation. Phase C wires the trigger — a line in the
@@ -263,7 +270,9 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
 | `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line |
 | `scripts/docs-drift.mjs` + `scripts/lib/docs-drift-core.mjs` + its test | `templates/scripts/docs-drift.mjs`, `templates/scripts/lib/docs-drift-core.mjs`, `templates/scripts/lib/docs-drift-core.test.mjs` | step 8a's stale-doc list; bind `DOC_GLOBS` to the doc tree |
-| `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields, from git and the state file (`scope-guard.md` › the state file's shape) |
+| `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git and the state file (`scope-guard.md` › the state file's shape) |
+| `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); bind the price table and the dollars-per-percent calibration |
+| `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
 | `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`, and run the id self-test (`commit-guard.md`) against every plan id and branch. Test the shipped file |
 | `.claude/hooks/command-guard.mjs` + settings entry | `harness-targets.md`, `templates/command-guard.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR` |

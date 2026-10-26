@@ -80,8 +80,10 @@ new session is the owner's choice alone. The work never waits on a `/compact`.
 - **Offer only at a step boundary:** after Gate 1, after implementation is
   committed, after findings are written down. Never mid-debug, mid-edit series, or
   with a decision not yet written down.
-- **At a gate that waits on the owner, or at a sub-milestone boundary, offer
+- **At a gate that waits on the owner, or at a deliverable's boundary, offer
   `/clear` instead** — with the resume command ready to paste (`/task-runner <unit>`).
+  Each deliverable's Gate 2 is that boundary: the next deliverable starts in a clean
+  coordinator context (`gate-design.md` › Milestone size).
   The state file is the resume point, so a cleared context resumes from about 8 KB
   instead of a 200–400K compaction summary, and it never waits out a cache expiry.
   It is an offer, like `/compact`; the work never stops for it, and nothing needs

@@ -292,6 +292,20 @@ test('an agent with no effort: is agent-effort-unpinned; xhigh or max is effort-
   assert.ok(!ids(report(repo)).includes('agent-effort-unpinned'));
 });
 
+test('an agent with no model: (or model: inherit) is agent-model-unpinned', () => {
+  const repo = mk({
+    '.claude/agents/pinned.md': '---\nname: pinned\nmodel: sonnet\neffort: high\n---\nBody.\n',
+    '.claude/agents/bare.md': '---\nname: bare\neffort: high\n---\nBody.\n',
+    '.claude/agents/inherit.md': '---\nname: inherit\nmodel: "inherit" # default\neffort: high\n---\nBody.\n',
+  });
+  const at = id => report(repo).hazards.filter(h => h.id === id).map(h => h.path).sort();
+  assert.deepStrictEqual(at('agent-model-unpinned'), ['.claude/agents/bare.md', '.claude/agents/inherit.md']);
+  // mutant: pinning both clears the hazard
+  write(repo, '.claude/agents/bare.md', '---\nname: bare\nmodel: opus\neffort: high\n---\nBody.\n');
+  write(repo, '.claude/agents/inherit.md', '---\nname: inherit\nmodel: sonnet\neffort: high\n---\nBody.\n');
+  assert.ok(!ids(report(repo)).includes('agent-model-unpinned'));
+});
+
 test('effort parsing: quoted keys and values, indentation and comments count; an empty value is unpinned', () => {
   const repo = mk({
     '.claude/agents/quoted.md': '---\nname: quoted\n"effort": \'high\'\n---\nBody.\n',

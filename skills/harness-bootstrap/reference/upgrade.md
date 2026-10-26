@@ -110,7 +110,7 @@ same upgrade, or do not install the hook yet.
 change:
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 3, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 4, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -185,6 +185,7 @@ a `SKILL.md`: frontmatter must be the first line.
 | `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
 | `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
 | `agent-effort-unpinned` | add `effort: high` to the agent file's frontmatter: without it the agent inherits the session's level, and a session at `max` reaches every reviewer |
+| `agent-model-unpinned` | add `model:` to the agent file's frontmatter (`opus` for judgment, `sonnet` for bounded work): one dispatch in ten names no model, and without a pin those run on the session's Opus |
 | `effort-above-high` | lower it to `high` — an agent file at `xhigh` or `max`, or `CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel` above `high` in the project's settings; raise effort per question, never per session (`gate-design.md`) |
 | `foundation-stage-has-tests` | the pass-signal unit landed and the flip did not run: claim the flip as a `harness/` unit (`foundation.md`) |
 
@@ -199,4 +200,5 @@ manifest's `skillVersion`. An install with no manifest is v1 or earlier.
 | 1 | up to 2.2.1-js.4 | plan mode only: task runner, commit guard (repo-wide lock), two gates, conformance and claim auditors, registry, harness log, context-budget hook (Stop + UserPromptSubmit, recommended a new session), first-line stamps |
 | 2 | 2.2.1-js.5 | change mode beside plan mode; task types; tiers Trivial · Small · Full (Standard became Small); risk map and merge policy in Phase B; scope guard, decision log and committed state file; lane B `blast-radius-auditor`; test honesty in the claim auditor; guard `SCOPE=repo\|checkout` with Branch-cell matching, case-insensitive ids and a `pre-merge-commit` hook; context-budget v2 (PostToolUse, no hand-off); `run-gates.sh` with counted gates, `check-agent-docs.mjs`, `codex-run.mjs`, `command-guard.mjs`, the review workflow; manifest and markers replace stamps |
 | 3 | 2.2.3-js.3 | the cost study's lineup (`gate-design.md` › Review lineup): per-slice review by the second family, one Opus code-reviewer per unit, lane B inside the adversarial pass (the Opus auditor is the fallback), `database-reviewer` on migrations only, the language lens folded into the code-reviewer, `pr-test-analyzer` on Sonnet; fix rounds by `review-gate.mjs` — P3s to one sweep, re-reviews over the fix diff, at most two Opus rounds; `docs-drift.mjs` (8a) and `unit-record.mjs` (8b), claim audit on product claims; the state file's shape; `effort: high` and the Tool discipline section in every agent; `/clear` + resume at owner waits; the milestone split; six Cost rules; the log's *Yield by source*; hazards `agent-effort-unpinned` and `effort-above-high`. Generated blocks and agents from v2 are replaced or get section proposals |
+| 4 | 2.2.3-js.4 | owner questions by class (`gate-design.md` › Who decides): P and C asked as decision cards, T decided and listed at Gate 2 as *Decided for you*, H turned into rules; the decision row's `Class` and `Reversal cost`; deliverables with `Demo:` lines, one per coordinator context; the second family as the first builder of cold work and fixes, `--writer` on fix rounds, the `executor:` override; the sandbox section (`cross-model.md`); `run-gates.sh` result reuse by tree, single-flight lock and instant-fail note; `unit-cost.mjs` and `estimate.mjs`; the log's Deliverable, Owner wait and Cost columns and a `unit-record.mjs` row that fits them; three rules (owner decides only the owner's, never re-run a passed tree, deliverables); hazard `agent-model-unpinned`. Generated blocks, agents and scripts from v3 are replaced or get section proposals; the policy and gate-table blocks are `reviewed`, so their rows are proposals the owner re-reviews |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |

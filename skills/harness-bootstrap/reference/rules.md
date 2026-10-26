@@ -162,6 +162,16 @@ was implemented, never that the implementation works.
 
 **An implementer may always raise a gate, never lower one.**
 
+**Ask the owner only what only the owner can decide.** Product and confirmation
+decisions go to the owner as a decision card — recommendation, why, options with
+pros, cons, reversal cost and data; a recoverable, product-neutral technical
+decision is the session's, logged and listed at Gate 2 as *Decided for you*; a
+process question a rule answers is never asked (`gate-design.md` › Who decides).
+> Origin, the v4 usage study (three projects, 14 days): of 373 owner questions 51%
+> were process and 30% technical; the owner took the recommended option 89% of the
+> time, overrode 2 defaults in total, and answered a 124-item round — about 75 of
+> them technical — with "use your recommendation". 121 hours went to waiting.
+
 **Taste is not a risk tier.** A table keyed on size, blast radius and
 dependencies cannot catch a deliverable that is correct by every check and still
 the owner's call — visual identity, product copy, naming.
@@ -214,11 +224,21 @@ together in one message; several patterns go in one search (`rg -e a -e b`).
 > call, and every turn re-reads the whole context — about 100K tokens in a subagent.
 
 **Split a milestone that will not fit one session.** At Gate 1 a slicing table past
-the cap becomes sub-milestones, each with its own step 8 and its own `/clear`
-boundary.
+the cap becomes deliverables the owner can see, each with its own `Demo:` line, its
+own step 8, its own Gate 2 and its own `/clear` boundary — one deliverable per
+coordinator context.
 > Origin, the cost study: one milestone of 59.6k lines and 50 slices ran in one main
 > session — 20 compactions, a 211K average context, and a state file that grew to
 > 493 KB.
+
+**Never re-run a gate on a tree it already passed.** `run-gates.sh` reuses an
+all-PASS result for the same tree, or for one that differs only in docs, and a
+second run of the same gates waits for the first.
+> Origin, the v4 usage study: 33 full-suite runs repeated on an unchanged tree —
+> retries, two agents a minute apart, verify → docs commit → verify — and one
+> project's tests step came after its FULL verify, so a second FULL was nearly
+> always owed. No run repeated after a merge whose tree equalled the verified tip;
+> the merges were never the waste.
 
 **Wait on a completion notice, never a sleep loop; shrink a screenshot before
 reading it.**
@@ -312,7 +332,7 @@ An anomaly recorded in a log is one discovered too late.
 | Elapsed beyond 3× the tier median, **work time only** | 3× |
 | A third review round opens **without the owner asking** | 1× |
 | A re-tier crosses into a never-auto category | 1× |
-| A second consecutive `FALSE CLAIMS` from the claim auditor | counts as the first row |
+| A second consecutive `FALSE CLAIMS` from the claim auditor on **product** claims | counts as the first row — on record prose alone it is quote-or-delete and land, not a stop |
 
 The first is the strongest signal in the data. **When a fix makes things worse,
 more fixing makes it worse still** — the approach is wrong, not the

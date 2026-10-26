@@ -7,12 +7,13 @@
  * SUMMARY line of the gate log, and the Base/Claimed/Owner wait lines, ledger and findings tables
  * of the unit's state file. The session pastes or redirects the output; nothing is hand-written.
  *
- *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--json]
+ *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--json]
  *
  * options:
  *   --state <file>   the unit's state file (docs/plans/<unit>.state.md by default layout)
  *   --base <sha>     the base to diff against (default: the state file's `Base:` line)
  *   --gates <file>   a run-gates log or captured output; absent -> "Gates: not run"
+ *   --cost "<line>"  the one-line output of scripts/unit-cost.mjs; goes in the draft row's Cost cell
  *   --json           print { header, summary, commits, diffstat, gates, record } instead
  *
  * Commits are `git log --reverse <base>..HEAD`, the diffstat is `git diff --shortstat
@@ -33,7 +34,7 @@ import {
 } from './lib/unit-record-core.mjs';
 
 const USAGE =
-  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--json]';
+  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--json]';
 
 function usage(msg) {
   process.stderr.write(`unit-record: ${msg}\n${USAGE}\n`);
@@ -104,6 +105,7 @@ function main() {
     now: new Date().toISOString(),
     base,
     head,
+    cost: args.cost,
   });
   if (args.json) {
     const summary = summarizeFindings(state.findings);

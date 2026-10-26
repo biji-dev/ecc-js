@@ -18,6 +18,8 @@ import {
   normalizeSeverity,
   normalizeStatus,
   parseArgs,
+  parseDuration,
+  parseOwnerWait,
   parseState,
   splitRow,
   summarizeFindings,
@@ -96,6 +98,7 @@ test('parseState reads the header, the ledger and the findings', () => {
     mode: 'plan',
     type: 'Code',
     tier: 'Full',
+    deliverable: '',
     branch: 'ep-27.04-foo',
     base: '1a2b3c4',
     claimed: '2026-10-24T03:10:00Z',
@@ -180,6 +183,7 @@ test('parseState reads a two-column header table as key/value rows, any column n
     mode: '',
     type: '',
     tier: 'Full',
+    deliverable: '',
     branch: 'ep-27.04-role-switcher',
     base: '438801c',
     claimed: '2026-10-24T00:55:49Z',
@@ -222,13 +226,125 @@ test('a long Owner wait is truncated to 80 characters plus an ellipsis in the El
   const long = 'Gate 1 asked ' + 'x'.repeat(100);
   const state = parseState(`Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\nOwner wait: ${long}\n`);
   const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW });
-  assert.match(rec, new RegExp(`^- Elapsed: 3h12m since claim · owner wait ${long.slice(0, 80)}…$`, 'm'));
+  assert.match(
+    rec,
+    new RegExp(`^- Elapsed: 3h12m wall · owner wait not recorded — work time unknown \\(state has: ${long.slice(0, 80)}…\\)$`, 'm'),
+  );
   assert.equal(state.header.ownerWait, long);
   const exact = parseState(`Owner wait: ${'y'.repeat(80)}\n`);
   assert.match(
     buildRecord({ state: exact, commits: [], diffstat: '', gatesSummary: null, now: NOW }),
     new RegExp(`owner wait ${'y'.repeat(80)}$`, 'm'),
   );
+});
+
+test('combined header keys (`Type · tier`, `Unit · Mode`, with `/`) fill each field; single keys are unchanged', () => {
+  const h = parseState('Unit · Mode: EP-1 · change\nType · tier: Feature · Full\nDeliverable: `docs/plan.md`\n').header;
+  assert.deepEqual([h.unit, h.mode, h.type, h.tier, h.deliverable], ['EP-1', 'change', 'Feature', 'Full', 'docs/plan.md']);
+  assert.deepEqual(
+    [parseState('Type/Tier: Code/Small\n').header.type, parseState('Type/Tier: Code/Small\n').header.tier],
+    ['Code', 'Small'],
+  );
+  // In a two-column table, with an unknown part skipped, a short value, and the first value winning.
+  const t = parseState('| Field | Value |\n|---|---|\n| Type · tier | Feature · Full |\n| Mode · Foo | plan · x |\n');
+  assert.deepEqual([t.header.type, t.header.tier, t.header.mode], ['Feature', 'Full', 'plan']);
+  assert.equal(parseState('Type · tier: Feature\n').header.tier, '');
+  assert.equal(parseState('Tier: Full\nType · tier: Feature · Small\n').header.tier, 'Full');
+  // A single key keeps a slash in its value (a branch, a path).
+  assert.equal(parseState('Branch: feat/x · y\n').header.branch, 'feat/x · y');
+  assert.equal(parseState('| Deliverable | `a/b.md` |\n|-|-|\n').header.deliverable, '');
+  assert.equal(parseState('| K | V |\n|-|-|\n| Deliverable | a/b.md |\n').header.deliverable, 'a/b.md');
+});
+
+test('parseDuration: 1h20m, 45m, 2h, 1h 20m, sums over , and +; anything else is null', () => {
+  for (const [raw, want] of [
+    ['1h20m', 80],
+    ['45m', 45],
+    ['2h', 120],
+    ['1h 20m', 80],
+    ['1h20m, 30m', 110],
+    ['1h + 15m + 5m', 80],
+    ['0m', 0],
+  ])
+    assert.equal(parseDuration(raw), want, raw);
+  for (const bad of ['', 'Gate 1 asked | answered', '1h20', 'about 1h', '1h20m (Gate 1)', '1h,', 'm', 'none'])
+    assert.equal(parseDuration(bad), null, bad);
+});
+
+test('Elapsed is work time: wall minus owner wait, with the draft row carrying the work time', () => {
+  const rec = (header, extra = {}) =>
+    buildRecord({ state: parseState(`Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\n${header}`), commits: [], diffstat: '', gatesSummary: null, now: NOW, ...extra });
+  const cellsOf = (r) => splitRow(r.split('\n').find((l) => l.startsWith('| U-1 ')));
+  // Several owner-wait intervals are summed: 3h12m wall - (1h + 20m) = 1h52m.
+  let r = rec('Owner wait: 1h, 20m\n');
+  assert.match(r, /^- Elapsed: 1h52m work · 3h12m wall · owner wait 1h, 20m$/m);
+  assert.equal(cellsOf(r)[2], '1h52m');
+  assert.equal(cellsOf(r)[3], '1h, 20m');
+  r = rec('Owner wait: 2h + 1h 12m\n');
+  assert.match(r, /^- Elapsed: 0m work · 3h12m wall · owner wait 2h \+ 1h 12m$/m);
+  // Absent or unparseable owner wait: no work time is invented.
+  for (const header of ['', 'Owner wait: Gate 1 asked\n']) {
+    r = rec(header);
+    assert.match(r, /^- Elapsed: 3h12m wall · owner wait not recorded — work time unknown/m);
+    assert.equal(cellsOf(r)[2], '<fill: work time>');
+  }
+  assert.equal(cellsOf(rec(''))[3], '<fill: owner wait>');
+  assert.equal(cellsOf(rec('Owner wait: Gate 1 asked\n'))[3], 'Gate 1 asked');
+  // An owner wait longer than the wall time cannot be work time.
+  r = rec('Owner wait: 9h\n');
+  assert.match(r, /^- Elapsed: 3h12m wall · owner wait 9h exceeds wall time — work time unknown$/m);
+  assert.equal(cellsOf(r)[2], '<fill: work time>');
+});
+
+test('the draft row has the 14 log columns in order, with Deliverable, owner wait and the --cost line', () => {
+  const state = parseState(`${STATE}`.replace('Tier: Full', 'Type · tier: Code · Full\nDeliverable: docs/x.md').replace('Type: Code\n', ''));
+  const row = (cost) => {
+    const rec = buildRecord({ state, commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, cost });
+    return splitRow(rec.split('\n').find((l) => l.startsWith('| EP-27.04 ')));
+  };
+  const cells = row('Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)');
+  assert.equal(cells.length, 14);
+  assert.deepEqual(cells.slice(0, 5), ['EP-27.04 · plan · Code · Full', 'docs/x.md', '1h52m', '1h20m', '0/1']);
+  assert.match(cells[5], /scope/);
+  assert.match(cells[6], /gates/);
+  assert.match(cells[7], /verdicts/);
+  assert.match(cells[8], /retries/);
+  assert.match(cells[9], /models/);
+  assert.equal(cells[10], 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)');
+  assert.match(cells[11], /missed by harness/);
+  assert.equal(cells[12], 'codex-review 0/1/0');
+  assert.match(cells[13], /friction/);
+  const bare = row(undefined);
+  assert.equal(bare.length, 14);
+  assert.equal(bare[10], '<fill: node scripts/unit-cost.mjs --session …>');
+  // A pipe in the cost line is escaped, so the row keeps its cell count.
+  assert.equal(row('a | b').length, 14);
+});
+
+test('owner wait as <ISO> → <ISO> pairs: summed, prose ignored, an unclosed pair runs to now, pairs beat durations', () => {
+  const T = 'T10:00:00Z';
+  const d = '2026-10-24';
+  // Single pair, with the word "answered" before the end time and with ->.
+  assert.deepEqual(parseOwnerWait(`Gate 1 asked ${d}T05:24:06Z → answered ${d}T05:25:13Z`, NOW), { ms: 67_000, pairs: true, waiting: false });
+  assert.equal(parseOwnerWait(`${d}${T} -> ${d}T10:30:00Z`, NOW).ms, 30 * 60_000);
+  // Several pairs, with prose and semicolons between them.
+  const several = `Gate 1 asked ${d}T05:00:00Z → answered ${d}T05:30:00Z; divergence stop asked ${d}T06:00:00Z → answered ${d}T07:20:00Z; ok`;
+  assert.equal(parseOwnerWait(several, NOW).ms, 110 * 60_000);
+  // An unclosed pair counts to now (06:22) and says it is still waiting.
+  assert.deepEqual(parseOwnerWait(`asked ${d}T06:00:00Z → pending`, NOW), { ms: 22 * 60_000, pairs: true, waiting: true });
+  const mixed = parseOwnerWait(`asked ${d}T05:00:00Z → answered ${d}T05:10:00Z; Gate 2 asked ${d}T06:12:00Z →`, NOW);
+  assert.deepEqual([mixed.ms, mixed.waiting], [20 * 60_000, true]);
+  // Pairs win over a duration in the same text; a duration alone still works; a backwards pair is null.
+  assert.equal(parseOwnerWait(`about 3h; ${d}T05:00:00Z → ${d}T05:10:00Z`, NOW).ms, 10 * 60_000);
+  assert.equal(parseOwnerWait('1h, 20m', NOW).ms, 80 * 60_000);
+  assert.equal(parseOwnerWait('Gate 1 asked', NOW), null);
+  assert.equal(parseOwnerWait(`${d}T07:00:00Z → ${d}T06:00:00Z`, NOW), null);
+  // In the record: wall 3h12m (claimed 03:10) minus 1h50m of pairs = 1h22m work.
+  const rec = (wait) => buildRecord({ state: parseState(`Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\nOwner wait: ${wait}\n`), commits: [], diffstat: '', gatesSummary: null, now: NOW });
+  const r = rec(several);
+  assert.match(r, /^- Elapsed: 1h22m work · 3h12m wall · owner wait 1h50m$/m);
+  assert.match(r, /^\| U-1 · \? · \? · \? \| — \| 1h22m \| 1h50m \|/m);
+  assert.match(rec(`asked ${d}T06:00:00Z → pending`), /^- Elapsed: 2h50m work · 3h12m wall · owner wait 22m \(still waiting\)$/m);
 });
 
 test('severity words map to P0-P3 and unknown severities are not counted', () => {
@@ -380,7 +496,7 @@ test('buildRecord prints every field with its exact label, in order', () => {
     '- Gates: SUMMARY 4 passed, 0 failed, 0 skipped',
     '- Findings: P0 0 · P1 1 · P2 1 · P3 0 (open 0 · fixed 1 · follow-up 1 · retracted 1)',
     '- Yield by source: codex-review P0/P1/P2 0/1/0',
-    '- Elapsed: 3h12m since claim · owner wait 1h20m',
+    '- Elapsed: 1h52m work · 3h12m wall · owner wait 1h20m',
     '- Ledger:',
   ]);
   assert.deepEqual(lines.slice(12), [
@@ -390,7 +506,7 @@ test('buildRecord prints every field with its exact label, in order', () => {
     '| 8 review — code-reviewer | ran | 3 findings |',
     '',
     'Draft log row:',
-    '| EP-27.04 · plan · Code · Full | 3h12m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |',
+    '| EP-27.04 · plan · Code · Full | — | 1h52m | 1h20m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: node scripts/unit-cost.mjs --session …> | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |',
     '',
   ]);
   // An explicit base and head win over the state file and the newest commit.
@@ -425,7 +541,7 @@ test('buildRecord degrades loudly: no gates, no Claimed, no ledger, no findings,
     /^- Elapsed: unknown — no Claimed: line in the state file · owner wait none recorded$/m,
   );
   assert.match(rec, /^\| — \| missing \| no ## Ledger section \|$/m);
-  assert.match(rec, /^\| U-2 · \? · \? · \? \| unknown \| 0\/0 \|/m);
+  assert.match(rec, /^\| U-2 · \? · \? · \? \| — \| <fill: work time> \| <fill: owner wait> \| 0\/0 \|/m);
   assert.match(rec, /\| none \| <fill: friction> \|$/m);
   assert.match(buildRecord({ state: parseState(''), commits: [], diffstat: '', gatesSummary: null, now: NOW }), /^## Record — unit \(/);
 });
@@ -482,13 +598,12 @@ test('buildRecord escapes a pipe inside a ledger cell, a source name and the uni
 });
 
 test('parseArgs needs --state and rejects unknown options and valueless flags', () => {
-  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, json: false });
-  assert.deepEqual(parseArgs(['--json', '--state', 's.md', '--base', 'abc', '--gates', 'g.out']), {
-    state: 's.md',
-    base: 'abc',
-    gates: 'g.out',
-    json: true,
-  });
+  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, cost: null, json: false });
+  assert.deepEqual(
+    parseArgs(['--json', '--state', 's.md', '--base', 'abc', '--gates', 'g.out', '--cost', 'Cost $1.00 · Claude 1%']),
+    { state: 's.md', base: 'abc', gates: 'g.out', cost: 'Cost $1.00 · Claude 1%', json: true },
+  );
+  assert.throws(() => parseArgs(['--state', 's.md', '--cost']), /--cost needs a value/);
   assert.throws(() => parseArgs([]), /--state <file> is required/);
   assert.throws(() => parseArgs(['--state']), /--state needs a value/);
   assert.throws(() => parseArgs(['--state', '--json']), /--state needs a value/);
@@ -547,7 +662,11 @@ test('the wrapper prints the record from git, the gate log and the state file', 
   assert.match(lines[i + 2], /^ {2}- [0-9a-f]+ fix: two \| with a pipe$/);
   assert.match(res.stdout, /^- Diffstat: 2 files changed, 2 insertions\(\+\)$/m);
   assert.match(res.stdout, /^- Findings: P0 0 · P1 1 · P2 1 · P3 0 /m);
-  assert.match(res.stdout, /^- Elapsed: .* since claim · owner wait 1h20m$/m);
+  assert.match(res.stdout, /^- Elapsed: .* work · .* wall · owner wait 1h20m$/m);
+  assert.match(res.stdout, /\| <fill: node scripts\/unit-cost\.mjs --session …> \|/);
+  const costed = run(f, ['--state', f.stateFile, '--gates', f.gates, '--cost', 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)']);
+  assert.equal(costed.status, 0, costed.stderr);
+  assert.match(costed.stdout, / \| Cost \$12\.40 · Claude 0\.6% · Codex 2% \(3 runs\) \| /);
 });
 
 test('the wrapper: --base overrides the state file, no --gates says "not run", works from a subdirectory', () => {

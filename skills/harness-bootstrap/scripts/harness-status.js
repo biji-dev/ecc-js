@@ -49,7 +49,7 @@ const CODEX_DEFAULT_BYTES = 32768;
 const V2_CORE_SKILLS = new Set(['task-runner']);
 const NEUTRAL_FILES = [
   'scripts/codex-run.mjs', 'scripts/lib/codex-run-core.mjs', 'scripts/check-agent-docs.mjs', 'scripts/run-gates.sh',
-  'scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs',
+  'scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs', 'scripts/unit-cost.mjs', 'scripts/estimate.mjs',
   '.claude/hooks/context-budget.mjs', '.claude/hooks/command-guard.mjs', 'docs/plans/decision-log.md',
   'docs/harness/follow-ups.md', 'docs/follow-ups.md', 'docs/guides/agent-workflow.md',
 ];
@@ -636,6 +636,10 @@ function buildReport() {
     const value = key ? key[1].replace(/[ \t]+#.*$/, '').trim().replace(/^["']|["']$/g, '') : '';
     if (!value || /^(null|~)$/i.test(value)) haz('agent-effort-unpinned', 'no effort: in its frontmatter, so it inherits the session level (a session at max reaches it)', rel);
     else if (ABOVE_HIGH.test(value)) haz('effort-above-high', `effort: ${value} in its frontmatter`, rel, lineOf(t, EFFORT_KEY));
+    // a dispatch that names no model falls back to the agent's; an agent with none runs on the session model (Opus)
+    const model = (fm[1].match(/^[ \t]*["']?model["']?[ \t]*:[ \t]*(.*)$/m) || [])[1];
+    const modelValue = model ? model.replace(/[ \t]+#.*$/, '').trim().replace(/^["']|["']$/g, '') : '';
+    if (!modelValue || /^(null|~|inherit)$/i.test(modelValue)) haz('agent-model-unpinned', 'no model: in its frontmatter, so a dispatch that names none runs it on the session model (Opus)', rel);
   }
   for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
     const t = read(rel);

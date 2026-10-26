@@ -37,8 +37,10 @@ ports, and never stops one.
 disk` and the runner starts `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
 --apply-approved` in the background (`runner.md` › Due-checks). It frees the
 approved categories alone, takes a lock so two runs never overlap, refuses to run
-as root, and appends one line to `~/.agents/harness/sweep-log.jsonl`. The next
-`DUE disk` line says what the last run freed. `--dry-run` prints the plan instead.
+as root, and appends one line to `~/.agents/harness/sweep-log.jsonl`. At the next
+step boundary the runner says what it freed, from the run's last line or the newest
+line of `sweep-log.jsonl`: once the disk is back over the floor, no `DUE disk` line
+says it. `--dry-run` prints the plan instead.
 
 | Category | Frees | Keeps |
 |---|---|---|

@@ -276,7 +276,11 @@ gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-
 raise --min in scripts/run-gates.sh`); the unit that added the tests raises it. No
 summary is a FAIL, so a `--filter` that matched no package, `--if-present` with no
 script anywhere and `--passWithNoTests` fail where they passed. Bind one counted gate
-per package: a second summary in one output fails too.
+per package: a second summary in one output fails too. A plain `gate` passes on exit
+0 alone, so bind a build without `--if-present` and a pnpm filter with
+`--fail-if-no-match`: pnpm 10.30 exits 0 when `-r --if-present run build` finds no
+script or a `--filter` matches nothing, and 1 without `--if-present` or with the
+flag (2026-10-26).
 > Origin: three projects found gates green on what never ran, and each wrote its own
 > fix. One: a grep for `Tests +[1-9][0-9]* passed` "matched one pass among a
 > hundred skips, and so did a suite that lost half its tests"; `pnpm -r --if-present

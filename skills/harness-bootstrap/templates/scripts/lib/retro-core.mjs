@@ -565,7 +565,7 @@ export function candidates(d) {
   if (t && t.rewriteShare >= REWRITE_ALERT_PERCENT) {
     sources[1].push({
       kind: 'threshold',
-      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (context.md › Gate waits)`,
+      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (context.md › The gate wait)`,
       evidence: 'transcripts',
     });
   }

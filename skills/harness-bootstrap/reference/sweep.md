@@ -83,8 +83,9 @@ never the other way; job 2 warns on rows scheduled for a unit that is close and
 not started; job 3 reports the queue by status and its growth.
 
 `[B]` Register locations · merge-commit shapes, read from `git log --merges
---format=%s` on the real history, never from the convention (one project: `Merge
-task/p2-16: …` and `P3-12 landed: …` — its 430e3af8 catches all three shapes; the other:
-`Merge l-core/T-DATA-037: …` — its first sweep missed a merge named by its branch
-and id ranges such as `T-MOD-001..007`, fixed in 19c0abf) · the task-id pattern ·
-what counts as non-code work.
+--format=%s` on the real history, never from the convention (one project: its first
+pattern caught `Merge P0-07:` and missed `Merge segment P0-12:` and
+`merge(P1-12a):`, fixed in 430e3af8, and its later merges read `Merge task/p2-16:
+…` and `P3-12 landed: …`; the other: `Merge l-core/T-DATA-037: …` — its first sweep
+missed a merge named by its branch and id ranges such as `T-MOD-001..007`, fixed in
+19c0abf) · the task-id pattern · what counts as non-code work.

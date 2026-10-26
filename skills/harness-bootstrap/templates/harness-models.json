@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "hosts": {
+    "claude": {
+      "main": { "model": "opus", "effort": "high" },
+      "bounded": { "model": "sonnet", "effort": "high" },
+      "second": "codex"
+    },
+    "codex": {
+      "main": { "model": "gpt-6.1-sol", "effort": "high" },
+      "bounded": { "model": "gpt-6-luna", "effort": "high" },
+      "second": "claude"
+    },
+    "zcode": {
+      "main": { "model": "GLM-5.3" },
+      "bounded": { "model": "GLM-5.3-Flash" },
+      "second": "codex",
+      "fallback": "claude"
+    }
+  }
+}

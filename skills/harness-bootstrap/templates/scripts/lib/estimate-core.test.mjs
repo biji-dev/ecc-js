@@ -319,3 +319,12 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   assert.equal(cli(['--log', log, '--slices', '3']).status, 2);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['empty.md', 'log.md']);
 });
+
+test('a log with its headers and no rows yet says no history, the install\'s first Gate 1', () => {
+  const dir = tmpDir('estimate-');
+  const log = path.join(dir, 'log.md');
+  fs.writeFileSync(log, '# Harness log\n\n| Unit · Mode · Type · Tier | Elapsed (work) | Owner wait | Cost |\n|---|---|---|---|\n');
+  const r = cli(['--log', log, '--tier', 'small']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^Estimate per unit \(small, n=0 units\): work no history \(n=0, need \d+\)/);
+});

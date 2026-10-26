@@ -7,24 +7,29 @@
  * owed, so the main thread does not guess: nothing, the second model family, one Opus
  * code-reviewer over the whole unit, or an adversarial pass. The rules are in the core's header.
  *
- *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix --writer claude|codex|sonnet|mixed
- *        [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]
+ *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed
+ *        [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3]
+ *        [--round N] [--json]
  *
  *   --kind slice   after a slice passes its gate, before the next builds on it
  *   --kind unit    step 8, once, over the whole unit diff from the merge base
  *   --kind fix     once per fix round, over <sha-before-the-fixes>.. (pass the whole round once,
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
- *   --writer       REQUIRED, never assumed: who wrote the diff (for --kind fix: who wrote the fix).
- *                  claude = Opus | codex = the second family | sonnet = a Sonnet builder |
- *                  mixed = several executors (a fix round split between Opus and Codex; routes like
- *                  codex). Code is never reviewed only by the family that wrote it, and critical
- *                  code written by anyone but Opus (codex, sonnet, mixed) gets an Opus reviewer
+ *   --writer       REQUIRED, never assumed: the ROLE that wrote the diff (for --kind fix: the fix),
+ *                  on this host (gate-design.md › Model and effort): main = the judgment model (Opus
+ *                  on Claude Code) | bounded = the bounded model (Sonnet) | second = the second
+ *                  family | mixed = several executors (a fix round split between main and second;
+ *                  routes like second). On Claude Code claude|sonnet|codex name the same roles; on
+ *                  another host they are a usage error. Code is never reviewed only by the family
+ *                  that wrote it, and critical code written by anyone but main gets a main reviewer
+ *   --host         the host whose roles --writer names. Default: harness-host's detection
+ *                  (HARNESS_HOST, then each host's own variables); unknown reads like Claude Code
  *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
  *                  against <base> (committed, staged, unstaged and untracked changes; a review is
  *                  often owed before the commit; a binary file counts 0 lines but is a changed file)
  *
- * Prints exactly one line (`--json`: the result object instead):
+ * Prints exactly one line (`--json`: the result object, with `host` and `role` -- the --writer given):
  *   review-gate: <decision> — <reason> → <reviewers joined by ' + ' or 'none'> [<n> production files, <n> lines; not checked: ...]
  *
  * exit: 0 for ANY decision (a decision is not an error) | 2 on a usage error or a git failure
@@ -33,10 +38,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { decide, formatLine, parseArgs, parseNumstat } from './lib/review-gate-core.mjs';
+import { detectHost } from './lib/harness-host-core.mjs';
+import { decide, formatLine, parseArgs, parseNumstat, writerRole } from './lib/review-gate-core.mjs';
 
 const USAGE =
-  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer claude|codex|sonnet|mixed [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
+  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed (on Claude Code also claude|sonnet|codex) [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
 
 function fail(msg, withUsage) {
   process.stderr.write(`review-gate: ${msg}\n${withUsage ? `${USAGE}\n` : ''}`);
@@ -54,6 +60,14 @@ const git = (cwd, ...a) =>
 let args;
 try {
   args = parseArgs(process.argv.slice(2));
+} catch (e) {
+  fail(e.message, true);
+}
+
+// The host decides what a --writer name means; a bad HARNESS_HOST is a usage error, not a guess.
+let host;
+try {
+  host = args.host ?? detectHost(process.env).host;
 } catch (e) {
   fail(e.message, true);
 }
@@ -101,7 +115,7 @@ try {
     files,
     kind: args.kind,
     tier: args.tier,
-    writer: args.writer,
+    writer: writerRole(args.writer, host),
     maxFixed: args.maxFixed,
     round: args.round,
   });
@@ -109,4 +123,4 @@ try {
   fail(e.message, true);
 }
 
-console.log(args.json ? JSON.stringify(result, null, 2) : formatLine(result));
+console.log(args.json ? JSON.stringify({ ...result, host, role: args.writer }, null, 2) : formatLine(result));

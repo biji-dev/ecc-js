@@ -11,11 +11,13 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   IDS,
+  LOCK_STALE_MINUTES,
   REBUILDABLE,
   SCHEMA,
   WORKTREE_IDLE_HOURS,
   approvalsFile,
   categoryList,
+  clonesToRemove,
   deletable,
   devOrphans,
   dockerBytes,
@@ -23,7 +25,9 @@ import {
   formatReport,
   heldRows,
   inUse,
+  lockPid,
   logEntry,
+  mainCheckout,
   mcpOrphans,
   olderReleases,
   parseArgs,
@@ -35,6 +39,7 @@ import {
   readApprovals,
   recordedToStop,
   settled,
+  staleLock,
   staleStores,
   treePorts,
   unusedBrowsers,
@@ -230,6 +235,56 @@ test('deletable: strictly inside its root, the root strictly inside the home (or
   assert.equal(deletable('/var/folders/ab/cdef/T/x', '/var/folders/ab/cdef/T', '/h'), false);
 });
 
+test('deletable: checked again where the links lead; a linked root or ancestor that leads into the agents\' sessions or out of the home refuses, so does a link that cannot be read; a leaf link is its own', () => {
+  const intoSessions = (p) => p.replace(/^\/h\/\.bun\/install\/cache/, '/h/.codex/sessions');
+  assert.equal(deletable('/h/.bun/install/cache/2026', '/h/.bun/install/cache', '/h'), true);
+  assert.equal(deletable('/h/.bun/install/cache/2026', '/h/.bun/install/cache', '/h', intoSessions), false);
+  assert.equal(deletable('/h/Library/Caches/x', '/h/Library/Caches', '/h', (p) => p.replace(/^\/h\/Library/, '/opt')), false);
+  assert.equal(deletable('/h/Library/Caches/x', '/h/Library/Caches', '/h', () => { throw new Error('ENOENT'); }), false);
+  const home = tmpDir('machine-sweep-links-');
+  const sessions = path.join(home, '.codex', 'sessions');
+  put(path.join(sessions, '2026', 's.jsonl'));
+  const cache = path.join(home, '.bun', 'install', 'cache');
+  fs.mkdirSync(path.dirname(cache), { recursive: true });
+  fs.symlinkSync(sessions, cache);
+  assert.equal(deletable(path.join(cache, '2026'), cache, home, fs.realpathSync), false);
+  const elsewhere = tmpDir('machine-sweep-elsewhere-');
+  put(path.join(elsewhere, 'Caches', 'x-updater', 'u.zip'));
+  fs.symlinkSync(elsewhere, path.join(home, 'Library'));
+  assert.equal(deletable(path.join(home, 'Library', 'Caches', 'x-updater'), path.join(home, 'Library', 'Caches'), home, fs.realpathSync), false);
+  const plain = path.join(home, '.cache', 'tool');
+  put(path.join(plain, 'entry', 'x'));
+  fs.symlinkSync(sessions, path.join(plain, 'leaf'));
+  assert.equal(deletable(path.join(plain, 'entry'), plain, home, fs.realpathSync), true);
+  assert.equal(deletable(path.join(plain, 'leaf'), plain, home, fs.realpathSync), true);
+});
+
+test('a failed inspection is unknown, never none: no worktree, release or clone is taken for unused when ps or lsof failed', () => {
+  const done = { path: '/r/.worktrees/a', rel: '.worktrees/a', branch: 'task/a', merged: true, own: true, clean: true, ignored: [], active: NOW - 7 * HOUR };
+  assert.equal(worktreeVerdict(done, { now: NOW, cwds: null }), 'keep: could not tell which processes run in it (lsof failed)');
+  assert.equal(worktreeVerdict(done, { now: NOW, cwds: [] }), 'remove');
+  assert.equal(inUse(['/a'], null), null);
+  assert.equal(inUse(['/a'], [], null), null);
+  const names = ['0.1.0-x', '0.2.0-x', '0.3.0-x', '0.4.0-x'];
+  assert.deepEqual(olderReleases(names, '0.4.0-x', null), []);
+  assert.deepEqual(olderReleases(names, '0.4.0-x', new Set()), ['0.1.0-x', '0.2.0-x']);
+  const root = '/var/folders/ab/X/com.google.Chrome.code_sign_clone';
+  const clones = [{ name: 'code_sign_clone.a', written: NOW - 2 * HOUR }, { name: 'code_sign_clone.b', written: NOW - 2 * HOUR }];
+  assert.equal(clonesToRemove(clones, root, null, NOW), null);
+  assert.deepEqual(clonesToRemove(clones, root, [{ command: `${root}/code_sign_clone.a/Google Chrome.app/Contents/MacOS/Google Chrome` }], NOW), { remove: ['code_sign_clone.b'], busy: 1 });
+});
+
+test('the lock: a live run\'s lock holds however old it is; a dead run\'s is stale at once; one with no readable pid only past the stale age', () => {
+  assert.deepEqual([lockPid('4242\n'), lockPid(' 7 '), lockPid(''), lockPid('42x'), lockPid('0'), lockPid(null)], [4242, 7, null, null, null, null]);
+  const old = NOW - (LOCK_STALE_MINUTES + 1) * 60_000;
+  const recent = NOW - 60_000;
+  assert.equal(staleLock({ pid: 4242, alive: true, written: old, now: NOW }), false);
+  assert.equal(staleLock({ pid: 4242, alive: false, written: recent, now: NOW }), true);
+  assert.equal(staleLock({ pid: null, alive: false, written: recent, now: NOW }), false);
+  assert.equal(staleLock({ pid: null, alive: false, written: old, now: NOW }), true);
+  assert.equal(staleLock({ pid: null, alive: false, written: null, now: NOW }), false);
+});
+
 test('sizes, the report and the log line', () => {
   assert.equal(dockerBytes('3.251GB'), 3_251_000_000);
   assert.equal(dockerBytes('12.29kB'), 12_290);
@@ -271,10 +326,21 @@ test('sizes, the report and the log line', () => {
 const cachesRel = process.platform === 'darwin' ? ['Library', 'Caches'] : process.platform === 'win32' ? ['AppData', 'Local'] : ['.cache'];
 const past = (h) => new Date(Date.now() - h * HOUR);
 
+// The healthy CLI tests read no lsof of this machine's: this one prints nothing and exits 0, as on a
+// machine where no process runs inside the fixtures, so a machine without lsof (or running Codex) decides nothing.
+let quietBin = null;
+function quietTools() {
+  if (!quietBin) {
+    quietBin = tmpDir('machine-sweep-quiet-');
+    fs.writeFileSync(path.join(quietBin, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  return quietBin;
+}
+
 function cleanEnv() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_') || k.startsWith('PLAYWRIGHT_') || k.startsWith('BUN_') || k === 'XDG_CACHE_HOME') delete env[k];
-  return { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  return { ...env, PATH: `${quietTools()}${path.delimiter}${env.PATH}`, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
 }
 
 function cli(home, args, cwd = home) {
@@ -432,17 +498,174 @@ test('the CLI: a registered repository\'s worktree is removed only when it is re
   assert.ok(!listed.includes('.worktrees/done'), listed);
 });
 
-test('the CLI: a held lock makes a second run wait, a stale one is replaced; usage errors exit 2', posixOnly, () => {
+test('the CLI: a link from a category\'s directory into the agents\' sessions is refused, and the sessions stay', posixOnly, () => {
+  const h = fakeHome();
+  const cache = path.join(h.home, '.bun', 'install', 'cache');
+  const sessions = path.join(h.home, '.codex', 'sessions');
+  put(path.join(sessions, '2026', 'rollout.jsonl'), '{}');
+  fs.rmSync(cache, { recursive: true });
+  fs.symlinkSync(sessions, cache);
+  assert.equal(cli(h.home, ['--approve', 'bun']).status, 0);
+  const res = cli(h.home, ['--apply-approved', '--only', 'bun']);
+  assert.ok(fs.existsSync(path.join(sessions, '2026', 'rollout.jsonl')), 'the sessions were deleted through the link');
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stdout, /^error {2}bun: refused .+2026: outside .+ or protected$/m);
+});
+
+test('the CLI: a recorded process stays while the main checkout\'s registry holds a row, though a linked worktree recorded it, and while its repository is gone', posixOnly, async () => {
+  assert.deepEqual([mainCheckout('/r/.worktrees/u1', '/r/.git'), mainCheckout('/r', '/r/.git/'), mainCheckout('/w', '/srv/r.git'), mainCheckout('/r', null)], ['/r', '/r', '/w', null]);
+  const h = fakeHome();
+  const state = path.join(h.home, '.agents', 'harness');
+  const git = (args, cwd) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  const repo = (prefix) => {
+    const dir = tmpDir(prefix);
+    git(['init', '-q', '-b', 'main'], dir);
+    put(path.join(dir, 'a.txt'));
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'init'], dir);
+    return dir;
+  };
+  const main = repo('machine-sweep-main-');
+  const worktree = path.join(main, '.worktrees', 'u1');
+  git(['worktree', 'add', '-q', '-b', 'task/u1', worktree, 'main'], main);
+  // the registry is untracked and lives in the main checkout alone
+  put(path.join(main, '.claude', 'registry.md'), '| # | Unit | Worktree |\n|---|---|---|\n| 1 | P1-01 | .worktrees/u1 |\n');
+  const gone = repo('machine-sweep-gone-');
+  const free = repo('machine-sweep-free-');
+  const start = () => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
+  const procs = [start(), start(), start()];
+  try {
+    [worktree, gone, free].forEach((cwd, i) => assert.equal(cli(h.home, ['--record', String(procs[i].pid)], cwd).status, 0));
+    const file = path.join(state, 'pids.jsonl');
+    const records = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(records.map((r) => r.repo), [worktree, gone, free]);
+    for (const r of records) r.t = past(7).toISOString();
+    fs.writeFileSync(file, `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    fs.rmSync(gone, { recursive: true });
+    assert.equal(cli(h.home, ['--approve', 'recorded-pids']).status, 0);
+    const exited = new Promise((resolve) => procs[2].once('exit', (code, signal) => resolve(signal)));
+    const res = cli(h.home, ['--apply-approved', '--only', 'recorded-pids']);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /^done {3}recorded-pids: 1 stopped$/m);
+    assert.equal(await Promise.race([exited, new Promise((r) => setTimeout(() => r('still running'), 5000))]), 'SIGTERM');
+    assert.deepEqual(procs.slice(0, 2).map((p) => [p.exitCode, p.signalCode]), [[null, null], [null, null]], "a held or a gone repository's process was stopped");
+  } finally {
+    for (const p of procs) p.kill();
+  }
+});
+
+test('the CLI: a recorded process is not stopped when the last ps before the signal fails, though it printed the command', posixOnly, async () => {
+  const h = fakeHome();
+  const state = path.join(h.home, '.agents', 'harness');
+  const realPs = spawnSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(realPs, 'no ps on PATH');
+  const bin = tmpDir('machine-sweep-bin-');
+  // `ps -o command= -p <pid>` prints the real answer, then exits 1; every other call is the real ps
+  const stub = `#!/bin/sh\nif [ "$#" -eq 4 ] && [ "$1" = "-o" ] && [ "$2" = "command=" ] && [ "$3" = "-p" ]; then\n  '${realPs}' "$@"\n  exit 1\nfi\nexec '${realPs}' "$@"\n`;
+  fs.writeFileSync(path.join(bin, 'ps'), stub, { mode: 0o755 });
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
+  try {
+    assert.equal(cli(h.home, ['--record', String(child.pid)], tmpDir('machine-sweep-cwd-')).status, 0);
+    const file = path.join(state, 'pids.jsonl');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8').trim());
+    fs.writeFileSync(file, `${JSON.stringify({ ...record, t: past(7).toISOString() })}\n`);
+    assert.equal(cli(h.home, ['--approve', 'recorded-pids']).status, 0);
+    const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve(signal)));
+    const res = spawnSync(process.execPath, [CLI, '--home', h.home, '--apply-approved', '--only', 'recorded-pids'], { cwd: h.home, env: { ...cleanEnv(), PATH: `${bin}${path.delimiter}${process.env.PATH}` }, encoding: 'utf8', timeout: 120_000 });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /^done {3}recorded-pids: 0 stopped$/m);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'sweep-log.jsonl'), 'utf8').trim()).categories, { 'recorded-pids': 0 });
+    assert.equal(await Promise.race([exited, new Promise((r) => setTimeout(() => r('still running'), 1500))]), 'still running');
+  } finally {
+    child.kill();
+  }
+});
+
+test('the CLI: when ps or lsof fails, no Codex release is taken for unused, and the report still prints', posixOnly, async () => {
+  const h = fakeHome();
+  const failing = (...tools) => {
+    const bin = tmpDir('machine-sweep-bin-');
+    for (const t of tools) fs.writeFileSync(path.join(bin, t), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    return (args) => spawnSync(process.execPath, [CLI, '--home', h.home, ...args], { cwd: h.home, env: { ...cleanEnv(), PATH: `${bin}${path.delimiter}${process.env.PATH}` }, encoding: 'utf8', timeout: 120_000 });
+  };
+  const codex = (res) => {
+    assert.equal(res.status, 0, res.stderr);
+    return JSON.parse(res.stdout).categories[0];
+  };
+  const noPs = codex(failing('ps')(['--only', 'codex', '--json']));
+  assert.deepEqual(noPs.plan, []);
+  assert.match(noPs.detail, /^standalone: keep 0\.1\.0-x, 0\.2\.0-x, 0\.3\.0-x, 0\.4\.0-x, could not tell which run \(ps or lsof failed\)/);
+  const text = failing('ps', 'lsof')(['--only', 'codex']);
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /^codex .+could not tell which run/m);
+  assert.match(text.stdout, /^orphaned dev processes, listed and never stopped here: unknown \(ps failed\)$/m);
+  // lsof exits 1 when a process it was asked about has exited: unknown too
+  const decoy = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)', 'codex-decoy'], { stdio: 'ignore' });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(codex(failing('lsof')(['--only', 'codex', '--json'])).plan, []);
+  } finally {
+    decoy.kill();
+  }
+});
+
+test('the CLI: a lock it cannot read is judged by its age: an old one is taken, a fresh one stops the run as pid unknown', posixOnly, () => {
+  const h = fakeHome();
+  assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
+  const lockFile = path.join(h.home, '.agents', 'harness', 'machine-sweep.lock');
+  // no pid in it either, so the case holds where the file is readable after all (as root)
+  const unreadable = (hoursAgo) => {
+    fs.writeFileSync(lockFile, 'not-a-pid\n');
+    if (hoursAgo) fs.utimesSync(lockFile, past(hoursAgo), past(hoursAgo));
+    fs.chmodSync(lockFile, 0o000);
+  };
+  try {
+    unreadable(2);
+    const old = cli(h.home, ['--apply-approved']);
+    assert.equal(old.status, 0, old.stderr);
+    assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')) && !fs.existsSync(lockFile));
+    unreadable(0);
+    const fresh = cli(h.home, ['--apply-approved']);
+    assert.equal(fresh.status, 1, fresh.stdout);
+    assert.match(fresh.stderr, /^machine-sweep: another sweep \(pid unknown\) holds the lock; run again once it ends$/m);
+    assert.ok(fs.existsSync(lockFile), 'a fresh lock was taken');
+  } finally {
+    if (fs.existsSync(lockFile)) fs.chmodSync(lockFile, 0o644);
+  }
+});
+
+test("the CLI: a run's end leaves in place a lock another sweep took while it ran", posixOnly, () => {
+  const h = fakeHome();
+  assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
+  const lockFile = path.join(h.home, '.agents', 'harness', 'machine-sweep.lock');
+  const realDu = spawnSync('sh', ['-c', 'command -v du'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(realDu, 'no du on PATH');
+  const bin = tmpDir('machine-sweep-bin-');
+  // du runs while the run holds the lock (it measures the updaters); this one hands the lock to process 424242 first
+  fs.writeFileSync(path.join(bin, 'du'), `#!/bin/sh\nprintf '424242\\n' > '${lockFile}'\nexec '${realDu}' "$@"\n`, { mode: 0o755 });
+  const res = spawnSync(process.execPath, [CLI, '--home', h.home, '--apply-approved', '--only', 'updaters'], { cwd: h.home, env: { ...cleanEnv(), PATH: `${bin}${path.delimiter}${process.env.PATH}` }, encoding: 'utf8', timeout: 120_000 });
+  assert.equal(res.status, 0, res.stderr + res.stdout);
+  assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')));
+  assert.equal(fs.readFileSync(lockFile, 'utf8'), '424242\n', "the run's end removed another sweep's lock");
+});
+
+test('the CLI: a live sweep\'s lock stops a second run however old it is, a dead one\'s is replaced; usage errors exit 2', posixOnly, () => {
   const h = fakeHome();
   const state = path.join(h.home, '.agents', 'harness');
   assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
   const lockFile = path.join(state, 'machine-sweep.lock');
+  // process 1 never exits: its lock is a live sweep's, past the stale age or not
   fs.writeFileSync(lockFile, '1\n');
+  fs.utimesSync(lockFile, past(2), past(2));
   const held = cli(h.home, ['--apply-approved']);
   assert.equal(held.status, 1);
-  assert.match(held.stderr, /another sweep holds the lock/);
+  assert.match(held.stderr, /^machine-sweep: another sweep \(pid 1\) holds the lock; run again once it ends$/m);
   assert.ok(fs.existsSync(path.join(h.caches, 'old-updater')));
-  fs.utimesSync(lockFile, past(2), past(2));
+  assert.equal(fs.readFileSync(lockFile, 'utf8'), '1\n', "a live sweep's lock was taken");
+  fs.writeFileSync(lockFile, `${spawnSync(process.execPath, ['-e', '']).pid}\n`);
   const stale = cli(h.home, ['--apply-approved']);
   assert.equal(stale.status, 0, stale.stderr);
   assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')) && !fs.existsSync(lockFile));

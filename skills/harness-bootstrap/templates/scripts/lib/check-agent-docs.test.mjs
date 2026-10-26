@@ -319,6 +319,26 @@ test('rule-index: the missing-entry message shows what an index line looks like'
   assert.match(r.err, /add a line like: - `db\.md` — /, r.all);
 });
 
+test('nested rules: a rule under a subdirectory is checked, indexed by its relative path and listed', () => {
+  const nested = '.claude/rules/web/deep/react.md';
+  const bare = '---\ndescription: x\n---\nBody\n';
+  // Without `paths:` and without an index line it fails both checks and is always loaded.
+  const r = expectFail({ '.claude/rules/web/react.md': bare, [nested]: bare }, 'rule-paths', 'web/react\\.md .*no non-empty');
+  assert.match(r.err, /^FAIL rule-paths: .*web\/deep\/react\.md .*no non-empty/m, r.all);
+  assert.match(r.err, /^FAIL rule-index: .*web\/react\.md is missing/m, r.all);
+  assert.match(r.err, /^FAIL rule-index: .*web\/deep\/react\.md is missing/m, r.all);
+  const loaded = run(fixture({ '.claude/rules/web/react.md': bare }), ['--base']).out;
+  assert.match(loaded, /\.claude\/rules\/web\/react\.md \(a rule without paths:\)/, loaded);
+  // Scoped and indexed by its path relative to the rules dir it passes; a slash bullet naming no rule is no index entry.
+  const scoped = '---\npaths:\n  - "src/**"\n---\nBody\n';
+  const agents = `${baseFiles()['AGENTS.md']}- \`web/react.md\` — react.\n- \`docs/guide.md\` — another doc, not a rule.\n`;
+  const ok = fixture({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': agents });
+  expectOk({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': agents });
+  assert.equal(run(ok, ['--rules-for', 'src/index.js']).out, '.claude/rules/web/react.md\n');
+  // A slash-free bullet that names no rule file is still an extra.
+  expectFail({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': `${agents}- \`ghost.md\` — nothing.\n` }, 'rule-index', 'indexes ghost\\.md');
+});
+
 // 5. links
 test('links: a broken relative link fails with its line number', () => {
   expectFail({ 'AGENTS.md': `${baseFiles()['AGENTS.md']}\nSee [gone](docs/gone.md).\n` }, 'links', 'AGENTS\\.md:7 .*docs/gone\\.md');
@@ -603,6 +623,27 @@ test('--base: imports go five hops deep and no further', () => {
   assert.ok(!files.includes('docs/d6.md'), files.join(' '));
 });
 
+test('--base: an import first met at the depth limit is still followed when a shallower path reaches it', () => {
+  // d1 > d2 > d3 > d4 > shared is five hops (recorded, not followed); CLAUDE.md then imports shared directly.
+  const files = {
+    'CLAUDE.md': '@AGENTS.md\n@docs/d1.md\n@docs/shared.md\n',
+    'docs/d1.md': '@d2.md\n',
+    'docs/d2.md': '@d3.md\n',
+    'docs/d3.md': '@d4.md\n',
+    'docs/d4.md': '@shared.md\n',
+    'docs/shared.md': '@deep.md\nShared.\n',
+    'docs/deep.md': 'Deep.\n',
+  };
+  const listed = JSON.parse(run(fixture(files), ['--base', '--json']).out).files;
+  const via = Object.fromEntries(listed.map((f) => [f.file, f.via]));
+  assert.equal(via['docs/deep.md'], 'imported by docs/shared.md', JSON.stringify(via));
+  assert.equal(via['docs/shared.md'], 'imported by docs/d4.md', 'a file keeps the first path that reached it');
+  assert.equal(listed.filter((f) => f.file === 'docs/shared.md').length, 1, 'a file is counted once');
+  // An import cycle ends.
+  const cycle = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/a.md\n', 'docs/a.md': '@b.md\n', 'docs/b.md': '@a.md\n' }), ['--base']);
+  assert.equal(cycle.status, 0, cycle.all);
+});
+
 test('--base --json: the files, their total, the target and the excess', () => {
   const r = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` }), ['--base', '--json']);
   assert.equal(r.status, 0, r.all);
@@ -702,6 +743,28 @@ test('citations: a sibling or a lower level that is gone fails; an install witho
   assert.equal(bare.status, 1, bare.all);
   assert.equal(bare.err.match(/^FAIL citations: CLAUDE\.md:3 /gm).length, 2, bare.all);
   assert.doesNotMatch(bare.err, /src\/index\.js/);
+});
+
+test('citations: a citeFiles glob that matches a directory symlink or a submodule is skipped, never a crash', () => {
+  // `vendor/pdf.js` is a directory symlink and `vendor/lib.js` a gitlink: git lists each as one entry.
+  const after = (dir) => {
+    mkdirSync(join(dir, 'vendor/lib.js'), { recursive: true });
+    // The gitlink is mandatory and its id has the repo's own length (40 hex for sha1, 64 for sha256).
+    const format = execFileSync('git', ['rev-parse', '--show-object-format'], { cwd: dir, env: ENV, encoding: 'utf8' }).trim();
+    const id = 'a'.repeat(format === 'sha256' ? 64 : 40);
+    execFileSync('git', ['update-index', '--add', '--cacheinfo', `160000,${id},vendor/lib.js`], { cwd: dir, env: ENV });
+    try {
+      symlinkSync('../src', join(dir, 'vendor/pdf.js'));
+    } catch {
+      // symlinks may be unavailable (Windows without privileges); the gitlink still counts
+    }
+  };
+  const files = { 'AGENTS.md': CITED_AGENTS, 'src/index.js': '// AGENTS.md "Deploy order"\nexport {};\n' };
+  const r = expectFail(files, 'citations', 'src/index\\.js:1 cites "Deploy order"', after);
+  assert.doesNotMatch(r.all, /EISDIR|at .*\.mjs/, r.all);
+  const clean = run(fixture({ 'AGENTS.md': CITED_AGENTS }, after));
+  assert.equal(clean.status, 0, clean.all);
+  assert.doesNotMatch(clean.all, /EISDIR|at .*\.mjs/, clean.all);
 });
 
 // --rules-for

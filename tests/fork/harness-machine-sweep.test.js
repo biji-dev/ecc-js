@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'machine-sweep-core.mjs');
 const CLI_REL = path.join('scripts', 'machine-sweep.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 15;
+const EXPECTED_TESTS = 24;
 
 let passed = 0;
 let failed = 0;
@@ -102,6 +102,12 @@ mutantFails('a worktree with no commits of its own removed', "  if (!w.own) retu
 mutantFails('deleting under a root outside the home', "if (h === path.parse(h).root || !inside(r, h)) return false;", 'if (h === path.parse(h).root) return false;');
 mutantFails('applying categories nobody approved', 'const ids = approved.filter((id) => !args.only || args.only.includes(id));', 'const ids = (args.only ?? IDS).filter((id) => !args.only || args.only.includes(id));', CLI_REL);
 mutantFails('an installed copy with a changed core read as current', 'COPIED.some((f) =>', 'COPIED.slice(0, 1).some((f) =>', CLI_REL);
+mutantFails('a linked category directory followed out of its root', 'return allowed(...physical);', 'return true;');
+mutantFails("a linked worktree's record reading its own registry", "read(path.join(main, '.claude', 'registry.md'))", "read(path.join(repo, '.claude', 'registry.md'))", CLI_REL);
+mutantFails('a failed ps or lsof read as no process', 'if (!rows || !cwds) return null;', 'rows ??= []; cwds ??= [];');
+mutantFails("a live sweep's lock taken by its age", '  if (Number.isInteger(pid)) return !alive;\n', '');
+mutantFails('a failed ps before the signal read as the planned process', 'if (!now.ok || now.out.trim() !== p.command.trim()) return 0;', 'if (now.out.trim() !== p.command.trim()) return 0;', CLI_REL);
+mutantFails("a run's end removing a lock another sweep took", 'if (lockPid(read(file)) === process.pid) fs.rmSync(file, { force: true });', 'fs.rmSync(file, { force: true });', CLI_REL);
 mutantFails('a dry run that frees', "        if (args.dryRun) {\n          lines.push(`would  ${id}: ${describe(p)}`);\n          continue;\n        }\n", '', CLI_REL);
 
 test('CLI smoke: the report on an empty home says each category is absent and writes nothing', () => {

@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 66;
+const EXPECTED_PASS = 69;
 
 let passed = 0;
 let failed = 0;
@@ -223,6 +223,65 @@ test('mutant without the citations check passes a repo citing a renamed section 
   assert.strictEqual(shipped.err.match(/^FAIL /gm).length, 2, shipped.err);
   const result = runScript(mutantOf("if (isFile('AGENTS.md')) checkCitations(", 'if (false) checkCitations('), dir);
   assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
+});
+
+/** A repo with the given files, staged; `after(dir)` runs once they are. */
+function repoOf(prefix, files, after = null) {
+  const dir = tmp(prefix);
+  git(dir, 'init', '-q', '-b', 'main');
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  git(dir, 'add', '-A');
+  if (after) after(dir);
+  return dir;
+}
+
+test('mutant that reads the rules dir one level deep misses a nested rule without paths: the shipped file catches', () => {
+  const dir = repoOf('agent-docs-nested-', {
+    'AGENTS.md': '# Agents\n\n- `api.md` — an indexed rule.\n',
+    'CLAUDE.md': '@AGENTS.md\n',
+    'src/x.js': 'module.exports = {};\n',
+    '.claude/rules/api.md': '---\npaths:\n  - "src/x.js"\n---\nRule body.\n',
+    '.claude/rules/web/react.md': 'No frontmatter.\n',
+  });
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^FAIL rule-paths: \.claude\/rules\/web\/react\.md /m);
+  assert.match(shipped.err, /^FAIL rule-index: .*web\/react\.md is missing/m);
+  const result = runScript(mutantOf('if (entry.isDirectory()) out.push(...listRules(p));', 'if (false) out.push(...listRules(p));'), dir);
+  assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
+});
+
+test('mutant that never walks an import again from a shallower path drops what the shipped --base lists', () => {
+  const dir = repoOf('agent-docs-depth-', {
+    'AGENTS.md': '# Agents\n',
+    'CLAUDE.md': '@AGENTS.md\n@docs/d1.md\n@docs/shared.md\n',
+    'docs/d1.md': '@d2.md\n',
+    'docs/d2.md': '@d3.md\n',
+    'docs/d3.md': '@d4.md\n',
+    'docs/d4.md': '@shared.md\n',
+    'docs/shared.md': '@deep.md\n',
+    'docs/deep.md': 'Deep.\n',
+  });
+  assert.match(runScript(SCRIPT, dir, ['--base']).out, /docs\/deep\.md \(imported by docs\/shared\.md\)/);
+  const mutant = mutantOf('else if (depth >= reached.get(f)) return;', 'else return;');
+  assert.doesNotMatch(runScript(mutant, dir, ['--base']).out, /docs\/deep\.md/);
+});
+
+test('mutant that reads every glob match as a file crashes on a symlinked directory the shipped file skips', () => {
+  const dir = repoOf(
+    'agent-docs-dirlink-',
+    { 'AGENTS.md': '# Agents\n', 'CLAUDE.md': '@AGENTS.md\n', 'src/x.js': 'module.exports = {};\n' },
+    (d) => fs.symlinkSync('src', path.join(d, 'vendor-pdf.js')),
+  );
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 0, `shipped file should pass: ${shipped.out}${shipped.err}`);
+  const mutant = mutantOf(')])].filter(isFile);', ')])];');
+  const result = runScript(mutant, dir);
+  assert.notStrictEqual(result.status, 0, `mutant should crash: ${result.out}${result.err}`);
+  assert.match(result.err, /EISDIR/);
 });
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'estimate-core.mjs');
 const CLI_REL = 'estimate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 22;
+const EXPECTED_TESTS = 23;
 
 let passed = 0;
 let failed = 0;
@@ -110,6 +110,7 @@ mutantFails('counting each deliverable row as its own sample', 'if (!byId.has(r.
 mutantFails('reading only the first term of an owner wait', 'return wait === null ? parseDuration(cell) : wait.ms / 60_000;', 'return parseDuration(cell);');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
 mutantFails('dropping the rows below a later table', 'for (const r of loose) out.findLast((x) => x.names.length === r.cells.length)?.rows.push(r);', 'void out;');
+mutantFails('refusing a log that has headers and no rows yet', 'return tables(text).some(({ names })', 'return false && tables(text).some(({ names })');
 mutantFails('keeping the code ticks in the unit id', "id: parts[0].replace(/^[`*]+|[`*]+$/g, ''),", 'id: parts[0],');
 
 test('CLI smoke: a log file gives the Gate 1 line, and a thin cohort says no history', () => {

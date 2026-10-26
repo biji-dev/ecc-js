@@ -292,8 +292,11 @@ export function notifyCommand(platform, { title, text }) {
 
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** The LaunchAgent plist: the program and its arguments, the weekly calendar slot, PATH, and one log file. */
-export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile }) {
+/**
+ * The LaunchAgent plist: the program and its arguments, the weekly calendar slot, PATH (and the
+ * Claude Code config directory when one is set: launchd never sees the shell's), and one log file.
+ */
+export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile, configDir = null }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -306,7 +309,7 @@ export function launchdPlist({ label = LABEL, programArguments, schedule = SCHED
     '  </array>',
     '  <key>StartCalendarInterval</key>',
     `  <dict><key>Weekday</key><integer>${schedule.weekday}</integer><key>Hour</key><integer>${schedule.hour}</integer><key>Minute</key><integer>${schedule.minute}</integer></dict>`,
-    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string></dict>`,
+    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string>${configDir ? `<key>CLAUDE_CONFIG_DIR</key><string>${xml(configDir)}</string>` : ''}</dict>`,
     `  <key>StandardOutPath</key><string>${xml(logFile)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(logFile)}</string>`,
     '  <key>ProcessType</key><string>Background</string>',
@@ -322,14 +325,19 @@ const shq = (s) => (/^[A-Za-z0-9_./:=@%+,-]+$/.test(s) ? s : `'${String(s).repla
 /** A command line for a shell, each argument quoted where it needs it. */
 export const shellLine = (args) => args.map(shq).join(' ');
 
-/** The cron line (Linux) and the schtasks line (Windows) for the same weekly slot. */
-export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE }) {
+/**
+ * The cron line (Linux) and the schtasks line (Windows) for the same weekly slot. The cron line makes
+ * the log's directory first: the shell opens the redirect before the command runs, and a missing
+ * directory fails it, so the job would never start. A set `configDir` goes in as the command's
+ * CLAUDE_CONFIG_DIR, which cron never inherits.
+ */
+export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null }) {
   const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const hhmm = `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
   const [program, ...rest] = programArguments;
   const tr = [program, ...rest].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
   return {
-    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} ${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
+    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
     schtasks: `schtasks /Create /F /SC WEEKLY /D ${days[schedule.weekday]} /ST ${hhmm} /TN harness-retro-weekly /TR "${tr}"`,
   };
 }

@@ -15,6 +15,14 @@
 //
 // Decides from FACTS about a diff (paths, production lines, what a fix round fixed) which review
 // it is owed, so the main thread does not guess. No I/O here, so the test can pin each rule.
+//
+// THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
+// model, a bounded model and a second family (gate-design.md › Model and effort). Read as Claude
+// Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
+// unit went to the bounded model -- the family that wrote it. So `--writer` names the role, and a
+// family name counts only on Claude Code (or an unknown host, where every v4 install ran).
+
+import { HOSTS } from './harness-host-core.mjs';
 
 // ---- [B] project bindings — from the reviewed risk map in the harness file
 export const CRITICAL = []; // path regexes of critical code (risk map › critical); empty until bound
@@ -38,9 +46,13 @@ export const FIX_LINES = 40; // a critical P1 fix at or under this many producti
 
 export const KINDS = ['slice', 'unit', 'fix'];
 export const TIERS = ['small', 'full'];
-// who wrote the diff: claude = Opus (main thread / implementer), codex = the second family,
-// sonnet = a Sonnet builder, mixed = several executors (a fix round split between Opus and Codex)
+// who wrote the diff, as decide() routes it, in Claude Code's names: claude = Opus (main thread /
+// implementer), codex = the second family, sonnet = a Sonnet builder, mixed = several executors
+// (a fix round split between Opus and Codex). The CLI takes a role and maps it with writerRole.
 export const WRITERS = ['claude', 'codex', 'sonnet', 'mixed'];
+// --writer's role → the routing value; the same on every host
+export const ROLES = { main: 'claude', bounded: 'sonnet', second: 'codex', mixed: 'mixed' };
+const FAMILY_HOSTS = ['claude', 'unknown']; // where a family name keeps Claude Code's meaning
 export const SEVERITIES = ['P0', 'P1', 'P2', 'P3'];
 
 const WRITER_NAMES = {
@@ -52,6 +64,24 @@ const WRITER_NAMES = {
 const secondFamilyWrote = (writer) => writer === 'codex' || writer === 'mixed'; // routes like codex
 
 const UNBOUND_NOTE = 'CRITICAL unbound — every path treated as cold';
+
+/**
+ * `--writer` on `host` → the routing value decide() takes. A role (main | bounded | second |
+ * mixed) maps the same on every host; a family name (claude | sonnet | codex) is itself on Claude
+ * Code or an unknown host and a usage error anywhere else -- there it names the wrong model, so it
+ * is refused, never guessed. A missing or unknown writer is refused here too: decide()'s own message
+ * lists routing values, which on another host are the names it refuses.
+ */
+export function writerRole(writer, host) {
+  if (!FAMILY_HOSTS.includes(host) && !HOSTS.includes(host))
+    throw new Error(`--host must be one of ${HOSTS.join('|')}, not "${host}"`);
+  if (Object.hasOwn(ROLES, writer)) return ROLES[writer];
+  if (WRITERS.includes(writer) && !FAMILY_HOSTS.includes(host))
+    throw new Error(`--writer ${writer} names a model family; on a ${host} host name the role: main | bounded | second | mixed`);
+  if (WRITERS.includes(writer)) return writer;
+  const also = FAMILY_HOSTS.includes(host) ? ' (on Claude Code also claude | sonnet | codex)' : '';
+  throw new Error(`--writer is required and names the role that wrote the diff: main | bounded | second | mixed${also}`);
+}
 
 export const isProduction = (path) => !NON_PRODUCTION.some((re) => re.test(path));
 export const isCritical = (path) => CRITICAL.some((re) => re.test(path));
@@ -80,7 +110,8 @@ export function parseNumstat(text) {
 /**
  * CLI arguments → options. Throws on an unknown option or a missing value; `--base` is required.
  * `kind` and `writer` are validated by `decide` (`writer` has no default), so a bad or missing
- * one is the same usage error everywhere.
+ * one is the same usage error everywhere. `--host` is set only when given (the CLI detects it
+ * otherwise) and must name a host.
  */
 export function parseArgs(argv) {
   const a = { tier: 'full', writer: null, round: 1, maxFixed: null, json: false };
@@ -92,6 +123,7 @@ export function parseArgs(argv) {
     '--writer': 'writer',
     '--max-fixed': 'maxFixed',
     '--round': 'round',
+    '--host': 'host',
   };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
@@ -105,6 +137,8 @@ export function parseArgs(argv) {
     } else throw new Error(`unknown option ${t}`);
   }
   if (!a.base) throw new Error('--base <sha> is required');
+  if (a.host !== undefined && !HOSTS.includes(a.host))
+    throw new Error(`--host must be one of ${HOSTS.join('|')}, not "${a.host}"`);
   a.round = Number(a.round);
   return a;
 }
@@ -194,7 +228,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
       return out(
         'review',
         [base, ...specialists],
-        `small unit written by ${writer}: the other model family reviews the whole unit diff`,
+        `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff`,
       );
     }
     const reviewers = [

@@ -18,7 +18,7 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
   'command-guard': 6,
-  'edit-guard': 5,
+  'edit-guard': 8,
   'harness-guard': 7,
   'context-budget': 6,
   'run-gates': 4,
@@ -160,6 +160,36 @@ mutantFails(
   '.claude/hooks/edit-guard.mjs',
   '(?:Add File|Update File|Delete File|Move to)',
   '(?:Add File|Update File|Delete File)',
+);
+mutantFails(
+  'an edit guard that checks only the lexical path, so a link to a protected path gets through',
+  '.claude/hooks/edit-guard.mjs',
+  'PROTECTED.some((re) => re.test(rel) || re.test(real))',
+  'PROTECTED.some((re) => re.test(rel))',
+);
+mutantFails(
+  'an edit guard that checks only the physical path, so a .env link to an allowed file gets through',
+  '.claude/hooks/edit-guard.mjs',
+  'PROTECTED.some((re) => re.test(rel) || re.test(real))',
+  'PROTECTED.some((re) => re.test(real))',
+);
+mutantFails(
+  'an edit guard that drops `..` from a link target as text, so alias -> jump/../x gets through',
+  '.claude/hooks/edit-guard.mjs',
+  'head = isAbsolute(target) ? target : `${dirname(head)}${sep}${target}`;',
+  'head = resolve(dirname(head), target);',
+);
+mutantFails(
+  'an edit guard that normalises a patch path before its links, so jump/../x gets through',
+  '.claude/hooks/edit-guard.mjs',
+  'physicalPath(isAbsolute(p) ? p : `${resolve(base)}${sep}${p}`)',
+  'physicalPath(resolve(base, p))',
+);
+mutantFails(
+  'an edit guard whose .env pattern is case-sensitive, so .ENV gets through',
+  '.claude/hooks/edit-guard.mjs',
+  '[^/]*)?$/i,',
+  '[^/]*)?$/,',
 );
 mutantFails(
   'a commit guard that never refuses the mainline while a row is held',

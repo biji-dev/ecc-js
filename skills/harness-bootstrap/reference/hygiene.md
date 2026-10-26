@@ -51,10 +51,10 @@ names and no process runs in (`lsof -d cwd`), with `git worktree remove` and nev
 `--force`. It names one only when it is merged with commits of its own, has no
 change, holds no ignored file but rebuildable output (a link counts as none), and
 has been idle over 6 h. Delete `.review-work/` directories older than 14 days `[B]`;
-keep `.codex-runs/`, which holds only `ledger.jsonl`, the second family's meter
-(`codex-run.mjs` writes nothing else there). Stop processes by recorded PID only
-(`runner.md` › Step 10). Disk outside the repository is the machine sweep's
-(`machine.md`).
+keep `.codex-runs/` and `.claude-runs/`, which hold only `ledger.jsonl`, the second
+family's meter (`codex-run.mjs` and `claude-run.mjs` write nothing else there). Stop
+processes by recorded PID only (`runner.md` › Step 10). Disk outside the repository
+is the machine sweep's (`machine.md`).
 > Origin: the check's first draft named a worktree in one project whose ignored
 > `.reconcile/` held 673 files of a reconciliation's briefs and second-model
 > outputs; `git worktree remove` deletes ignored files without a word. The project's own

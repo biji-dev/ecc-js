@@ -55,7 +55,8 @@ carries out an approved deploy runs on Sonnet (below).
 
 `[M]` **A switch line before each step**, one line, then continue:
 `Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact or clear offered) · Reason`.
-The main session runs at `high`. An `Effort` above `high` with no reason in the line
+Model and Effort are the host's, from `harness-host.mjs`'s first line. The main
+session runs at `high`. An `Effort` above `high` with no reason in the line
 is itself a finding: say so and ask the owner to lower it (`/effort high`) — a
 session left at `max` passes it to every subagent (`gate-design.md`).
 
@@ -181,7 +182,8 @@ transcript tail and:
   session;
 - takes its limit from the auto-compact window, 40K under it, read where Claude
   Code reads it: `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then `.claude/settings.local.json`,
-  `.claude/settings.json` and the user's settings; with none set, or `auto`, 260K;
+  `.claude/settings.json` and the user's settings (`$CLAUDE_CONFIG_DIR/settings.json`
+  when that is set, else `~/.claude/settings.json`); with none set, or `auto`, 260K;
 - on `PostToolUse`, speaks only when the context crosses into a new 25K band or a
   new level, so a long tool loop hears about it without hearing it every call;
 - after a compaction, says nothing until the next reply brings a new figure. A hook

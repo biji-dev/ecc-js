@@ -35,13 +35,14 @@ function parseSize(value) {
 
 /**
  * The auto-compact window this session runs under, in Claude Code's own order: the environment
- * variable, then local, project and user settings. The first file that sets it decides, so a
- * project's "auto" (or a value Claude Code would reject) means the model's default: unknown, null.
+ * variable, then local, project and user settings (CLAUDE_CONFIG_DIR when set, as Claude Code reads
+ * them, else ~/.claude). The first file that sets it decides, so a project's "auto" (or a value
+ * Claude Code would reject) means the model's default: unknown, null.
  */
 export function compactWindow(env = process.env, projectDir = env.CLAUDE_PROJECT_DIR, home = homedir()) {
   if (env.CLAUDE_CODE_AUTO_COMPACT_WINDOW) return parseSize(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
   const files = projectDir ? [join(projectDir, '.claude', 'settings.local.json'), join(projectDir, '.claude', 'settings.json')] : [];
-  for (const file of [...files, join(home, '.claude', 'settings.json')]) {
+  for (const file of [...files, join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'settings.json')]) {
     let value;
     try {
       value = JSON.parse(readFileSync(file, 'utf8'))?.autoCompactWindow;

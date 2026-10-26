@@ -587,6 +587,42 @@ test('summarizeTimes: a background notice starts no wait, a slash command does n
   assert.deepEqual(summarizeTimes([], {}), { wallMs: 0, waitMs: 0, workMs: 0, questions: 0, unanswered: 0, prompts: 0, questionMs: 0, promptMs: 0 });
 });
 
+test('summarizeTimes: a wait that crosses a window edge is clipped to the wall, not counted as work', () => {
+  // A question asked at 50 and answered at 90, measured from 60: the wall starts at the note (70).
+  const ev = parseEvents(
+    [
+      asst(40),
+      asst(50, [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion' }]),
+      jline({ type: 'system', subtype: 'turn_duration', timestamp: atMin(70) }),
+      userLine(90, [{ type: 'tool_result', tool_use_id: 'q1' }]),
+      asst(100),
+    ].join('\n'),
+  );
+  const q = summarizeTimes(ev, { since: atMin(60) });
+  assert.deepEqual([q.wallMs, q.questionMs, q.waitMs, q.workMs], [30 * MIN, 20 * MIN, 20 * MIN, 10 * MIN]);
+  assert.deepEqual([q.questions, q.unanswered], [0, 0]); // the ask itself is outside the window
+  // A prompt typed at 65 whose last turn was at 40, before the window.
+  const p = summarizeTimes(
+    parseEvents([asst(40), jline({ type: 'system', subtype: 'turn_duration', timestamp: atMin(62) }), userLine(65, 'go'), asst(70)].join('\n')),
+    { since: atMin(60) },
+  );
+  assert.deepEqual([p.wallMs, p.promptMs, p.waitMs, p.workMs, p.prompts], [8 * MIN, 3 * MIN, 3 * MIN, 5 * MIN, 1]);
+  // Unanswered is the window's own: an ask from before it, never answered, is not counted; one inside it is.
+  const note = (min) => jline({ type: 'system', subtype: 'turn_duration', timestamp: atMin(min) });
+  const old = [asst(50, [{ type: 'tool_use', id: 'q3', name: 'AskUserQuestion' }]), note(65), asst(70)];
+  assert.equal(summarizeTimes(parseEvents(old.join('\n')), { since: atMin(60) }).unanswered, 0);
+  const fresh = [...old, asst(75, [{ type: 'tool_use', id: 'q4', name: 'AskUserQuestion' }])];
+  assert.equal(summarizeTimes(parseEvents(fresh.join('\n')), { since: atMin(60) }).unanswered, 1);
+  // The other edge: asked at 50, answered at 90, window ends at 70; the question is the window's, and answered.
+  const u = summarizeTimes(
+    parseEvents(
+      [asst(50, [{ type: 'tool_use', id: 'q2', name: 'AskUserQuestion' }]), jline({ type: 'system', subtype: 'turn_duration', timestamp: atMin(55) }), userLine(90, [{ type: 'tool_result', tool_use_id: 'q2' }])].join('\n'),
+    ),
+    { until: atMin(70) },
+  );
+  assert.deepEqual([u.wallMs, u.questionMs, u.waitMs, u.questions, u.unanswered], [5 * MIN, 5 * MIN, 5 * MIN, 1, 0]);
+});
+
 test('summarizeTimes over two sessions: the gap before the next session\'s first prompt is owner wait', () => {
   const first = parseEvents([asst(0), asst(10)].join('\n'));
   const second = parseEvents([userLine(60, 'resume U-1'), asst(65)].join('\n'));
@@ -683,6 +719,46 @@ test('summarizeSteps: the open last step runs to the last turn, a tag names its 
   assert.match(s.problems[0], /done of 9 r1 .* matches no open step/);
 });
 
+test('summarizeSteps: a step interval adds only its part inside the window to the wall time', () => {
+  const markers = [marker('4', 'start', 0), marker('4', 'done', 120)];
+  const rows = [pricedRow(100, 1)];
+  const wall = (window) => summarizeSteps(rows, markers, { unit: 'U-1', ...window }).steps.find((x) => x.label === '4 r1').wallMs;
+  assert.equal(wall({}), 120 * MIN);
+  assert.equal(wall({ since: atMin(60) }), 60 * MIN);
+  assert.equal(wall({ since: atMin(60), until: atMin(90) }), 30 * MIN);
+  assert.equal(wall({ until: atMin(30) }), 30 * MIN);
+});
+
+test('summarizeSteps: a subagent dispatched before the window is placed by its first turn, not its first one in the window', () => {
+  const markers = [marker('2', 'start', 0), marker('2', 'done', 58), marker('3', 'start', 58), marker('3', 'done', 120)];
+  const agent = { kind: 'sub', agentId: 'a1', description: 'untagged builder' };
+  const rows = [pricedRow(55, 1, agent), pricedRow(70, 2, agent), pricedRow(80, 4, agent)];
+  const s = summarizeSteps(rows, markers, { unit: 'U-1', since: atMin(60) });
+  const by = Object.fromEntries(s.steps.map((x) => [x.label, x]));
+  near(by['2 r1'].usd, 6); // its cost and turns stay the window's, its step is the first turn's
+  assert.equal(by['2 r1'].turns, 2);
+  near(by['3 r1'].usd, 0);
+  near(s.total, 6);
+});
+
+test('summarizeSteps: an open step runs to the last turn anywhere, so a window that ends inside it still gets its time', () => {
+  const markers = [marker('4', 'start', 0)];
+  const wall = (rows, window) => summarizeSteps(rows, markers, { unit: 'U-1', ...window }).steps.find((x) => x.label === '4 r1').wallMs;
+  assert.equal(wall([pricedRow(30, 1), pricedRow(120, 2)], { until: atMin(60) }), 60 * MIN);
+  assert.equal(wall([pricedRow(120, 2)], { until: atMin(60) }), 60 * MIN); // no turn inside the window at all
+  assert.equal(wall([pricedRow(30, 1), pricedRow(120, 2)], {}), 120 * MIN);
+});
+
+test('summarizeSteps: a row without a readable time never sets a subagent\'s first turn', () => {
+  const markers = [marker('2', 'start', 0), marker('2', 'done', 58), marker('3', 'start', 58), marker('3', 'done', 120)];
+  const agent = { kind: 'sub', agentId: 'a1', description: 'untagged builder' };
+  const rows = [{ ...pricedRow(90, 8, agent), ts: NaN }, pricedRow(55, 1, agent), pricedRow(70, 2, agent)];
+  const s = summarizeSteps(rows, markers, { unit: 'U-1', since: atMin(60) });
+  const by = Object.fromEntries(s.steps.map((x) => [x.label, x]));
+  near(by['2 r1'].usd, 2);
+  assert.equal(by.unmarked, undefined);
+});
+
 test('parseArgs reads --times, --by-step and --unit, and refuses --line with them and --unit alone', () => {
   const a = parseArgs(['--session', 's1', '--times', '--by-step', 'docs/plans/U-1.steps.jsonl', '--unit', 'U-1']);
   assert.equal(a.times, true);
@@ -718,6 +794,30 @@ test('formatReport adds the times, compaction, cache and step sections only when
   assert.match(text, /^ {2}unmarked +\$1\.00 +1\.3% · .* · no marker$/m);
   assert.match(text, /^ {2}! done of 9 r1/m);
   assert.ok(text.trimEnd().endsWith('Dollar figures are API-equivalent and relative, not a bill.'));
+});
+
+test('without --projects-dir the wrapper reads $CLAUDE_CONFIG_DIR/projects when it is set, else ~/.claude/projects', () => {
+  const sessions = fixture();
+  const withProjects = (base) => {
+    fs.cpSync(path.join(sessions, 'projects'), path.join(base, 'projects'), { recursive: true });
+    return base;
+  };
+  const bare = tmpDir('unit-cost-bare-');
+  const config = withProjects(tmpDir('unit-cost-config-'));
+  const home = tmpDir('unit-cost-home-');
+  const homed = tmpDir('unit-cost-homed-');
+  withProjects(path.join(homed, '.claude'));
+  const exec = (env) => {
+    const e = { ...process.env, ...env };
+    for (const k of Object.keys(e)) if (k.startsWith('GIT_')) delete e[k];
+    return spawnSync(process.execPath, [RUNNER, '--session', 'sess1', '--line'], { cwd: bare, env: e, encoding: 'utf8' });
+  };
+  const viaConfig = exec({ HOME: home, CLAUDE_CONFIG_DIR: config });
+  assert.equal(viaConfig.status, 0, viaConfig.stderr);
+  assert.match(viaConfig.stdout, /^Cost \$/);
+  // The variable wins over a HOME that also has the session; set but empty falls back to HOME.
+  assert.equal(exec({ HOME: homed, CLAUDE_CONFIG_DIR: bare }).status, 2);
+  assert.equal(exec({ HOME: homed, CLAUDE_CONFIG_DIR: '' }).status, 0);
 });
 
 test('the wrapper adds --times and --by-step from the session, its subagents\' tags and the steps file', () => {

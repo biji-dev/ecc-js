@@ -39,6 +39,7 @@ function tmp(prefix) {
 // sick keeps it from answering. MIN_FREE_GB and HEALTH_WAIT come from the environment so a test can move them.
 const BLOCK = /^# >>> unit-stack \[B\][^\n]*\n[\s\S]*?^# <<< unit-stack$/m;
 const BINDING = `# >>> unit-stack [B] - the test binding
+REGISTRY=.claude/registry.md
 SLOTS="1 2 3"
 MIN_FREE_GB=\${FAKE_MIN_FREE_GB:-0}
 HEALTH_WAIT=\${FAKE_HEALTH_WAIT:-0}
@@ -246,6 +247,44 @@ test('the registry is read as the commit guard reads it: markers, a header above
   assert.strictEqual(w.run(w.u1, ['free-slot']).out.trim(), '2');
   const r = w.run(w.u1, ['up', '1']);
   assert.strictEqual(r.status, 0, r.all);
+});
+
+// The commit guard binds the registry's path ([B] REGISTRY); unit-stack binds the same path, not a fixed one.
+const MOVED = () => boundText().replace('REGISTRY=.claude/registry.md', 'REGISTRY=docs/registry.md');
+function moveRegistry(w) {
+  fs.mkdirSync(path.join(w.main, 'docs'), { recursive: true });
+  fs.renameSync(path.join(w.main, '.claude', 'registry.md'), path.join(w.main, 'docs', 'registry.md'));
+}
+
+test('a registry kept at the bound REGISTRY path is the one read: free-slot skips its claim, up starts the stack', () => {
+  const w = world(MOVED());
+  w.registry([[1, '.worktrees/u1', 'slot 1']]);
+  moveRegistry(w);
+  assert.strictEqual(w.run(w.u2, ['free-slot']).out.trim(), '2');
+  const r = w.run(w.u1, ['up', '1']);
+  assert.strictEqual(r.status, 0, r.all);
+  assert.deepStrictEqual(w.calls(), [`up 1 ${w.u1}`]);
+});
+
+test('no registry file at the bound path is an error naming the binding, never "nothing held"', () => {
+  const w = world(MOVED());
+  w.registry([[1, '.worktrees/u1', 'slot 1']]); // written at .claude/, where the binding does not look
+  const needle = /no registry at .*\/docs\/registry\.md: bind REGISTRY in the \[B\] block of scripts\/unit-stack\.sh \(the commit guard's REGISTRY\)/;
+  refused(w.run(w.u1, ['free-slot']), needle);
+  refused(w.run(w.u1, ['up', '1']), needle);
+  assert.deepStrictEqual(w.calls(), []);
+  assert.strictEqual(w.state(w.u1), null);
+});
+
+test('down with the registry gone refuses before any teardown: the stack and its state file stay', () => {
+  const w = world(MOVED());
+  w.registry([[1, '.worktrees/u1', 'slot 2']]);
+  moveRegistry(w);
+  assert.strictEqual(w.run(w.u1, ['up', '2']).status, 0);
+  fs.rmSync(path.join(w.main, 'docs', 'registry.md'));
+  refused(w.run(w.u1, ['down']), /no registry at .*\/docs\/registry\.md: bind REGISTRY in the \[B\] block of scripts\/unit-stack\.sh \(the commit guard's REGISTRY\)/);
+  assert.deepStrictEqual(w.calls(), [`up 2 ${w.u1}`], 'no down call');
+  assert.strictEqual(w.state(w.u1), 'UNIT_SLOT=2\n');
 });
 
 test('the shipped [B] block is unbound: up names the block to edit and starts nothing', () => {

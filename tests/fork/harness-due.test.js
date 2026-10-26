@@ -14,9 +14,10 @@ const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scr
 const TEST_REL = path.join('lib', 'harness-due-core.test.mjs');
 const CORE_REL = path.join('lib', 'harness-due-core.mjs');
 const CLI_REL = 'harness-due.mjs';
+const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 14;
+const EXPECTED_TESTS = 17;
 
 let passed = 0;
 let failed = 0;
@@ -104,7 +105,29 @@ mutantFails('counting an ignored link as a file it would lose', ".filter((p) => 
 mutantFails('reading a fast-forwarded branch as one cut and never started', 'const own = merged && (!mainline.has(w.head) || moved);', 'const own = merged && !mainline.has(w.head);', CLI_REL);
 mutantFails('matching a project name inside a longer one', '${esc(project)}(?![A-Za-z0-9_-])', '${esc(project)}');
 mutantFails('moving a seen week backward', "if (!(typeof out[project] === 'string' && out[project] >= week)) out[project] = week;", 'out[project] = week;');
+mutantFails('counting a report no commit holds by its file time', 'found.filter((r) => times.has(r.rel)).map((r) => ({ rel: r.rel, time: times.get(r.rel) }))', 'found.map((r) => ({ rel: r.rel, time: times.get(r.rel) ?? mtime(path.join(top, r.rel)) }))', CLI_REL);
+mutantFails("counting a landed branch's merge of the mainline as a landing", "'--merges', '--first-parent', ", "'--merges', ", CLI_REL);
+mutantFails('dating a line not committed yet by the time of the blame', 'committed ? time : null', 'time', GATHER_REL);
 mutantFails('exiting 0 when the claim is blocked', 'if (blocking) process.exitCode = 1;', '', CLI_REL);
+
+test('the shipped suite never skips: bound to no preflight and a 72 h idle time it still passes with skipped 0 and todo 0', () => {
+  const copy = tmp('harness-due-binding-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const file = path.join(copy, CORE_REL);
+  const before = fs.readFileSync(file, 'utf8');
+  const bound = before
+    .replace("preflight: 'docs/harness/reports/preflight-<phase>.md',", 'preflight: null,')
+    .replace('WORKTREE_IDLE_HOURS = 6;', 'WORKTREE_IDLE_HOURS = 72;');
+  assert.ok(bound.includes('preflight: null,') && bound.includes('WORKTREE_IDLE_HOURS = 72;'), 'the binding did not apply');
+  fs.writeFileSync(file, bound);
+  const res = runSuite(copy, cleanup);
+  const out = res.stdout + res.stderr;
+  assert.strictEqual(res.status, 0, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'skipped'), 0, out.slice(-800));
+  assert.strictEqual(tapCount(out, 'todo'), 0, out.slice(-800));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+});
 
 test('CLI smoke: claiming the first row of a phase with no preflight report exits 1 and names the report', () => {
   const repo = tmp('harness-due-cli-');

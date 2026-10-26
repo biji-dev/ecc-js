@@ -329,8 +329,8 @@ Own skills shipped today:
 | Skill | What it does |
 | --- | --- |
 | `skill-advisor` | Recommends and installs library items per project |
-| `harness-bootstrap` | Assesses a repo, new or already bootstrapped, and installs or upgrades a gated harness: plan mode (task runner over a plan with stable ids) or change mode (task type, Trivial/Small/Full tiers), risk map and merge policy, commit and command guards, scope guard, three cross-check lanes, verify runner, harness log, upgrade manifest. Claude Code first (Opus for judgment, Sonnet for bounded work) |
-| `delegate-tasks` | Opus architect writes build, fix, control, check or plan specs; executors chosen per slice from the risk (Sonnet waves, Opus serial for critical code, a second model family) run them behind command gates, with a per-slice reviewer on another model. The dispatch engine for `harness-bootstrap` runs |
+| `harness-bootstrap` | Assesses a repo, new or already bootstrapped, and installs or upgrades a gated harness: plan mode (task runner over a plan with stable ids) or change mode (task type, Trivial/Small/Full tiers), risk map and merge policy, commit and command guards, scope guard, three cross-check lanes, verify runner, harness log, upgrade manifest. Runs on any host — Claude Code, Codex, ZCode or Kimi — with that host's judgment and bounded models |
+| `delegate-tasks` | The architect, on the host's judgment model, writes build, fix, control, check or plan specs; executors chosen per slice from the risk (on Claude Code: Sonnet waves, Opus serial for critical code, a second model family) run them behind command gates, with a per-slice reviewer on another model. The dispatch engine for `harness-bootstrap` runs |
 
 ## Known limitations
 

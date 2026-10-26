@@ -392,8 +392,21 @@ function main() {
           .filter(isFile)
       : [];
 
+  // Claude Code loads `.claude/rules/**/*.md`, nested directories included. Recurse into real directories only:
+  // a symlinked one is never followed, so a link back up the tree cannot loop.
+  const listRules = (dir) => {
+    if (!existsSync(abs(dir))) return [];
+    const out = [];
+    for (const entry of readdirSync(abs(dir), { withFileTypes: true })) {
+      const p = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) out.push(...listRules(p));
+      else if (entry.name.endsWith('.md') && isFile(p)) out.push(p);
+    }
+    return out.sort();
+  };
+
   const ruleDirExists = existsSync(abs(CONFIG.rulesDir));
-  const ruleFiles = listMd(CONFIG.rulesDir, (f) => f.endsWith('.md'));
+  const ruleFiles = listRules(CONFIG.rulesDir);
   const skillFiles = CONFIG.skillDirs.flatMap((dir) =>
     existsSync(abs(dir))
       ? readdirSync(abs(dir))
@@ -437,9 +450,12 @@ function main() {
   // five hops deep), AGENTS.md (Codex reads it directly), and each rule file without `paths:` (a path-scoped
   // rule loads only when a matching file is read). `~/` and absolute imports are per machine, not counted.
   const base = new Map();
+  const reached = new Map(); // the shallowest depth a file was walked from: a shorter path walks it again
   const load = (f, via, depth) => {
-    if (base.has(f) || !isFile(f)) return;
-    base.set(f, via);
+    if (!isFile(f)) return;
+    if (!base.has(f)) base.set(f, via);
+    else if (depth >= reached.get(f)) return;
+    reached.set(f, depth);
     if (depth >= 5) return;
     for (const line of proseLines(read(f))) {
       for (const m of line.replace(/`[^`]*`/g, ' ').matchAll(/(?:^|\s)@([^\s`]+)/g)) {
@@ -550,7 +566,12 @@ function main() {
   const indexExists = isFile(CONFIG.indexFile);
   if (ruleDirExists && indexExists) {
     const lines = proseLines(read(CONFIG.indexFile));
-    const bulletOf = (line) => line.match(/^[ \t]*[-*] `([^`/]+\.md)`[ \t]*(?:—|–|-|:)(?:\s|$)/)?.[1];
+    // A nested rule is indexed by its path under the rules dir (`web/react.md`); a slash bullet that names
+    // no rule file is another doc, not an index entry.
+    const bulletOf = (line) => {
+      const name = line.match(/^[ \t]*[-*] `([^`]+\.md)`[ \t]*(?:—|–|-|:)(?:\s|$)/)?.[1];
+      return name && (!name.includes('/') || ruleNames.has(name)) ? name : undefined;
+    };
     const levelOf = (line) => line.match(/^ {0,3}(#{1,6})(?:[ \t]|$)/)?.[1].length ?? 0;
     const first = lines.findIndex((l) => ruleNames.has(bulletOf(l) ?? ''));
     const indexed = new Set();
@@ -708,7 +729,8 @@ function main() {
     };
     const exempt = new Set(CONFIG.citeExempt ?? []);
     const citeRes = (CONFIG.citeFiles ?? []).map(globToRegExp);
-    const citing = [...new Set([...docFiles, ...files.filter((f) => citeRes.some((re) => re.test(f)))])];
+    // A glob may match a directory git lists as one entry (a submodule, a symlinked directory): files only.
+    const citing = [...new Set([...docFiles, ...files.filter((f) => citeRes.some((re) => re.test(f)))])].filter(isFile);
     for (const f of citing.filter((p) => !exempt.has(p))) {
       const text = read(f);
       if (!text.includes('AGENTS.md')) continue;

@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 40;
+const EXPECTED_TESTS = 45;
 
 let passed = 0;
 let failed = 0;
@@ -140,6 +140,18 @@ test('mutant: writer mixed no longer routes like the second family', () => {
 
 test('mutant: critical code written by Sonnet no longer gets an Opus reviewer', () => {
   mutantRun("if (writer !== 'claude' && critical.length > 0) {", "if (secondFamilyWrote(writer) && critical.length > 0) {");
+});
+
+test('mutant: a family name on a Codex, ZCode or Kimi host is no longer refused, so it routes as Claude Code\'s', () => {
+  mutantRun('WRITERS.includes(writer) && !FAMILY_HOSTS.includes(host)', 'WRITERS.includes(writer) && false');
+});
+
+test('mutant: a missing or unknown --writer falls through to decide()\'s message, which names refused family names', () => {
+  mutantRun('  if (WRITERS.includes(writer)) return writer;\n', '  return writer;\n');
+});
+
+test('mutant: the small-unit reason prints the routing value again, naming the wrong family off Claude Code', () => {
+  mutantRun('small unit written by ${WRITER_NAMES[writer]}', 'small unit written by ${writer}');
 });
 
 test('mutant: the FIX_LINES boundary moved by one makes the suite fail', () => {

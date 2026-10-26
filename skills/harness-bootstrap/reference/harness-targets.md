@@ -57,7 +57,9 @@ size today, rounded up, and the lint fails only above it. A 118 KB `CLAUDE.md` m
 not fail on day one; it must not grow either.
 
 `[M]` **Area rules are indexed in `AGENTS.md`**, one line each:
-``- `<file>.md` — <what it covers> (`<first path glob>` …)``. Sub-agents and other
+``- `<file>.md` — <what it covers> (`<first path glob>` …)``; a rule in a
+subdirectory (Claude Code loads `.claude/rules/` at any depth) by its path under the
+rules dir, `web/react.md`. Sub-agents and other
 agents do not load path-scoped rules on their own, so **every brief names the ones
 that apply** — `node scripts/check-agent-docs.mjs --rules-for <files>` lists them.
 
@@ -131,7 +133,10 @@ call it; never maintain the same sequence in three skill files.
   `Write`, `MultiEdit` and `NotebookEdit`, installed to `.claude/hooks/edit-guard.mjs`.
   It reads the paths from stdin (`tool_input.file_path`, `notebook_path`) and refuses,
   with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets and
-  installed packages, while a committed `.env.example` stays editable. It replaces
+  installed packages, while a committed `.env.example` stays editable. It tests the
+  path as written and the path the write lands on, through symlinks, and matches
+  without case (macOS and Windows volumes ignore it): `.ENV`, or `deps/` linked to
+  `node_modules/`, is refused too. It replaces
   inline hooks on `$CLAUDE_FILE_PATHS`, which Claude Code does not set: one project's
   `.env` guard and formatter read it, so neither ever ran (the 2.1.308 binary holds no
   such name). A `PostToolUse` formatter imports its `editedPaths`.
@@ -155,13 +160,29 @@ call it; never maintain the same sequence in three skill files.
 ## Codex
 
 - **Instructions:** `AGENTS.md`. **Skills:** `.agents/skills/`.
-- **Read-only agents:** `.codex/agents/<name>.toml` with
-  `sandbox_mode = "read-only"` and the auditor brief as `developer_instructions`.
-  That is the tool-level bound the conformance auditor needs.
-- **Models:** the TOML's `model` and `model_reasoning_effort`; keep the same
-  judgment / bounded split with whatever models the project runs.
+- **Agents:** `.codex/agents/<name>.toml`, generated when Codex is a target, one per
+  generated Claude agent: `name`, `description`, the agent file's brief as
+  `developer_instructions`, and `model` and `model_reasoning_effort` from
+  `.agents/harness-models.json` (`gate-design.md` › Model and effort). **A TOML bounds
+  no sandbox:** "Other session settings, including `sandbox_mode`, `approval_policy`,
+  `model_provider`, and `mcp_servers`, don't override the parent configuration when
+  placed in a custom agent file", and its instructions "can ask an agent to avoid
+  edits, but they don't create a separate read-only sandbox" (Codex's subagents
+  documentation). The read-only bound the conformance and blast-radius auditors need
+  is `codex exec -s read-only`: `codex-run.mjs`'s read-only kinds, `lane-a` for the
+  conformance checklist.
+- **Models:** the session's own effort is `config.toml`'s `model_reasoning_effort` —
+  the project's `.codex/config.toml` first, in a trusted repository — and
+  `harness-host.mjs` flags one above `high`: start the session with
+  `-c model_reasoning_effort=high`. A profile is a file, not a `[profiles]` table:
+  `codex -p <name>` layers `$CODEX_HOME/<name>.config.toml` on the user config
+  (`--help`, 0.163).
 - **As the second family for Claude Code:** through the `codex-run.mjs` wrapper
   (`cross-model.md`).
+- **As the host:** its second family is Claude, through `claude-run.mjs`
+  (`cross-model.md` › When the host is not Claude Code). The `workspace-write`
+  sandbox has no network and cannot write `~/.claude`, so `claude-run` runs outside
+  it, on the approval Codex asks for.
 - **Hooks:** the command and edit guards run under Codex unchanged, from
   `.codex/hooks.json`, which Codex loads only once the project's `.codex/` layer is
   trusted. Its stdin carries `tool_name`, `tool_input` and `cwd`; "`Bash` and
@@ -188,6 +209,12 @@ call it; never maintain the same sequence in three skill files.
 - **Model pinning** exists only on dynamic workflows (`subagent_model`); ad-hoc
   dispatches run on the session model. When the split matters, batch the bounded
   work into a workflow (the `delegate-tasks` skill describes one).
+- **The second family** is Codex, through `codex-run.mjs`; Claude, through
+  `claude-run.mjs`, when Codex is out. ZCode sets `CLAUDE_*` variables too, so
+  `harness-host.mjs` reads any `ZCODE_*` variable first. No ZCode variable is
+  verified yet (none was found in its app or its logs), so until one is, a ZCode
+  session reads as `claude`: set `HARNESS_HOST=zcode` in the environment ZCode gives
+  its shells, never in a shell profile the other hosts read too.
 - Check whether the session model reads images before planning a visual step.
 - **When ZCode is the main runtime,** the Claude Code hooks (command and edit
   guards, context budget) do not protect it, and "pass `model` and `effort` on every
@@ -206,3 +233,11 @@ call it; never maintain the same sequence in three skill files.
 `[M]` State which agents you generated for and the evidence for each. Generating
 for an agent the project does not use is clutter; missing one it does use leaves
 that agent unguarded by everything except the git hook.
+
+`[M]` **At run time, `scripts/harness-host.mjs` names the host:** `HARNESS_HOST`,
+then any `ZCODE_*` variable, then `CODEX_THREAD_ID` or `CODEX_SANDBOX`, then
+`CLAUDECODE`. A host started from another inherits its variables — a Codex run
+started from a Claude Code shell carries `CLAUDECODE` — so the inner host's own
+variables go first; `HARNESS_HOST` settles anything else. Kimi sets none: it needs
+`HARNESS_HOST=kimi`. ZCode needs `HARNESS_HOST=zcode` until a `ZCODE_*` variable is
+verified in its shells (ZCode, above).

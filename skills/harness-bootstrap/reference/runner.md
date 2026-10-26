@@ -52,6 +52,7 @@ never by feel. Check in this order; unsure → the heavier type.
 |---|---|---|
 | **Ops** | a deploy, migration run, production data fix or credential rotation, even with no repo change | its runbook, owner approval first; the runbook's mechanical steps on a Sonnet runner, judgment calls in the Opus session (`context.md`) |
 | **Answer** | nothing changes — a question, an investigation, a review, a status, a plan only | no steps; the answer quotes its evidence. **A bug's cause, even with no fix, takes step 1's root-cause route** |
+| **Intake** | new behaviour no request and no plan row covers, with an open P or C decision or more than one deliverable | `intake.md`: capture, ground, draft in the project's own shape, the second family's review, one owner sheet, register and queue — no code; unit 1's Gate 1 is then `intake.mjs --gate1`'s |
 | **Docs-light** | every changed path is prose, and no test or script reads it | write, format, lint, commit; one ledger row |
 | **Docs-heavy** | the same, but a rule file, a runbook, a change request, or ~200+ lines others act on | Docs-light + one review by the other model family + one fix pass |
 | **Code** | anything else — docs mixed with code, a doc a test reads, a hook | the tiers (`gate-design.md`) and the sequence below |
@@ -167,7 +168,7 @@ hygiene unit bound, `DUE p3` queues the P3 batch alone.
 |---|---|---|---|
 | 0 claim | type + tier in the claim line | + Scope block, frozen when stated | + Scope block for Gate 1 |
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
-| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner |
+| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
 | 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
@@ -194,6 +195,9 @@ as its own commit. Never reclaim a row you do not own.
 **Step 0 — claim.**
 - `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
   this row opens stops the claim before anything is held.
+- `[M]` **The host, once a session:** `node scripts/harness-host.mjs`. Its first line
+  gives each role's model on this host for the claim line and the switch line, and
+  each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
   role, and on Small the Scope block.
@@ -209,7 +213,8 @@ as its own commit. Never reclaim a row you do not own.
   another checkout (a stale state file would otherwise remove that unit's data), a
   port another process holds and a disk below its floor; `down` checks the ports
   are free after. Three projects each built this lock their own way.
-  `[B]` the slot range, the floor and what a slot owns (its block).
+  `[B]` the registry's path (the commit guard's `REGISTRY`), the slot range, the
+  floor and what a slot owns (its block).
 - `[M]` Compare this unit's write set against every other held row. Overlap means
   sequence, not parallelise — say so and stop.
 - `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
@@ -267,6 +272,11 @@ as its own commit. Never reclaim a row you do not own.
 
 Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`).
 
+`[M]` **Unit 1 of an approved intake runs `node scripts/intake.mjs --gate1 <request>
+--state <state file>` first.** `Gate 1: auto — …` skips the sheet, quoted in the
+ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
+(`intake.md` › Unit 1's Gate 1).
+
 **Step 2 — implement.**
 - `[M]` **An executor per slice, from the risk map** (`gate-design.md`): critical
   slices to the Opus `implementer` agent, serially, never in parallel; cold slices
@@ -279,7 +289,8 @@ Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`)
   header, or in the owner's Gate 1 reply (`S3: codex`). Precedence: the owner's
   word, then the risk routing, then the default. Lowering the writer on critical or
   never-auto code is a **C** decision, the owner's only, recorded as a decision row;
-  such a slice runs `review-gate.mjs --writer codex` so an Opus reviewer reads it.
+  such a slice runs `review-gate.mjs --writer second` (`bounded` for a Sonnet
+  override) so an Opus reviewer reads it.
   An override to the second family while its budget guard reserves write kinds
   (`codex-run` exit 4) falls back to Sonnet and says so in the ledger.
 - `[M]` **One slice per agent.** A fix round is split by area into several.
@@ -294,7 +305,8 @@ Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`)
   > named, were invoked 0 times and read once (2026-10-05 to 26).
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
-  --writer <who wrote it>` and dispatch what it names — the **second family's review** over
+  --writer <role>` (the role that wrote it) and dispatch what it names — the
+  **second family's review** over
   that slice's diff before the next slice builds on it (`codex-run review`); a cold
   slice the second family wrote is deferred to the unit review. **Never an Opus
   code-reviewer per slice.** The review runs in the background while the next
@@ -330,7 +342,8 @@ DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
-  <tier> --writer <who wrote it>` (`mixed` when more than one family did) and dispatch exactly
+  <tier> --writer <role>` (the role that wrote it, `mixed` when more than one did)
+  and dispatch exactly
   the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
@@ -354,9 +367,10 @@ DOM snapshot; send screenshots to a model that reads images.
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
-  --max-fixed <P> --round <n> --writer <who wrote it>` names the re-review, which reads
-  the fix diff only — `--writer` is who wrote the fix: `claude | codex | sonnet |
-  mixed`, required on every kind.
+  --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
+  fix diff only — `--writer` is the role that wrote the fix: `main | bounded |
+  second | mixed` (on Claude Code also `claude | sonnet | codex`; each role's model
+  per host in `gate-design.md` › Model and effort), required on every kind.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
 - `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
@@ -485,8 +499,8 @@ starts at 15 slices or 10k changed production lines and the log moves it
 `[M]` Close out in the document itself: the milestone row marked shipped with scope
 corrections, wrong claims struck through in place.
 
-`[M]` No request yet → writing it is the work (`superpowers:brainstorming`, where
-installed).
+`[M]` **No request yet → the Intake type** (`intake.md`): the request is drafted in the
+project's own shape with every P and C decision on one owner sheet, before unit 1.
 
 `[M]` **A request against the specification** — documents the owner decides — is
 the owner's. A unit that finds a gap may *draft* a new request in the shape the

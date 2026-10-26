@@ -34,7 +34,10 @@ export function repoTop(cwd) {
   }
 }
 
-/** line -> the commit time (ms) of the commit that last changed it; empty when git cannot blame the file. */
+/**
+ * line -> the commit time (ms) of the commit that last changed it, or null for a line not committed
+ * yet (git blames it on the zero commit, with the time of the blame); empty when git cannot blame the file.
+ */
 export function blameDates(top, rel) {
   let out;
   try {
@@ -44,9 +47,12 @@ export function blameDates(top, rel) {
   }
   const dates = new Map();
   let time = null;
+  let committed = true;
   for (const line of out.split('\n')) {
-    if (line.startsWith('committer-time ')) time = Number(line.slice('committer-time '.length)) * 1000;
-    else if (line.startsWith('\t')) dates.set(dates.size + 1, time);
+    const head = /^([0-9a-f]{40,64}) \d+ \d+/.exec(line);
+    if (head) committed = /[^0]/.test(head[1]);
+    else if (line.startsWith('committer-time ')) time = Number(line.slice('committer-time '.length)) * 1000;
+    else if (line.startsWith('\t')) dates.set(dates.size + 1, committed ? time : null);
   }
   return dates;
 }

@@ -33,9 +33,9 @@ import { fileURLToPath } from 'node:url';
 import {
   FRESH_HOURS,
   IDS,
-  LOCK_STALE_MINUTES,
   PROCESS_IDS,
   approvalsFile,
+  clonesToRemove,
   deletable,
   devOrphans,
   dockerBytes,
@@ -43,7 +43,9 @@ import {
   formatReport,
   heldRows,
   inUse,
+  lockPid,
   logEntry,
+  mainCheckout,
   mcpOrphans,
   olderReleases,
   parseArgs,
@@ -56,6 +58,7 @@ import {
   readApprovals,
   recordedToStop,
   settled,
+  staleLock,
   staleStores,
   unusedBrowsers,
   worktreeVerdict,
@@ -145,30 +148,37 @@ function size(p) {
 const ago = (t, now) => (Number.isFinite(t) ? `${Math.max(0, Math.round((now - t) / 86_400_000))} d ago` : 'never');
 
 // ---- the machine: processes, their working directories, launchd's jobs, free disk
+// A ps, lsof or launchctl that failed -- missing, denied, timed out -- reads as null, never as an
+// empty inventory: an empty one would show every worktree, clone and release unused.
 
 function machine(home, now) {
   const cache = {};
-  const once = (key, fn) => (cache[key] ??= fn());
+  const once = (key, fn) => (key in cache ? cache[key] : (cache[key] = fn()));
   return {
     home,
     now,
     // tools keep their caches in the real home: with another --home, those categories are left out
     foreign: path.resolve(home) !== path.resolve(os.homedir()),
     get rows() {
-      return once('rows', () => parsePs(run('ps', ['-axo', 'pid=,ppid=,etime=,rss=,command=']).out));
+      return once('rows', () => {
+        const r = run('ps', ['-axo', 'pid=,ppid=,etime=,rss=,command=']);
+        return r.ok ? parsePs(r.out) : null;
+      });
     },
     get services() {
-      return once('services', () =>
-        process.platform === 'darwin'
-          ? new Set(run('launchctl', ['list']).out.split('\n').slice(1).map((l) => Number(l.split('\t')[0])).filter((n) => Number.isInteger(n) && n > 0))
-          : new Set(),
-      );
+      return once('services', () => {
+        if (process.platform !== 'darwin') return new Set();
+        const r = run('launchctl', ['list']);
+        return r.ok ? new Set(r.out.split('\n').slice(1).map((l) => Number(l.split('\t')[0])).filter((n) => Number.isInteger(n) && n > 0)) : null;
+      });
     },
     get cwds() {
       return once('cwds', () => {
+        const r = run('lsof', ['-a', '-d', 'cwd', '-Fpn'], { timeout: 60_000 });
+        if (!r.ok) return null;
         const byPid = new Map();
         let pid = null;
-        for (const line of run('lsof', ['-a', '-d', 'cwd', '-Fpn'], { timeout: 60_000 }).out.split('\n')) {
+        for (const line of r.out.split('\n')) {
           if (line[0] === 'p') pid = Number(line.slice(1));
           else if (line[0] === 'n' && pid !== null) byPid.set(pid, line.slice(1));
         }
@@ -176,13 +186,20 @@ function machine(home, now) {
       });
     },
     get listeners() {
-      return once('listeners', () => parseListeners(run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { timeout: 60_000 }).out));
+      return once('listeners', () => {
+        const r = run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { timeout: 60_000 });
+        return r.ok ? parseListeners(r.out) : null;
+      });
     },
-    /** The files the processes whose command matches `re` execute or map (lsof's txt): what they truly run. */
+    /** The files the processes whose command matches `re` execute or map (lsof's txt): what they truly run; null when unknown. */
     mapped(re) {
-      const pids = this.rows.filter((r) => re.test(r.command)).map((r) => r.pid);
+      const rows = this.rows;
+      if (!rows) return null;
+      const pids = rows.filter((r) => re.test(r.command)).map((r) => r.pid);
       if (!pids.length) return [];
-      return run('lsof', ['-a', '-d', 'txt', '-Fn', '-p', pids.join(',')], { timeout: 60_000 }).out.split('\n').filter((l) => l[0] === 'n').map((l) => l.slice(1));
+      // lsof exits 1 when a listed process has exited since ps: unknown too, so this run frees none
+      const r = run('lsof', ['-a', '-d', 'txt', '-Fn', '-p', pids.join(',')], { timeout: 60_000 });
+      return r.ok ? r.out.split('\n').filter((l) => l[0] === 'n').map((l) => l.slice(1)) : null;
     },
   };
 }
@@ -209,7 +226,7 @@ function worktreesOf(top, m) {
   if (!mainline) return [];
   const held = heldRows(read(path.join(top, '.claude', 'registry.md')));
   const firstParent = new Set((git(['rev-list', '--first-parent', mainline], top) ?? '').split('\n').filter(Boolean));
-  const cwds = [...m.cwds.values()];
+  const cwds = m.cwds ? [...m.cwds.values()] : null;
   return parseWorktrees(git(['worktree', 'list', '--porcelain'], top))
     .slice(1)
     .filter((w) => !w.bare && !w.prunable && w.head && exists(w.path))
@@ -306,6 +323,7 @@ const MEASURE = {
     if (process.platform !== 'darwin') return absent('not macOS');
     const root = path.join(m.home, 'Library', 'Developer', 'Xcode', 'DerivedData');
     if (!exists(root)) return absent('no DerivedData');
+    if (!m.rows) return { bytes: 0, plan: [], detail: 'could not tell whether Xcode runs (ps failed): kept' };
     if (m.rows.some((r) => /\/Xcode\.app\/Contents\/MacOS\/Xcode(\s|$)|(^|\/)xcodebuild(\s|$)/.test(r.command))) return { bytes: 0, plan: [], detail: 'Xcode is running: kept' };
     const plan = rmPlan(root, list(root));
     return { bytes: sum(plan), plan };
@@ -358,6 +376,7 @@ const MEASURE = {
     if (!exists(base)) return absent('no ~/.codex');
     const plan = [];
     const notes = [];
+    let mapped;
     for (const pkg of list(path.join(base, 'packages'))) {
       const releases = path.join(base, 'packages', pkg, 'releases');
       let current = null;
@@ -369,11 +388,12 @@ const MEASURE = {
       }
       const names = list(releases);
       // a session started before an update runs an older release under the same command line
-      const running = (m.codexMapped ??= m.mapped(/codex/i)).map((f) => ({ command: f }));
-      const busy = new Set([...inUse(names.map((n) => path.join(releases, n)), running)].map((d) => path.basename(d)));
+      if (mapped === undefined) mapped = m.mapped(/codex/i);
+      const used = inUse(names.map((n) => path.join(releases, n)), mapped?.map((f) => ({ command: f })) ?? null);
+      const busy = used && new Set([...used].map((d) => path.basename(d)));
       const drop = olderReleases(names, current, busy);
       plan.push(...rmPlan(releases, drop));
-      notes.push(`${pkg}: keep ${names.filter((n) => !drop.includes(n)).join(', ') || 'none'}`);
+      notes.push(`${pkg}: keep ${names.filter((n) => !drop.includes(n)).join(', ') || 'none'}${busy ? '' : ', could not tell which run (ps or lsof failed)'}`);
     }
     const trees = [];
     for (const slot of list(path.join(base, 'worktrees'))) {
@@ -396,11 +416,11 @@ const MEASURE = {
     const root = temp && path.join(path.dirname(temp), 'X', 'com.google.Chrome.code_sign_clone');
     if (!root || !exists(root)) return absent('no Chrome code-sign clones');
     const entries = list(root).filter((n) => n.startsWith('code_sign_clone.')).map((name) => ({ name, written: written(path.join(root, name), 1) }));
-    const busy = inUse(entries.map((e) => path.join(root, e.name)), m.rows);
-    const ready = settled(entries, m.now).filter((e) => !busy.has(path.join(root, e.name))).map((e) => e.name);
+    const clones = clonesToRemove(entries, root, m.rows, m.now);
+    if (!clones) return { bytes: 0, unknown: true, plan: [], detail: `none of ${entries.length} clones: could not tell which a running Chrome uses (ps failed)` };
     // copy-on-write: their size says nothing of the disk they free, so none is counted
-    const plan = ready.map((n) => ({ rm: path.join(root, n), root, bytes: 0 }));
-    return { bytes: 0, unknown: true, plan, detail: `${ready.length} of ${entries.length} clones (${busy.size} in use); copy-on-write: what they free shows in the sweep log` };
+    const plan = clones.remove.map((n) => ({ rm: path.join(root, n), root, bytes: 0 }));
+    return { bytes: 0, unknown: true, plan, detail: `${clones.remove.length} of ${entries.length} clones (${clones.busy} in use); copy-on-write: what they free shows in the sweep log` };
   },
   worktrees(m) {
     const repos = readJson(path.join(m.home, '.agents', 'harness', 'repos.json'))?.repos ?? [];
@@ -411,14 +431,22 @@ const MEASURE = {
   },
   'orphan-mcp'(m) {
     if (m.foreign) return absent("another --home: the processes are this machine's");
+    if (!m.rows || !m.services) return { count: 0, plan: [], detail: 'could not list the processes or launchd\'s jobs (ps or launchctl failed): none stopped' };
     const procs = mcpOrphans(m.rows, m.services);
     return { count: procs.length, plan: procs.map((p) => ({ kill: p.pid, command: p.command })), detail: procs.length ? `${procs.length}: ${procs.map((p) => p.pid).join(', ')}` : 'none' };
   },
   'recorded-pids'(m) {
     const records = parseRecords(read(path.join(m.home, '.agents', 'harness', 'pids.jsonl')));
     if (!records.length) return { count: 0, plan: [], detail: 'none recorded' };
-    const live = parseLstart(run('ps', ['-o', 'pid=,lstart=,command=', '-p', records.map((r) => r.pid).join(',')]).out);
-    const heldRepos = new Set(records.map((r) => r.repo).filter((repo) => repo && heldRows(read(path.join(repo, '.claude', 'registry.md'))).length));
+    const ps = run('ps', ['-o', 'pid=,lstart=,command=', '-p', records.map((r) => r.pid).join(',')]);
+    if (!ps.ok) return { count: 0, plan: [], detail: `${records.length} recorded; could not tell which still run (ps failed): none stopped` };
+    const live = parseLstart(ps.out);
+    // the registry is the main checkout's; a repository that is gone, or that git cannot place, counts as held
+    const held = (repo) => {
+      const main = exists(repo) ? mainCheckout(repo, git(['-C', repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'])?.trim()) : null;
+      return main === null || heldRows(read(path.join(main, '.claude', 'registry.md'))).length > 0;
+    };
+    const heldRepos = new Set(records.map((r) => r.repo).filter((repo) => repo && held(repo)));
     const stop = recordedToStop(records, live, { now: m.now, heldRepos });
     return { count: stop.length, plan: stop.map((r) => ({ kill: r.pid, command: r.command })), detail: `${stop.length} of ${records.length} recorded, ${live.length} still running` };
   },
@@ -434,10 +462,10 @@ function measure(id, m) {
 
 // ---- freeing
 
-/** Carries out one step of a plan; returns the bytes it freed. Throws on a refused or failed step. */
+/** Carries out one step of a plan; returns the bytes it freed, or 1 for a process it signalled. Throws on a refused or failed step. */
 function step(p, m) {
   if (p.rm) {
-    if (!deletable(p.rm, p.root, m.home)) throw new Error(`refused ${p.rm}: outside ${p.root} or protected`);
+    if (!deletable(p.rm, p.root, m.home, (x) => fs.realpathSync(x))) throw new Error(`refused ${p.rm}: outside ${p.root} or protected`);
     fs.rmSync(p.rm, { recursive: true, force: true });
     return p.bytes ?? 0;
   }
@@ -453,10 +481,11 @@ function step(p, m) {
     return p.bytes ?? 0;
   }
   if (p.kill) {
-    const now = run('ps', ['-o', 'command=', '-p', String(p.kill)]).out.trim();
-    if (now !== p.command.trim()) return 0;
+    // only an ok ps that still names the planned command: a failed one is unknown, and stops nothing
+    const now = run('ps', ['-o', 'command=', '-p', String(p.kill)]);
+    if (!now.ok || now.out.trim() !== p.command.trim()) return 0;
     process.kill(p.kill, 'SIGTERM');
-    return 0;
+    return 1;
   }
   return 0;
 }
@@ -464,17 +493,41 @@ function step(p, m) {
 const describe = (p) =>
   p.rm ? `remove ${p.rm}` : p.cmd ? `${p.cmd} ${p.args.join(' ')}` : p.worktree ? `git -C ${p.top} worktree remove ${p.worktree}` : `kill -TERM ${p.kill}  # ${p.command.slice(0, 80)}`;
 
+/** Whether process `pid` runs: kill -0 fails with ESRCH only when it is gone (EPERM: another user's). */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+/** The sweep's lock: { release }, or { holder } when another sweep holds it (staleLock decides). */
 function lock(dir) {
   const file = path.join(dir, 'machine-sweep.lock');
   fs.mkdirSync(dir, { recursive: true });
-  const age = mtime(file);
-  if (age !== null && Date.now() - age > LOCK_STALE_MINUTES * 60_000) fs.rmSync(file, { force: true });
+  const text = read(file);
+  // a lock that exists but cannot be read holds no readable pid: its age decides
+  const st = lstat(file);
+  if (st) {
+    const pid = lockPid(text);
+    // this run's own pid in the lock is an earlier boot's: no sweep runs under it
+    if (!staleLock({ pid, alive: pid !== null && pid !== process.pid && alive(pid), written: st.mtimeMs, now: Date.now() })) return { holder: pid ?? 'unknown' };
+    // only the lock judged stale: another sweep may have replaced it since
+    if (read(file) === text) fs.rmSync(file, { force: true });
+  }
   try {
     fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
   } catch {
-    return null;
+    return { holder: lockPid(read(file)) ?? 'unknown' };
   }
-  return () => fs.rmSync(file, { force: true });
+  // a lock another sweep took since is that sweep's to remove
+  return {
+    release: () => {
+      if (lockPid(read(file)) === process.pid) fs.rmSync(file, { force: true });
+    },
+  };
 }
 
 function apply(args, m, state) {
@@ -485,9 +538,9 @@ function apply(args, m, state) {
     process.stdout.write(approved.length ? 'machine-sweep: none of --only is approved; nothing to do\n' : 'machine-sweep: nothing is approved, so nothing was touched; the owner approves categories once with --approve <ids>\n');
     return 0;
   }
-  const release = args.dryRun ? () => {} : lock(state);
+  const { release, holder } = args.dryRun ? { release: () => {} } : lock(state);
   if (!release) {
-    process.stderr.write('machine-sweep: another sweep holds the lock; this one waits for it\n');
+    process.stderr.write(`machine-sweep: another sweep (pid ${holder}) holds the lock; run again once it ends\n`);
     return 1;
   }
   try {
@@ -501,6 +554,7 @@ function apply(args, m, state) {
         lines.push(`skip   ${id}: ${c.absent}`);
         continue;
       }
+      // bytes, or in a process category the processes signalled
       let freed = 0;
       for (const p of c.plan ?? []) {
         if (args.dryRun) {
@@ -515,8 +569,8 @@ function apply(args, m, state) {
         }
       }
       if (!args.dryRun) {
-        categories[id] = PROCESS_IDS.includes(id) ? (c.plan ?? []).length : freed;
-        lines.push(`done   ${id}: ${PROCESS_IDS.includes(id) ? `${(c.plan ?? []).length} stopped` : `about ${fmtBytes(freed)}`}`);
+        categories[id] = freed;
+        lines.push(`done   ${id}: ${PROCESS_IDS.includes(id) ? `${freed} stopped` : `about ${fmtBytes(freed)}`}`);
       }
     }
     if (args.dryRun) {
@@ -569,7 +623,8 @@ function report(args, m, state) {
   const ids = args.only ?? IDS;
   const approved = readApprovals(read(path.join(state, 'sweep.json')) ?? '');
   const measured = ids.map((id) => measure(id, m));
-  const dev = devOrphans(m.rows, m.services).map((r) => ({ ...r, cwd: m.cwds.get(r.pid)?.replace(m.home, '~') ?? null, ports: treePorts(r.pid, m.rows, m.listeners) }));
+  // report-only: a failed reading says unknown and the report still prints
+  const dev = m.rows && devOrphans(m.rows, m.services ?? new Set()).map((r) => ({ ...r, cwd: m.cwds?.get(r.pid)?.replace(m.home, '~') ?? null, ports: m.listeners && treePorts(r.pid, m.rows, m.listeners) }));
   const { free, total } = freeDisk(m.home);
   if (args.json) {
     const plain = measured.map(({ plan, ...c }) => ({ ...c, plan: (plan ?? []).map(describe) }));

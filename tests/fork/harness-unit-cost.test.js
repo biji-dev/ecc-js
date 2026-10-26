@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 44;
+const EXPECTED_TESTS = 50;
 
 let passed = 0;
 let failed = 0;
@@ -125,6 +125,14 @@ mutantFails('taking a new session\'s first turn for an expiry rewrite', 'const p
 mutantFails('placing a tagged subagent by its first turn', 'tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt', 'false ? label(tag) : stepAt');
 mutantFails("honouring another unit's tag", 'tag && (unit === null || tag.unit === unit) ? label(tag)', 'tag ? label(tag)');
 mutantFails('dropping the dispatch description from the meta file', "description: typeof meta.description === 'string' ? meta.description : null,", 'description: null,', SOURCES_REL);
+mutantFails('pairing waits over the window\'s events only', 'for (const e of all) {', 'for (const e of ev) {');
+mutantFails('counting a wait\'s whole length instead of its part inside the wall', 'out.waitMs = unionMs(spans.map(([a, b]) => [Math.max(a, lo), Math.min(b, hi)]));', 'out.waitMs = unionMs(spans);');
+mutantFails('adding a step interval\'s whole length to its wall time', 'Math.max(0, Math.min(iv.end, winHi) - Math.max(iv.start, winLo))', 'iv.end - iv.start');
+mutantFails('placing a subagent by its first turn inside the window', 'firstTurns(deduped, agentKey)', 'firstTurns(used, agentKey)');
+mutantFails('counting an ask from before the window as unanswered', 'out.unanswered = [...asks.values()].filter((ts) => inWindow(ts, since, until)).length;', 'out.unanswered = asks.size;');
+mutantFails('ignoring CLAUDE_CONFIG_DIR', 'process.env.CLAUDE_CONFIG_DIR || ', '', CLI_REL);
+mutantFails('ending an open step at the window\'s last turn', 'const lastTs = deduped.reduce', 'const lastTs = used.reduce');
+mutantFails('letting an unreadable time set a subagent\'s first turn', "if (r.kind !== 'sub' || !Number.isFinite(r.ts)) continue;", "if (r.kind !== 'sub') continue;");
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

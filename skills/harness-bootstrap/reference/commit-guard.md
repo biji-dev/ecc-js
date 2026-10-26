@@ -116,6 +116,14 @@ registry's release check, which finds the row by id, accepts removing any row th
 cut id is a prefix of. The default pattern cuts `EP-27.01` to `EP-27`. After install,
 the status script reports a cut id as `id-pattern-truncates`.
 
+`[M]` **Its test ships with it:** `templates/scripts/lib/harness-guard.test.mjs`,
+installed to `scripts/lib/`. It runs the installed guard as git runs it, in throwaway
+repos: no registry, row 0 alone, a registry without its markers, the owning branch
+against the mainline and another branch, a clean `--no-ff` merge onto the mainline,
+and every id in its `[B]` `IDS` (the self-test above, end to end). Bind `IDS` to the
+plan's ids and `GUARD` to where the guard is installed; a plan-mode guard with no ids
+bound fails the test.
+
 `[B]` **Change mode leaves `ID_PATTERN` empty** unless its changes carry ids. The
 plan default also matches tokens such as `UTF-8` or `ISO-8601`, and refused a
 `fix/UTF-8-bom` branch with no run in progress. With it empty, a row is matched

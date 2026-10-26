@@ -52,6 +52,7 @@ never by feel. Check in this order; unsure → the heavier type.
 |---|---|---|
 | **Ops** | a deploy, migration run, production data fix or credential rotation, even with no repo change | its runbook, owner approval first; the runbook's mechanical steps on a Sonnet runner, judgment calls in the Opus session (`context.md`) |
 | **Answer** | nothing changes — a question, an investigation, a review, a status, a plan only | no steps; the answer quotes its evidence. **A bug's cause, even with no fix, takes step 1's root-cause route** |
+| **Intake** | new behaviour no request and no plan row covers, with an open P or C decision or more than one deliverable | `intake.md`: capture, ground, draft in the project's own shape, the second family's review, one owner sheet, register and queue — no code; unit 1's Gate 1 is then `intake.mjs --gate1`'s |
 | **Docs-light** | every changed path is prose, and no test or script reads it | write, format, lint, commit; one ledger row |
 | **Docs-heavy** | the same, but a rule file, a runbook, a change request, or ~200+ lines others act on | Docs-light + one review by the other model family + one fix pass |
 | **Code** | anything else — docs mixed with code, a doc a test reads, a hook | the tiers (`gate-design.md`) and the sequence below |
@@ -70,7 +71,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 
 ```
 0a resume      a held registry row or an existing unit branch = a stopped run; verify each step against evidence
-0  claim       type · tier · unit · overlap · branch (+ worktree) · lock · state file
+0  claim       due-checks · type · tier · unit · overlap · branch (+ worktree) · lock · state file
 1  ground      plan mode: sync both ways, follow the trace, read follow-ups owed
                change mode: investigate → plan + Impact Analysis + Scope block → plan check (Full)
                                                           ══ GATE 1 ══  one decision sheet
@@ -86,7 +87,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8b record      written last, from the diff, as fields
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
                                                           ══ GATE 2 ══  by the merge policy
-9  land        guard → land commit → release the lock → merge → push on the owner's word
+9  land        guard → land commit → release the lock → merge → push on the owner's word → due-checks
 10 teardown    stop what was started; close the state file; offer /compact; next unit
 ```
 
@@ -100,19 +101,80 @@ correspondence is: investigate, plan, plan check → 1 · decision sheet → Gat
 implement and tests → 2 · diff review → 8 · cross-check A/B/C → 4, 8, 8c ·
 regression → 5–8 · doc sweep → 8a · ship → 9.
 
+## Step markers
+
+`[M]` **Every step's start is a command, never prose:** `node scripts/unit-step.mjs <unit>
+<step> start`, chained onto the step's first command (`node scripts/unit-step.mjs EP-7 8
+start && node scripts/review-gate.mjs …`) so a marker costs no turn of its own. A start
+closes the step before it, so `done` is needed only after the last step and before a stop.
+Step ids are the sequence's own (`0a`, `0`, `1` … `8a`, `8b`, `8c`, `9`, `10`), `g1` and
+`g2` for the gates; a step's second round passes `--round 2`. The steps file sits beside the
+state file (`scope-guard.md`); `--list` prints what it holds. Small and Full; Trivial needs
+none.
+
+`[M]` **Every dispatch's description starts with the tag `[<unit> s<step> r<n>]`** —
+`[EP-7 s8 r2] codex review` — so `unit-cost.mjs --by-step` puts each subagent's cost on its
+step. An untagged dispatch goes by when it started.
+
+`[M]` **Step 8b reads them:** `unit-record.mjs --steps` puts each step's time in the
+record, and `unit-cost.mjs --times --by-step <steps file>` gives the wall, owner-wait and
+work time and the dollars per step (`log-format.md`).
+> Origin: ledger rows carried no times and were written in one batch at the end. One
+> measured unit's record step took 19% of its $78.41, found only by rebuilding its steps
+> from the transcripts by hand.
+
+## Due-checks
+
+`[M]` **Step 0 starts with `node scripts/harness-due.mjs --claim <row id>`; step 9
+ends with `node scripts/harness-due.mjs`.** It reads the log, the follow-ups doc,
+the reports, git and the free disk, prints one line for each thing the harness owes,
+and never asks a question. What each line makes the runner do:
+
+| Line | The runner |
+|---|---|
+| `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
+| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit, a `harness/<slug>` unit |
+| `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
+| `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
+| `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
+
+`[M]` **No queue is stored.** The checks re-read the files each time, so a unit
+that is due stays due until its report is committed, and nothing has to remember
+it. Reports are committed under `docs/harness/reports/`, never a gitignored
+directory: a report nobody can count does not exist for the next check.
+> Origin: 13 preflights and sweeps in two projects caught real problems, and each
+> ran because someone asked: the owner asked six times, two sweeps ran overdue
+> ("overdue by four days and fourteen landings"), one project kept its
+> reports in a gitignored directory, and another's note that a sweep was due lived
+> in a session's memory only. On 2026-10-26 the check read 10 landings since
+> one project's last sweep, five days earlier.
+
+`[B]` In `scripts/lib/harness-due-core.mjs`: `MAIN`, `LOG`, `FOLLOW_UPS`, `REPORTS`
+(`null` for a kind the project does not run), `PHASE_OF`, `CADENCE`, `P3_AGE_DAYS`,
+`DISK_MIN_GB`, `WORKTREE_IDLE_HOURS`, `COMMANDS`.
+
+## The hygiene unit
+
+`[M]` **`DUE hygiene` queues a `harness/hygiene-<date>` unit: the P3 batch over the
+follow-ups doc's oldest P3s, dead code and unused dependencies, docs drift over the
+whole tree, the archive, and the residue** (`hygiene.md`). It is a Code unit with
+the tiers, Full when it deletes in critical code. It ends by committing
+`docs/harness/reports/hygiene-<date>.md`, which restarts the count. With no
+hygiene unit bound, `DUE p3` queues the P3 batch alone.
+
 ## Which steps each tier runs
 
 | Step | Trivial | Small | Full |
 |---|---|---|---|
 | 0 claim | type + tier in the claim line | + Scope block, frozen when stated | + Scope block for Gate 1 |
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
-| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner |
+| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
 | 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
-| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the sweep | the same (`gate-design.md`) |
+| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the P3 batch | the same (`gate-design.md`) |
 | 8 verify | scoped | FULL once before merge | FULL |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
@@ -131,6 +193,11 @@ evidence; redoing a step is cheap and never wrong. Commit uncommitted work first
 as its own commit. Never reclaim a row you do not own.
 
 **Step 0 — claim.**
+- `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
+  this row opens stops the claim before anything is held.
+- `[M]` **The host, once a session:** `node scripts/harness-host.mjs`. Its first line
+  gives each role's model on this host for the claim line and the switch line, and
+  each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
   role, and on Small the Scope block.
@@ -138,7 +205,16 @@ as its own commit. Never reclaim a row you do not own.
   for the whole run, its `Step` updated at every boundary. The commit guard reads
   it (`commit-guard.md`); in `SCOPE=checkout` the row names its worktree.
 - `[M]` **The registry is also a resource lock** where units share machines —
-  ports, isolated stacks, migration slots in the same row.
+  ports, isolated stacks, migration slots in the same row. Where units run live
+  stacks side by side, `templates/unit-stack.sh` (installed to `scripts/`) is that
+  lock: one slot per unit, claimed as `slot N` in the row's Resources cell, and
+  every port, database and container project of the slot derives from N. Its `up`
+  refuses the main checkout, a slot another row holds, a slot whose stack serves
+  another checkout (a stale state file would otherwise remove that unit's data), a
+  port another process holds and a disk below its floor; `down` checks the ports
+  are free after. Three projects each built this lock their own way.
+  `[B]` the registry's path (the commit guard's `REGISTRY`), the slot range, the
+  floor and what a slot owns (its block).
 - `[M]` Compare this unit's write set against every other held row. Overlap means
   sequence, not parallelise — say so and stop.
 - `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
@@ -196,6 +272,11 @@ as its own commit. Never reclaim a row you do not own.
 
 Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`).
 
+`[M]` **Unit 1 of an approved intake runs `node scripts/intake.mjs --gate1 <request>
+--state <state file>` first.** `Gate 1: auto — …` skips the sheet, quoted in the
+ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
+(`intake.md` › Unit 1's Gate 1).
+
 **Step 2 — implement.**
 - `[M]` **An executor per slice, from the risk map** (`gate-design.md`): critical
   slices to the Opus `implementer` agent, serially, never in parallel; cold slices
@@ -208,14 +289,24 @@ Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`)
   header, or in the owner's Gate 1 reply (`S3: codex`). Precedence: the owner's
   word, then the risk routing, then the default. Lowering the writer on critical or
   never-auto code is a **C** decision, the owner's only, recorded as a decision row;
-  such a slice runs `review-gate.mjs --writer codex` so an Opus reviewer reads it.
+  such a slice runs `review-gate.mjs --writer second` (`bounded` for a Sonnet
+  override) so an Opus reviewer reads it.
   An override to the second family while its budget guard reserves write kinds
   (`codex-run` exit 4) falls back to Sonnet and says so in the ledger.
 - `[M]` **One slice per agent.** A fix round is split by area into several.
   > Origin: one agent handed a whole fix round ran 309 calls, to 368K of context.
+- `[M]` **Every brief has a `Traps:` line**: each vendor-trap skill
+  (`vendor-skill.md`) whose library or tool the slice touches, by path (a gate or
+  script slice counts the package manager), or `Traps: none`. `--rules-for` finds
+  rule files by their `paths:` globs, never a trap skill, and one no brief names
+  goes unused.
+  > Origin: one project names them in every slice brief; 14 briefs named one and agents
+  > read them 45 times, while the four user-global vendor skills, which no brief
+  > named, were invoked 0 times and read once (2026-10-05 to 26).
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
-  --writer <who wrote it>` and dispatch what it names — the **second family's review** over
+  --writer <role>` (the role that wrote it) and dispatch what it names — the
+  **second family's review** over
   that slice's diff before the next slice builds on it (`codex-run review`); a cold
   slice the second family wrote is deferred to the unit review. **Never an Opus
   code-reviewer per slice.** The review runs in the background while the next
@@ -251,7 +342,8 @@ DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
-  <tier> --writer <who wrote it>` (`mixed` when more than one family did) and dispatch exactly
+  <tier> --writer <role>` (the role that wrote it, `mixed` when more than one did)
+  and dispatch exactly
   the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
@@ -269,22 +361,27 @@ DOM snapshot; send screenshots to a model that reads images.
   > Origin: about 6% of claimed gaps in the third project were artefacts — a
   > scaled measurement, harness timing, another worktree's test run.
 - `[M]` **Triage by scope class, then severity**: OUT → follow-ups whatever its
-  severity; P3 → **the sweep**, never a fix round, unless on a line this round already
-  changes.
+  severity; P3 → **the P3 batch**, never a fix round, unless on a line this round
+  already changes.
 - `[M]` **Fix rounds** are bounded by `gate-design.md`, and each fix gets a
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
-  --max-fixed <P> --round <n> --writer <who wrote it>` names the re-review, which reads
-  the fix diff only — `--writer` is who wrote the fix: `claude | codex | sonnet |
-  mixed`, required on every kind.
+  --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
+  fix diff only — `--writer` is the role that wrote the fix: `main | bounded |
+  second | mixed` (on Claude Code also `claude | sonnet | codex`; each role's model
+  per host in `gate-design.md` › Model and effort), required on every kind.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
-- `[M]` **The P3 sweep** runs once per slice set, after the fix rounds: one Sonnet
+- `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
   fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
-  targeted tests, no re-review.
+  targeted tests, no re-review (`review-gate.mjs` says `p3-batch`). The P3s a unit
+  defers go to the follow-ups doc, and the hygiene unit batches them.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
-  attributed against the merge base, working tree included. `run-gates.sh` reuses an
+  attributed against the merge base, working tree included. Where the project bound
+  `SNAPSHOT_COPY`, it is `bash scripts/run-gates.sh --snapshot` once the unit's work
+  is committed: the gates read what lands, and no scratch file or note reaches them.
+  `run-gates.sh` reuses an
   all-PASS result for the same tree (`REUSED <tree>`) — and for a tree that differs
   only in docs when the project bound `RUN_GATES_DOCS_ONLY`, which it does only if
   no gate reads those paths; a second agent that starts the same run waits for the
@@ -302,10 +399,10 @@ rule file updates every document that repeats the rule (`rules.md` §1).
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
-<state file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
+<state file> --steps <steps file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
 --line --session <every session id since the claim, comma-separated> --since <claimed>)"` prints commits, diffstat, the gate
-SUMMARY line, finding counts by severity and by source, elapsed, the ledger and the
-draft log row from git and the state file, never retyped. The git-derived fields
+SUMMARY line, finding counts by severity and by source, elapsed, each step's time, the ledger and the
+draft log row from git, the state file and the steps file, never retyped. The git-derived fields
 are true by construction; the ledger and findings rows are copied as the session
 wrote them.
 The session writes only what no command knows: the deviations, the controls
@@ -328,7 +425,7 @@ checked against the saved returns. Blocking on Full. A second consecutive
 the screenshot, the named tests or the live-walk transcript that shows it ·
 **Decided for you** — every T decision row, one line each with its reversal cost ·
 the P and C cards still open · verdicts · unresolved findings · diffstat · **cost
-against the Gate 1 estimate** (`unit-cost.mjs`) · what is still running · **the step
+against the Gate 1 estimate** (`unit-cost.mjs`; `--by-step` for where it went) · what is still running · **the step
 ledger and its lists** (`context.md`). Never presented while a
 review round is outstanding. Decided by the merge policy (`gate-design.md`). When it
 waits on the owner, offer `/clear` with the resume command (`context.md`).
@@ -344,10 +441,16 @@ waits on the owner, offer `/clear` with the resume command (`context.md`).
   merge whose tree equals the verified tip.
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file; `git merge` does not read stdin.
+- `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
+  unit the close announces.
 
 **Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
 — ran in the background and were awaited by their completion notice, never a sleep
-loop. Stop everything started, by recorded PID only, and
+loop. Each long-running process was recorded at its start; where the machine sweep
+is installed, also with `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
+--record <pid>`, so one a dead run leaves behind is still stopped (`machine.md`).
+Stop everything started, by recorded PID only (a unit stack with
+`bash scripts/unit-stack.sh down`), and
 confirm nothing still listens on the claimed ports. If a library behaved contrary to
 its documentation, write the vendor skill now (`vendor-skill.md`). Close out the
 follow-ups doc (`scope-guard.md`), then the no-hand-off close above.
@@ -358,12 +461,15 @@ version or release step · where artifacts live.
 ## The implementer agent
 
 `[M]` Generated to `.claude/agents/implementer.md`: `model: opus`, `effort: high`,
-`tools: Read, Edit, Write, Grep, Glob, Bash`. Dispatched with `model` and `effort`
-passed explicitly — `"sonnet"` for a cold slice. Its file carries the **Tool
-discipline** section verbatim (`context.md`) and says:
+`tools: Read, Edit, Write, Grep, Glob, Bash`, `autoCompactWindow: 250000` — a
+backstop; the slice keeps it small (`context.md` › The window, the gate wait and
+the base). Dispatched with `model` and `effort` passed explicitly — `"sonnet"` for
+a cold slice. Its file carries the **Tool discipline** section verbatim
+(`context.md`) and says:
 
 - work only in the worktree the brief names, by absolute path;
-- read `AGENTS.md` and every rule file the brief lists (`--rules-for`);
+- read `AGENTS.md`, every rule file the brief lists (`--rules-for`) and every trap
+  skill on its `Traps:` line;
 - **follow the slice literally**; on divergence from what the slice assumes, stop,
   change nothing further, and report it;
 - run only the targeted tests and the type check of what it touched, once per batch
@@ -393,8 +499,8 @@ starts at 15 slices or 10k changed production lines and the log moves it
 `[M]` Close out in the document itself: the milestone row marked shipped with scope
 corrections, wrong claims struck through in place.
 
-`[M]` No request yet → writing it is the work (`superpowers:brainstorming`, where
-installed).
+`[M]` **No request yet → the Intake type** (`intake.md`): the request is drafted in the
+project's own shape with every P and C decision on one owner sheet, before unit 1.
 
 `[M]` **A request against the specification** — documents the owner decides — is
 the owner's. A unit that finds a gap may *draft* a new request in the shape the

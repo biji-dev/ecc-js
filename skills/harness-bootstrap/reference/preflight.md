@@ -1,10 +1,25 @@
 # Reference: phase preflight
 
-**Evidence: 2 runs.** Both produced real decisions; neither has been run enough
-to trust its edges. Install only where the project has phase-scoped work and a
-decision log.
+**Evidence: 5 runs in two projects** — one project's four phases (2026-09-06 to
+2026-10-21) and one of the other's waves (2026-10-18). Every run escalated real
+decisions: the first project's P2 run found the phase's own entry clause failing on three open
+questions, and its P3 run escalated five decisions; the other's found 15 open decisions
+and a wrong port. Install wherever the plan has phases — the default since v5.
 
 **`[M]` mechanism · `[B]` binding**
+
+## When it runs
+
+`[M]` **Before the first row of a phase is claimed, by the claim itself.** Step 0's
+`harness-due.mjs --claim <row>` stops the claim when the row opens a phase that has
+no report, and the escalations become that row's Gate 1 cards (`runner.md` ›
+Due-checks). A phase already under way without one is named, never stopped.
+> Origin: every one of the five runs happened because someone asked for it; the first project's
+> runner read the report "if it exists".
+
+`[M]` **The report is committed** at `docs/harness/reports/preflight-<phase>.md`,
+never in a gitignored directory: the other project's went to `.review-work/`, where no check or
+later reader could find it.
 
 ## Why it exists
 
@@ -56,4 +71,6 @@ authorises each edit, in a *separate* commit.
 `[M]` Report its own elapsed and how many tasks it scanned. A preflight costing
 more than the halts it prevents is not paying for itself.
 
-`[B]` Which documents · what a decision entry looks like · where the report goes.
+`[B]` Which documents · what a decision entry looks like · where the report goes
+(`REPORTS.preflight` in `harness-due-core.mjs`) · the phase in a row id
+(`PHASE_OF`).

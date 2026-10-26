@@ -61,6 +61,7 @@ Each rule was produced by a failure in another project; the incident behind each
 - **One turn, many tool calls.** 96% of agent turns made one tool call, each re-reading the whole context.
 - **Split a milestone that will not fit one session.** 50 slices in one session meant 20 compactions and a 493 KB state file.
 - **Never re-run a gate on a tree it already passed.** 33 full-suite runs repeated on an unchanged tree in 14 days.
+- **At an owner gate past 150K, the cards go out as text and the turn ends.** An open question is never idle-compacted; waits of over an hour rewrote whole contexts for 9.6% of main-thread spend.
 - **Wait on a completion notice, never a sleep loop; shrink a screenshot before reading it.** Each poll re-read about 200K of context.
 
 ### Sessions and the working tree

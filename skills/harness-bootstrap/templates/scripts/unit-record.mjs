@@ -9,7 +9,8 @@
  * Elapsed, wall and owner-wait window at that time (owner-wait pairs before it are left out); without
  * it the window opens at `Claimed:`, so a unit's second deliverable would include its first. The session pastes or redirects the output; nothing is hand-written.
  *
- *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--json]
+ *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"]
+ *     [--steps <steps file>] [--json]
  *
  * options:
  *   --state <file>   the unit's state file (docs/plans/<unit>.state.md by default layout)
@@ -17,6 +18,8 @@
  *   --gates <file>   a run-gates log or captured output; absent -> "Gates: not run"
  *   --cost "<line>"  the output of `scripts/unit-cost.mjs ... --line`; goes in the draft row's Cost cell
  *                    (CR/LF in it become one space, so the row stays one line)
+ *   --steps <file>   the unit's steps file (unit-step.mjs, `<unit>.steps.jsonl`): adds a `Steps:` line
+ *                    and each ledger step's time; a missing file is a usage error, an empty one adds nothing
  *   --json           print { header, summary, commits, diffstat, gates, record } instead
  *
  * Commits are `git log --reverse <base>..HEAD`, the diffstat is `git diff --shortstat
@@ -35,9 +38,10 @@ import {
   parseState,
   summarizeFindings,
 } from './lib/unit-record-core.mjs';
+import { parseSteps } from './lib/unit-step-core.mjs';
 
 const USAGE =
-  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--json]';
+  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--steps <steps file>] [--json]';
 
 function usage(msg) {
   process.stderr.write(`unit-record: ${msg}\n${USAGE}\n`);
@@ -75,6 +79,7 @@ function main() {
   }
   let state;
   let gatesText = null;
+  let steps = null;
   let commits;
   let diffstat;
   let head;
@@ -85,6 +90,7 @@ function main() {
     if (!base) throw new Error('no base: pass --base <sha> or add a `Base:` line to the state file');
     if (base.startsWith('-')) throw new Error(`base must be a commit, not an option (got "${base}")`);
     if (args.gates) gatesText = readFile(args.gates, 'gates file');
+    if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));
     const top = git(['rev-parse', '--show-toplevel'], process.cwd()).trim();
     const range = `${base}..HEAD`;
     commits = git(['log', '--reverse', '--format=%h%x09%s', range], top)
@@ -109,6 +115,7 @@ function main() {
     base,
     head,
     cost: args.cost,
+    steps,
   });
   if (args.json) {
     const summary = summarizeFindings(state.findings);

@@ -25,8 +25,8 @@ const SHIPPED =
   process.env.CHECK_AGENT_DOCS_SCRIPT || join(dirname(fileURLToPath(import.meta.url)), '..', 'check-agent-docs.mjs');
 
 // The [B] budgets the suite runs under. Small, so over-budget fixtures stay small; skillLines is the shipped default.
-const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024 };
-const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile} },`;
+const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024, base: 6144 };
+const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile}, base: ${BUDGETS.base} },`;
 // The rest is the shipped default, which the fixtures below are written against.
 const CONFIG_BLOCK = `export const CONFIG = {
   ${BUDGETS_LINE}
@@ -38,6 +38,8 @@ const CONFIG_BLOCK = `export const CONFIG = {
   pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
   intentionallyAbsent: [],
   requireImport: true,
+  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+  citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'],
 };`;
 
 // Hermetic: no developer HOME, global or system git config reaches a fixture.
@@ -317,6 +319,26 @@ test('rule-index: the missing-entry message shows what an index line looks like'
   assert.match(r.err, /add a line like: - `db\.md` — /, r.all);
 });
 
+test('nested rules: a rule under a subdirectory is checked, indexed by its relative path and listed', () => {
+  const nested = '.claude/rules/web/deep/react.md';
+  const bare = '---\ndescription: x\n---\nBody\n';
+  // Without `paths:` and without an index line it fails both checks and is always loaded.
+  const r = expectFail({ '.claude/rules/web/react.md': bare, [nested]: bare }, 'rule-paths', 'web/react\\.md .*no non-empty');
+  assert.match(r.err, /^FAIL rule-paths: .*web\/deep\/react\.md .*no non-empty/m, r.all);
+  assert.match(r.err, /^FAIL rule-index: .*web\/react\.md is missing/m, r.all);
+  assert.match(r.err, /^FAIL rule-index: .*web\/deep\/react\.md is missing/m, r.all);
+  const loaded = run(fixture({ '.claude/rules/web/react.md': bare }), ['--base']).out;
+  assert.match(loaded, /\.claude\/rules\/web\/react\.md \(a rule without paths:\)/, loaded);
+  // Scoped and indexed by its path relative to the rules dir it passes; a slash bullet naming no rule is no index entry.
+  const scoped = '---\npaths:\n  - "src/**"\n---\nBody\n';
+  const agents = `${baseFiles()['AGENTS.md']}- \`web/react.md\` — react.\n- \`docs/guide.md\` — another doc, not a rule.\n`;
+  const ok = fixture({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': agents });
+  expectOk({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': agents });
+  assert.equal(run(ok, ['--rules-for', 'src/index.js']).out, '.claude/rules/web/react.md\n');
+  // A slash-free bullet that names no rule file is still an extra.
+  expectFail({ '.claude/rules/web/react.md': scoped, 'AGENTS.md': `${agents}- \`ghost.md\` — nothing.\n` }, 'rule-index', 'indexes ghost\\.md');
+});
+
 // 5. links
 test('links: a broken relative link fails with its line number', () => {
   expectFail({ 'AGENTS.md': `${baseFiles()['AGENTS.md']}\nSee [gone](docs/gone.md).\n` }, 'links', 'AGENTS\\.md:7 .*docs/gone\\.md');
@@ -545,6 +567,204 @@ test('secrets: a file name that holds a key is masked; task-<20 alnum> is not a 
     assert.ok(plain.all.includes(`.claude/skills/task-${FAKE}/SKILL.md`), `a file name was masked ${flags.join(' ')}: ${plain.all}`);
     assert.ok(!plain.all.includes('[masked]'), plain.all);
   }
+});
+
+// 9. base and --base
+test('base: the always-loaded total over its budget fails, though every file is under its own', () => {
+  const big = 'x'.repeat(3500);
+  const agents = `${baseFiles()['AGENTS.md']}${big}\n`;
+  expectOk({ 'AGENTS.md': agents, 'docs/notes.md': `${big}\n` });
+  const r = expectFail(
+    { 'AGENTS.md': agents, 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${big}\n` },
+    'base',
+    `every session loads \\d+ bytes from this repository, budget ${BUDGETS.base}`,
+  );
+  assert.doesNotMatch(r.err, /^FAIL budget: /m, r.all);
+});
+
+test('--base: CLAUDE.md, imports relative to the importer, AGENTS.md and rules without paths, largest first', () => {
+  const dir = fixture({
+    'CLAUDE.md': '@AGENTS.md\nSee @docs/a.md and `@docs/code.md` in code.\n```\n@docs/fenced.md\n```\n@~/.claude/mine.md\n@../outside.md\n',
+    'AGENTS.md': `${baseFiles()['AGENTS.md']}${'x'.repeat(150)}\n`,
+    '.claude/CLAUDE.md': '@../docs/c.md\n',
+    'docs/a.md': `@b.md\n${'a'.repeat(300)}\n`,
+    'docs/b.md': `${'b'.repeat(200)}\n`,
+    'docs/c.md': `${'c'.repeat(100)}\n`,
+    'docs/code.md': 'never loaded\n',
+    'docs/fenced.md': 'never loaded\n',
+    '.claude/rules/always.md': '---\ndescription: x\n---\nAlways.\n',
+  });
+  const r = run(dir, ['--base']);
+  assert.equal(r.status, 0, r.all);
+  const listed = r.out
+    .split('\n')
+    .slice(1)
+    .map((l) => l.trim().replace(/^\d+\s+/, ''))
+    .filter(Boolean);
+  assert.deepEqual(listed, [
+    'docs/a.md (imported by CLAUDE.md)',
+    'AGENTS.md (imported by CLAUDE.md)',
+    'docs/b.md (imported by docs/a.md)',
+    'CLAUDE.md',
+    'docs/c.md (imported by .claude/CLAUDE.md)',
+    '.claude/rules/always.md (a rule without paths:)',
+    '.claude/CLAUDE.md',
+  ]);
+  assert.match(r.out, new RegExp(`^check-agent-docs --base: every session loads \\d+ bytes from this repository, target ${BUDGETS.base}$`, 'm'));
+  assert.equal(run(dir).status, 1, 'the checks still fail the rule without paths: --base is a report');
+});
+
+test('--base: imports go five hops deep and no further', () => {
+  const chain = {};
+  for (let i = 1; i <= 6; i += 1) chain[`docs/d${i}.md`] = `@d${i + 1}.md\n`;
+  const r = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/d1.md\n', ...chain }), ['--base', '--json']);
+  const files = JSON.parse(r.out).files.map((f) => f.file);
+  assert.ok(files.includes('docs/d5.md'), files.join(' '));
+  assert.ok(!files.includes('docs/d6.md'), files.join(' '));
+});
+
+test('--base: an import first met at the depth limit is still followed when a shallower path reaches it', () => {
+  // d1 > d2 > d3 > d4 > shared is five hops (recorded, not followed); CLAUDE.md then imports shared directly.
+  const files = {
+    'CLAUDE.md': '@AGENTS.md\n@docs/d1.md\n@docs/shared.md\n',
+    'docs/d1.md': '@d2.md\n',
+    'docs/d2.md': '@d3.md\n',
+    'docs/d3.md': '@d4.md\n',
+    'docs/d4.md': '@shared.md\n',
+    'docs/shared.md': '@deep.md\nShared.\n',
+    'docs/deep.md': 'Deep.\n',
+  };
+  const listed = JSON.parse(run(fixture(files), ['--base', '--json']).out).files;
+  const via = Object.fromEntries(listed.map((f) => [f.file, f.via]));
+  assert.equal(via['docs/deep.md'], 'imported by docs/shared.md', JSON.stringify(via));
+  assert.equal(via['docs/shared.md'], 'imported by docs/d4.md', 'a file keeps the first path that reached it');
+  assert.equal(listed.filter((f) => f.file === 'docs/shared.md').length, 1, 'a file is counted once');
+  // An import cycle ends.
+  const cycle = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/a.md\n', 'docs/a.md': '@b.md\n', 'docs/b.md': '@a.md\n' }), ['--base']);
+  assert.equal(cycle.status, 0, cycle.all);
+});
+
+test('--base --json: the files, their total, the target and the excess', () => {
+  const r = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` }), ['--base', '--json']);
+  assert.equal(r.status, 0, r.all);
+  const parsed = JSON.parse(r.out);
+  assert.equal(parsed.total, parsed.files.reduce((n, f) => n + f.bytes, 0));
+  assert.equal(parsed.target, BUDGETS.base);
+  assert.equal(parsed.over, parsed.total - BUDGETS.base);
+  assert.ok(parsed.over > 0);
+  assert.deepEqual(Object.keys(parsed.files[0]).sort(), ['bytes', 'file', 'via']);
+});
+
+test('base: an install with no base budget skips the check, and --base says no target is set', () => {
+  const script = withConfig(`, base: ${BUDGETS.base} }`, ' }');
+  const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
+  assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
+  assert.equal(run(dir, [], script).status, 0);
+  assert.match(run(dir, ['--base'], script).out, /no target set \(budgets\.base\)/);
+});
+
+// 10. citations
+// An AGENTS.md with the shapes citations name: headings with a tail after a comma, a bold lead with a dash, a table's bold cell.
+const CITED_AGENTS = `${baseFiles()['AGENTS.md']}
+## Owner stops, and what is not one
+
+**Fix rounds - the review gate decides.** Keep handlers thin.
+
+## Context budget and reporting
+
+| **Spec** | a change to docs |
+`;
+const RULE_HEAD = '---\npaths:\n  - "src/db/**"\n---\n\n';
+const checksIn = (r) => Number(r.out.match(/\((\d+) checks\)/)?.[1]);
+
+test('citations: every form that names a section AGENTS.md has passes, and each cited name is one check', () => {
+  const plain = expectOk({ 'AGENTS.md': CITED_AGENTS });
+  const cited = expectOk({
+    'AGENTS.md': CITED_AGENTS,
+    // the section, an abbreviation, the name and more words, a quoted name, a quoted phrase, a parenthesis (7)
+    '.claude/rules/db.md': `${RULE_HEAD}Per \`AGENTS.md\` › Area rules, use the helpers (\`AGENTS.md\` › Owner stops).\nSee \`AGENTS.md\` › Context; \`AGENTS.md\` › Fix rounds apply here.\nAGENTS.md "Owner stops" and AGENTS.md's "keep handlers thin", as \`AGENTS.md\` (Spec) says.\n`,
+    // a path, a sibling, a quoted name after a parenthesis, a wrapped `›` and a wrapped quote (6)
+    'src/index.js': '// `AGENTS.md` › Area rules › Spec, Owner stops.\n/* AGENTS.md ("Context budget and reporting") and `AGENTS.md` ›\n * Context, read together. AGENTS.md\n * "Fix rounds" too.\n */\nexport {};\n',
+  });
+  assert.equal(checksIn(cited) - checksIn(plain), 13, cited.out);
+});
+
+test('citations: a section AGENTS.md no longer has fails at each citing line, in a rule, a skill, an agent and code', () => {
+  const renamed = CITED_AGENTS.replace('## Owner stops, and what is not one', '## Owner gates');
+  const r = expectFail(
+    {
+      'AGENTS.md': renamed,
+      '.claude/rules/db.md': `${RULE_HEAD}Stop per \`AGENTS.md\` › Owner stops.\n`,
+      '.claude/skills/demo/SKILL.md': '---\nname: demo\ndescription: Demo\n---\n\n# Demo\n\nSee `AGENTS.md` › Owner stops, Context.\n',
+      '.claude/agents/reviewer.md': '---\nname: reviewer\ndescription: Reviews code\ntools: Read, Grep\n---\n\nAs `AGENTS.md` (Owner stops) says.\n',
+      'src/index.js': 'export {};\n// AGENTS.md › Owner stops: never ask twice\n',
+    },
+    'citations',
+    '\\.claude/rules/db\\.md:6 cites `AGENTS\\.md` › Owner stops, which names no heading',
+  );
+  assert.match(r.err, /^FAIL citations: \.claude\/skills\/demo\/SKILL\.md:8 cites `AGENTS\.md` › Owner stops,/m);
+  assert.match(r.err, /^FAIL citations: \.claude\/agents\/reviewer\.md:7 cites `AGENTS\.md` › Owner stops,/m);
+  assert.match(r.err, /^FAIL citations: src\/index\.js:2 cites `AGENTS\.md` › Owner stops,/m);
+  assert.equal(r.err.match(/^FAIL citations: /gm).length, 4, 'Context still holds');
+});
+
+test('citations: a quoted name or phrase AGENTS.md no longer has fails, part by part', () => {
+  const r = expectFail(
+    { 'AGENTS.md': CITED_AGENTS, 'src/index.js': '// AGENTS.md "Deploy order" and AGENTS.md "Area rules → Gone".\nexport {};\n' },
+    'citations',
+    'src/index\\.js:1 cites "Deploy order", which AGENTS\\.md no longer has',
+  );
+  assert.match(r.err, /^FAIL citations: src\/index\.js:1 cites "Gone",/m);
+  assert.doesNotMatch(r.err, /cites "Area rules"/);
+});
+
+test('citations: other files, imports, string literals, § references, prose, code blocks and exempt files are not read', () => {
+  expectOk({
+    'AGENTS.md': CITED_AGENTS,
+    '.claude/rules/db.md': `${RULE_HEAD}\`apps/web/AGENTS.md\` › Gone. \`AGENTS.md\` › gone in lowercase. AGENTS.md: Gone. AGENTS.md Gone.\n\n\`\`\`text\n\`AGENTS.md\` › Gone\n\`\`\`\n`,
+    'src/index.js': 'const FILES = ["AGENTS.md", "Gone"];\n// `AGENTS.md` (TRD §13.5) and docs/AGENTS.md "Gone"\nexport { FILES };\n',
+    'apps/web/AGENTS.md': '# Web\n',
+    'scripts/x.py': '# `AGENTS.md` › Gone\n',
+    'scripts/check-agent-docs.mjs': '// `AGENTS.md` › Gone\n',
+  });
+});
+
+test('citations: a sibling or a lower level that is gone fails; an install without citeFiles reads only the instruction files', () => {
+  const files = {
+    'AGENTS.md': CITED_AGENTS,
+    'CLAUDE.md': '@AGENTS.md\n\n`AGENTS.md` › Area rules, Gone, read with `AGENTS.md` › Area rules › Missing.\n',
+    'src/index.js': '// `AGENTS.md` › Gone\nexport {};\n',
+  };
+  const r = expectFail(files, 'citations', 'CLAUDE\\.md:3 cites `AGENTS\\.md` › Gone,');
+  assert.match(r.err, /^FAIL citations: CLAUDE\.md:3 cites `AGENTS\.md` › Missing,/m);
+  assert.match(r.err, /^FAIL citations: src\/index\.js:1 /m);
+  const script = withConfig("  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],\n", '');
+  const bare = run(fixture(files), [], script);
+  assert.equal(bare.status, 1, bare.all);
+  assert.equal(bare.err.match(/^FAIL citations: CLAUDE\.md:3 /gm).length, 2, bare.all);
+  assert.doesNotMatch(bare.err, /src\/index\.js/);
+});
+
+test('citations: a citeFiles glob that matches a directory symlink or a submodule is skipped, never a crash', () => {
+  // `vendor/pdf.js` is a directory symlink and `vendor/lib.js` a gitlink: git lists each as one entry.
+  const after = (dir) => {
+    mkdirSync(join(dir, 'vendor/lib.js'), { recursive: true });
+    // The gitlink is mandatory and its id has the repo's own length (40 hex for sha1, 64 for sha256).
+    const format = execFileSync('git', ['rev-parse', '--show-object-format'], { cwd: dir, env: ENV, encoding: 'utf8' }).trim();
+    const id = 'a'.repeat(format === 'sha256' ? 64 : 40);
+    execFileSync('git', ['update-index', '--add', '--cacheinfo', `160000,${id},vendor/lib.js`], { cwd: dir, env: ENV });
+    try {
+      symlinkSync('../src', join(dir, 'vendor/pdf.js'));
+    } catch {
+      // symlinks may be unavailable (Windows without privileges); the gitlink still counts
+    }
+  };
+  const files = { 'AGENTS.md': CITED_AGENTS, 'src/index.js': '// AGENTS.md "Deploy order"\nexport {};\n' };
+  const r = expectFail(files, 'citations', 'src/index\\.js:1 cites "Deploy order"', after);
+  assert.doesNotMatch(r.all, /EISDIR|at .*\.mjs/, r.all);
+  const clean = run(fixture({ 'AGENTS.md': CITED_AGENTS }, after));
+  assert.equal(clean.status, 0, clean.all);
+  assert.doesNotMatch(clean.all, /EISDIR|at .*\.mjs/, clean.all);
 });
 
 // --rules-for

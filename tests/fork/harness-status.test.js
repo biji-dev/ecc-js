@@ -1082,6 +1082,21 @@ test('12. lineage-neutral harness files are legacy entries and do not change the
   assert.deepStrictEqual(report(man).entries, []);
 });
 
+test('12b. v5\'s project files are lineage-neutral legacy entries too', () => {
+  const files = [
+    'scripts/unit-step.mjs', 'scripts/retro.mjs', 'scripts/harness-due.mjs', 'scripts/run-counted.mjs', 'scripts/unit-stack.sh',
+    'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
+    '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
+  ];
+  const rep = report(mk(Object.fromEntries(files.map(f => [f, 'x\n']))));
+  assert.strictEqual(rep.lineage.verdict, 'none');
+  for (const f of files) {
+    const row = rep.entries.find(e => e.path === f);
+    assert.ok(row, `no entry for ${f}`);
+    assert.strictEqual(row.status, 'legacy');
+  }
+});
+
 test('13. a gitignored scaffold that is absent reads ignored, not missing', () => {
   const manifest = JSON.stringify({ schema: 1, modes: ['plan'], entries: [{ path: '.claude/registry.md', kind: 'scaffold' }, { path: 'docs/log.md', kind: 'scaffold' }] });
   const repo = mk({ '.agents/harness-manifest.json': manifest, '.gitignore': '.claude/registry.md\n' });
@@ -1221,6 +1236,159 @@ test('id-pattern: mutant that drops the character-after-the-match test changes t
   assert.ok(ids(report(cut)).includes('id-pattern-truncates'));
   const mutantCut = mutantOf('/[A-Z0-9.]/.test(ch)', 'false');
   assert.deepStrictEqual(idPatternIds(report(cut, mutantCut)), []);
+});
+
+// ── due-checks ───────────────────────────────────────────────────────────────
+
+console.log('\nharness-status: due-checks');
+
+const DAY_MS = 86400000;
+const daysAgo = n => new Date(Date.now() - n * DAY_MS).toISOString().slice(0, 10);
+function isoWeekAgo(n) {
+  const d = new Date(Date.now() - n * DAY_MS);
+  const thursday = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3);
+  const year = new Date(thursday).getUTCFullYear();
+  const jan4 = Date.UTC(year, 0, 4);
+  const firstThursday = jan4 - ((new Date(jan4).getUTCDay() + 6) % 7) * DAY_MS + 3 * DAY_MS;
+  return `${year}-W${String(1 + Math.round((thursday - firstThursday) / (7 * DAY_MS))).padStart(2, '0')}`;
+}
+const dueLog = ids => `# Log\n\n| Unit \u00b7 Mode \u00b7 Type \u00b7 Tier | Elapsed (work) | Cost |\n|---|---|---|\n${ids.map(id => `| ${id} \u00b7 plan \u00b7 Code \u00b7 Small | 60m | $1 |`).join('\n')}\n`;
+const dueManifest = generated => JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 5, generated, modes: ['plan'], targets: ['claude'], entries: [] });
+const hazardsOf = (rep, id) => rep.hazards.filter(h => h.id === id);
+
+test('preflight-missing: the phase under way has no report at either place, only where preflights run', () => {
+  const repo = mk({
+    '.agents/skills/phase-preflight/SKILL.md': '# phase-preflight\n',
+    'docs/harness/log.md': dueLog(['P1-01', 'P1-02', 'CR-3', 'P2-01', 'P2-02', 'CR-4']),
+    'docs/preflight/P1.md': '# P1\n',
+  });
+  const found = hazardsOf(report(repo), 'preflight-missing');
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+  assert.strictEqual(found[0].path, 'docs/harness/log.md');
+  assert.match(found[0].detail, /^phase P2 is under way \(2 log rows\) and has no preflight report at docs\/harness\/reports\/preflight-P2\.md or docs\/preflight\/P2\.md$/);
+  write(repo, 'docs/harness/reports/preflight-p2.md', '# P2\n');
+  assert.deepStrictEqual(hazardsOf(report(repo), 'preflight-missing'), []);
+  const none = mk({ 'docs/harness/log.md': dueLog(['P1-01']) });
+  assert.deepStrictEqual(hazardsOf(report(none), 'preflight-missing'), [], 'no preflight skill and no report: preflights are not run here');
+});
+
+test('sweep-, retro- and hygiene-overdue: the newest report by the date in its name, or none once the install is that old', () => {
+  const repo = mk({
+    '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n',
+    [`docs/sweeps/${daysAgo(20)}.md`]: '# old\n',
+    [`docs/sweeps/${daysAgo(8)}.md`]: '# sweep\n',
+    'docs/sweeps/notes.md': 'not a report\n',
+    'scripts/retro.mjs': '// retro\n',
+    [`docs/harness/reports/retro-${isoWeekAgo(21)}.md`]: '# retro\n',
+    'scripts/harness-due.mjs': '// due\n',
+    '.agents/harness-manifest.json': dueManifest(daysAgo(20)),
+  });
+  const rep = report(repo);
+  const sweep = hazardsOf(rep, 'sweep-overdue');
+  assert.strictEqual(sweep.length, 1);
+  assert.strictEqual(sweep[0].path, `docs/sweeps/${daysAgo(8)}.md`);
+  assert.match(sweep[0].detail, /^the newest sweep report is 8 days old; due every 7 days$/);
+  assert.strictEqual(hazardsOf(rep, 'retro-overdue').length, 1);
+  assert.match(hazardsOf(rep, 'hygiene-overdue')[0].detail, /^no hygiene report at docs\/harness\/reports\/hygiene-<date>\.md$/);
+  write(repo, `docs/harness/reports/sweep-${daysAgo(2)}.md`, '# sweep\n');
+  write(repo, `docs/harness/reports/retro-${isoWeekAgo(0)}.md`, '# retro\n');
+  write(repo, `docs/harness/reports/hygiene-${daysAgo(1)}.md`, '# hygiene\n');
+  const after = ids(report(repo));
+  for (const id of ['sweep-overdue', 'retro-overdue', 'hygiene-overdue']) assert.ok(!after.includes(id), `${id} still raised: ${after}`);
+  // a fresh install has not had its first week yet; with no manifest it is an older one
+  const fresh = mk({ 'scripts/retro.mjs': '// retro\n', 'scripts/harness-due.mjs': '// due\n', '.agents/harness-manifest.json': dueManifest(daysAgo(2)) });
+  assert.ok(!ids(report(fresh)).some(id => id.endsWith('-overdue')), ids(report(fresh)).join());
+  const older = mk({ 'scripts/retro.mjs': '// retro\n' });
+  assert.ok(ids(report(older)).includes('retro-overdue'));
+});
+
+test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may wait', () => {
+  const rows = ['| # | Area | Severity | Status |', '|---|---|---|---|', '| 1 | a.ts | P3 | open |', '| 2 | b.ts | P3 | fixed `abc1234` |', '| 3 | c.ts | P2 | open |'];
+  const repo = mk({ 'docs/harness/follow-ups.md': `${rows.join('\n')}\n` });
+  const found = hazardsOf(report(repo), 'p3-queue-aging');
+  assert.strictEqual(found.length, 1);
+  assert.strictEqual(found[0].path, 'docs/harness/follow-ups.md');
+  assert.match(found[0].detail, /^1 open P3 row, and no hygiene report: the P3 batch has not taken them$/);
+  write(repo, `docs/harness/reports/hygiene-${daysAgo(3)}.md`, '# hygiene\n');
+  assert.deepStrictEqual(hazardsOf(report(repo), 'p3-queue-aging'), []);
+  write(repo, `docs/harness/reports/hygiene-${daysAgo(3)}.md`, '');
+  fs.renameSync(path.join(repo, 'docs', 'harness', 'reports', `hygiene-${daysAgo(3)}.md`), path.join(repo, 'docs', 'harness', 'reports', `hygiene-${daysAgo(15)}.md`));
+  assert.match(hazardsOf(report(repo), 'p3-queue-aging')[0].detail, /the newest hygiene report is 15 days old/);
+  const closed = mk({ 'docs/harness/follow-ups.md': `${rows.slice(0, 2).concat(rows[3]).join('\n')}\n` });
+  assert.deepStrictEqual(hazardsOf(report(closed), 'p3-queue-aging'), []);
+  // the follow-ups doc the manifest's roles name, outside the usual paths (one install keeps it at docs/qa/known-issues.md)
+  const roles = { 'follow-ups': 'docs/qa/known-issues.md' };
+  const named = mk({ 'docs/qa/known-issues.md': `${rows.join('\n')}\n`, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles }) });
+  assert.strictEqual((hazardsOf(report(named), 'p3-queue-aging')[0] || {}).path, 'docs/qa/known-issues.md');
+});
+
+test('mutants: the older report places and the phase-under-way rule each matter', () => {
+  const repo = mk({
+    '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n',
+    [`docs/sweeps/${daysAgo(1)}.md`]: '# sweep\n',
+    '.agents/skills/phase-preflight/SKILL.md': '# phase-preflight\n',
+    'docs/harness/log.md': dueLog(['P1-01', 'P2-01']),
+    'docs/preflight/P2.md': '# P2\n',
+  });
+  assert.ok(!ids(report(repo)).includes('sweep-overdue'));
+  assert.ok(!ids(report(repo)).includes('preflight-missing'));
+  const newOnly = mutantOf("sweep: ['docs/harness/reports/sweep-<date>.md', 'docs/sweeps/<date>.md'],", "sweep: ['docs/harness/reports/sweep-<date>.md'],");
+  assert.ok(ids(report(repo, newOnly)).includes('sweep-overdue'), 'a sweep report at the older docs/sweeps/ path must count');
+  const firstPhase = mutantOf('const current = logIds.filter(phaseOf).pop();', 'const current = logIds.filter(phaseOf)[0];');
+  assert.ok(ids(report(repo, firstPhase)).includes('preflight-missing'), 'only the phase under way is checked');
+});
+
+// ── hosts ────────────────────────────────────────────────────────────────────
+
+console.log('\nharness-status: hosts');
+
+const MODELS = '.agents/harness-models.json';
+const role = model => ({ model, effort: 'high' });
+const models = hosts => JSON.stringify({ schema: 1, hosts });
+const THREE = {
+  claude: { main: role('opus'), bounded: role('sonnet'), second: 'codex' },
+  codex: { main: role('gpt-6.1-sol'), bounded: role('gpt-6-luna'), second: 'claude' },
+  zcode: { main: { model: 'GLM-5.3' }, bounded: { model: 'GLM-5.3-Flash' }, second: 'codex', fallback: 'claude' },
+};
+
+test('host-models-missing: harness-host with no models file, a file that is not one, a manifest target with no entry', () => {
+  const repo = mk({ 'scripts/harness-host.mjs': '// x\n' });
+  const missing = hazardsOf(report(repo), 'host-models-missing');
+  assert.strictEqual(missing.length, 1, JSON.stringify(missing));
+  assert.strictEqual(missing[0].path, MODELS);
+  assert.match(missing[0].detail, /^scripts\/harness-host\.mjs reads \.agents\/harness-models\.json, which is missing/);
+  write(repo, MODELS, '{');
+  assert.strictEqual(hazardsOf(report(repo), 'host-models-missing')[0].detail, 'invalid JSON');
+  write(repo, MODELS, JSON.stringify({ schema: 1, hosts: [] }));
+  assert.match(hazardsOf(report(repo), 'host-models-missing')[0].detail, /^not a schema 1 models file/);
+  write(repo, MODELS, models({ claude: THREE.claude }));
+  write(repo, 'scripts/codex-run.mjs', '// x\n');
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['change'], targets: ['claude', 'codex'], entries: [] }));
+  const target = hazardsOf(report(repo), 'host-models-missing');
+  assert.deepStrictEqual(target.map(h => h.detail), ['the manifest targets codex and .agents/harness-models.json has no codex entry']);
+  assert.deepStrictEqual(hazardsOf(report(mk({})), 'host-models-missing'), [], 'an install without harness-host owes no models file');
+});
+
+test('second-family-absent: a host that names none, or whose second family\'s wrapper is not installed; an installed fallback is named', () => {
+  const repo = mk({ [MODELS]: models(THREE), 'scripts/codex-run.mjs': '// x\n' });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
+    "codex's second family, claude, runs through scripts/claude-run.mjs, which is not installed: every cross-family pass on codex is degraded (if the project never runs on codex, drop its entry)",
+  ]);
+  fs.rmSync(path.join(repo, 'scripts', 'codex-run.mjs'));
+  write(repo, 'scripts/claude-run.mjs', '// x\n');
+  assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
+    "claude's second family, codex, runs through scripts/codex-run.mjs, which is not installed: every cross-family pass on claude is degraded (if the project never runs on claude, drop its entry)",
+    "zcode's second family, codex, runs through scripts/codex-run.mjs, which is not installed; the fallback, claude, takes its passes (if the project never runs on zcode, drop its entry)",
+  ]);
+  write(repo, MODELS, models({ zcode: { ...THREE.zcode, second: null, fallback: null } }));
+  assert.match(hazardsOf(report(repo), 'second-family-absent')[0].detail, /^zcode names no second family: every cross-family pass is degraded by design$/);
+});
+
+test('mutant: the wrapper check skipped -> second-family-absent is never raised', () => {
+  const mutant = mutantOf('if (!wrapper || isFile(wrapper)) return;', 'return;');
+  const repo = mk({ [MODELS]: models(THREE) });
+  assert.ok(hazardsOf(report(repo), 'second-family-absent').length > 0);
+  assert.deepStrictEqual(hazardsOf(report(repo, mutant), 'second-family-absent'), []);
 });
 
 // ── mutation ─────────────────────────────────────────────────────────────────

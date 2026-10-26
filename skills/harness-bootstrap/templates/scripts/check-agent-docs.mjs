@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap check-agent-docs (generated YYYY-MM-DD). Verify gate for the shared agent instruction files.
-// [M] mechanism (ship as-is): everything below the CONFIG block - the eight checks, the glob matcher,
-//     `--rules-for` and `--json`.
+// [M] mechanism (ship as-is): everything below the CONFIG block - the ten checks, the glob matcher,
+//     `--rules-for`, `--base` and `--json`.
 // [B] binding (re-derived per project): the CONFIG block only. Generation sets each budget to the
 //     file's current size rounded up, so a budget is a ratchet: a check fails only ABOVE it.
 //
@@ -14,17 +14,23 @@
 //   paths        backticked repo paths exist on disk (a gitignored path counts as present)
 //   frontmatter  skills and agents carry valid frontmatter; read-only agents hold no write tools
 //   secrets      no credential-shaped strings in the instruction files
+//   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
+//                AGENTS.md and rule files without `paths:` (skipped when budgets.base is unset)
+//   citations    each AGENTS.md section the instruction files or the code cite still exists: `AGENTS.md` › Name,
+//                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently)
 //
 // `--rules-for <file...>` prints the rule files whose `paths:` globs match the given paths and exits 0.
-// `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text.
+// `--base` prints those always-loaded files with their bytes and the target, and exits 0.
+// `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text (with --base: the files).
 import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, normalize, relative, isAbsolute, sep } from 'node:path';
 
 // ---- [B] binding: re-derive per project -------------------------------------------------------
 export const CONFIG = {
-  // Bytes (files) and lines (skillLines). Set to the current size rounded up at generation time.
-  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192 },
+  // Bytes (files and base) and lines (skillLines). Set to the current size rounded up at generation time;
+  // base is the always-loaded total, lowered as it shrinks (each 10K tokens is about 2% of main-thread spend).
+  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192, base: 49152 },
   rulesDir: '.claude/rules',
   indexFile: 'AGENTS.md', // holds the area-rules index
   skillDirs: ['.claude/skills', '.agents/skills'],
@@ -33,6 +39,8 @@ export const CONFIG = {
   pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
   intentionallyAbsent: [], // backticked paths cited as deliberately absent
   requireImport: true, // CLAUDE.md line 1 must be @AGENTS.md
+  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'], // code whose comments may cite AGENTS.md (the instruction files always do)
+  citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'], // their citations are fixtures
 };
 // ---- [M] mechanism: ship as-is ----------------------------------------------------------------
 
@@ -178,10 +186,109 @@ function proseLines(text) {
   });
 }
 
+// ---- section citations ---------------------------------------------------------------------------
+/** A section name or a quoted phrase as a citation is compared: no backticks or bold, single spaces, lowercase. */
+const nameKey = (text) =>
+  String(text)
+    .replace(/`|\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,:;]+$/, '')
+    .trim()
+    .toLowerCase();
+
+/**
+ * Every name a citation may give a place in AGENTS.md: each heading and each bold lead (at the start of a line,
+ * a list item or a table row) in full, without a trailing parenthetical, the parenthetical alone, and the head
+ * before a dash, colon, comma or parenthesis ("Owner stops, and what is not one" answers to "Owner stops").
+ */
+export function sectionNames(lines) {
+  const names = new Set();
+  const add = (text) => {
+    const key = nameKey(text);
+    if (key) names.add(key);
+  };
+  for (const line of lines) {
+    const text =
+      line.match(/^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/)?.[1] ??
+      line.match(/^\s*(?:[-*+]\s+|\d+\.\s+|\|\s*)?\*\*([^*]+)\*\*/)?.[1];
+    if (!text) continue;
+    add(text);
+    const paren = text.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+    if (paren) {
+      add(paren[1]);
+      add(paren[2]);
+    }
+    const head = text.match(/^(.+?)(?:\s+[—–-]\s+|:\s|,\s|\s\()/);
+    if (head) add(head[1]);
+  }
+  return names;
+}
+
+// A cited name is a run of words that ends at punctuation, a dash, a sentence end or the next `›`.
+const CITE_STOP = /[()",;:|[\]*`]|\s[—–-]\s|\.(?:\s|$)|\s?[›→]/;
+
+/** The names in `A › B, C`: each starts with a capital; `›` or `→` goes a level down, `, C` names a sibling. */
+function citedRuns(text) {
+  const runs = [];
+  let rest = text;
+  for (;;) {
+    const stop = rest.match(CITE_STOP);
+    const run = (stop ? rest.slice(0, stop.index) : rest).trim();
+    if (!/^[A-Z]/.test(run) || run.includes('§')) break; // prose, or a numbered section of another document
+    runs.push(run);
+    rest = rest.slice(rest.indexOf(run) + run.length);
+    const next = rest.match(/^\s*[›→]\s*|^,\s*(?=[A-Z])/);
+    if (!next) break;
+    rest = rest.slice(next[0].length);
+  }
+  return runs;
+}
+
+/**
+ * The AGENTS.md sections one line cites, `following` being the next lines without comment markers (a citation
+ * may wrap): [{names, quoted}]. Three forms follow the name: `› A › B`, `(A)`, and a "quoted" name or phrase
+ * (after an optional `'s <words>`). After a path (`apps/web/AGENTS.md`), `@` (an import) or a quote (a string
+ * literal) it is another file or no citation; followed by anything else it cites nothing this check can hold.
+ */
+export function citationsIn(line, following = []) {
+  const out = [];
+  for (let at = line.indexOf('AGENTS.md'); at !== -1; at = line.indexOf('AGENTS.md', at + 9)) {
+    if (at > 0 && /[\w./@'"-]/.test(line[at - 1])) continue;
+    let rest = line.slice(at + 9);
+    if (rest.startsWith('`')) rest = rest.slice(1); // the end of the code span that holds the name
+    const harness = rest.match(/^\s*›\s*/);
+    if (harness) {
+      const tail = rest.slice(harness[0].length);
+      const names = citedRuns(tail.trim() ? tail : (following[0] ?? ''));
+      if (names.length) out.push({ names, quoted: false });
+      continue;
+    }
+    const quoted = [rest, ...following]
+      .join(' ')
+      .match(/^(?:['’]s(?:\s+[a-z]+)*)?[\s,(]*(?:"([^"]+)"|“([^”]+)”)/);
+    if (quoted) {
+      const names = (quoted[1] ?? quoted[2])
+        .split(/[›→]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (names.length) out.push({ names, quoted: true });
+      continue;
+    }
+    const paren = rest.match(/^\s*\(([^()]*)\)/);
+    const names = paren ? citedRuns(paren[1]) : [];
+    if (names.length) out.push({ names, quoted: false });
+  }
+  return out;
+}
+
+// The comment marker a wrapped citation's next line opens with.
+const COMMENT_MARKER = /^\s*(?:\/\*+|\*+\/?|\/\/+|#+|<!--)?\s?/;
+
 // ---- main ---------------------------------------------------------------------------------------
 const args = process.argv.slice(2);
 const wantJson = args.includes('--json');
 const rulesForAt = args.indexOf('--rules-for');
+const wantBase = args.includes('--base') && rulesForAt === -1;
 
 const failures = [];
 let checks = 0;
@@ -285,8 +392,21 @@ function main() {
           .filter(isFile)
       : [];
 
+  // Claude Code loads `.claude/rules/**/*.md`, nested directories included. Recurse into real directories only:
+  // a symlinked one is never followed, so a link back up the tree cannot loop.
+  const listRules = (dir) => {
+    if (!existsSync(abs(dir))) return [];
+    const out = [];
+    for (const entry of readdirSync(abs(dir), { withFileTypes: true })) {
+      const p = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) out.push(...listRules(p));
+      else if (entry.name.endsWith('.md') && isFile(p)) out.push(p);
+    }
+    return out.sort();
+  };
+
   const ruleDirExists = existsSync(abs(CONFIG.rulesDir));
-  const ruleFiles = listMd(CONFIG.rulesDir, (f) => f.endsWith('.md'));
+  const ruleFiles = listRules(CONFIG.rulesDir);
   const skillFiles = CONFIG.skillDirs.flatMap((dir) =>
     existsSync(abs(dir))
       ? readdirSync(abs(dir))
@@ -322,6 +442,48 @@ function main() {
       const globs = parsePaths(read(f)) ?? [];
       if (targets.some((t) => globs.some((g) => matchGlob(t, g)))) console.log(f);
     }
+    return;
+  }
+
+  // The files every session loads from this repository, as Claude Code resolves them: CLAUDE.md (at the
+  // root or in .claude/), each file it imports with `@` (relative to the importing file, never inside code,
+  // five hops deep), AGENTS.md (Codex reads it directly), and each rule file without `paths:` (a path-scoped
+  // rule loads only when a matching file is read). `~/` and absolute imports are per machine, not counted.
+  const base = new Map();
+  const reached = new Map(); // the shallowest depth a file was walked from: a shorter path walks it again
+  const load = (f, via, depth) => {
+    if (!isFile(f)) return;
+    if (!base.has(f)) base.set(f, via);
+    else if (depth >= reached.get(f)) return;
+    reached.set(f, depth);
+    if (depth >= 5) return;
+    for (const line of proseLines(read(f))) {
+      for (const m of line.replace(/`[^`]*`/g, ' ').matchAll(/(?:^|\s)@([^\s`]+)/g)) {
+        const target = m[1].replace(/[),.;:]+$/, '');
+        if (target.startsWith('~') || isAbsolute(target)) continue;
+        const p = normalize(join(dirname(f), target)).split(sep).join('/');
+        if (p !== '..' && !p.startsWith('../')) load(p, `imported by ${f}`, depth + 1);
+      }
+    }
+  };
+  for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) load(f, 'loaded', 0);
+  for (const f of ruleFiles) if (!parsePaths(read(f))?.length) load(f, 'a rule without paths:', 0);
+  const baseFiles = [...base].map(([file, via]) => ({ file, via, bytes: size(file) }));
+  const baseTotal = baseFiles.reduce((n, f) => n + f.bytes, 0);
+  const baseTarget = CONFIG.budgets.base;
+
+  // `--base`: the always-loaded files, largest first, against the target; then exit.
+  if (wantBase) {
+    baseFiles.sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file));
+    const over = baseTarget === undefined ? null : Math.max(0, baseTotal - baseTarget);
+    if (wantJson) {
+      console.log(JSON.stringify({ total: baseTotal, target: baseTarget ?? null, over, files: baseFiles }, null, 2));
+      return;
+    }
+    const target = baseTarget === undefined ? 'no target set (budgets.base)' : `target ${baseTarget}`;
+    console.log(`check-agent-docs --base: every session loads ${baseTotal} bytes from this repository, ${target}`);
+    for (const f of baseFiles) console.log(`  ${String(f.bytes).padStart(8)}  ${f.file}${f.via === 'loaded' ? '' : ` (${f.via})`}`);
+    if (over) console.log(`  ${over} bytes over the target - move content into path-scoped rules, skills or reference files`);
     return;
   }
 
@@ -404,7 +566,12 @@ function main() {
   const indexExists = isFile(CONFIG.indexFile);
   if (ruleDirExists && indexExists) {
     const lines = proseLines(read(CONFIG.indexFile));
-    const bulletOf = (line) => line.match(/^[ \t]*[-*] `([^`/]+\.md)`[ \t]*(?:—|–|-|:)(?:\s|$)/)?.[1];
+    // A nested rule is indexed by its path under the rules dir (`web/react.md`); a slash bullet that names
+    // no rule file is another doc, not an index entry.
+    const bulletOf = (line) => {
+      const name = line.match(/^[ \t]*[-*] `([^`]+\.md)`[ \t]*(?:—|–|-|:)(?:\s|$)/)?.[1];
+      return name && (!name.includes('/') || ruleNames.has(name)) ? name : undefined;
+    };
     const levelOf = (line) => line.match(/^ {0,3}(#{1,6})(?:[ \t]|$)/)?.[1].length ?? 0;
     const first = lines.findIndex((l) => ruleNames.has(bulletOf(l) ?? ''));
     const indexed = new Set();
@@ -534,6 +701,59 @@ function main() {
       fail('secrets', f, line, `looks like a secret (${name}); value masked`);
     }
   }
+
+  // 9. base
+  if (baseTarget !== undefined) {
+    verify(
+      baseTotal <= baseTarget,
+      'base',
+      '',
+      0,
+      `every session loads ${baseTotal} bytes from this repository, budget ${baseTarget} - \`--base\` lists the files`,
+    );
+  }
+
+  // 10. citations
+  if (isFile('AGENTS.md')) checkCitations(proseLines(read('AGENTS.md')));
+
+  // A quoted citation holds while AGENTS.md has the name or the words; `› A` while a name is A, begins A
+  // ("› Gates apply") or A begins it ("› Context" for "Context budget and reporting").
+  function checkCitations(agentsMd) {
+    const names = sectionNames(agentsMd);
+    const words = nameKey(agentsMd.join(' '));
+    const holds = (name, quoted) => {
+      const key = nameKey(name);
+      if (names.has(key)) return true;
+      if (quoted) return words.includes(key);
+      return [...names].some((n) => key.startsWith(`${n} `) || n.startsWith(`${key} `));
+    };
+    const exempt = new Set(CONFIG.citeExempt ?? []);
+    const citeRes = (CONFIG.citeFiles ?? []).map(globToRegExp);
+    // A glob may match a directory git lists as one entry (a submodule, a symlinked directory): files only.
+    const citing = [...new Set([...docFiles, ...files.filter((f) => citeRes.some((re) => re.test(f)))])].filter(isFile);
+    for (const f of citing.filter((p) => !exempt.has(p))) {
+      const text = read(f);
+      if (!text.includes('AGENTS.md')) continue;
+      const lines = f.endsWith('.md') ? proseLines(text) : text.split('\n');
+      lines.forEach((line, i) => {
+        if (!line.includes('AGENTS.md')) return;
+        const following = lines.slice(i + 1, i + 3).map((l) => l.replace(COMMENT_MARKER, ''));
+        for (const { names: cited, quoted } of citationsIn(line, following)) {
+          for (const name of cited) {
+            verify(
+              holds(name, quoted),
+              'citations',
+              f,
+              i + 1,
+              quoted
+                ? `cites "${name}", which AGENTS.md no longer has as a heading, a bold lead or its words - cite what replaced it`
+                : `cites \`AGENTS.md\` › ${name}, which names no heading or bold lead of AGENTS.md - cite the section by its name, ended by punctuation`,
+            );
+          }
+        }
+      });
+    }
+  }
 }
 
-if (ROOT && rulesForAt === -1) finish();
+if (ROOT && rulesForAt === -1 && !wantBase) finish();

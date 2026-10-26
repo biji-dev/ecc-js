@@ -25,7 +25,7 @@
  * Read-only. It prints; it never writes into the repo.
  */
 import fs from 'node:fs';
-import { estimate, formatLine, formatReport, parseArgs, parseLog } from './lib/estimate-core.mjs';
+import { estimate, formatLine, formatReport, hasLogTable, parseArgs, parseLog } from './lib/estimate-core.mjs';
 
 const USAGE =
   'usage: node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>] [--json]';
@@ -46,8 +46,8 @@ function main() {
     } catch (e) {
       throw new Error(`cannot read log ${args.log}: ${e.code ?? e.message}`, { cause: e });
     }
+    if (!hasLogTable(text)) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${args.log}`);
     const records = parseLog(text);
-    if (records.length === 0) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${args.log}`);
     est = estimate(records, { tier: args.tier, cohort: args.cohort });
   } catch (e) {
     return usage(e.message);

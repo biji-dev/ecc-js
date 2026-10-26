@@ -1,19 +1,20 @@
 ---
 name: delegate-tasks
-description: "Use when a batch of well-specified work should go to subagents behind deterministic gates — two or more build slices, diagnosed fixes, control tests, check or review fan-outs with typed findings, or a blind second plan — while the main session (Opus) stays architect and diagnostician. Also the dispatch engine for a gated harness (harness-bootstrap): the implement, fix-round, cross-check and doc-sweep steps of a plan task or a change. Use when the user invokes /delegate-tasks, asks to delegate builds, fixes or checks, or names the architect-builder or spec-driven delegation pattern. Claude Code first; Codex, ZCode and Kimi supported. Not for a single bug, a design decision still open, or taste work."
+description: "Use when a batch of well-specified work should go to subagents behind deterministic gates — two or more build slices, diagnosed fixes, control tests, check or review fan-outs with typed findings, or a blind second plan — while the main session, on the host's judgment model, stays architect and diagnostician. Also the dispatch engine for a gated harness (harness-bootstrap): the implement, fix-round, cross-check and doc-sweep steps of a plan task or a change. Use when the user invokes /delegate-tasks, asks to delegate builds, fixes or checks, or names the architect-builder or spec-driven delegation pattern. Claude Code first; Codex, ZCode and Kimi supported. Not for a single bug, a design decision still open, or taste work."
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 3
+  version: 5
 ---
 
-# delegate-tasks — architect on Opus, executors by risk
+# delegate-tasks — architect on the judgment model, executors by risk
 
-The main session is the **architect and diagnostician**: it understands the work,
-makes the design decisions, diagnoses defects, and writes one spec file per task.
-Executors do the work from those specs. **Commands decide, not claims:** the session
-gates the result on the project's own checks, and checks each executor's file scope
-with git rather than trusting its report. Then it integrates and reviews.
+The main session, on the host's judgment model, is the **architect and
+diagnostician**: it understands the work, makes the design decisions, diagnoses
+defects, and writes one spec file per task. Executors do the work from those specs.
+**Commands decide, not claims:** the session gates the result on the project's own
+checks, and checks each executor's file scope with git rather than trusting its
+report. Then it integrates and reviews.
 
 **Evidence:** 23 delegated runs in one project (about 9 relaunched, every relaunch
 traced to a spec or gate defect, never to a builder's skill), and a third project's
@@ -33,6 +34,11 @@ Five kinds of spec, one machinery:
   session to compare.
 
 What never delegates: understanding, design, **diagnosis**, triage and the commit.
+
+**Opus and Sonnet below are Claude Code's names** for the two models every host has:
+the judgment model and the bounded one. On another host read them as that host's
+pair, and the second family as that host's (`reference/other-harnesses.md` ›
+Dispatch, by host; in a harness, `.agents/harness-models.json`).
 
 ## When to Use
 
@@ -82,6 +88,14 @@ Handing critical code to the second family or Sonnet is the user's call alone, a
 its review is then an Opus reviewer per slice. Each Build and Fix spec states its
 executor in `## Executor`.
 
+**Size each slice to one executor context: about 70 tool calls, a peak under
+200K.** A larger slice splits before dispatch. An executor that compacts loses what
+it read: after a subagent compaction, 147 of the next 170 Reads went back to files
+already read. A per-agent `autoCompactWindow` is a backstop, never the plan.
+> Origin: one project's study found subagents at 76% of its spend, all of it out of
+> sight of the main-thread budget hook, and it has sliced to about 70 calls since.
+> Across nine installs in 21 days, 108 of 575 implementer runs passed 200K.
+
 State the decision and the model for each role in one line before going on.
 
 ### Phase B — Specs (main session)
@@ -105,8 +119,9 @@ State the decision and the model for each role in one line before going on.
    - **Pin and ratchet tests broken by design** are listed in the spec, with the
      new expected value, or the gate reads them as regressions.
    - **Patterns to imitate**, **repo rules** quoted (in a harness:
-     `node scripts/check-agent-docs.mjs --rules-for <files>`), and **copy decided,
-     not delegated**.
+     `node scripts/check-agent-docs.mjs --rules-for <files>`), **traps** by path —
+     each vendor-trap skill whose library the task touches, or `none`; `--rules-for`
+     never lists one — and **copy decided, not delegated**.
    - **Fix and control specs:** the test is shown **red on the current code first**.
    - **Check specs** never authorise edits, and their findings are typed.
 4. **Order.** Specs that create a contract or shared copy run first; dependents wait.
@@ -126,7 +141,9 @@ Templates for every kind are in `reference/spec-templates.md`.
 
 1. **Dispatch.** One Agent call per spec, with **`model` and `effort: "high"`
    passed explicitly** — never inherited. Parallel waves go in **one message**;
-   serial slices go one at a time. The executor brief:
+   serial slices go one at a time. In a harness the call's `description` starts with
+   the step tag, `[<unit> s<step> r<n>] <slice>` (the `harness-bootstrap` runner's step
+   markers), so the unit's cost splits by step. The executor brief:
 
    > Read `<spec path>` and implement it exactly. Read every source file it
    > references before writing code, and follow the patterns it points to. Batch
@@ -174,7 +191,7 @@ Templates for every kind are in `reference/spec-templates.md`.
 7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
    code) **fenced to the current slice's listed files, never a folder** — a fixer
    once wrote the next wave's strings. **Review findings:** P3s never open a fix
-   round — they wait for one batched Sonnet sweep, with no re-review; fix groups
+   round — they wait for one Sonnet P3 batch, with no re-review; fix groups
    whose files do not overlap go in one brief per area; the re-review reads the fix
    diff only, by the reviewer whose finding was fixed — the second family first,
    Opus again only on critical code with a P1 fixed (a harness's `review-gate.mjs`
@@ -191,7 +208,7 @@ Templates for every kind are in `reference/spec-templates.md`.
 
 **Check fan-outs** — reviewers, cross-check lanes, adversarial passes — dispatch in
 one message, one brief per reviewer, each with its own `.review-work/<name>/`
-directory. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
+directory and, in a harness, the step tag in its description. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
 reproduce, introduced by this diff or pre-existing, and a proposed scope class. Every
 P0 and P1 is then **verified** — reproduced or refuted — before anyone fixes it; an
 unverifiable one stays blocking. A harness's review workflow
@@ -253,7 +270,7 @@ the P0 and P1 findings a grep can decide before anyone fixes them.
 - **Executors never commit.**
 - **Pass `model` and `effort` on every dispatch** — the executor model from the
   slice's risk; Sonnet for check specs unless the harness says otherwise; the main
-  session stays on Opus. Effort `high`; `xhigh` only with the reason in the brief,
+  session stays on the judgment model. Effort `high`; `xhigh` only with the reason in the brief,
   `max` never for a whole session — it reaches every dispatch that does not pass its
   own.
 - **Critical slices never run in parallel.**

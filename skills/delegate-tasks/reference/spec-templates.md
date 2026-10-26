@@ -30,7 +30,8 @@ Wave: 0 | 1 | …
 ## Executor
 
 <codex | opus | sonnet> — from the slicing table's Executor cell; `codex` runs through
-`codex-run implement-cold`, the others as `Agent(model: …, effort: "high")`.
+`codex-run implement-cold`, the others as `Agent(model: …, effort: "high")`, with the
+step tag first in the description in a harness (`[EP-7 s2 r1] 01 money service`).
 
 ## Goal
 One sentence: what this task delivers.
@@ -52,6 +53,10 @@ touches it, with its source (plan row or decision id):
 
 ## Repo rules
 - Quote the two or three project rules this slice could break.
+
+## Traps
+- `.agents/skills/drizzle-kit-traps/SKILL.md` — each trap skill whose library or tool
+  this task touches, by path; read it before the first edit. Or `none`.
 
 ## Tool discipline
 Send independent reads and searches as parallel tool calls in one message. Read a
@@ -96,6 +101,9 @@ only — no throw.
 
 ## Patterns to imitate
 - `src/utils/csv.test.ts` — test style
+
+## Traps
+`none` — or, by path, each trap skill whose library or tool the fix touches.
 
 ## Acceptance
 - Write the regression test; run it on the CURRENT code and see it FAIL first.

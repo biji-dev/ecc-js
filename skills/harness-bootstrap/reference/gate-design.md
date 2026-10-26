@@ -47,6 +47,38 @@ Default if unanswered: <option> (park-and-carry: work that depends on it waits)
 > of owner wait. One 124-item owner round, about 75 of them technical, was answered
 > in one line: "use your recommendation". A sheet nobody reads is not a review.
 
+`[M]` **How the cards reach the owner depends on the context**, which the budget
+hook's figure line gives (`context.md` › The window, the gate wait and the base):
+
+- **Under 150K:** the question tool — `AskUserQuestion`, or `ExitPlanMode` for a plan.
+- **At 150K or more:** write each open card to the state file's decision log as a
+  `Q-n` row, give the cards as text after the `/clear` offer and its resume command,
+  and **end the turn**. The answer comes back as text, and the `Q-n` rows become
+  `DEC` rows. In plan mode, `ExitPlanMode` follows the answer, while the owner is
+  there.
+
+> Origin, the v5 context study (21 days, nine installs): 183 requests after a gap
+> of more than an hour rewrote their whole context — $267, 9.6% of main-thread
+> spend. Past about 125K an idle compaction costs less than the rewrite it saves,
+> but it runs only after an ended turn: 0 of 44 idle compactions came while a
+> question was pending, and 39 of the 183 waits were on one.
+
+## The intake sheet — Gate 1 ahead of time
+
+`[M]` **An idea with no request is drafted into one first** (`intake.md`), and the
+owner answers it on one sheet before unit 1 is claimed: the deliverables with their
+`Demo:` lines, every P and C card, the never-auto and risk-map hits with the tier
+they set, the estimate, unit 1's Scope block, the queue, and *Decided*. The context
+rule above decides how the sheet reaches the owner.
+
+`[M]` **That sheet is unit 1's Gate 1.** The `Approved:` line it leaves in the
+request names the unit, the tier, and the shas of the Scope block and of the whole
+request the owner saw; at unit 1's Gate 1, `node scripts/intake.mjs --gate1`
+compares them with the claim. Unchanged → auto, its line in the ledger. Anything else — another unit, a re-tier,
+an edited Scope block, a request edited after its approval, a default in place of
+the owner's answer — re-opens Gate 1 as an ordinary sheet. Later units' Gate 1s run
+as usual; the cards the intake answered are decision rows, never asked again.
+
 ## Tiers — decided at claim, after the task type
 
 `[M]` For a Code unit (`runner.md` › Task type first), state the tier in the claim
@@ -103,13 +135,18 @@ session dispatches what it names, with `model` and `effort` passed.
 > cheapest per unique P0/P1 and stay. **Track it:** the log's *Yield by source*
 > (`log-format.md`) says which source to drop or restore next.
 
-`[M]` **What `review-gate.mjs` names, and what the session dispatches:**
-`second-family-review` → `codex-run.mjs review`; `second-family-adversarial` →
-`codex-run.mjs adversarial --prompt <brief>` (`--critical` on critical code);
-`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on that
-model; `opus-adversarial` → the Opus `blast-radius-auditor` with the adversarial
-brief (the round-3 pass over a fix the second family wrote); every other name → the agent of that name (`pr-test-analyzer` on Sonnet). Each
-dispatch passes `model` and `effort: "high"`.
+`[M]` **What `review-gate.mjs` names, and what the session dispatches.** The names
+and the words of its reasons are Claude Code's: on another host, Opus is that host's
+main model, Sonnet its bounded model, and the second family its own (› Model and
+effort). `second-family-review` → the second family's wrapper with `review`:
+`codex-run.mjs` on Claude Code and ZCode (`claude-run.mjs` on ZCode when Codex is
+out), `claude-run.mjs` on Codex; `second-family-adversarial` → the same wrapper with
+`adversarial --prompt <brief>` (`--critical` on critical code);
+`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on the
+main / bounded model; `opus-adversarial` → the `blast-radius-auditor` on the main
+model with the adversarial brief (the round-3 pass over a fix the second family
+wrote); every other name → the agent of that name (`pr-test-analyzer` on the
+bounded model). Each dispatch passes `model` and `effort: "high"`.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
@@ -162,6 +199,7 @@ Never impose a column the project does not have.
 | **Owner taste** — identity, copy, naming | ask | ask |
 | A re-tier during the run | re-ask | re-ask, at the new tier |
 | The foundation stage (`foundation.md`) — before the flip | every unit Full: ask | ask, **never auto** |
+| **Unit 1 of an approved intake**, `intake.mjs --gate1` saying `auto` | auto — its sheet asked ahead of time: its `Never-auto:` and `Risk map:` lines and its cards answer the Gate 1 ask of every row above they cover | by the merge policy; every row above still applies |
 
 `[M]` **The project's own rules tighten these rows, never loosen them.** A document
 that requires every change reviewed by another agent puts a reviewer on Trivial too;
@@ -237,7 +275,7 @@ in one line and start it.
 | **P0** | data loss, a security or isolation breach, wrong money, an outage | always |
 | **P1** | a correctness defect the unit introduces, or a blocker for its "Done when" | always |
 | **P2** | a robustness gap, an edge case, a missing test for a real path | if IN scope |
-| **P3** | a nit, a style point | **never opens one** — the batched sweep, or rides along on a line the round already changes |
+| **P3** | a nit, a style point | **never opens one** — the P3 batch, or rides along on a line the round already changes |
 
 `[M]` Agents that report CRITICAL / HIGH / MEDIUM / LOW map to P0 / P1 / P2 / P3.
 Severity decides whether a finding enters a fix round; the scope class decides
@@ -253,22 +291,26 @@ line in the ledger. Its rules:
 
 | Round fixed | Cold code | Critical code |
 |---|---|---|
-| P3 only | **no fix round** — `sweep` | **no fix round** — `sweep` |
+| P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch` |
 | P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
 | any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
 | **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review; round 3 is an Opus adversarial brief |
 
 `[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
-writes, the other re-reads — fix rounds included. It is required —
-`claude | codex | sonnet | mixed`; a round whose fix groups went to more than one
-executor is `mixed` and routes as the second family's, and critical code that
-Sonnet wrote gets the Opus reviewer as the second family's does.
+writes, the other re-reads — fix rounds included. It is required and names the
+writer's role on this host — `main | bounded | second | mixed` (on Claude Code
+also `claude | sonnet | codex`), each role's model per host in › Model and effort
+below; a round whose fix groups went to more than one executor is `mixed` and
+routes as `second`, and critical code that Sonnet wrote gets the Opus reviewer as
+the second family's does.
 
-`[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
+`[M]` **P3s never open a fix round.** They wait for **the P3 batch, one per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
 P3 still IN scope, with no re-review; a P3 on a line the round already changes rides
-along in that round.
+along in that round. P3s deferred to the follow-ups doc get their own batch in the
+hygiene unit (`hygiene.md`). It was called the P3 sweep until v5, a name the
+workstream sweep (`sweep.md`) also uses.
 > Origin: in one 50-slice milestone, 20 of 50 fix rounds were opened by P3s alone,
 > each re-reviewed by Opus (`rules.md` §1 › Cost).
 
@@ -286,7 +328,7 @@ owner's to order, and it is the adversarial pass.
 overlap go to one executor in one brief; groups that share files run in sequence.
 Fix groups on critical code go to Opus; the rest to the second family's `fix-cold`
 where it has quota, else Sonnet — and the review gate then runs with
-`--writer codex`.
+`--writer second`.
 
 `[M]` **A P0 or P1 introduced by the fix itself trips the stop** (`rules.md` §2). A
 pre-existing finding seen for the first time does not.
@@ -295,21 +337,36 @@ pre-existing finding seen for the first time does not.
 
 `[M]` Key models on the **same** signals as the gates — the risk map and the
 policy. The split is by **recoverability**: a wrong number can be corrected; data
-that left the building cannot.
+that left the building cannot. Every host has a judgment model, a bounded model and a
+second family, and the roles are the same on each.
 
-| Role | Claude Code default |
-|---|---|
-| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` |
-| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** |
-| **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) · per-slice review · the review of a Small unit · re-reviews of Claude-written fixes · the adversarial pass (carrying lane B) | the second family (`cross-model.md`) |
-| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 sweep · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** |
-| The blast-radius auditor (lane B) | **Opus**, only when the second family is unavailable (`degraded`) |
+| Role | Claude Code | Codex | ZCode |
+|---|---|---|---|
+| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` | **gpt-6.1-sol**, `high` | **GLM-5.3** |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+| **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) | Codex (`codex-run`) | the bounded model below: `claude-run` has no write kind | Codex (`codex-run`) |
+| Per-slice review · the review of a Small unit · re-reviews of fixes the host's family wrote · the adversarial pass (carrying lane B) | Codex (`codex-run`) | Claude (`claude-run`) | Codex (`codex-run`); Claude (`claude-run`) when Codex is out |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
+| The blast-radius auditor (lane B), only when the second family is unavailable (`degraded`) | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+
+`[M]` **The cross-family rule is unchanged** (`cross-model.md`): whatever one family
+writes, the other reviews. `[B]` `.agents/harness-models.json` holds this table's
+models for the hosts the project runs (`templates/harness-models.json`, re-derived
+from each host's CLI). `scripts/harness-host.mjs` names the host and reads it; its
+first line, `host codex · main gpt-6.1-sol high · second family claude`, is what the
+switch line's Model and Effort quote (`context.md`), and its `HAZARD` lines name an
+effort above `high`, a second family that cannot run, and a host with no models.
+> Origin, the v5 study: this table named Claude Code's models only, and nothing
+> detected the host. Measured on one machine: Codex started every session at `xhigh`
+> from its `config.toml`, and a Codex run started from a Claude Code shell still
+> carried `CLAUDECODE`, so that one variable names the wrong host.
 
 `[M]` **An `executor:` override beats this table** (`runner.md` › Executor
 override) — owner first, then the risk routing above, then the default — with one
 guard: an override that hands critical or never-auto code to the second family or
 Sonnet is a **C** decision, only the owner's, and its slices run with `--writer`
-set so the review gate names an Opus reviewer.
+set to the role that wrote them (`second` or `bounded`) so the review gate names
+an Opus reviewer.
 > Origin, the v4 usage study: the second family wrote code 7 times in 14 days
 > against 502 Opus implementer spawns, while its weekly meter sat at 5–30% most days.
 > Its write runs cost 0.5–2% of its week each, so at that plan it can carry about a
@@ -323,6 +380,9 @@ silently gets the cheapest reviewer.
 file's `effort:` beats the session's level; without it, a session raised to `max`
 reaches every reviewer. **Never leave the main session at `xhigh` or `max`**: raise it
 for one hard question, then lower it (`rules.md` §1 › Cost).
+On Codex the agent TOML's `model_reasoning_effort` is that pin, and the session's
+own level comes from `config.toml`; on ZCode only a workflow's `subagent_model` pins
+a builder (`harness-targets.md`).
 
 `[M]` **Effort floor `high`** on every dispatch and the main session; never `low` or
 `medium` on the Claude side. **`xhigh` only with the reason in the brief** — an

@@ -52,7 +52,31 @@ const NEUTRAL_FILES = [
   'scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs', 'scripts/unit-cost.mjs', 'scripts/estimate.mjs',
   '.claude/hooks/context-budget.mjs', '.claude/hooks/command-guard.mjs', 'docs/plans/decision-log.md',
   'docs/harness/follow-ups.md', 'docs/follow-ups.md', 'docs/guides/agent-workflow.md',
+  // v5
+  'scripts/unit-step.mjs', 'scripts/retro.mjs', 'scripts/harness-due.mjs', 'scripts/run-counted.mjs', 'scripts/unit-stack.sh',
+  'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
+  '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
 ];
+// harness-due's checks, from files alone (templates/scripts/lib/harness-due-core.mjs holds the
+// generated defaults): where its reports are -- the v5 default first, then the paths earlier
+// installs used -- the phase in a row id, and each cadence in days. A report's date is in its name.
+const DUE_REPORTS = {
+  preflight: ['docs/harness/reports/preflight-<phase>.md', 'docs/preflight/<phase>.md'],
+  sweep: ['docs/harness/reports/sweep-<date>.md', 'docs/sweeps/<date>.md'],
+  retro: ['docs/harness/reports/retro-<week>.md'],
+  hygiene: ['docs/harness/reports/hygiene-<date>.md'],
+};
+// harness-host's models file (templates/harness-models.json), the hosts it may name, and the wrapper
+// each second family runs through (templates/scripts/lib/harness-host-core.mjs holds the same).
+const MODELS_FILE = '.agents/harness-models.json';
+const MODEL_HOSTS = { claude: true, codex: true, zcode: true, kimi: true };
+const WRAPPER_OF = { codex: 'scripts/codex-run.mjs', claude: 'scripts/claude-run.mjs' };
+const DUE_VALUE = { preflight: /^[A-Za-z]+-?\d+$/, sweep: /^\d{4}-\d{2}-\d{2}$/, retro: /^\d{4}-W\d{2}$/, hygiene: /^\d{4}-\d{2}-\d{2}$/ };
+const DUE_DAYS = { sweep: 7, retro: 7, hygiene: 14, p3: 14 };
+const PHASE_OF = /^([A-Za-z]+-?\d+)[-.]\w/;
+const LOG_FILES = ['docs/harness/log.md', 'docs/harness-log.md', 'harness/log.md'];
+const FOLLOW_UP_FILES = ['docs/harness/follow-ups.md', 'docs/follow-ups.md', 'harness/follow-ups.md'];
+const DAY_MS = 86400000;
 const GUARD_RUN = /harness[- ]guard|commit guard|pre-commit/i;
 const NEVER_AUTO = /never[- ]auto|never merged on agent output|manual review categories/i;
 const POLICY_STATUS = /Never-auto policy:\s*(DRAFT|REVIEWED)/;
@@ -318,6 +342,48 @@ function tableCells(line) {
   const t = line.trim();
   if (!t.startsWith('|')) return null;
   return t.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+
+/** The markdown tables in `text`: each one's lower-cased header names and its data rows' cells. */
+function mdTables(text) {
+  const out = [];
+  const ls = norm(text).split('\n');
+  for (let i = 0; i + 1 < ls.length; i += 1) {
+    if (!/^\s*\|/.test(ls[i]) || !/^\s*\|?\s*:?-{3,}/.test(ls[i + 1])) continue;
+    const names = tableCells(ls[i]).map(c => c.replace(/^[\u2605*\s]+/, '').toLowerCase());
+    const rows = [];
+    let j = i + 2;
+    for (; j < ls.length && /^\s*\|/.test(ls[j]); j += 1) rows.push(tableCells(ls[j]));
+    out.push({ names, rows });
+    i = j - 1;
+  }
+  return out;
+}
+
+/** A due kind's reports at any of its places, newest first: [{ rel, value, time }]. A week's time is its end. */
+function dueReports(kind) {
+  const out = [];
+  for (const place of DUE_REPORTS[kind]) {
+    const dir = path.posix.dirname(place);
+    const [head, tail] = path.posix.basename(place).split(/<\w+>/);
+    let names = [];
+    try { names = fs.readdirSync(abs(dir)); } catch { continue; }
+    for (const name of names) {
+      if (name.length <= head.length + tail.length || !name.startsWith(head) || !name.endsWith(tail)) continue;
+      const value = name.slice(head.length, name.length - tail.length);
+      if (!DUE_VALUE[kind].test(value)) continue;
+      let time = NaN;
+      if (kind === 'retro') {
+        const [y, w] = value.split('-W').map(Number);
+        const jan4 = Date.UTC(y, 0, 4);
+        time = jan4 - ((new Date(jan4).getUTCDay() + 6) % 7) * DAY_MS + w * 7 * DAY_MS;
+      } else if (kind !== 'preflight') {
+        time = Date.parse(`${value}T00:00:00Z`);
+      }
+      out.push({ rel: `${dir}/${name}`, value, time });
+    }
+  }
+  return out.sort((a, b) => (b.time || 0) - (a.time || 0));
 }
 
 /** Registry table cells inside the active markers (else the whole file), header and separator rows left out. */
@@ -652,6 +718,8 @@ function buildReport() {
     }
   }
 
+  hostHazards(manifest, haz);
+
   // hooks
   for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
     const t = read(rel);
@@ -700,6 +768,64 @@ function buildReport() {
     }
   }
 
+  // due-checks: what harness-due would say, from files alone -- no git, so a report is dated by its
+  // name and a landing is not counted; with no manifest the install is taken to be an older one
+  const now = Date.now();
+  const roleFile = (role, list) => {
+    const own = manifest && manifest.roles && typeof manifest.roles[role] === 'string' ? safeRel(manifest.roles[role]) : null;
+    return [...(own ? [own] : []), ...list].find(isFile) || null;
+  };
+  const hasSkill = name => SKILL_ROOTS.some(root => isDir(`${root}/${name}`));
+  const installed = manifest ? Date.parse(manifest.generated) : NaN;
+  const settled = days => !Number.isFinite(installed) || now - installed >= days * DAY_MS;
+  const ageOf = r => Math.floor((now - r.time) / DAY_MS);
+  const logRel = roleFile('log', LOG_FILES);
+  const phaseOf = id => ((PHASE_OF.exec(id) || [])[1] || '').toLowerCase();
+  const logIds = [];
+  for (const t of mdTables(logRel ? read(logRel) || '' : '')) {
+    const col = t.names.findIndex(n => n.startsWith('unit') || n.startsWith('task'));
+    if (col === -1) continue;
+    for (const cells of t.rows) {
+      const id = (cells[col] || '').split('\u00b7')[0].replace(/[`*]/g, '').trim();
+      if (id) logIds.push(id);
+    }
+  }
+  // the phase under way -- the last phased log row's -- with no preflight report
+  const preflights = dueReports('preflight');
+  if (hasSkill('phase-preflight') || preflights.length) {
+    const current = logIds.filter(phaseOf).pop();
+    if (current && !preflights.some(r => r.value.toLowerCase() === phaseOf(current))) {
+      const phase = PHASE_OF.exec(current)[1];
+      const rows = logIds.filter(id => phaseOf(id) === phaseOf(current)).length;
+      haz('preflight-missing', `phase ${phase} is under way (${rows} log row${rows === 1 ? '' : 's'}) and has no preflight report at ${DUE_REPORTS.preflight.map(p => p.replace('<phase>', phase)).join(' or ')}`, logRel);
+    }
+  }
+  // a recurring report older than its cadence, or none once the install is that old
+  const overdue = (kind, runs) => {
+    if (!runs) return;
+    const r = dueReports(kind)[0];
+    if (r && ageOf(r) >= DUE_DAYS[kind]) haz(`${kind}-overdue`, `the newest ${kind} report is ${ageOf(r)} days old; due every ${DUE_DAYS[kind]} days`, r.rel);
+    else if (!r && settled(DUE_DAYS[kind])) haz(`${kind}-overdue`, `no ${kind} report at ${DUE_REPORTS[kind].join(' or ')}`);
+  };
+  overdue('sweep', hasSkill('workstream-sweep') || dueReports('sweep').length > 0);
+  overdue('retro', isFile('scripts/retro.mjs'));
+  overdue('hygiene', isFile('scripts/harness-due.mjs'));
+  // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
+  const fuRel = roleFile('follow-ups', FOLLOW_UP_FILES);
+  const fuText = fuRel ? read(fuRel) : null;
+  if (fuText !== null) {
+    let openP3 = 0;
+    for (const t of mdTables(fuText)) {
+      const st = t.names.findIndex(n => n.startsWith('status'));
+      if (st === -1) continue;
+      for (const cells of t.rows) if (/^open\b/i.test(cells[st] || '') && cells.some(c => /\bP3\b/.test(c))) openP3 += 1;
+    }
+    const h = dueReports('hygiene')[0];
+    if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
+      haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
+    }
+  }
+
   // foundation stage: the pass-signal unit landed and the flip did not run
   if (manifest && manifest.stage === 'foundation') {
     const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.(py|go)|[^/]+_spec\.rb)$/;
@@ -721,6 +847,48 @@ function buildReport() {
     policy,
     hazards,
   };
+}
+
+// models by host: harness-host.mjs reads the models file; each second family runs through its
+// wrapper (from files alone -- the login checks are harness-host's)
+/** The models file's hosts, or null; a missing or malformed file is host-models-missing where harness-host needs it. */
+function hostModelsOf(haz) {
+  const text = read(MODELS_FILE);
+  if (text === null) {
+    if (isFile('scripts/harness-host.mjs')) haz('host-models-missing', `scripts/harness-host.mjs reads ${MODELS_FILE}, which is missing: no host has models for its roles`, MODELS_FILE);
+    return null;
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* reported below */ }
+  if (parsed && parsed.schema === 1 && parsed.hosts && typeof parsed.hosts === 'object' && !Array.isArray(parsed.hosts)) return parsed.hosts;
+  haz('host-models-missing', parsed ? 'not a schema 1 models file with a hosts object' : 'invalid JSON', MODELS_FILE);
+  return null;
+}
+
+/** second-family-absent for one host: none named, or its wrapper not installed (an installed fallback is named). */
+function secondFamilyHazard(host, entry, haz) {
+  const second = entry && entry.second;
+  if (!second) {
+    haz('second-family-absent', `${host} names no second family: every cross-family pass is degraded by design`, MODELS_FILE);
+    return;
+  }
+  const wrapper = WRAPPER_OF[second];
+  if (!wrapper || isFile(wrapper)) return;
+  const fallback = entry.fallback;
+  const fbWrapper = fallback && WRAPPER_OF[fallback];
+  const then = fbWrapper && isFile(fbWrapper) ? `; the fallback, ${fallback}, takes its passes` : `: every cross-family pass on ${host} is degraded`;
+  // the template lists every host: one the project never runs on is an entry to drop, not a wrapper to install
+  haz('second-family-absent', `${host}'s second family, ${second}, runs through ${wrapper}, which is not installed${then} (if the project never runs on ${host}, drop its entry)`, MODELS_FILE);
+}
+
+function hostHazards(manifest, haz) {
+  const hostModels = hostModelsOf(haz);
+  if (!hostModels) return;
+  const targets = manifest && Array.isArray(manifest.targets) ? manifest.targets : [];
+  for (const t of targets) {
+    if (Object.prototype.hasOwnProperty.call(MODEL_HOSTS, t) && !hostModels[t]) haz('host-models-missing', `the manifest targets ${t} and ${MODELS_FILE} has no ${t} entry`, MODELS_FILE);
+  }
+  for (const [host, entry] of Object.entries(hostModels)) secondFamilyHazard(host, entry, haz);
 }
 
 function manifestEntry(entry) {

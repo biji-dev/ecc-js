@@ -14,9 +14,10 @@ const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scr
 const TEST_REL = path.join('lib', 'unit-cost-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-cost-core.mjs');
 const CLI_REL = 'unit-cost.mjs';
+const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 29;
+const EXPECTED_TESTS = 50;
 
 let passed = 0;
 let failed = 0;
@@ -111,10 +112,27 @@ mutantFails('counting a quota delta across a reset', 'Math.abs(b.resetsAt - a.re
 mutantFails('counting a negative quota delta', 'if (i.hi <= i.lo) continue;', '');
 mutantFails('counting overlapping quota intervals twice', 'if (l <= hi) hi = Math.max(hi, h);', 'if (false) hi = Math.max(hi, h);');
 mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {", 'if (false) {');
-mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", CLI_REL);
+mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", SOURCES_REL);
 mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
 mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
+mutantFails('counting a background notice as a typed prompt', '(?:task-notification|local-command-stdout', '(?:local-command-stdout');
+mutantFails('starting a prompt wait at any line instead of the last turn or result', "if (e.type === 'turn' || e.type === 'result') lastWork = e.ts;", 'lastWork = e.ts;');
+mutantFails('counting overlapping waits twice', 'if (hi === null || a > hi) {', 'if (true) {');
+mutantFails('reading a sidechain line as the main thread', 'if (!d || d.isSidechain) continue;', 'if (!d) continue;');
+mutantFails('counting a compaction outside the window', "events.filter((e) => e.type === 'compact' && inWindow(e.ts, since, until))", "events.filter((e) => e.type === 'compact')");
+mutantFails('taking a new session\'s first turn for an expiry rewrite', 'const prev = lastTurn.get(r.session);\n    lastTurn.set(r.session, r.ts);', 'const prev = lastTurn.get(0);\n    lastTurn.set(0, r.ts);');
+mutantFails('placing a tagged subagent by its first turn', 'tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt', 'false ? label(tag) : stepAt');
+mutantFails("honouring another unit's tag", 'tag && (unit === null || tag.unit === unit) ? label(tag)', 'tag ? label(tag)');
+mutantFails('dropping the dispatch description from the meta file', "description: typeof meta.description === 'string' ? meta.description : null,", 'description: null,', SOURCES_REL);
+mutantFails('pairing waits over the window\'s events only', 'for (const e of all) {', 'for (const e of ev) {');
+mutantFails('counting a wait\'s whole length instead of its part inside the wall', 'out.waitMs = unionMs(spans.map(([a, b]) => [Math.max(a, lo), Math.min(b, hi)]));', 'out.waitMs = unionMs(spans);');
+mutantFails('adding a step interval\'s whole length to its wall time', 'Math.max(0, Math.min(iv.end, winHi) - Math.max(iv.start, winLo))', 'iv.end - iv.start');
+mutantFails('placing a subagent by its first turn inside the window', 'firstTurns(deduped, agentKey)', 'firstTurns(used, agentKey)');
+mutantFails('counting an ask from before the window as unanswered', 'out.unanswered = [...asks.values()].filter((ts) => inWindow(ts, since, until)).length;', 'out.unanswered = asks.size;');
+mutantFails('ignoring CLAUDE_CONFIG_DIR', 'process.env.CLAUDE_CONFIG_DIR || ', '', CLI_REL);
+mutantFails('ending an open step at the window\'s last turn', 'const lastTs = deduped.reduce', 'const lastTs = used.reduce');
+mutantFails('letting an unreadable time set a subagent\'s first turn', "if (r.kind !== 'sub' || !Number.isFinite(r.ts)) continue;", "if (r.kind !== 'sub') continue;");
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

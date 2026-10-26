@@ -14,6 +14,7 @@ import {
   CRITICAL,
   FIX_LINES,
   NON_PRODUCTION,
+  ROLES,
   TESTS,
   TRIGGERS,
   WRITERS,
@@ -23,6 +24,7 @@ import {
   isProduction,
   parseArgs,
   parseNumstat,
+  writerRole,
 } from './review-gate-core.mjs';
 
 const RUNNER = fileURLToPath(new URL('../review-gate.mjs', import.meta.url));
@@ -221,10 +223,10 @@ test('fix: kind fix needs a valid --max-fixed', () => {
   assert.doesNotThrow(() => decide({ files: [f(COLD, 1)], kind: 'slice' }));
 });
 
-test('fix 1: a round that fixed only P3s is a sweep with no re-review, whatever the diff', () => {
+test('fix 1: a round that fixed only P3s is the P3 batch with no re-review, whatever the diff', () => {
   for (const files of [[f(HOT, 300)], [f(COLD, 3)], [f(TEST_FILE, 9)]]) {
     const r = bound(() => decide({ files, kind: 'fix', maxFixed: 'P3' }));
-    assert.equal(r.decision, 'sweep');
+    assert.equal(r.decision, 'p3-batch');
     assert.deepEqual(r.reviewers, []);
     assert.match(r.reason, /P3s never open a fix round/);
   }
@@ -257,11 +259,11 @@ test('fix 8: the specialist whose trigger the fix hits joins its re-review', () 
   assert.equal(r2.decision, 'review');
   assert.deepEqual(r2.reviewers, ['security-reviewer']);
   assert.match(r2.reason, /triggered specialist/);
-  // critical, round 3: adversarial plus the specialist; P3 stays a sweep
+  // critical, round 3: adversarial plus the specialist; P3 stays the P3 batch
   const hot = [f('src/core/migrations/0002.sql', 90)];
   const r3 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P1', round: 3 }));
   assert.deepEqual(r3.reviewers, ['second-family-adversarial', 'database-reviewer']);
-  assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'sweep');
+  assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'p3-batch');
 });
 
 test('fix 4: round 3+ on critical code escalates to the adversarial pass', () => {
@@ -481,6 +483,9 @@ function cleanEnv() {
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
   env.GIT_CONFIG_GLOBAL = os.devNull;
   env.GIT_CONFIG_NOSYSTEM = '1';
+  // the CLI tests pass Claude Code's family names; on another host (CODEX_THREAD_ID under Codex)
+  // those are a usage error, so the suite names its host and runs the same on every one
+  env.HARNESS_HOST = 'claude';
   return env;
 }
 
@@ -560,7 +565,7 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
     res = rawGate(...args);
     assert.equal(res.status, 2, args.join(' '));
     assert.equal(res.stdout, '');
-    assert.match(res.stderr, /--writer is required and must be one of claude\|codex\|sonnet\|mixed/, args.join(' '));
+    assert.match(res.stderr, /--writer is required and names the role that wrote the diff: main \| bounded \| second \| mixed \(on Claude Code also claude \| sonnet \| codex\)/, args.join(' '));
     assert.match(res.stderr, /usage: review-gate\.mjs/, args.join(' '));
   }
   res = rawGate('--base', base, '--kind', 'slice', '--writer', 'mixed');
@@ -643,4 +648,129 @@ test('writer mixed 2: a cold mixed fix round or slice is never a second-family-o
   assert.equal(slice.decision, 'defer');
   const unit = decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer: 'mixed' });
   assert.deepEqual(unit.reviewers, ['sonnet-code-reviewer']);
+});
+
+// ---- the host: --writer names the writer's role, so a family name never routes as Claude Code's
+
+/** A temp repo whose working tree holds a small unit: one untracked 3-line production file. */
+function smallUnitRepo(t, env) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'review-gate-host-')));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...a) => {
+    const r = spawnSync(
+      'git',
+      ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a],
+      { cwd: repo, env, encoding: 'utf8' },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'README.md'), 'x\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src/new.ts'), 'a\nb\nc\n');
+  const base = git('rev-parse', 'HEAD');
+  return (extraEnv, ...args) =>
+    spawnSync(process.execPath, [RUNNER, '--base', base, '--kind', 'unit', '--tier', 'small', ...args], {
+      cwd: repo,
+      env: { ...env, ...extraEnv },
+      encoding: 'utf8',
+    });
+}
+
+test('host 1: on a Codex host a family name is refused, and the role main sends a small unit to the second family', (t) => {
+  const gate = smallUnitRepo(t, cleanEnv());
+  const codex = { HARNESS_HOST: 'codex' };
+  // the session's own code on Codex is Codex's: read as Claude Code's "codex" it went to the bounded
+  // model, the family that wrote it
+  let res = gate(codex, '--writer', 'codex');
+  assert.equal(res.status, 2, res.stdout);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /--writer codex names a model family; on a codex host name the role: main \| bounded \| second \| mixed/);
+  // a missing or unknown writer names the roles only, never a family this host refuses
+  for (const args of [['--writer', 'gemini'], []]) {
+    res = gate(codex, ...args);
+    assert.equal(res.status, 2, args.join(' '));
+    assert.match(res.stderr, /^review-gate: --writer is required and names the role that wrote the diff: main \| bounded \| second \| mixed\n/, args.join(' '));
+  }
+  // the reason names the writer, never the routing value (on Codex, "claude" would be the other family)
+  res = gate(codex, '--writer', 'main');
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^review-gate: review — small unit written by Opus: /);
+  res = gate(codex, '--writer', 'main', '--json');
+  assert.equal(res.status, 0, res.stderr);
+  const json = JSON.parse(res.stdout);
+  assert.equal(json.decision, 'review');
+  assert.deepEqual(json.reviewers, ['second-family-review']);
+  assert.deepEqual([json.host, json.role], ['codex', 'main']);
+});
+
+test('host 2: --host beats the environment, family names still route on Claude Code, a bad HARNESS_HOST is exit 2', (t) => {
+  const gate = smallUnitRepo(t, cleanEnv());
+  let res = gate({ HARNESS_HOST: 'claude' }, '--writer', 'sonnet', '--host', 'kimi');
+  assert.equal(res.status, 2, res.stdout);
+  assert.match(res.stderr, /--writer sonnet names a model family; on a kimi host name the role/);
+  res = gate({ HARNESS_HOST: 'zcode' }, '--writer', 'codex', '--host', 'claude', '--json');
+  assert.equal(res.status, 0, res.stderr);
+  const json = JSON.parse(res.stdout);
+  assert.deepEqual(json.reviewers, ['sonnet-code-reviewer']);
+  assert.deepEqual([json.host, json.role, json.writer], ['claude', 'codex', 'codex']);
+  // the printed line is unchanged by the host
+  res = gate({ HARNESS_HOST: 'codex' }, '--writer', 'second');
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^review-gate: review — small unit written by the second family: .* → sonnet-code-reviewer \[1 production files, 3 lines; /);
+  res = gate({ HARNESS_HOST: 'gemini' }, '--writer', 'main');
+  assert.equal(res.status, 2, res.stdout);
+  assert.match(res.stderr, /HARNESS_HOST must be one of claude, codex, zcode, kimi, not "gemini"/);
+  assert.match(res.stderr, /usage: review-gate\.mjs/);
+});
+
+test('host 3: writerRole maps each role to the same routing value on every host', () => {
+  assert.deepEqual(ROLES, { main: 'claude', bounded: 'sonnet', second: 'codex', mixed: 'mixed' });
+  for (const host of ['claude', 'codex', 'zcode', 'kimi', 'unknown'])
+    for (const [role, routed] of [['main', 'claude'], ['bounded', 'sonnet'], ['second', 'codex'], ['mixed', 'mixed']])
+      assert.equal(writerRole(role, host), routed, `${role} on ${host}`);
+  // so on any host the role main sends a small unit to the second family, second to the bounded model
+  const unit = (writer) => decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer }).reviewers;
+  assert.deepEqual(unit(writerRole('main', 'codex')), ['second-family-review']);
+  assert.deepEqual(unit(writerRole('second', 'zcode')), ['sonnet-code-reviewer']);
+});
+
+test('host 4: a family name keeps its meaning on Claude Code or an unknown host, and is refused on any other', () => {
+  for (const host of ['claude', 'unknown'])
+    for (const w of ['claude', 'sonnet', 'codex']) assert.equal(writerRole(w, host), w, `${w} on ${host}`);
+  for (const host of ['codex', 'zcode', 'kimi'])
+    for (const w of ['claude', 'sonnet', 'codex'])
+      assert.throws(
+        () => writerRole(w, host),
+        new RegExp(`^Error: --writer ${w} names a model family; on a ${host} host name the role: main \\| bounded \\| second \\| mixed$`),
+        `${w} on ${host}`,
+      );
+  // a missing or unknown writer is refused here, naming the roles (and on Claude Code the family names)
+  for (const w of [null, undefined, '', 'gemini', 'opus']) {
+    for (const host of ['claude', 'unknown'])
+      assert.throws(
+        () => writerRole(w, host),
+        /^Error: --writer is required and names the role that wrote the diff: main \| bounded \| second \| mixed \(on Claude Code also claude \| sonnet \| codex\)$/,
+        `${String(w)} on ${host}`,
+      );
+    for (const host of ['codex', 'zcode', 'kimi'])
+      assert.throws(
+        () => writerRole(w, host),
+        /^Error: --writer is required and names the role that wrote the diff: main \| bounded \| second \| mixed$/,
+        `${String(w)} on ${host}`,
+      );
+  }
+  assert.throws(() => writerRole('main', 'gemini'), /--host must be one of claude\|codex\|zcode\|kimi/);
+});
+
+test('host 5: parseArgs takes --host for a known host only, and sets it only when given', () => {
+  for (const host of ['claude', 'codex', 'zcode', 'kimi'])
+    assert.equal(parseArgs(['--base', 'a', '--host', host]).host, host);
+  assert.ok(!('host' in parseArgs(['--base', 'a'])), 'no --host: the CLI detects it');
+  for (const bad of ['unknown', 'gemini', 'Codex', ''])
+    assert.throws(() => parseArgs(['--base', 'a', '--host', bad]), /--host must be one of claude\|codex\|zcode\|kimi/, bad);
+  assert.throws(() => parseArgs(['--base', 'a', '--host']), /--host needs a value/);
 });

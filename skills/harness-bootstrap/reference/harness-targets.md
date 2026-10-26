@@ -112,6 +112,22 @@ call it; never maintain the same sequence in three skill files.
   ```json
   { "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-guard.mjs\"", "timeout": 10 }] }] } }
   ```
+- **The edit guard** — `templates/edit-guard.mjs`, a `PreToolUse` hook on `Edit`,
+  `Write`, `MultiEdit` and `NotebookEdit`, installed to `.claude/hooks/edit-guard.mjs`.
+  It reads the paths from stdin (`tool_input.file_path`, `notebook_path`) and refuses,
+  with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets and
+  installed packages, while a committed `.env.example` stays editable. It replaces
+  inline hooks on `$CLAUDE_FILE_PATHS`, which Claude Code does not set: one project's
+  `.env` guard and formatter read it, so neither ever ran (the 2.1.308 binary holds no
+  such name). A `PostToolUse` formatter imports its `editedPaths`.
+
+  ```json
+  { "hooks": { "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/edit-guard.mjs\"", "timeout": 10 }] }] } }
+  ```
+- **Each hook ships with its test** (`templates/scripts/lib/command-guard.test.mjs`,
+  `edit-guard.test.mjs`, `context-budget.test.mjs`), installed to `scripts/lib/`. The
+  test drives the installed hook with the payload the host sends, so the project's
+  counted `harness` gate fails the day an edit breaks it.
 - **The review workflow** (optional, Full tier) — `templates/workflows/review.workflow.js`,
   installed to `.claude/workflows/review.workflow.js` and run by name with the Workflow
   tool. Its `MODELS`, `AGENTS` and `TRIGGERS` block is `[B]`; it passes `model` and
@@ -131,6 +147,21 @@ call it; never maintain the same sequence in three skill files.
   judgment / bounded split with whatever models the project runs.
 - **As the second family for Claude Code:** through the `codex-run.mjs` wrapper
   (`cross-model.md`).
+- **Hooks:** the command and edit guards run under Codex unchanged, from
+  `.codex/hooks.json`, which Codex loads only once the project's `.codex/` layer is
+  trusted. Its stdin carries `tool_name`, `tool_input` and `cwd`; "`Bash` and
+  `apply_patch` use `tool_input.command`". Every file edit reports as `apply_patch`
+  (the `Edit` and `Write` matchers alias it), and the edit guard reads the patch's
+  `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines
+  against `cwd`. Exit 2 blocks, as on Claude Code. Set `timeout`: Codex's default is
+  600 seconds.
+
+  ```json
+  { "hooks": { "PreToolUse": [
+    { "matcher": "apply_patch|Edit|Write", "hooks": [{ "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/edit-guard.mjs\"", "timeout": 10 }] },
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/command-guard.mjs\"", "timeout": 10 }] }
+  ] } }
+  ```
 
 ## ZCode
 
@@ -143,8 +174,8 @@ call it; never maintain the same sequence in three skill files.
   dispatches run on the session model. When the split matters, batch the bounded
   work into a workflow (the `delegate-tasks` skill describes one).
 - Check whether the session model reads images before planning a visual step.
-- **When ZCode is the main runtime,** the Claude Code hooks (command guard,
-  context budget) do not protect it, and "pass `model` and `effort` on every
+- **When ZCode is the main runtime,** the Claude Code hooks (command and edit
+  guards, context budget) do not protect it, and "pass `model` and `effort` on every
   dispatch" cannot hold outside a workflow. The git hooks still do — the commit
   guard is the one protection every agent shares. Say in the harness file which
   protections apply to which runtime, and which roles fall back to the session

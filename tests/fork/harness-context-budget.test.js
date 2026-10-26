@@ -1,7 +1,7 @@
 /**
  * Tests for the harness-bootstrap context-budget hook template (biji-dev/ecc-js):
  * PostToolUse banding, the gate line, the limit taken from the auto-compact window,
- * no-handoff wording, exported newBand, and mutation checks.
+ * silence after a compaction, no-handoff wording, exported newBand, and mutation checks.
  */
 
 const assert = require('assert');
@@ -33,14 +33,19 @@ function tmp(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
-function transcript(tokens) {
+/** A main-thread assistant record whose usage adds up to `tokens`. */
+function reading(tokens, extra = {}) {
+  return { type: 'assistant', message: { model: 'claude-opus', usage: { input_tokens: 10, cache_read_input_tokens: tokens - 10, cache_creation_input_tokens: 0 } }, ...extra };
+}
+
+function transcriptOf(records) {
   const file = path.join(tmp('ctx-budget-t-'), 't.jsonl');
-  const lines = [
-    { type: 'user', message: { content: 'hi' } },
-    { type: 'assistant', message: { model: 'claude-opus', usage: { input_tokens: 10, cache_read_input_tokens: tokens - 10, cache_creation_input_tokens: 0 } } }
-  ];
-  fs.writeFileSync(file, `${lines.map(l => JSON.stringify(l)).join('\n')}\n`);
+  fs.writeFileSync(file, `${records.map(l => JSON.stringify(l)).join('\n')}\n`);
   return file;
+}
+
+function transcript(tokens) {
+  return transcriptOf([{ type: 'user', message: { content: 'hi' } }, reading(tokens)]);
 }
 
 // Hermetic: no developer settings file or window variable reaches the hook unless a test passes one.
@@ -60,7 +65,7 @@ function settingsDir(files) {
 function runHook(event, tokens, stateDir, opts = {}) {
   const input = JSON.stringify({
     hook_event_name: event,
-    transcript_path: transcript(tokens),
+    transcript_path: opts.records ? transcriptOf(opts.records) : transcript(tokens),
     session_id: opts.session || 'sess-1',
     ...(opts.cwd ? { cwd: opts.cwd } : {})
   });
@@ -200,6 +205,33 @@ test('a 200K window pulls the warning down to its 160K limit', () => {
   assert.match(under, /^\[context-budget\] ~140K \(under 160K\)\.$/);
 });
 
+console.log('\nharness context-budget: a compaction since the last reading');
+
+function boundary(extra = {}) {
+  return { type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 300000 }, ...extra };
+}
+
+test('a main-thread compaction after a 300K reading: no event speaks until the next reply', () => {
+  const records = [{ type: 'user', message: { content: 'hi' } }, reading(300_000), boundary(), { type: 'user', message: { content: 'next' } }];
+  for (const event of ['Stop', 'UserPromptSubmit', 'PostToolUse']) {
+    assert.strictEqual(runHook(event, 0, tmp('ctx-budget-s-'), { records }), null, event);
+  }
+});
+
+test('the first reply after the compaction is the figure', () => {
+  const records = [reading(300_000), boundary(), { type: 'user', message: { content: 'next' } }, reading(120_000)];
+  const out = runHook('UserPromptSubmit', 0, tmp('ctx-budget-s-'), { records });
+  assert.match(out.hookSpecificOutput.additionalContext, /^\[context-budget\] ~120K \(under 220K\)\.$/);
+});
+
+test("a subagent's compaction, or a record that only names one, is not a boundary", () => {
+  const markers = [boundary({ isSidechain: true }), { type: 'user', message: { content: 'compact_boundary' } }, { type: 'user', subtype: 'compact_boundary' }];
+  for (const marker of markers) {
+    const out = runHook('Stop', 0, tmp('ctx-budget-s-'), { records: [reading(300_000), marker] });
+    assert.match(text(out), /Context 300K - over the 260K budget/, JSON.stringify(marker));
+  }
+});
+
 console.log('\nharness context-budget: no hand-off wording');
 
 test('no event/level combination recommends a new session or hand-off', () => {
@@ -299,6 +331,13 @@ test('mutation: a gate line on Stop too is caught (Stop stays quiet under WARN)'
   );
   assert.ok(runHook('Stop', 180_000, tmp('ctx-budget-s-'), { script }), 'the mutant speaks on Stop');
   assert.strictEqual(runHook('Stop', 180_000, tmp('ctx-budget-s-')), null);
+});
+
+test('mutation: a scan that reads past the compaction reports the size before it', () => {
+  const script = mutant('if (isCompaction(line)) return null;', '');
+  const records = [reading(300_000), boundary()];
+  assert.ok(runHook('UserPromptSubmit', 0, tmp('ctx-budget-s-'), { records, script }), 'the mutant reports the stale 300K');
+  assert.strictEqual(runHook('UserPromptSubmit', 0, tmp('ctx-budget-s-'), { records }), null);
 });
 
 console.log(`\nPassed: ${passed}`);

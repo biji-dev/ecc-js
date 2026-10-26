@@ -4,7 +4,8 @@
 // MARGIN and DEFAULT_LIMIT figures and BAND below, re-derived per project from its harness file's
 // Context budget section.
 // Every API call re-reads the whole context, so a session at 900K costs ~4x one at 200K per
-// turn. This reads the main thread's last `usage` from the transcript and:
+// turn. This reads the main thread's last `usage` from the transcript (none since a compaction: it
+// stays silent until the next reply) and:
 //   Stop             -> systemMessage to the user (a /compact is welcome; the work continues)
 //   UserPromptSubmit -> additionalContext to the model (offer a /compact at a step boundary; keep working)
 //   PostToolUse      -> the same, so a session that runs on while the owner is away (no prompts)
@@ -19,7 +20,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 220_000); // [B] past this, the model and the owner are told
-const GATE_TEXT = 150_000; // [B] past this, an owner gate goes out as text and the turn ends
+export const GATE_TEXT = 150_000; // [B] past this, an owner gate goes out as text and the turn ends
 const MARGIN = 40_000; // [B] the limit sits this far under the auto-compact window (compaction fired ~33K under it)
 const DEFAULT_LIMIT = 260_000; // [B] with no window set: the harness's 300K window less MARGIN
 const TAIL_BYTES = 4 * 1024 * 1024;
@@ -77,6 +78,17 @@ export function newBand(sessionId, ctx, dir = process.env.CONTEXT_BUDGET_STATE_D
   return true;
 }
 
+/** True for the main thread's compaction record (a subagent's compacts only its own context). */
+function isCompaction(line) {
+  if (!line.includes('"compact_boundary"')) return false;
+  try {
+    const b = JSON.parse(line);
+    return b?.type === 'system' && b.subtype === 'compact_boundary' && !b.isSidechain;
+  } catch {
+    return false; // cut mid-record: not a boundary this scan can trust
+  }
+}
+
 export function lastContextTokens(path) {
   const fd = openSync(path, 'r');
   try {
@@ -87,6 +99,10 @@ export function lastContextTokens(path) {
     const lines = buf.toString('utf8').split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
+      // A main-thread compaction makes every earlier reading stale: with no reply since, there is
+      // no figure. Read past it, the first prompt after a /compact (or an idle compaction) was
+      // told the size it had before.
+      if (isCompaction(line)) return null;
       if (!line.includes('"usage"') || !line.includes('"assistant"')) continue;
       let d;
       try {

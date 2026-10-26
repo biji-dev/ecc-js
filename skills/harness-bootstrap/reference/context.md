@@ -184,10 +184,16 @@ transcript tail and:
   `.claude/settings.json` and the user's settings; with none set, or `auto`, 260K;
 - on `PostToolUse`, speaks only when the context crosses into a new 25K band or a
   new level, so a long tool loop hears about it without hearing it every call;
+- after a compaction, says nothing until the next reply brings a new figure. A hook
+  that read past the compaction told the first prompt after it the size before it:
+  in seven installs, 185 of 408 main-thread compactions (2026-09-28 to 10-25; 157 of
+  177 manual ones) were followed by the old figure, 90 of them a warning to compact.
+  one project found and fixed it in its own copy (195086a5, FU-014);
 - never blocks, and exits 0 on any error.
 
-Install only when the owner agrees: copy it to `.claude/hooks/context-budget.mjs`
-and add to `.claude/settings.json`:
+Install only when the owner agrees: copy it to `.claude/hooks/context-budget.mjs`,
+its test `templates/scripts/lib/context-budget.test.mjs` to `scripts/lib/` (it runs
+the installed hook at the project's own figures), and add to `.claude/settings.json`:
 
 ```json
 {

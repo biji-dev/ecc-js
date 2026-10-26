@@ -279,8 +279,9 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts and Codex ledger are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
-| `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`, and run the id self-test (`commit-guard.md`) against every plan id and branch. Test the shipped file |
-| `.claude/hooks/command-guard.mjs` + settings entry | `harness-targets.md`, `templates/command-guard.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR` |
+| `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks`, + `scripts/lib/harness-guard.test.mjs` | `commit-guard.md`, `templates/harness-guard.sh`, `templates/scripts/lib/harness-guard.test.mjs` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`; the test runs the installed guard in throwaway repos, with `IDS` bound to every plan id (the id self-test, `commit-guard.md`) and `GUARD` to where it is installed |
+| `.claude/hooks/command-guard.mjs` + settings entry + `scripts/lib/command-guard.test.mjs` | `harness-targets.md`, `templates/command-guard.mjs`, `templates/scripts/lib/command-guard.test.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR`; a rule added to `EXTRA_RULES` gets its own case in the test |
+| `.claude/hooks/edit-guard.mjs` + settings entry, and `.codex/hooks.json` where Codex runs, + `scripts/lib/edit-guard.test.mjs` | `harness-targets.md`, `templates/edit-guard.mjs`, `templates/scripts/lib/edit-guard.test.mjs` | refuses an agent's edit of an env file or of installed packages, reading the paths from the hook's stdin on both hosts; bind `PROTECTED`, and the test's `REFUSED` and `ALLOWED` with it |
 | `scripts/check-agent-docs.mjs` + `scripts/lib/check-agent-docs.test.mjs`, run as a gate | `harness-targets.md`, `templates/scripts/check-agent-docs.mjs`, `templates/scripts/lib/check-agent-docs.test.mjs` | budgets ratcheted from today's sizes · `--rules-for` for briefs · the test is slow: a `full`-level gate |
 | the harness log, `docs/harness/log.md` | `log-format.md` | **the engine** — headers only, no seeded medians |
 | the follow-ups doc and the decision log | `scope-guard.md` | scaffolds at their default paths |
@@ -301,9 +302,9 @@ answer when the owner just accepts:
 
 | Component | From | Needs | Default |
 |---|---|---|---|
-| `.claude/hooks/context-budget.mjs` + settings entry | `context.md`, `templates/context-budget.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
+| `.claude/hooks/context-budget.mjs` + settings entry + `scripts/lib/context-budget.test.mjs` | `context.md`, `templates/context-budget.mjs`, `templates/scripts/lib/context-budget.test.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
 | `.claude/hooks/leftover-processes.mjs` + settings entry, on Stop and UserPromptSubmit | `machine.md`, `templates/leftover-processes.mjs` | checks that start dev servers, emulators or browsers; bind `WORKTREES` and `MACHINE_WIDE` | yes, on Claude Code, where they do |
-| `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh`, + `scripts/run-counted.mjs` + `scripts/lib/run-counted-core.mjs` + its test | `context.md`, `templates/run-gates.sh`, `templates/scripts/run-counted.mjs`, `templates/scripts/lib/run-counted-core.mjs`, `templates/scripts/lib/run-counted-core.test.mjs` | no existing runner that reports every gate and never bails; test gates bound through run-counted, so a skip, a filter that matched nothing or zero tests is a FAIL; `SNAPSHOT_COPY` bound where untracked files would reach the FULL verify | yes, unless such a runner exists |
+| `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh`, + `scripts/lib/run-gates.test.mjs` + `scripts/run-counted.mjs` + `scripts/lib/run-counted-core.mjs` + its test | `context.md`, `templates/run-gates.sh`, `templates/scripts/lib/run-gates.test.mjs`, `templates/scripts/run-counted.mjs`, `templates/scripts/lib/run-counted-core.mjs`, `templates/scripts/lib/run-counted-core.test.mjs` | no existing runner that reports every gate and never bails; test gates bound through run-counted, so a skip, a filter that matched nothing or zero tests is a FAIL (the runner's test holds every counted gate to it; `UNCOUNTED` names the exceptions); `SNAPSHOT_COPY` bound where untracked files would reach the FULL verify | yes, unless such a runner exists |
 | `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
 | `.claude/workflows/review.workflow.js` | `harness-targets.md`, `templates/workflows/review.workflow.js` | Full-tier review fan-outs often enough to want them deterministic | no, until the log shows them |
 | phase preflight · workstream sweep | `preflight.md`, `sweep.md` | phases in the plan (preflight); a question register, non-code work that gates code, or a follow-ups doc in change mode (sweep). 5 and 8 runs | yes, wherever they have a home; the due-checks run them |
@@ -333,9 +334,10 @@ another agent, every merge by a human, the owner's review of one kind of change
 stricter rule, Trivial included. Units that are not plan items (harness work,
 vendor-trap skills, follow-ups no unit owns) run on `harness/<slug>` branches matched
 by the registry's `Branch` cell; write paths with `<unit>`, never the plan's id
-shape alone. The harness's own paths go on the risk map (the guard, the command
-guard and `run-gates.sh` are critical: a broken one silently allows everything) and
-on the coverage map (uncovered until tested here).
+shape alone. The harness's own paths go on the risk map (the guard, the command and
+edit guards and `run-gates.sh` are critical: a broken one silently allows everything)
+and on the coverage map, covered by the tests that ship with them in `scripts/lib/`,
+which the counted `harness` gate runs.
 
 **Review the install before committing it.** A fresh agent that did not write it
 (Opus, read-only) checks that every path, command, flag, agent and section reference

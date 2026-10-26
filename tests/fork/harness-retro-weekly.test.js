@@ -100,6 +100,8 @@ mutantFails('running the review outside retro/', '    cwd: retroDir,\n    encodi
 mutantFails('a dry run that exports', '  if (opts.dryRun) return dryRun({ opts, reg, retroDir, week, claude });\n', '', CLI_REL);
 mutantFails('a cron line that redirects into a log directory that may not exist', 'mkdir -p ${shq(path.dirname(logFile))} && ', '');
 mutantFails('a cron line without the Claude Code config directory', "configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''", "''");
+mutantFails('a Windows task without the Claude Code config directory', "...(configDir ? ['--config-dir', configDir] : [])", '');
+mutantFails('--config-dir read and dropped', '  if (opts.configDir) process.env.CLAUDE_CONFIG_DIR = path.resolve(opts.configDir);\n', '', CLI_REL);
 mutantFails('reading the transcripts from ~/.claude whatever CLAUDE_CONFIG_DIR says', "path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')", "path.join(os.homedir(), '.claude', 'projects')", CLI_REL);
 mutantFails('exiting 0 when the review failed', 'return failed.length || (opts.review && !review.ok && !review.skipped) ? 1 : 0;', 'return failed.length ? 1 : 0;', CLI_REL);
 

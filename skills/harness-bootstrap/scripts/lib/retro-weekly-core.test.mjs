@@ -217,8 +217,11 @@ test('a set CLAUDE_CONFIG_DIR goes into the LaunchAgent\'s environment and in fr
   const plist = launchdPlist({ ...args, pathEnv: '/n:/usr/bin', configDir: '/c/my config' });
   assert.match(plist, /<key>EnvironmentVariables<\/key><dict><key>PATH<\/key><string>\/n:\/usr\/bin<\/string><key>CLAUDE_CONFIG_DIR<\/key><string>\/c\/my config<\/string><\/dict>/);
   assert.equal(scheduleLines({ ...args, configDir: '/c/my config' }).cron, "0 9 * * 1 mkdir -p /h && CLAUDE_CONFIG_DIR='/c/my config' /n/node /h/retro-weekly.mjs --run >> /h/out.log 2>&1");
+  // schtasks sets no environment: the task passes the directory as --config-dir
+  assert.equal(scheduleLines({ ...args, configDir: '/c/my config' }).schtasks, 'schtasks /Create /F /SC WEEKLY /D MON /ST 09:00 /TN harness-retro-weekly /TR "/n/node /h/retro-weekly.mjs --run --config-dir \\"/c/my config\\""');
   assert.doesNotMatch(launchdPlist({ ...args, pathEnv: '/n' }), /CLAUDE_CONFIG_DIR/);
   assert.doesNotMatch(scheduleLines(args).cron, /CLAUDE_CONFIG_DIR/);
+  assert.doesNotMatch(scheduleLines(args).schtasks, /--config-dir/);
 });
 
 test('importsOf lists the relative modules a file imports or re-exports, across lines, and nothing else', () => {
@@ -361,6 +364,10 @@ test('CLAUDE_CONFIG_DIR is where the transcripts are read and what the schedule 
   assert.equal(sessions({ CLAUDE_CONFIG_DIR: config }), '1');
   assert.equal(sessions({ CLAUDE_CONFIG_DIR: '' }), '0');
   assert.equal(sessions({}), '0');
+  // what the Windows task passes: the same directory as an option, over the environment's
+  const flagged = cli(f, ['--run', '--no-review', '--no-notify', '--config-dir', config], { CLAUDE_CONFIG_DIR: '' });
+  assert.equal(/exported demo: .* \(\d+ units, (\d+) sessions\)/.exec(flagged.stdout)?.[1], '1', flagged.stderr);
+  assert.match(cli(f, ['--print-schedule', '--claude', f.claude, '--config-dir', config]).stdout, /^Task Scheduler \(Windows\): .* --run .* --config-dir \S+"$/m);
   const sched = cli(f, ['--print-schedule', '--claude', f.claude], { CLAUDE_CONFIG_DIR: config });
   assert.match(sched.stdout, new RegExp(`^cron .*: 0 9 \\* \\* 1 mkdir -p \\S+ && CLAUDE_CONFIG_DIR=${config.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm'));
   assert.doesNotMatch(cli(f, ['--print-schedule', '--claude', f.claude]).stdout, /CLAUDE_CONFIG_DIR/);

@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'unit-cost-core.mjs');
 const CLI_REL = 'unit-cost.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 29;
+const EXPECTED_TESTS = 44;
 
 let passed = 0;
 let failed = 0;
@@ -115,6 +115,15 @@ mutantFails('looking for the ledger under the worktree instead of the main check
 mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
 mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
+mutantFails('counting a background notice as a typed prompt', '(?:task-notification|local-command-stdout', '(?:local-command-stdout');
+mutantFails('starting a prompt wait at any line instead of the last turn or result', "if (e.type === 'turn' || e.type === 'result') lastWork = e.ts;", 'lastWork = e.ts;');
+mutantFails('counting overlapping waits twice', 'if (hi === null || a > hi) {', 'if (true) {');
+mutantFails('reading a sidechain line as the main thread', 'if (!d || d.isSidechain) continue;', 'if (!d) continue;');
+mutantFails('counting a compaction outside the window', "events.filter((e) => e.type === 'compact' && inWindow(e.ts, since, until))", "events.filter((e) => e.type === 'compact')");
+mutantFails('taking a new session\'s first turn for an expiry rewrite', 'const prev = lastTurn.get(r.session);\n    lastTurn.set(r.session, r.ts);', 'const prev = lastTurn.get(0);\n    lastTurn.set(0, r.ts);');
+mutantFails('placing a tagged subagent by its first turn', 'tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt', 'false ? label(tag) : stepAt');
+mutantFails("honouring another unit's tag", 'tag && (unit === null || tag.unit === unit) ? label(tag)', 'tag ? label(tag)');
+mutantFails('dropping the dispatch description from the meta file', "description: typeof meta.description === 'string' ? meta.description : null,", 'description: null,', CLI_REL);
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

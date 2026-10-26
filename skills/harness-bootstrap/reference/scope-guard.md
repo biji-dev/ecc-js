@@ -171,11 +171,17 @@ Header lines come before the first `##`, one `Key: value` each. `Source` is the
 reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,
 `security-reviewer`, …), `Also` the others that reported it, `Status` one of `open`
 · `fixed <sha>` · `follow-up` · `retracted`. Columns are read by header name, so a
-project may add its own.
+project may add its own. A ledger row's Step cell starts with the step's id (`8b record`,
+`Gate 1`), so the record can put that step's time beside it.
 
 `[M]` **Committed on the unit branch at step boundaries**, never per fix.
 > Origin: one change request spent 49 commits on progress rows, state and
 > hand-off notes.
+
+`[M]` **Its steps file sits beside it:** `<unit>.steps.jsonl`, one JSON line per step
+start or end, appended by `unit-step.mjs` and never edited by hand (`runner.md` › Step
+markers). Committed with the state file, and kept after the unit lands: it is the only
+record of which step spent the time. About 30 lines a unit, so no byte budget.
 
 `[M]` **Byte budget**, enforced by the agent-docs lint (`check-agent-docs.mjs`):
 decisions with lasting value move to the decision log, and the state file keeps
@@ -184,7 +190,7 @@ row — its `Note` emptied — until step 8b's record has counted it, because
 `unit-record.mjs` reads only this table; after the record, closed rows may move to
 the follow-ups doc. A sub-milestone's step 8b runs before its rows leave.
 
-`[B]` Path (default `docs/plans/<unit>.state.md`) and budget (default 8 KB). The
+`[B]` Path (default `docs/plans/<unit>.state.md`, the steps file beside it) and budget (default 8 KB). The
 same budget binds a written record; an existing file over it is ratcheted at its
 current size, never grandfathered upward.
 

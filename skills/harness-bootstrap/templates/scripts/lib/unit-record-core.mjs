@@ -10,7 +10,9 @@
  * 58-81 KB of prose and a unit took four consecutive `FALSE CLAIMS` rounds from the claim auditor,
  * 75% of whose P1s were about record prose, not product code. A record generated from git, the gate
  * log and the state file is true by construction, so the claim audit can stay on product claims.
+ * With the unit's steps file (unit-step.mjs) the record also carries each step's time.
  */
+import { formatMinutes, label, stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] The project's own auditor lanes: findings from these sources are not product defects.
@@ -50,11 +52,11 @@ const NO_CLAIMED = 'unknown — no Claimed: line in the state file';
 
 /** Reject unknown flags and a missing --state before any file is read. */
 export function parseArgs(argv) {
-  const a = { state: null, base: null, gates: null, cost: null, json: false };
+  const a = { state: null, base: null, gates: null, cost: null, steps: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
-    else if (t === '--state' || t === '--base' || t === '--gates' || t === '--cost') {
+    else if (t === '--state' || t === '--base' || t === '--gates' || t === '--cost' || t === '--steps') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
       a[t.slice(2)] = v;
@@ -317,11 +319,39 @@ export function parseOwnerWait(text, nowIso, sinceIso = null) {
 const cell = (s) => String(s).replace(/[\r\n]+/g, ' ').replaceAll('|', '\\|');
 
 /**
+ * Step markers -> { line, cells }: the record's `Steps:` line (each step and round in time order,
+ * an open step up to `now`) and one Time cell per ledger row. A row names the step that is the first
+ * word of its Step cell (`8b record` is step 8b; `Gate 1` is step g1). The first row naming a step
+ * carries its time over all rounds and a later one points back to it, so the column never counts a
+ * step twice. Null without markers.
+ */
+export function stepTimes(markers, now, ledger = []) {
+  if (!markers || markers.length === 0) return null;
+  const { intervals, problems } = stepIntervals(markers, Date.parse(now));
+  const total = new Map();
+  for (const iv of intervals) {
+    if (iv.end !== null) total.set(iv.step, (total.get(iv.step) ?? 0) + iv.end - iv.start);
+  }
+  const shown = intervals.map((iv) => `${label(iv)} ${iv.end === null ? 'open' : formatMinutes(iv.end - iv.start)}${iv.open ? ' (open)' : ''}`);
+  const line = `${shown.join(' · ') || 'none'}${problems.length ? ` · ${problems.length} out of order` : ''}`;
+  const seen = new Set();
+  const cells = ledger.map((r) => {
+    const [id] = String(r.step).trim().replace(/^Gate (\d+)(?=\s|$)/i, 'g$1').split(/\s+/);
+    if (!total.has(id)) return '—';
+    if (seen.has(id)) return `(${id} above)`;
+    seen.add(id);
+    return formatMinutes(total.get(id));
+  });
+  return { line, cells };
+}
+
+/**
  * The record markdown. `commits` is [{sha, subject}], newest last. `base` and `head` default to the
  * state file's `Base:` and the newest commit; the wrapper passes the resolved ones (a `--base` flag
- * wins over the file). Every `<fill: ...>` cell is the session's to complete -- never invented here.
+ * wins over the file). `steps` (the unit's step markers) adds a `Steps:` line and a Time column to
+ * the ledger. Every `<fill: ...>` cell is the session's to complete -- never invented here.
  */
-export function buildRecord({ state, commits, diffstat, gatesSummary, now, base, head, cost }) {
+export function buildRecord({ state, commits, diffstat, gatesSummary, now, base, head, cost, steps = null }) {
   const h = state.header;
   const sum = summarizeFindings(state.findings);
   const unit = h.unit || 'unit';
@@ -334,9 +364,10 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
     : 'none';
   const shown = commits.slice(0, MAX_COMMITS).map((c) => `  - ${c.sha} ${c.subject}`);
   if (commits.length > MAX_COMMITS) shown.push(`  - … and ${commits.length - MAX_COMMITS} more`);
+  const times = stepTimes(steps, now, state.ledger);
   const ledgerRows = state.ledger.length
-    ? state.ledger.map((r) => `| ${cell(r.step)} | ${cell(r.status)} | ${cell(r.evidence)} |`)
-    : ['| — | missing | no ## Ledger section |'];
+    ? state.ledger.map((r, i) => `| ${cell(r.step)} | ${cell(r.status)} | ${cell(r.evidence)} |${times ? ` ${times.cells[i]} |` : ''}`)
+    : [`| — | missing | no ## Ledger section |${times ? ' — |' : ''}`];
   const s = sum.byStatus;
   const ownerWait =
     h.ownerWait.length > MAX_OWNER_WAIT ? `${h.ownerWait.slice(0, MAX_OWNER_WAIT)}…` : h.ownerWait || 'none recorded';
@@ -373,10 +404,11 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
     `- Findings: P0 ${sum.bySev.P0} · P1 ${sum.bySev.P1} · P2 ${sum.bySev.P2} · P3 ${sum.bySev.P3} (open ${s.open} · fixed ${s.fixed} · follow-up ${s['follow-up']} · retracted ${s.retracted})`,
     `- Yield by source: ${yieldLine}`,
     `- Elapsed: ${elapsedLine}`,
+    ...(times ? [`- Steps: ${times.line}`] : []),
     '- Ledger:',
     '',
-    '| Step | Status | Evidence |',
-    '|---|---|---|',
+    times ? '| Step | Status | Evidence | Time |' : '| Step | Status | Evidence |',
+    times ? '|---|---|---|---|' : '|---|---|---|',
     ...ledgerRows,
     '',
     'Draft log row:',

@@ -11,7 +11,13 @@
  * session believed, nearly all of it in subagents nobody had added up. The numbers below come from
  * `message.usage` on each assistant turn, so the harness log can carry Cost / Claude % / Codex %
  * and Gate 1 can quote a range from real units instead of a hope.
+ *
+ * WHERE IT WENT. A unit total does not say which step spent it, nor how long the run sat waiting on
+ * the owner. `--times` reads the main thread's own events (questions, typed prompts, compactions,
+ * cache expiries) and `--by-step` joins the turns to the unit's step markers (unit-step.mjs), so the
+ * retro can see that one step cost a fifth of a unit, or that the waits were most of its wall time.
  */
+import { formatMinutes, label, stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] USD per million tokens: [input, output, cacheRead]. Matched on the model id's family word.
@@ -33,6 +39,11 @@ export const CACHE_WRITE_1H = 2;
 // before and after a measured stretch of work. Dollar figures are API-equivalent and relative -- a
 // way to compare units and size a plan -- not a bill, and not what a subscription is charged.
 export const DOLLARS_PER_PERCENT = 20;
+// [B] Minutes a cached prompt prefix lives: main sessions write 1-hour cache entries, so a main-thread
+// turn after a longer gap re-writes its prefix (an expiry rewrite).
+export const CACHE_TTL_MIN = 60;
+// [B] The share of a turn's context written to cache that makes it an expiry rewrite.
+export const REWRITE_SHARE = 0.5;
 // ---- end [B]
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -47,6 +58,9 @@ export function parseArgs(argv) {
     until: null,
     ledger: null,
     cwdMatch: null,
+    byStep: null,
+    unit: null,
+    times: false,
     json: false,
     line: false,
   };
@@ -57,11 +71,14 @@ export function parseArgs(argv) {
     '--until': 'until',
     '--ledger': 'ledger',
     '--cwd-match': 'cwdMatch',
+    '--by-step': 'byStep',
+    '--unit': 'unit',
   };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
     else if (t === '--line') a.line = true;
+    else if (t === '--times') a.times = true;
     else if (Object.hasOwn(valued, t)) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
@@ -69,6 +86,8 @@ export function parseArgs(argv) {
     } else throw new Error(`unknown option ${t}`);
   }
   if (a.json && a.line) throw new Error('--json and --line cannot be combined');
+  if (a.line && (a.times || a.byStep)) throw new Error('--line prints the cost cell only; drop --times and --by-step');
+  if (a.unit !== null && a.byStep === null) throw new Error('--unit names the unit of a --by-step steps file');
   a.session = [
     ...new Set(
       (a.session ?? '')
@@ -102,16 +121,29 @@ export function isPricedId(model) {
   return PRICED_IDS.includes(String(model ?? '').toLowerCase().replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, ''));
 }
 
+/** A turn's cache writes as 5-minute and 1-hour tokens; with neither split, the flat count is 5-minute. */
+function cacheWrites(usage) {
+  const cc = usage.cache_creation ?? {};
+  const w1h = num(cc.ephemeral_1h_input_tokens);
+  let w5m = num(cc.ephemeral_5m_input_tokens);
+  if (w1h + w5m === 0) w5m = num(usage.cache_creation_input_tokens);
+  return { w5m, w1h };
+}
+
+/** Dollars for the cache-write part of one turn's usage alone. */
+export function writeCost(fam, usage) {
+  const [pin] = PRICE[fam] ?? [0];
+  const { w5m, w1h } = cacheWrites(usage);
+  return (w5m * pin * CACHE_WRITE_5M + w1h * pin * CACHE_WRITE_1H) / 1e6;
+}
+
 /**
  * Dollars for one turn's usage. Cache writes use the 5m and 1h split when the usage carries it;
  * when both are 0 the flat `cache_creation_input_tokens` is priced at the 5-minute rate.
  */
 export function rowCost(fam, usage) {
   const [pin, pout, pread] = PRICE[fam] ?? [0, 0, 0];
-  const cc = usage.cache_creation ?? {};
-  const w1h = num(cc.ephemeral_1h_input_tokens);
-  let w5m = num(cc.ephemeral_5m_input_tokens);
-  if (w1h + w5m === 0) w5m = num(usage.cache_creation_input_tokens);
+  const { w5m, w1h } = cacheWrites(usage);
   return (
     (num(usage.input_tokens) * pin +
       w5m * pin * CACHE_WRITE_5M +
@@ -124,8 +156,9 @@ export function rowCost(fam, usage) {
 
 /**
  * One transcript file's text -> priced rows. Only `assistant` lines with `message.usage` count;
- * `<synthetic>` turns are skipped. `ctx` = { kind: 'main'|'sub', agentId, agentType } labels the file.
- * A row's `key` is "message.id|requestId", null when the line carries neither.
+ * `<synthetic>` turns are skipped. `ctx` = { kind: 'main'|'sub', agentId, agentType, session,
+ * description } labels the file; `description` is a subagent's dispatch description, which carries
+ * its step tag. A row's `key` is "message.id|requestId", null when the line carries neither.
  */
 export function parseTranscript(text, ctx = {}) {
   const rows = [];
@@ -141,6 +174,7 @@ export function parseTranscript(text, ctx = {}) {
     if (d?.type !== 'assistant' || !msg || typeof msg.usage !== 'object' || msg.usage === null) continue;
     if (msg.model === '<synthetic>') continue;
     const fam = family(msg.model);
+    const { w5m, w1h } = cacheWrites(msg.usage);
     rows.push({
       key: msg.id || d.requestId ? `${msg.id ?? ''}|${d.requestId ?? ''}` : null,
       ts: Date.parse(d.timestamp),
@@ -150,7 +184,13 @@ export function parseTranscript(text, ctx = {}) {
       kind: ctx.kind === 'sub' ? 'sub' : 'main',
       agentId: ctx.agentId ?? null,
       agentType: ctx.agentType ?? null,
+      session: ctx.session ?? null,
+      agentDescription: ctx.description ?? null,
       output: num(msg.usage.output_tokens),
+      input: num(msg.usage.input_tokens),
+      cacheRead: num(msg.usage.cache_read_input_tokens),
+      cacheWrite: w5m + w1h,
+      writeCost: writeCost(fam, msg.usage),
       cost: rowCost(fam, msg.usage),
     });
   }
@@ -208,6 +248,251 @@ export function summarizeClaude(rows, { since = null, until = null } = {}) {
   out.familyRated = [...familyRated].sort();
   out.claudePercent = round1(out.total / DOLLARS_PER_PERCENT);
   return out;
+}
+
+// The tools that stop the run until the owner answers.
+const ASK_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+// User lines Claude Code writes that nobody typed: background-task notices and command output.
+const NOT_TYPED =
+  /^\s*<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)\b/;
+
+/**
+ * True when a transcript line is something the owner typed: a prompt, a slash command, a `!` command.
+ * A line with an `origin` says so itself (`human`; a peer session or a task notice is not); an older
+ * line without one is judged by its text. Tool results, meta lines and compaction summaries never are.
+ */
+export function isOwnerPrompt(d) {
+  if (d?.type !== 'user' || d.isSidechain || d.isMeta || d.isCompactSummary) return false;
+  const origin = d.origin !== null && typeof d.origin === 'object' ? d.origin.kind : d.origin;
+  if (origin !== undefined && origin !== null) return origin === 'human';
+  const c = d.message?.content;
+  let text = '';
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c)) {
+    if (c.some((x) => x?.type === 'tool_result')) return false;
+    text = c
+      .filter((x) => x?.type === 'text')
+      .map((x) => String(x.text ?? ''))
+      .join('');
+  } else return false;
+  return text.trim() !== '' && !NOT_TYPED.test(text);
+}
+
+/**
+ * One main-thread transcript's text -> its events in time order: `turn` (an assistant line), `ask`
+ * (a question tool call), `result` (a tool result, by tool_use_id), `prompt` (the owner typed), `note`
+ * (any other user or system line) and `compact` (a compaction boundary, with its trigger, tokens before
+ * and duration). Sidechain lines and lines without a readable time are skipped.
+ */
+export function parseEvents(text) {
+  const events = [];
+  for (const line of String(text).split('\n')) {
+    if (!line.includes('"timestamp"')) continue;
+    let d;
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!d || d.isSidechain) continue;
+    const ts = Date.parse(d.timestamp);
+    if (!Number.isFinite(ts)) continue;
+    const content = Array.isArray(d.message?.content) ? d.message.content : [];
+    if (d.type === 'assistant') {
+      events.push({ ts, type: 'turn' });
+      for (const c of content) {
+        if (c?.type === 'tool_use' && ASK_TOOLS.has(c.name) && c.id) events.push({ ts, type: 'ask', id: c.id });
+      }
+    } else if (d.type === 'user') {
+      const results = content.filter((c) => c?.type === 'tool_result' && c.tool_use_id);
+      if (results.length) for (const c of results) events.push({ ts, type: 'result', id: c.tool_use_id });
+      else events.push({ ts, type: isOwnerPrompt(d) ? 'prompt' : 'note' });
+    } else if (d.type === 'system') {
+      if (d.subtype === 'compact_boundary') {
+        const m = d.compactMetadata ?? {};
+        events.push({
+          ts,
+          type: 'compact',
+          trigger: String(m.trigger ?? 'unknown'),
+          preTokens: num(m.preTokens),
+          durationMs: num(m.durationMs),
+        });
+      } else events.push({ ts, type: 'note' });
+    }
+  }
+  return events.sort((x, y) => x.ts - y.ts);
+}
+
+/** The total length of [from, to] spans, an overlap counted once; an empty or backward span adds nothing. */
+export function unionMs(spans) {
+  const sorted = spans.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let lo = null;
+  let hi = null;
+  for (const [a, b] of sorted) {
+    if (hi === null || a > hi) {
+      if (hi !== null) total += hi - lo;
+      [lo, hi] = [a, b];
+    } else hi = Math.max(hi, b);
+  }
+  if (hi !== null) total += hi - lo;
+  return total;
+}
+
+/**
+ * Main-thread events -> wall, owner-wait and work time. Owner wait is the union of each question from
+ * its call to its answer, and each typed prompt back to the last assistant turn or tool result before
+ * it: the session had stopped and was waiting on the owner. Lines nobody typed (a background task's
+ * notice, command output) start no wait, so time the run spent on its own work stays work. Events of
+ * several sessions can be merged: the gap before the next session's first prompt is owner wait too.
+ */
+export function summarizeTimes(events, { since = null, until = null } = {}) {
+  const ev = events.filter((e) => inWindow(e.ts, since, until)).sort((x, y) => x.ts - y.ts);
+  const out = { wallMs: 0, waitMs: 0, workMs: 0, questions: 0, unanswered: 0, prompts: 0, questionMs: 0, promptMs: 0 };
+  if (ev.length === 0) return out;
+  const spans = [];
+  const asks = new Map();
+  let lastWork = null;
+  for (const e of ev) {
+    if (e.type === 'ask') {
+      out.questions += 1;
+      asks.set(e.id, e.ts);
+    } else if (e.type === 'result' && asks.has(e.id)) {
+      spans.push([asks.get(e.id), e.ts]);
+      out.questionMs += e.ts - asks.get(e.id);
+      asks.delete(e.id);
+    } else if (e.type === 'prompt') {
+      out.prompts += 1;
+      if (lastWork !== null && e.ts > lastWork) {
+        spans.push([lastWork, e.ts]);
+        out.promptMs += e.ts - lastWork;
+      }
+    }
+    if (e.type === 'turn' || e.type === 'result') lastWork = e.ts;
+  }
+  out.unanswered = asks.size;
+  out.wallMs = ev.at(-1).ts - ev[0].ts;
+  out.waitMs = unionMs(spans);
+  out.workMs = Math.max(0, out.wallMs - out.waitMs);
+  return out;
+}
+
+/** Compaction boundaries in the window: how many, by trigger, the median tokens before, the time spent. */
+export function summarizeCompactions(events, { since = null, until = null } = {}) {
+  const hits = events.filter((e) => e.type === 'compact' && inWindow(e.ts, since, until));
+  const byTrigger = {};
+  for (const e of hits) byTrigger[e.trigger] = (byTrigger[e.trigger] ?? 0) + 1;
+  const pre = hits
+    .map((e) => e.preTokens)
+    .filter((n) => n > 0)
+    .sort((x, y) => x - y);
+  const mid = Math.floor(pre.length / 2);
+  const median = pre.length === 0 ? 0 : pre.length % 2 ? pre[mid] : (pre[mid - 1] + pre[mid]) / 2;
+  return {
+    count: hits.length,
+    byTrigger,
+    medianPreTokens: Math.round(median),
+    durationMs: hits.reduce((s, e) => s + e.durationMs, 0),
+  };
+}
+
+/**
+ * The main thread's cache: the share of its context read from cache, and its expiry rewrites -- a turn
+ * more than CACHE_TTL_MIN after the previous turn of the same session that wrote at least REWRITE_SHARE
+ * of its context to cache. A session's first turn is not one (there was no cache to lose).
+ */
+export function summarizeCache(rows, { since = null, until = null } = {}) {
+  const main = dedupeRows(rows)
+    .filter((r) => r.kind === 'main' && Number.isFinite(r.ts))
+    .sort((x, y) => x.ts - y.ts);
+  const out = { hitPercent: 0, rewrites: 0, rewriteDollars: 0, rewriteTokens: 0 };
+  const lastTurn = new Map();
+  let read = 0;
+  let context = 0;
+  for (const r of main) {
+    const prev = lastTurn.get(r.session);
+    lastTurn.set(r.session, r.ts);
+    if (!inWindow(r.ts, since, until)) continue;
+    const ctx = num(r.input) + num(r.cacheRead) + num(r.cacheWrite);
+    read += num(r.cacheRead);
+    context += ctx;
+    if (prev !== undefined && r.ts - prev > CACHE_TTL_MIN * 60_000 && ctx > 0 && num(r.cacheWrite) >= REWRITE_SHARE * ctx) {
+      out.rewrites += 1;
+      out.rewriteDollars += num(r.writeCost);
+      out.rewriteTokens += num(r.cacheWrite);
+    }
+  }
+  out.hitPercent = context > 0 ? round1((read / context) * 100) : 0;
+  return out;
+}
+
+// A dispatch description's step tag, `[<unit> s<step> r<round>]`; the round is optional.
+const STEP_TAG = /\[([A-Za-z0-9][A-Za-z0-9._-]*) s([A-Za-z0-9][A-Za-z0-9._-]{0,31}?)(?: r(\d+))?\]/;
+
+/** `[EP-27.03 s8c r2] codex review` -> { unit, step, round }; null when there is no tag. */
+export function parseTag(description) {
+  const m = STEP_TAG.exec(String(description ?? ''));
+  return m ? { unit: m[1], step: m[2], round: m[3] ? Number(m[3]) : 1 } : null;
+}
+
+/**
+ * Rows plus the unit's step markers -> dollars and time per runner step. A main-thread turn belongs to
+ * the step interval it falls in. A subagent belongs to the step its dispatch tag names when the tag is
+ * this unit's; otherwise to the interval its first turn falls in. Anything outside every interval is
+ * `unmarked`. A step's wall time is its intervals summed, so a step run in two rounds shows both.
+ */
+export function summarizeSteps(rows, markers, { unit = null, since = null, until = null } = {}) {
+  const used = dedupeRows(rows).filter((r) => inWindow(r.ts, since, until));
+  const lastTs = used.reduce((m, r) => (Number.isFinite(r.ts) ? Math.max(m, r.ts) : m), -Infinity);
+  const { intervals, problems } = stepIntervals(markers, Number.isFinite(lastTs) ? lastTs : null);
+  const stepAt = (ts) => {
+    const iv = intervals.find((i) => ts >= i.start && (i.end === null || ts < i.end || (i.open && ts <= i.end)));
+    return iv ? label(iv) : 'unmarked';
+  };
+  const slots = new Map();
+  const slot = (key) => {
+    if (!slots.has(key)) slots.set(key, { usd: 0, mainUsd: 0, subUsd: 0, turns: 0, agents: new Set(), wallMs: 0 });
+    return slots.get(key);
+  };
+  for (const iv of intervals) slot(label(iv)).wallMs += iv.end === null ? 0 : iv.end - iv.start;
+  const agentKey = (r) => r.agentId ?? r.agentType ?? 'unknown';
+  const firstTurn = new Map();
+  for (const r of used) {
+    if (r.kind === 'sub' && (!firstTurn.has(agentKey(r)) || r.ts < firstTurn.get(agentKey(r)))) firstTurn.set(agentKey(r), r.ts);
+  }
+  const agentStep = new Map();
+  for (const r of used) {
+    if (r.kind !== 'sub' || agentStep.has(agentKey(r))) continue;
+    const tag = parseTag(r.agentDescription);
+    agentStep.set(agentKey(r), tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt(firstTurn.get(agentKey(r))));
+  }
+  let total = 0;
+  for (const r of used) {
+    const s = slot(r.kind === 'sub' ? agentStep.get(agentKey(r)) : stepAt(r.ts));
+    s.usd += r.cost;
+    if (r.kind === 'sub') {
+      s.subUsd += r.cost;
+      s.agents.add(agentKey(r));
+    } else s.mainUsd += r.cost;
+    s.turns += 1;
+    total += r.cost;
+  }
+  const order = [...new Set([...intervals.map(label), ...slots.keys()])].filter((k) => k !== 'unmarked');
+  if (slots.has('unmarked')) order.push('unmarked');
+  const steps = order.map((k) => {
+    const s = slots.get(k);
+    return {
+      label: k,
+      usd: s.usd,
+      mainUsd: s.mainUsd,
+      subUsd: s.subUsd,
+      turns: s.turns,
+      agents: s.agents.size,
+      wallMs: s.wallMs,
+      share: total > 0 ? round1((s.usd / total) * 100) : 0,
+    };
+  });
+  return { unit, steps, problems, total };
 }
 
 /** Ledger JSONL text -> run objects; a blank or unparseable line is skipped, never fatal. */
@@ -315,8 +600,45 @@ const pairs = (o, fmt = (v) => v) =>
     .map(([k, v]) => `${k} ${fmt(v)}`)
     .join(' · ') || 'none';
 
-/** The multi-line human report; `codex` null prints "Codex: no ledger". */
-export function formatReport(claude, codex) {
+const kTokens = (n) => `${Math.round(n / 1000)}K`;
+
+/** The `--times` lines: wall, owner wait and work, then compactions and the cache. */
+function timesLines({ times, compactions, cache }) {
+  const lines = [
+    `Times (main thread): wall ${formatMinutes(times.wallMs)} · owner wait ${formatMinutes(times.waitMs)} (${times.questions} questions${times.unanswered ? `, ${times.unanswered} unanswered` : ''} · ${times.prompts} prompts) · work ${formatMinutes(times.workMs)}`,
+  ];
+  if (compactions) {
+    lines.push(
+      compactions.count
+        ? `  compactions ${compactions.count} (${pairs(compactions.byTrigger)}) · median ${kTokens(compactions.medianPreTokens)} before · ${formatMinutes(compactions.durationMs)} spent`
+        : '  compactions 0',
+    );
+  }
+  if (cache) {
+    lines.push(`  cache hit ${cache.hitPercent}% · expiry rewrites ${cache.rewrites}${cache.rewrites ? ` (${usd(cache.rewriteDollars)}, ${kTokens(cache.rewriteTokens)} written)` : ''}`);
+  }
+  return lines;
+}
+
+/** The `--by-step` lines: one per step in time order, `unmarked` last, then any marker problem. */
+function stepLines({ unit, steps, problems }) {
+  const width = Math.max(8, ...steps.map((s) => s.label.length));
+  const lines = [`By step${unit ? ` (${unit})` : ''}:`];
+  for (const s of steps) {
+    lines.push(
+      `  ${s.label.padEnd(width)} ${usd(s.usd).padStart(9)} ${`${s.share}%`.padStart(6)} · main ${usd(s.mainUsd)} · subagents ${usd(s.subUsd)} (${s.agents}) · ${s.label === 'unmarked' ? 'no marker' : formatMinutes(s.wallMs)}`,
+    );
+  }
+  if (steps.length === 0) lines.push('  no turns in the window');
+  for (const p of problems) lines.push(`  ! ${p}`);
+  return lines;
+}
+
+/**
+ * The multi-line human report; `codex` null prints "Codex: no ledger". `extra` adds the `--times`
+ * section ({ times, compactions, cache }) and the `--by-step` section ({ steps }) when present.
+ */
+export function formatReport(claude, codex, extra = {}) {
   const lines = [
     summaryLine(claude, codex),
     '',
@@ -334,6 +656,8 @@ export function formatReport(claude, codex) {
       ...(codex.uncounted ? [`  ${codex.uncounted} runs without a same-window quota reading are not in the %`] : []),
     );
   }
+  if (extra.times) lines.push('', ...timesLines(extra));
+  if (extra.steps) lines.push('', ...stepLines(extra.steps));
   lines.push('', 'Dollar figures are API-equivalent and relative, not a bill.');
   return `${lines.join('\n')}\n`;
 }

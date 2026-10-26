@@ -126,7 +126,9 @@ Templates for every kind are in `reference/spec-templates.md`.
 
 1. **Dispatch.** One Agent call per spec, with **`model` and `effort: "high"`
    passed explicitly** — never inherited. Parallel waves go in **one message**;
-   serial slices go one at a time. The executor brief:
+   serial slices go one at a time. In a harness the call's `description` starts with
+   the step tag, `[<unit> s<step> r<n>] <slice>` (the `harness-bootstrap` runner's step
+   markers), so the unit's cost splits by step. The executor brief:
 
    > Read `<spec path>` and implement it exactly. Read every source file it
    > references before writing code, and follow the patterns it points to. Batch
@@ -191,7 +193,7 @@ Templates for every kind are in `reference/spec-templates.md`.
 
 **Check fan-outs** — reviewers, cross-check lanes, adversarial passes — dispatch in
 one message, one brief per reviewer, each with its own `.review-work/<name>/`
-directory. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
+directory and, in a harness, the step tag in its description. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
 reproduce, introduced by this diff or pre-existing, and a proposed scope class. Every
 P0 and P1 is then **verified** — reproduced or refuted — before anyone fixes it; an
 unverifiable one stays blocking. A harness's review workflow

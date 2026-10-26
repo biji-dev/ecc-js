@@ -22,8 +22,10 @@ import {
   parseOwnerWait,
   parseState,
   splitRow,
+  stepTimes,
   summarizeFindings,
 } from './unit-record-core.mjs';
+import { parseSteps, stepLine } from './unit-step-core.mjs';
 
 const RUNNER = fileURLToPath(new URL('../unit-record.mjs', import.meta.url));
 
@@ -600,11 +602,12 @@ test('buildRecord escapes a pipe inside a ledger cell, a source name and the uni
 });
 
 test('parseArgs needs --state and rejects unknown options and valueless flags', () => {
-  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, cost: null, json: false });
+  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, cost: null, steps: null, json: false });
   assert.deepEqual(
-    parseArgs(['--json', '--state', 's.md', '--base', 'abc', '--gates', 'g.out', '--cost', 'Cost $1.00 · Claude 1%']),
-    { state: 's.md', base: 'abc', gates: 'g.out', cost: 'Cost $1.00 · Claude 1%', json: true },
+    parseArgs(['--json', '--state', 's.md', '--base', 'abc', '--gates', 'g.out', '--cost', 'Cost $1.00 · Claude 1%', '--steps', 'U.steps.jsonl']),
+    { state: 's.md', base: 'abc', gates: 'g.out', cost: 'Cost $1.00 · Claude 1%', steps: 'U.steps.jsonl', json: true },
   );
+  assert.throws(() => parseArgs(['--state', 's.md', '--steps']), /--steps needs a value/);
   assert.throws(() => parseArgs(['--state', 's.md', '--cost']), /--cost needs a value/);
   assert.throws(() => parseArgs([]), /--state <file> is required/);
   assert.throws(() => parseArgs(['--state']), /--state needs a value/);
@@ -792,4 +795,68 @@ test('parseOwnerWait with a since time clips pairs to it: before is dropped, spa
   assert.equal(parseOwnerWait(`${d}T03:00:00Z → ${d}T04:00:00Z`, NOW).ms, 60 * 60_000);
   // A duration has no times, so since cannot clip it.
   assert.equal(parseOwnerWait('1h, 20m', NOW, since).ms, 80 * 60_000);
+});
+
+// Steps of one unit on 2026-10-24 (NOW is 06:22): 0 5m, g1 30m, 8 r1 20m + r2 10m, 8b 12m, a stray
+// done of 8c, and 9 still open since 06:00.
+const STEP_ROWS = [
+  ['03:10', '0', 'start'], ['03:15', '0', 'done'],
+  ['03:15', 'g1', 'start'], ['03:45', 'g1', 'done'],
+  ['03:45', '8', 'start'], ['04:05', '8', 'done'],
+  ['04:05', '8', 'start', 2], ['04:15', '8', 'done', 2],
+  ['04:15', '8b', 'start'], ['04:27', '8b', 'done'],
+  ['04:30', '8c', 'done'],
+  ['06:00', '9', 'start'],
+];
+const stepsText = (rows) =>
+  rows.map(([t, step, event, round = 1]) => stepLine({ t: `2026-10-24T${t}:00Z`, unit: 'EP-27.04', step, event, round })).join('\n');
+const MARKERS = parseSteps(stepsText(STEP_ROWS));
+
+test('stepTimes: a Steps line in time order and one Time cell per ledger row, each step counted once', () => {
+  const ledger = ['0 claim', 'Gate 1', '8 review r1', '8 fix r1', '8b record', '8a docs', 'Gate 2 · 9 land', '9 land'].map((step) => ({ step }));
+  const t = stepTimes(MARKERS, NOW, ledger);
+  assert.equal(t.line, '0 r1 5m · g1 r1 30m · 8 r1 20m · 8 r2 10m · 8b r1 12m · 9 r1 22m (open) · 1 out of order');
+  // 8 is 20m + 10m on its first row only; 8a has no markers; Gate 2 is step g2, which has none.
+  assert.deepEqual(t.cells, ['5m', '30m', '30m', '(8 above)', '12m', '—', '—', '22m']);
+  assert.equal(stepTimes([], NOW, ledger), null);
+  assert.equal(stepTimes(null, NOW), null);
+  // Without a time to run to, an open step has no end and so no time.
+  assert.equal(stepTimes(MARKERS, 'never', [{ step: '9' }]).cells[0], '—');
+});
+
+test('buildRecord with steps adds the Steps line after Elapsed and a Time column; without them nothing changes', () => {
+  const rec = buildRecord({ state: parseState(STATE), commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, steps: MARKERS });
+  const lines = rec.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('- Elapsed: '));
+  assert.deepEqual(lines.slice(at + 1, at + 7), [
+    '- Steps: 0 r1 5m · g1 r1 30m · 8 r1 20m · 8 r2 10m · 8b r1 12m · 9 r1 22m (open) · 1 out of order',
+    '- Ledger:',
+    '',
+    '| Step | Status | Evidence | Time |',
+    '|---|---|---|---|',
+    '| 8 review — code-reviewer | ran | 3 findings | 30m |',
+  ]);
+  const noLedger = buildRecord({ state: parseState('Unit: U-2\n'), commits: [], diffstat: '', gatesSummary: null, now: NOW, steps: MARKERS });
+  assert.match(noLedger, /^\| — \| missing \| no ## Ledger section \| — \|$/m);
+  const plain = buildRecord({ state: parseState(STATE), commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW });
+  assert.equal(buildRecord({ state: parseState(STATE), commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, steps: [] }), plain);
+  assert.doesNotMatch(plain, /^- Steps:/m);
+});
+
+test('the wrapper: --steps reads the steps file into the record; an empty one adds nothing, a missing one exits 2', () => {
+  const f = fixture();
+  const steps = path.join(f.repo, 'docs/plans/u.steps.jsonl');
+  fs.writeFileSync(steps, `${stepsText(STEP_ROWS.slice(0, 10))}\n`);
+  const res = run(f, ['--state', f.stateFile, '--steps', steps]);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^- Steps: 0 r1 5m · g1 r1 30m · 8 r1 20m · 8 r2 10m · 8b r1 12m$/m);
+  assert.match(res.stdout, /^\| 8 review — code-reviewer \| ran \| 3 findings \| 30m \|$/m);
+  assert.match(JSON.parse(run(f, ['--state', f.stateFile, '--steps', steps, '--json']).stdout).record, /^- Steps: 0 r1 5m /m);
+  fs.writeFileSync(steps, '');
+  const empty = run(f, ['--state', f.stateFile, '--steps', steps]);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.doesNotMatch(empty.stdout, /^- Steps:/m);
+  const missing = run(f, ['--state', f.stateFile, '--steps', path.join(f.repo, 'nope.steps.jsonl')]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /cannot read steps file .*nope\.steps\.jsonl: ENOENT/);
 });

@@ -100,6 +100,28 @@ correspondence is: investigate, plan, plan check → 1 · decision sheet → Gat
 implement and tests → 2 · diff review → 8 · cross-check A/B/C → 4, 8, 8c ·
 regression → 5–8 · doc sweep → 8a · ship → 9.
 
+## Step markers
+
+`[M]` **Every step's start is a command, never prose:** `node scripts/unit-step.mjs <unit>
+<step> start`, chained onto the step's first command (`node scripts/unit-step.mjs EP-7 8
+start && node scripts/review-gate.mjs …`) so a marker costs no turn of its own. A start
+closes the step before it, so `done` is needed only after the last step and before a stop.
+Step ids are the sequence's own (`0a`, `0`, `1` … `8a`, `8b`, `8c`, `9`, `10`), `g1` and
+`g2` for the gates; a step's second round passes `--round 2`. The steps file sits beside the
+state file (`scope-guard.md`); `--list` prints what it holds. Small and Full; Trivial needs
+none.
+
+`[M]` **Every dispatch's description starts with the tag `[<unit> s<step> r<n>]`** —
+`[EP-7 s8 r2] codex review` — so `unit-cost.mjs --by-step` puts each subagent's cost on its
+step. An untagged dispatch goes by when it started.
+
+`[M]` **Step 8b reads them:** `unit-record.mjs --steps` puts each step's time in the
+record, and `unit-cost.mjs --times --by-step <steps file>` gives the wall, owner-wait and
+work time and the dollars per step (`log-format.md`).
+> Origin: ledger rows carried no times and were written in one batch at the end. One
+> measured unit's record step took 19% of its $78.41, found only by rebuilding its steps
+> from the transcripts by hand.
+
 ## Which steps each tier runs
 
 | Step | Trivial | Small | Full |
@@ -302,10 +324,10 @@ rule file updates every document that repeats the rule (`rules.md` §1).
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
-<state file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
+<state file> --steps <steps file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
 --line --session <every session id since the claim, comma-separated> --since <claimed>)"` prints commits, diffstat, the gate
-SUMMARY line, finding counts by severity and by source, elapsed, the ledger and the
-draft log row from git and the state file, never retyped. The git-derived fields
+SUMMARY line, finding counts by severity and by source, elapsed, each step's time, the ledger and the
+draft log row from git, the state file and the steps file, never retyped. The git-derived fields
 are true by construction; the ledger and findings rows are copied as the session
 wrote them.
 The session writes only what no command knows: the deviations, the controls
@@ -328,7 +350,7 @@ checked against the saved returns. Blocking on Full. A second consecutive
 the screenshot, the named tests or the live-walk transcript that shows it ·
 **Decided for you** — every T decision row, one line each with its reversal cost ·
 the P and C cards still open · verdicts · unresolved findings · diffstat · **cost
-against the Gate 1 estimate** (`unit-cost.mjs`) · what is still running · **the step
+against the Gate 1 estimate** (`unit-cost.mjs`; `--by-step` for where it went) · what is still running · **the step
 ledger and its lists** (`context.md`). Never presented while a
 review round is outstanding. Decided by the merge policy (`gate-design.md`). When it
 waits on the owner, offer `/clear` with the resume command (`context.md`).

@@ -13,8 +13,8 @@ their report, not a row.
 |---|---|
 | Unit · Mode · Type · Tier | what the gates and models keyed on — plan task id or change id; plan or change; the tier as finally run |
 | Deliverable | which deliverable of the unit the row is (`2 of 3 — staff pause`); `1 of 1` for a unit that is one deliverable. One row per deliverable that reaches its own Gate 2 |
-| **Elapsed (work)** | from the deliverable's start (`Deliverable started:`, else the lock claim), minus owner wait and machine-down time, cross-checked against `git log --format=%cI`. Mark and exclude any row that cannot be reconciled |
-| Owner wait | the time the run waited on the owner, from the state file's `Owner wait:` — a duration or its `asked <ISO> → answered <ISO>` pairs |
+| **Elapsed (work)** | from the deliverable's start (`Deliverable started:`, else the lock claim), minus owner wait and machine-down time, cross-checked against `git log --format=%cI` and `unit-cost.mjs --times`. Mark and exclude any row that cannot be reconciled |
+| Owner wait | the time the run waited on the owner, from the state file's `Owner wait:` — a duration or its `asked <ISO> → answered <ISO>` pairs. `unit-cost.mjs --times` measures it from the transcripts: each question until its answer, each typed prompt back to the last turn before it |
 | **Defects** | P0/P1 from reviewers, lane B and the second family, as `0/2`. Not from the conformance or claim auditors. A row written before the P0–P3 scale may say `2C/6H` |
 | Scope | admitted (BLOCKER/CRITICAL) · filed OUT · drift rejected, as counts |
 | Gate 1 · Gate 2 | as *actually* decided, including overrides and what they covered — and how many P/C cards each asked |
@@ -39,6 +39,12 @@ to earn the Hot-small slot (`gate-design.md`). Non-empty is the reason not to.
 **A source with no unique P0–P2 across five units** is a candidate to drop or to
 move to a cheaper model — and one whose removal shows up in `Missed by harness` comes
 back. This is how the review lineup in `gate-design.md` was set; keep measuring it.
+
+**Where a unit's time and money went** is not a column; it would not fit one. Step
+8b's `unit-cost.mjs --times --by-step <steps file>` prints it: wall, owner-wait and
+work time, compactions, the cache-hit share, cache-expiry rewrites, and dollars and
+time per runner step (`runner.md` › Step markers). Quote the line that explains an
+outlier in Friction.
 
 **Two of the same friction** means fix the machinery, not the habit. If the log
 says *"fix the machinery"* twice, the next run starts by fixing it.

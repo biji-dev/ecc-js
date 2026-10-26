@@ -30,7 +30,8 @@ Wave: 0 | 1 | …
 ## Executor
 
 <codex | opus | sonnet> — from the slicing table's Executor cell; `codex` runs through
-`codex-run implement-cold`, the others as `Agent(model: …, effort: "high")`.
+`codex-run implement-cold`, the others as `Agent(model: …, effort: "high")`, with the
+step tag first in the description in a harness (`[EP-7 s2 r1] 01 money service`).
 
 ## Goal
 One sentence: what this task delivers.

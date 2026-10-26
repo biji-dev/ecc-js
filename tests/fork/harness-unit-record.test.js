@@ -15,7 +15,7 @@ const TEST_REL = path.join('lib', 'unit-record-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-record-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 34;
+const EXPECTED_TESTS = 37;
 
 let passed = 0;
 let failed = 0;
@@ -76,13 +76,13 @@ function git(cwd, ...args) {
 
 const cleanup = [];
 
-/** Copy the shipped scripts, apply a one-line mutation to the core, and assert the suite fails. */
-function mutantFails(name, needle, replacement) {
+/** Copy the shipped scripts, apply a one-line mutation to the core (or `fileRel`), and assert the suite fails. */
+function mutantFails(name, needle, replacement, fileRel = CORE_REL) {
   test(`mutant: ${name} makes the suite fail`, () => {
     const copy = tmp('unit-record-mutant-');
     cleanup.push(copy);
     fs.cpSync(SCRIPTS, copy, { recursive: true });
-    const corePath = path.join(copy, CORE_REL);
+    const corePath = path.join(copy, fileRel);
     const before = fs.readFileSync(corePath, 'utf8');
     const mutated = before.replace(needle, replacement);
     assert.notStrictEqual(mutated, before, 'the mutation did not apply');
@@ -116,6 +116,11 @@ mutantFails('letting a newline in the cost line break the draft row', ".replace(
 mutantFails('measuring a deliverable from the unit claim', 'h.deliverableStarted || h.claimed', 'h.claimed');
 mutantFails('counting owner-wait pairs from before the deliverable started', 'if (Number.isFinite(since) && to <= since) continue;', '');
 mutantFails('listing every commit instead of capping the list', 'commits.slice(0, MAX_COMMITS)', 'commits');
+mutantFails('counting a step again on its later ledger rows', 'if (seen.has(id)) return `(${id} above)`;', '');
+mutantFails('reading a Gate row as no step', ".replace(/^Gate (\\d+)(?=\\s|$)/i, 'g$1')", '');
+mutantFails('leaving the open step without a time up to now', 'stepIntervals(markers, Date.parse(now))', 'stepIntervals(markers)');
+mutantFails('dropping the Steps line', '...(times ? [`- Steps: ${times.line}`] : []),', '');
+mutantFails('ignoring --steps', "if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));", '', 'unit-record.mjs');
 
 test('the draft log row has log-format.md\'s columns, in its order (Yield before Friction)', () => {
   const doc = fs.readFileSync(path.join(ROOT, 'skills', 'harness-bootstrap', 'reference', 'log-format.md'), 'utf8');

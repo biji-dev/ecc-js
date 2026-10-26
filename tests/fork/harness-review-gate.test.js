@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 34;
+const EXPECTED_TESTS = 40;
 
 let passed = 0;
 let failed = 0;
@@ -127,7 +127,19 @@ test('mutant: the database trigger matching every path makes the suite fail', ()
 });
 
 test('mutant: critical code written by the second family no longer gets a Claude reviewer', () => {
-  mutantRun("writer === 'codex' && critical.length === 0", "writer === 'codex'");
+  mutantRun('secondFamilyWrote(writer) && critical.length === 0', 'secondFamilyWrote(writer)');
+});
+
+test('mutant: a default writer comes back, so a cold Codex slice run without --writer is not caught', () => {
+  mutantRun("tier = 'full', writer, maxFixed", "tier = 'full', writer = 'claude', maxFixed");
+});
+
+test('mutant: writer mixed no longer routes like the second family', () => {
+  mutantRun("writer === 'codex' || writer === 'mixed'", "writer === 'codex'");
+});
+
+test('mutant: critical code written by Sonnet no longer gets an Opus reviewer', () => {
+  mutantRun("if (writer !== 'claude' && critical.length > 0) {", "if (secondFamilyWrote(writer) && critical.length > 0) {");
 });
 
 test('mutant: the FIX_LINES boundary moved by one makes the suite fail', () => {

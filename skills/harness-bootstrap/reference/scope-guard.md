@@ -72,7 +72,9 @@ logged.
 `[M]` **A choice with a hidden cost is spelled out before it is taken** — an option
 implying a new table, migration, endpoint, dependency or second platform says so:
 in the card's option text when it is P or C, in the decision row's `Reversal`
-cell when it is T.
+cell when it is T. A hidden cost that is a one-way door — a migration, a public
+contract, a second platform — makes the choice C, never T (`gate-design.md` ›
+Who decides).
 > Origin: an owner's "fix it here, fully" once added a table nobody had named.
 
 ## The decision sheet — Gate 1
@@ -147,6 +149,7 @@ Mode: <plan | change>
 Type: <type>
 Tier: <tier>
 Deliverable: <n of m — its one-line name>
+Deliverable started: <ISO time this deliverable's context began>
 Demo: <open · do · expect>
 Branch: <b>
 Base: <merge-base sha>
@@ -161,7 +164,8 @@ Owner wait: <e.g. 1h20m>
 ```
 
 `Deliverable:` and `Demo:` name the deliverable this coordinator context is on
-(`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`.
+(`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
+each new deliverable; the record measures the row's time from it.
 
 Header lines come before the first `##`, one `Key: value` each. `Source` is the
 reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,

@@ -4,7 +4,8 @@
 // from the project's own harness log.
 /**
  * Turns the harness log's rows into a RANGE (p25-p75) for work time, owner wait, Claude % and
- * Codex %, so Gate 1 can show the owner a range and say "no history" when there is none. No I/O
+ * Codex % PER UNIT, so Gate 1 can show the owner a range and say "no history" when there is none.
+ * A unit with several deliverable rows is one sample: its rows are summed. No I/O
  * here, so `estimate-core.test.mjs` can pin each rule.
  *
  * WHY A RANGE. The origin project's units ran in two regimes ten times apart (22-59 min clean,
@@ -12,7 +13,7 @@
  * the project's own rows shows the spread; below a handful of rows it shows nothing and says so
  * instead of inventing a median.
  */
-import { splitRow } from './unit-record-core.mjs';
+import { parseOwnerWait, splitRow } from './unit-record-core.mjs';
 
 // ---- [B] project bindings
 // [B] How many rows a metric needs before it is shown (the log's own "armed at 3" rule).
@@ -27,8 +28,6 @@ export const COLUMNS = {
   elapsed: 'elapsed',
   ownerWait: 'owner wait',
   cost: 'cost',
-  slices: 'slices',
-  scope: 'scope',
 };
 // ---- end [B]
 
@@ -47,11 +46,11 @@ const DUR =
 
 /** Reject unknown flags and a missing --log before any file is read. */
 export function parseArgs(argv) {
-  const a = { log: null, tier: null, cohort: null, slices: null, json: false };
+  const a = { log: null, tier: null, cohort: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
-    else if (t === '--log' || t === '--tier' || t === '--cohort' || t === '--slices') {
+    else if (t === '--log' || t === '--tier' || t === '--cohort') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
       a[t.slice(2)] = v;
@@ -68,11 +67,6 @@ export function parseArgs(argv) {
     } catch (e) {
       throw new Error(`--cohort is not a regular expression: ${e.message}`, { cause: e });
     }
-  }
-  if (a.slices !== null) {
-    const n = Number(a.slices);
-    if (!Number.isInteger(n) || n < 1) throw new Error(`--slices must be a whole number >= 1 (got "${a.slices}")`);
-    a.slices = n;
   }
   return a;
 }
@@ -130,6 +124,16 @@ export function parseCost(cell) {
   };
 }
 
+/**
+ * An Owner wait cell -> minutes. unit-record writes it as summed durations (`10m + 60m`) or as
+ * `asked <ISO> → answered <ISO>` pairs, so unit-record-core's parser sums every term; text it cannot
+ * read (a looser phrase such as `~2h55`) falls back to the first duration in it.
+ */
+export function ownerWaitMinutes(cell) {
+  const wait = parseOwnerWait(cell, null);
+  return wait === null ? parseDuration(cell) : wait.ms / 60_000;
+}
+
 const norm = (c) => c.toLowerCase().replace(/^[\s*★]+/, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
 const findCol = (names, prefix) => names.findIndex((n) => n.startsWith(prefix));
 
@@ -166,13 +170,12 @@ export function parseLog(text) {
       const parts = first.split('·').map((s) => s.trim());
       const tier = col.tier !== -1 ? tierWord(at(cells, 'tier')) : tierWord(parts.length > 1 ? parts.at(-1) : '');
       const elapsed = parseElapsed(at(cells, 'elapsed'));
-      const wait = col.ownerWait !== -1 ? parseDuration(at(cells, 'ownerWait')) : null;
-      const sliceCell = /(\d+)\s+slices?\b/i.exec(at(cells, 'scope'));
-      const sliceCount = col.slices !== -1 ? Number.parseInt(at(cells, 'slices'), 10) : sliceCell ? Number(sliceCell[1]) : NaN;
+      const wait = col.ownerWait !== -1 ? ownerWaitMinutes(at(cells, 'ownerWait')) : null;
       const cost = parseCost(at(cells, 'cost'));
       const usable = !UNUSABLE.test(at(cells, 'elapsed'));
       records.push({
         unit: first,
+        id: parts[0],
         type: at(cells, 'type'),
         tier,
         work: usable ? elapsed.work : null,
@@ -180,7 +183,6 @@ export function parseLog(text) {
         claudePct: cost.claudePct,
         codexPct: cost.codexPct,
         cost: cost.cost,
-        slices: Number.isFinite(sliceCount) && sliceCount > 0 ? sliceCount : null,
       });
     }
   }
@@ -194,25 +196,42 @@ export function filterRows(records, { tier = null, cohort = null } = {}) {
   );
 }
 
+const sumKnown = (rows, key) => {
+  const v = rows.map((r) => r[key]).filter(Number.isFinite);
+  return v.length === 0 ? null : v.reduce((x, y) => x + y, 0);
+};
+
+/**
+ * Rows -> one record per unit, by the id in the first cell (the part before ` · `). A unit with
+ * several deliverable rows is one sample: work, owner wait, cost and the two percents are summed
+ * over its rows (a metric no row of the unit has stays null); tier and type come from its first row.
+ */
+export function groupUnits(records) {
+  const byId = new Map();
+  for (const r of records) {
+    if (!byId.has(r.id)) byId.set(r.id, []);
+    byId.get(r.id).push(r);
+  }
+  return [...byId.values()].map((rows) => ({
+    ...rows[0],
+    rows: rows.length,
+    ...Object.fromEntries(Object.keys(METRICS).map((k) => [k, sumKnown(rows, k)])),
+    cost: sumKnown(rows, 'cost'),
+  }));
+}
+
 function stat(values) {
   const n = values.length;
   if (n < MIN_ROWS) return { n, noHistory: true, message: `no history (n=${n}, need ${MIN_ROWS})` };
   return { n, p25: percentile(values, 0.25), median: percentile(values, 0.5), p75: percentile(values, 0.75) };
 }
 
-/** Per-metric ranges for the rows, plus a per-slice range scaled to `slices` when given. */
-export function estimate(records, { tier = null, cohort = null, slices = null } = {}) {
-  const rows = filterRows(records, { tier, cohort });
-  const out = { tier, rows: rows.length, metrics: {}, perSlice: null, slices };
+/** Per-metric ranges, one sample per unit among the rows of the tier and cohort asked for. */
+export function estimate(records, { tier = null, cohort = null } = {}) {
+  const units = groupUnits(filterRows(records, { tier, cohort }));
+  const out = { tier, rows: units.length, metrics: {} };
   for (const key of Object.keys(METRICS)) {
-    out.metrics[key] = stat(rows.map((r) => r[key]).filter(Number.isFinite));
-  }
-  if (slices !== null) {
-    out.perSlice = {};
-    for (const key of Object.keys(METRICS)) {
-      const scaled = rows.filter((r) => r.slices !== null && Number.isFinite(r[key])).map((r) => (r[key] / r.slices) * slices);
-      out.perSlice[key] = stat(scaled);
-    }
+    out.metrics[key] = stat(units.map((u) => u[key]).filter(Number.isFinite));
   }
   return out;
 }
@@ -229,19 +248,15 @@ const range = (s, fmt, unit = '') => (s.noHistory ? s.message : `${fmt(s.p25)}�
 export function formatLine(est) {
   const m = est.metrics;
   const tier = est.tier ?? 'all tiers';
-  return `Estimate (${tier}, n=${est.rows}): work ${range(m.work, fmtMinutes)} · owner wait ${range(m.ownerWait, fmtMinutes)} · Claude ${range(m.claudePct, fmtPct, '%')} · Codex ${range(m.codexPct, fmtPct, '%')} — a range from this project's log, not a promise`;
+  return `Estimate per unit (${tier}, n=${est.rows} units): work ${range(m.work, fmtMinutes)} · owner wait ${range(m.ownerWait, fmtMinutes)} · Claude ${range(m.claudePct, fmtPct, '%')} · Codex ${range(m.codexPct, fmtPct, '%')} — a range from this project's log, not a promise`;
 }
 
-/** The line plus a median detail per metric, and the per-slice ranges when asked for. */
+/** The line plus a median detail per metric. */
 export function formatReport(est) {
   const fmts = { work: fmtMinutes, ownerWait: fmtMinutes, claudePct: fmtPct, codexPct: fmtPct };
   const detail = (label, s, fmt) =>
     `  ${label}: ${s.noHistory ? s.message : `n=${s.n} · p25 ${fmt(s.p25)} · median ${fmt(s.median)} · p75 ${fmt(s.p75)}`}`;
   const lines = [formatLine(est)];
   for (const [k, label] of Object.entries(METRICS)) lines.push(detail(label, est.metrics[k], fmts[k]));
-  if (est.perSlice) {
-    lines.push(`Per slice, scaled to ${est.slices} slice${est.slices === 1 ? '' : 's'}:`);
-    for (const [k, label] of Object.entries(METRICS)) lines.push(detail(label, est.perSlice[k], fmts[k]));
-  }
   return `${lines.join('\n')}\n`;
 }

@@ -12,8 +12,8 @@ their report, not a row.
 | Column | Why it exists |
 |---|---|
 | Unit · Mode · Type · Tier | what the gates and models keyed on — plan task id or change id; plan or change; the tier as finally run |
-| Deliverable | which deliverable of the unit the row is (`2 of 3 — staff pause`); `—` for a unit that is one deliverable. One row per deliverable that reaches its own Gate 2 |
-| **Elapsed (work)** | from the lock claim, minus owner wait and machine-down time, cross-checked against `git log --format=%cI`. Mark and exclude any row that cannot be reconciled |
+| Deliverable | which deliverable of the unit the row is (`2 of 3 — staff pause`); `1 of 1` for a unit that is one deliverable. One row per deliverable that reaches its own Gate 2 |
+| **Elapsed (work)** | from the deliverable's start (`Deliverable started:`, else the lock claim), minus owner wait and machine-down time, cross-checked against `git log --format=%cI`. Mark and exclude any row that cannot be reconciled |
 | Owner wait | the time the run waited on the owner, from the state file's `Owner wait:` — a duration or its `asked <ISO> → answered <ISO>` pairs |
 | **Defects** | P0/P1 from reviewers, lane B and the second family, as `0/2`. Not from the conformance or claim auditors. A row written before the P0–P3 scale may say `2C/6H` |
 | Scope | admitted (BLOCKER/CRITICAL) · filed OUT · drift rejected, as counts |
@@ -66,8 +66,8 @@ a number.
 
 ## Estimates come from here
 
-`node scripts/estimate.mjs --log <this file> --tier <tier> [--slices <n>]` prints
-p25–p75 ranges for work time, owner wait, Claude % and Codex % at Gate 1, with the
+`node scripts/estimate.mjs --log <this file> --tier <tier>` prints, per unit (a
+unit's deliverable rows summed), p25–p75 ranges for work time, owner wait, Claude % and Codex % at Gate 1, with the
 cohort size, and **"no history" below three rows** of the cohort. Gate 2 sets the
 actual (`unit-cost.mjs`) beside it, and the next estimate reads the row.
 > Origin, the v4 usage study: per-slice cost varied too much for a point estimate —

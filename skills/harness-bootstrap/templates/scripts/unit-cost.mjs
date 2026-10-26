@@ -7,16 +7,22 @@
  * ledger, and prints the cost, the Claude % and the Codex % for the harness log row.
  *
  *   node scripts/unit-cost.mjs --session <id>[,<id>...] [--projects-dir <dir>] [--since <ISO>]
- *     [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--json]
+ *     [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--json | --line]
  *
  * options:
  *   --session <ids>      one or more session ids (comma-separated); the files are found by scanning
  *                        <projects-dir>/*\/<id>.jsonl, subagents in <id>/subagents/*.jsonl
  *   --projects-dir <d>   default ~/.claude/projects
  *   --since / --until    only turns (and Codex runs) inside this ISO window
- *   --ledger <path>      Codex ledger JSONL (default <git toplevel>/.codex-runs/ledger.jsonl if present)
+ *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
+ *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
  *   --cwd-match <s>      only Codex runs whose cwd contains this substring
  *   --json               print { claude, codex, summary } instead
+ *   --line               print only the one-line summary (`Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`),
+ *                        for `unit-record.mjs --cost "$(node scripts/unit-cost.mjs ... --line)"`
+ *
+ * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs,
+ * so it includes any other work on the same account in that window. Overlapping runs count once.
  *
  * exit: 0 ok | 2 usage (bad flag, session not found, unreadable transcript).
  *
@@ -36,8 +42,11 @@ import {
   summaryLine,
 } from './lib/unit-cost-core.mjs';
 
+// [B] Where the ledger lives, relative to the main checkout (the same name as in codex-run.mjs).
+const LEDGER_DIR = '.codex-runs';
+
 const USAGE =
-  'usage: node scripts/unit-cost.mjs --session <id>[,<id>...] [--projects-dir <dir>] [--since <ISO>] [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--json]';
+  'usage: node scripts/unit-cost.mjs --session <id>[,<id>...] [--projects-dir <dir>] [--since <ISO>] [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--json | --line]';
 
 function usage(msg) {
   process.stderr.write(`unit-cost: ${msg}\n${USAGE}\n`);
@@ -84,15 +93,17 @@ function sessionFiles(projectsDir, id) {
   return files;
 }
 
-function defaultLedger() {
+/** Main checkout root, so worktrees share one ledger (the same resolution as codex-run.mjs). */
+function defaultLedger(cwd = process.cwd()) {
   try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    return path.join(top, '.codex-runs', 'ledger.jsonl');
+    return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');
   } catch {
-    return null;
+    return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');
   }
 }
 
@@ -115,7 +126,8 @@ function main() {
   } catch (e) {
     return usage(e.message);
   }
-  if (args.json) {
+  if (args.line) process.stdout.write(`${summaryLine(claude, codex)}\n`);
+  else if (args.json) {
     process.stdout.write(`${JSON.stringify({ claude, codex, summary: summaryLine(claude, codex) }, null, 2)}\n`);
   } else process.stdout.write(formatReport(claude, codex));
 }

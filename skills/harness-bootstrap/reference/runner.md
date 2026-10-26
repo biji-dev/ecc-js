@@ -182,8 +182,8 @@ as its own commit. Never reclaim a row you do not own.
    open, do and see. **A table past the cap splits here** (`gate-design.md` ›
    Milestone size).
 2. **The P and C decision cards** — nothing else is asked.
-3. **The estimate**: `node scripts/estimate.mjs --log <harness log> --tier <tier>
-   --slices <n>` — p25–p75 for work time, owner wait, Claude % and Codex %, with
+3. **The estimate**: `node scripts/estimate.mjs --log <harness log> --tier <tier>`
+   — per unit, p25–p75 for work time, owner wait, Claude % and Codex %, with
    its cohort size, or "no history" — and the second family's weekly meter from its
    ledger. A range from this project's log, never a single number.
 4. **Decided** — the T decisions taken, one line each with its reversal cost.
@@ -215,7 +215,7 @@ Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`)
   > Origin: one agent handed a whole fix round ran 309 calls, to 368K of context.
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
-  [--writer codex]` and dispatch what it names — the **second family's review** over
+  --writer <who wrote it>` and dispatch what it names — the **second family's review** over
   that slice's diff before the next slice builds on it (`codex-run review`); a cold
   slice the second family wrote is deferred to the unit review. **Never an Opus
   code-reviewer per slice.** The review runs in the background while the next
@@ -251,7 +251,7 @@ DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
-  <tier>` (`--writer codex` for a unit the second family wrote) and dispatch exactly
+  <tier> --writer <who wrote it>` (`mixed` when more than one family did) and dispatch exactly
   the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
@@ -275,8 +275,9 @@ DOM snapshot; send screenshots to a model that reads images.
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
-  --max-fixed <P> --round <n> [--writer codex]` names the re-review, which reads
-  the fix diff only — `--writer` is who wrote the fix.
+  --max-fixed <P> --round <n> --writer <who wrote it>` names the re-review, which reads
+  the fix diff only — `--writer` is who wrote the fix: `claude | codex | sonnet |
+  mixed`, required on every kind.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
 - `[M]` **The P3 sweep** runs once per slice set, after the fix rounds: one Sonnet
@@ -284,9 +285,13 @@ DOM snapshot; send screenshots to a model that reads images.
   targeted tests, no re-review.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
   attributed against the merge base, working tree included. `run-gates.sh` reuses an
-  all-PASS result for the same tree (`REUSED <tree>`), and for a tree that differs
-  only in docs; a second agent that starts the same run waits for the first. Quote
-  the `REUSED` line as the evidence — never re-run to have a fresh one.
+  all-PASS result for the same tree (`REUSED <tree>`) — and for a tree that differs
+  only in docs when the project bound `RUN_GATES_DOCS_ONLY`, which it does only if
+  no gate reads those paths; a second agent that starts the same run waits for the
+  first. Quote the `REUSED` line as the evidence — never re-run to have a fresh
+  one. The key is the working tree's tracked and untracked files plus what
+  `RUN_GATES_KEY_EXTRA` names; ignored inputs (`node_modules`, `.env`) and refs are
+  not in it unless named, and worktrees of one repository share the cache.
 
 **Step 8a — docs.** `[M]` Only when the diff changes a public behaviour, a named
 invariant, a module description or user-visible output. List stale docs with
@@ -298,7 +303,7 @@ rule file updates every document that repeats the rule (`rules.md` §1).
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
 <state file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
---session <this session's id> --since <claimed>)"` prints commits, diffstat, the gate
+--line --session <every session id since the claim, comma-separated> --since <claimed>)"` prints commits, diffstat, the gate
 SUMMARY line, finding counts by severity and by source, elapsed, the ledger and the
 draft log row from git and the state file, never retyped. The git-derived fields
 are true by construction; the ledger and findings rows are copied as the session

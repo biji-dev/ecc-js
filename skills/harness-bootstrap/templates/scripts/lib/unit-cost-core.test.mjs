@@ -14,10 +14,12 @@ import {
   CACHE_WRITE_5M,
   DOLLARS_PER_PERCENT,
   PRICE,
+  PRICED_IDS,
   dedupeRows,
   family,
   formatReport,
   inWindow,
+  isPricedId,
   parseArgs,
   parseLedger,
   parseTranscript,
@@ -187,11 +189,35 @@ const run = (over) => ({
 });
 
 test('summarizeLedger sums the quota delta of same-window runs and counts runs by kind with minutes', () => {
-  const s = summarizeLedger([run(), run({ kind: 'adversarial', ms: 500, limitsAfter: { usedPercent: 15.5, resetsAt: 111 } })]);
+  const s = summarizeLedger([
+    run(),
+    run({ kind: 'adversarial', ms: 500, limitsBefore: { usedPercent: 12, resetsAt: 111 }, limitsAfter: { usedPercent: 15.5, resetsAt: 111 } }),
+  ]);
   assert.equal(s.runs, 2);
   assert.deepEqual(s.byKind, { review: 1, adversarial: 1 });
-  assert.equal(s.percent, 7.5);
+  assert.equal(s.percent, 5.5);
   assert.equal(s.ms, 1500);
+});
+
+test('summarizeLedger counts the union of overlapping quota intervals once: 10->12 and 10->13 is 3, not 5', () => {
+  const at = (before, after, reset = 111) => ({ limitsBefore: { usedPercent: before, resetsAt: reset }, limitsAfter: { usedPercent: after, resetsAt: reset } });
+  assert.equal(summarizeLedger([run(at(10, 12)), run(at(10, 13))]).percent, 3);
+  // Nested, chained and disjoint intervals: [10,20] swallows [12,14]; [18,25] chains on; [30,31] is apart.
+  assert.equal(summarizeLedger([run(at(10, 20)), run(at(12, 14)), run(at(18, 25)), run(at(30, 31))]).percent, 16);
+  // Another window (a different resetsAt) is summed separately, so equal intervals there do not merge.
+  assert.equal(summarizeLedger([run(at(10, 12)), run(at(10, 12, 999_999))]).percent, 4);
+  // A one-second drift of resetsAt inside one window does not split it.
+  assert.equal(summarizeLedger([run(at(10, 12, 1793382102)), run({ limitsBefore: { usedPercent: 11, resetsAt: 1793382103 }, limitsAfter: { usedPercent: 13, resetsAt: 1793382103 } })]).percent, 3);
+  assert.equal(summarizeLedger([run({ limitsBefore: { usedPercent: 10, resetsAt: 1793382102 }, limitsAfter: { usedPercent: 12, resetsAt: 1793382103 } })]).percent, 2);
+});
+
+test('summarizeLedger keeps reserved and unavailable rows out of runs and counts them as notRun', () => {
+  const s = summarizeLedger([run(), run({ outcome: 'ok' }), run({ outcome: 'failed' }), run({ outcome: 'reserved', limitsAfter: undefined }), run({ outcome: 'unavailable', ms: 9999 })]);
+  assert.equal(s.runs, 3);
+  assert.equal(s.notRun, 2);
+  assert.equal(s.ms, 3000);
+  assert.deepEqual(s.byKind, { review: 3 });
+  assert.equal(summarizeLedger([run()]).notRun, 0);
 });
 
 test('summarizeLedger does not count a delta across a reset (different resetsAt) or a negative delta', () => {
@@ -243,6 +269,10 @@ test('parseArgs splits the session list, reads every option and rejects unknown 
   assert.equal(a.ledger, 'l.jsonl');
   assert.equal(a.cwdMatch, 'app');
   assert.equal(a.json, true);
+  assert.equal(a.line, false);
+  assert.equal(parseArgs(['--session', 'a', '--line']).line, true);
+  assert.throws(() => parseArgs(['--session', 'a', '--line', '--json']), /cannot be combined/);
+  assert.deepEqual(parseArgs(['--session', 'a,b,a']).session, ['a', 'b']);
   assert.throws(() => parseArgs(['--session', 'a', '--nope']), /unknown option --nope/);
   assert.throws(() => parseArgs(['--session', 'a', 'stray']), /unknown option stray/);
 });
@@ -261,6 +291,29 @@ test('summaryLine has the log-cell format, and says "no ledger" without one', ()
   const claude = { total: 12.345, claudePercent: 0.6 };
   assert.equal(summaryLine(claude, { percent: 1.5, runs: 3 }), 'Cost $12.35 · Claude 0.6% · Codex 1.5% (3 runs)');
   assert.equal(summaryLine(claude, null), 'Cost $12.35 · Claude 0.6% · Codex no ledger');
+  assert.equal(summaryLine(claude, { percent: 1.5, runs: 3, notRun: 0 }), 'Cost $12.35 · Claude 0.6% · Codex 1.5% (3 runs)');
+  assert.equal(summaryLine(claude, { percent: 1.5, runs: 3, notRun: 2 }), 'Cost $12.35 · Claude 0.6% · Codex 1.5% (3 runs, 2 not run)');
+});
+
+test('a model id outside PRICED_IDS is priced at its family rate and named; a listed id (or one with a date suffix) is not', () => {
+  assert.ok(PRICED_IDS.includes('claude-opus-5-5'));
+  assert.equal(isPricedId('claude-opus-5-5'), true);
+  assert.equal(isPricedId('claude-opus-5-5-20261001'), true);
+  assert.equal(isPricedId('claude-opus-5-5[1m]'), true);
+  assert.equal(isPricedId('claude-opus-4-1'), false);
+  assert.equal(isPricedId(undefined), false);
+  const u = { output_tokens: M };
+  const rows = parseTranscript(
+    [turn({ id: 'a', usage: u }), turn({ id: 'b', model: 'claude-opus-4-1', usage: u }), turn({ id: 'c', model: 'claude-sonnet-4-5', usage: u }), turn({ id: 'd', model: 'mystery-1', usage: u })].join('\n'),
+  );
+  const s = summarizeClaude(rows);
+  near(s.byFamily.opus, 2 * PRICE.opus[1]); // the older opus is priced at the opus rate, not left out
+  assert.deepEqual(s.familyRated, ['claude-opus-4-1', 'claude-sonnet-4-5']); // 'other' is unpriced, not family-rated
+  assert.equal(s.unpricedTurns, 1);
+  const text = formatReport(s, null);
+  assert.match(text, /^  priced at family rates: claude-opus-4-1, claude-sonnet-4-5$/m);
+  assert.doesNotMatch(summaryLine(s, null), /family/);
+  assert.doesNotMatch(formatReport(summarizeClaude(parseTranscript(turn({ usage: u }))), null), /family rates/);
 });
 
 test('formatReport carries the split, the model mix, the subagent mix and the no-ledger line', () => {
@@ -272,6 +325,9 @@ test('formatReport carries the split, the model mix, the subagent mix and the no
   assert.match(text, /subagents 1: implementer 1/);
   assert.match(text, /^Codex: no ledger$/m);
   assert.match(text, /not a bill/);
+  const withCodex = formatReport(summarizeClaude(rows), summarizeLedger([run(), run({ outcome: 'reserved' })]));
+  assert.match(withCodex, /^Codex: 1 runs \(review 1\) · 1 not run \(reserved or unavailable\) · 2% of quota/m);
+  assert.match(withCodex, /^  the % is account-wide: it includes any other work on the same Codex account during the window$/m);
 });
 
 /** A synthetic projects dir: one session with a subagent, a ledger, nothing from the real HOME. */
@@ -311,4 +367,65 @@ test('the wrapper exits 2 on a missing session and on a bad flag, and writes not
   assert.match(bad.stderr, /session nope not found/);
   assert.equal(cli(root, ['--bogus']).status, 2);
   assert.deepEqual(fs.readdirSync(root).sort(), ['ledger.jsonl', 'projects']);
+});
+
+/** A real git repo with one commit; returns its root. */
+function gitRepo() {
+  const root = tmpDir('unit-cost-git-');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_') && !['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'].includes(k)) delete env[k];
+  const git = (...a) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd: root, env, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(root, 'f.txt'), 'x\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  return { root, git };
+}
+
+test('from a linked worktree the wrapper reads the main checkout\'s ledger, the one codex-run.mjs writes', () => {
+  const { root, git } = gitRepo();
+  const wt = path.join(root, '.worktrees', 'wt1');
+  git('worktree', 'add', '-q', '-b', 'wt1', wt);
+  fs.mkdirSync(path.join(root, '.codex-runs'));
+  fs.writeFileSync(path.join(root, '.codex-runs', 'ledger.jsonl'), `${JSON.stringify(run())}\n`);
+  const sessions = fixture();
+  const args = ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'];
+  const fromWorktree = cli(sessions, args, wt);
+  assert.equal(fromWorktree.status, 0, fromWorktree.stderr);
+  assert.match(fromWorktree.stdout, /Codex 2% \(1 runs\)\n$/);
+  assert.match(cli(sessions, args, root).stdout, /Codex 2% \(1 runs\)\n$/);
+  // Outside any repository (and with no ledger there) it says so instead of failing.
+  assert.match(cli(sessions, args, sessions).stdout, /Codex no ledger\n$/);
+});
+
+test('--line prints exactly the summary line, one line, with the not-run count only when there are not-run rows', () => {
+  const root = fixture();
+  const base = ['--session', 'sess1', '--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'ledger.jsonl')];
+  const r = cli(root, [...base, '--line']);
+  assert.equal(r.status, 0, r.stderr);
+  const total = PRICE.opus[1] + PRICE.sonnet[1];
+  assert.equal(r.stdout, `Cost $${total.toFixed(2)} · Claude ${Math.round((total / DOLLARS_PER_PERCENT) * 10) / 10}% · Codex 2% (1 runs)\n`);
+  fs.appendFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run({ outcome: 'reserved' }))}\n`);
+  assert.match(cli(root, [...base, '--line']).stdout, /Codex 2% \(1 runs, 1 not run\)\n$/);
+  assert.equal(cli(root, [...base, '--line', '--json']).status, 2);
+});
+
+test('--session takes a comma-separated list: every session counts, in whichever project dir it lives', () => {
+  const root = fixture();
+  const other = path.join(root, 'projects', '-p-other');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, 'sess2.jsonl'), `${turn({ id: 'z', usage: { output_tokens: M } })}\n`);
+  const base = ['--projects-dir', path.join(root, 'projects'), '--json'];
+  const one = JSON.parse(cli(root, ['--session', 'sess1', ...base]).stdout);
+  const both = JSON.parse(cli(root, ['--session', 'sess1,sess2', ...base]).stdout);
+  assert.equal(both.claude.turns, one.claude.turns + 1);
+  near(both.claude.total, one.claude.total + PRICE.opus[1]);
+  // The same id twice, or a session listed again, does not double a turn.
+  assert.equal(JSON.parse(cli(root, ['--session', 'sess1,sess2,sess1', ...base]).stdout).claude.turns, both.claude.turns);
+  const missing = cli(root, ['--session', 'sess1,nope', ...base]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /session nope not found/);
 });

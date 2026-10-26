@@ -106,7 +106,8 @@ mutantFails('showing a range below the history threshold', 'export const MIN_ROW
 mutantFails('reading the tier from the wrong part of the combined cell', "parts.length > 1 ? parts.at(-1) : ''", "''");
 mutantFails('ignoring the Type cell in the cohort filter', 'cohort.test(r.unit) || cohort.test(r.type)', 'cohort.test(r.unit)');
 mutantFails('reading hours as 6 minutes each', 'n * 60 +', 'n * 6 +');
-mutantFails('not scaling the per-slice range', '(r[key] / r.slices) * slices', 'r[key]');
+mutantFails('counting each deliverable row as its own sample', 'if (!byId.has(r.id)) byId.set(r.id, []);\n    byId.get(r.id).push(r);', 'byId.set(`${byId.size}`, [r]);');
+mutantFails('reading only the first term of an owner wait', 'return wait === null ? parseDuration(cell) : wait.ms / 60_000;', 'return parseDuration(cell);');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
 
 test('CLI smoke: a log file gives the Gate 1 line, and a thin cohort says no history', () => {
@@ -118,7 +119,7 @@ test('CLI smoke: a log file gives the Gate 1 line, and a thin cohort says no his
   const res = runCli(SCRIPTS, ['--log', log, '--tier', 'full'], dir, cleanup);
   assert.strictEqual(res.status, 0, res.stderr);
   assert.ok(
-    res.stdout.startsWith("Estimate (full, n=4): work 1h45m–3h15m · owner wait 30m–30m · Claude 1.8–3.3% · Codex 1–1% — a range from this project's log, not a promise\n"),
+    res.stdout.startsWith("Estimate per unit (full, n=4 units): work 1h45m–3h15m · owner wait 30m–30m · Claude 1.8–3.3% · Codex 1–1% — a range from this project's log, not a promise\n"),
     res.stdout,
   );
   const thin = runCli(SCRIPTS, ['--log', log, '--tier', 'full', '--cohort', '^EP-[01]$', '--json'], dir, cleanup);

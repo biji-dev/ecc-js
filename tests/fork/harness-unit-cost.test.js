@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'unit-cost-core.mjs');
 const CLI_REL = 'unit-cost.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 23;
+const EXPECTED_TESTS = 29;
 
 let passed = 0;
 let failed = 0;
@@ -72,17 +72,17 @@ function runCli(scriptsDir, args, cwd, cleanup) {
 
 const cleanup = [];
 
-/** Copy the shipped scripts, apply a one-line mutation to the core, and assert the suite fails. */
-function mutantFails(name, needle, replacement) {
+/** Copy the shipped scripts, apply a one-line mutation to the core (or `fileRel`), and assert the suite fails. */
+function mutantFails(name, needle, replacement, fileRel = CORE_REL) {
   test(`mutant: ${name} makes the suite fail`, () => {
     const copy = tmp('unit-cost-mutant-');
     cleanup.push(copy);
     fs.cpSync(SCRIPTS, copy, { recursive: true });
-    const corePath = path.join(copy, CORE_REL);
-    const before = fs.readFileSync(corePath, 'utf8');
+    const filePath = path.join(copy, fileRel);
+    const before = fs.readFileSync(filePath, 'utf8');
     const mutated = before.replace(needle, replacement);
     assert.notStrictEqual(mutated, before, 'the mutation did not apply');
-    fs.writeFileSync(corePath, mutated);
+    fs.writeFileSync(filePath, mutated);
     const res = runSuite(copy, cleanup);
     const out = res.stdout + res.stderr;
     assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
@@ -107,8 +107,13 @@ mutantFails('counting a repeated (message.id, requestId) twice', 'if (seen.has(r
 mutantFails('counting synthetic turns', "if (msg.model === '<synthetic>') continue;", '');
 mutantFails('ignoring the upper bound of the window', 'return (lo === null || ts >= lo) && (hi === null || ts <= hi);', 'return lo === null || ts >= lo;');
 mutantFails('attributing subagent dollars to the main thread', 'out[r.kind] += r.cost;', 'out.main += r.cost;');
-mutantFails('counting a quota delta across a reset', 'b.resetsAt === a.resetsAt', 'true');
-mutantFails('counting a negative quota delta', 'Math.max(0, a.usedPercent - b.usedPercent)', 'a.usedPercent - b.usedPercent');
+mutantFails('counting a quota delta across a reset', 'Math.abs(b.resetsAt - a.resetsAt) <= SAME_WINDOW_S', 'true');
+mutantFails('counting a negative quota delta', 'if (i.hi <= i.lo) continue;', '');
+mutantFails('counting overlapping quota intervals twice', 'if (l <= hi) hi = Math.max(hi, h);', 'if (false) hi = Math.max(hi, h);');
+mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {", 'if (false) {');
+mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", CLI_REL);
+mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
+mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
@@ -147,6 +152,20 @@ test('CLI smoke: a synthetic session prices main plus subagent, dedupes, and rea
   assert.strictEqual(out.summary, 'Cost $30.00 · Claude 1.5% · Codex 2% (1 runs)');
   const text = runCli(SCRIPTS, ['--session', 's1', '--projects-dir', projects], root, cleanup);
   assert.ok(text.stdout.startsWith('Cost $30.00 · Claude 1.5% · Codex no ledger\n'), text.stdout);
+});
+
+test('CLI smoke: --line prints one summary line, and a session list sums its sessions', () => {
+  const root = fixture();
+  const projects = path.join(root, 'projects');
+  const other = path.join(projects, '-p-other');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(
+    path.join(other, 's2.jsonl'),
+    `${JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T01:00:00Z', requestId: 'req-z', message: { id: 'z', model: 'claude-opus-5-5', usage: { output_tokens: 1_000_000 } } })}\n`,
+  );
+  const res = runCli(SCRIPTS, ['--session', 's1,s2', '--projects-dir', projects, '--ledger', path.join(root, 'ledger.jsonl'), '--line'], root, cleanup);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(res.stdout, 'Cost $50.00 · Claude 2.5% · Codex 2% (1 runs)\n');
 });
 
 test('CLI smoke: a missing session and an unknown flag exit 2 with usage', () => {

@@ -8,16 +8,17 @@
  * threshold. Gate 1 quotes the line as-is.
  *
  *   node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>]
- *     [--slices <n>] [--json]
+ *     [--json]
  *
  * options:
  *   --log <file>      the harness log (a markdown table; `\|` is a literal pipe inside a cell)
  *   --tier <t>        only rows of this tier (read from the Tier column, or the last part of
  *                     the `Unit · Mode · Type · Tier` cell)
  *   --cohort <re>     only rows whose Unit or Type cell matches this regular expression (case-insensitive)
- *   --slices <n>      also print the per-slice range scaled to n slices (rows that name their slice
- *                     count in a Slices column or a "<n> slices" Scope cell)
- *   --json            print { tier, rows, metrics, perSlice, line } instead
+ *   --json            print { tier, rows, metrics, line } instead (`rows` counts units)
+ *
+ * One sample per UNIT: rows are grouped by the unit id (the first cell, before ` · `) and a unit's
+ * deliverable rows are summed, so a unit with three deliverables is one sample, not three.
  *
  * exit: 0 ok | 2 usage (bad flag, unreadable log, no usable table).
  *
@@ -27,7 +28,7 @@ import fs from 'node:fs';
 import { estimate, formatLine, formatReport, parseArgs, parseLog } from './lib/estimate-core.mjs';
 
 const USAGE =
-  'usage: node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>] [--slices <n>] [--json]';
+  'usage: node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>] [--json]';
 
 function usage(msg) {
   process.stderr.write(`estimate: ${msg}\n${USAGE}\n`);
@@ -47,7 +48,7 @@ function main() {
     }
     const records = parseLog(text);
     if (records.length === 0) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${args.log}`);
-    est = estimate(records, { tier: args.tier, cohort: args.cohort, slices: args.slices });
+    est = estimate(records, { tier: args.tier, cohort: args.cohort });
   } catch (e) {
     return usage(e.message);
   }

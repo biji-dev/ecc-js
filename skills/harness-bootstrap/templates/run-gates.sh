@@ -25,30 +25,49 @@
 #   | FAIL <name> <secs>s <logpath> (no count line matched) | SKIP <name> (full only)
 #   SUMMARY <p> passed, <f> failed, <s> skipped (<full|scoped>)
 #   A FAIL in under RUN_GATES_INSTANT_SECS seconds (default 10) ends with
-#   " (instant: check the command/env before re-running)": it is usually the command or
-#   the environment, not the code, so look there before running again.
+#   " (instant: if the log shows no real failure, check the command/env before re-running)":
+#   a gate that dies at once is often the command or the environment, not the code (a
+#   genuine fast failure gets the note too, so read the log first).
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
 #   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
 #   the real index is never touched. A run with every gate PASS is recorded under that tree,
-#   the mode (full or scoped:<since-sha>) and the bound gate list. The next run for the same
-#   tree, mode and gates prints, instead of running anything:
+#   the mode (full or scoped:<since-sha>), the bound gate list and the KEY_EXTRA output. The
+#   next run for the same tree, mode, gates and extra prints, instead of running anything:
 #     REUSED <tree> <time of the original run>
 #     <the original result lines and SUMMARY line>            (exit 0)
-#   A tree that differs from a recorded one only in docs paths (RUN_GATES_DOCS_ONLY, an
-#   extended regex, default '\.md$|^docs/') reuses the newest such record with the first
-#   line "REUSED <tree> docs-only change since <time of the original run>". A FAIL is never
-#   recorded. Not a reusable state (no commit yet, no git index to hash): runs normally.
+#   A run is recorded only if the tree is still the same after the gates ran; otherwise it
+#   prints "NOT CACHED tree changed during the run" on stderr (a gate that writes files into
+#   the tree, or an edit made meanwhile: the result may describe neither tree). A FAIL is
+#   never recorded. Not a reusable state (no commit yet, no git index to hash): runs normally.
+#   [B] Docs-only reuse is OFF unless the DOCS_ONLY pattern (an extended regex; env
+#   RUN_GATES_DOCS_ONLY overrides, empty = off) is set: a tree that differs from a recorded
+#   one only in matching paths then reuses the newest such record with the first line
+#   "REUSED <tree> docs-only change since <time of the original run>". Bind it only when no
+#   gate reads the matched paths: a gate that reads .md files (a docs linter, an agent-doc
+#   check, a grep over README.md) would be answered by a stale PASS.
+#   [B] The key covers tracked, staged, unstaged and untracked-not-ignored files; ignored
+#   inputs (node_modules, .env, build output) and refs are NOT in it unless KEY_EXTRA names
+#   them. KEY_EXTRA is a shell command whose stdout is hashed into the key (env
+#   RUN_GATES_KEY_EXTRA overrides, empty = nothing), e.g.
+#     KEY_EXTRA='cat pnpm-lock.yaml node_modules/.modules.yaml 2>/dev/null; git rev-parse origin/main'
+#   Worktrees of one repository share the cache (same tree, same result), so a worktree
+#   whose ignored inputs differ needs KEY_EXTRA to name them. Keep the cache dir out of any
+#   writer's reach (a sandboxed Codex run must not be able to write a PASS record): the
+#   default is under the git common dir, outside the working tree.
 # Lock: one run per worktree and mode at a time. A second run prints "WAITING for run <pid>"
 #   on stderr, polls every RUN_GATES_LOCK_POLL seconds (default 5) for up to
-#   RUN_GATES_LOCK_WAIT seconds (default 1800), then looks at the cache again before it
-#   runs (the other run's result is usually a hit). A lock whose pid is dead is taken over;
+#   RUN_GATES_LOCK_WAIT seconds (default 1800), then works out the changed files, the mode
+#   (scoped or promoted to full), the cache variant and the tree again and looks at the
+#   cache before it runs (the other run's result is usually a hit). A lock whose pid is dead
+#   is taken over (only while it still names that pid); a lock is removed only by its owner;
 #   after the wait limit the run goes ahead without the lock.
 # Exit status = number of FAIL lines (capped at 98); 99 = usage error (including no gates bound).
 # Env: RUN_GATES_LOG_DIR overrides the log dir. Each gate sees RUN_GATES_MODE=full|scoped,
 #      RUN_GATES_SINCE=<ref or empty>, RUN_GATES_CHANGED_FILE=<changed-file list, scoped only>.
 #      RUN_GATES_CACHE_DIR overrides the cache dir (default: run-gates-cache inside the git
 #      common dir, which worktrees of one repository share). RUN_GATES_NO_CACHE,
-#      RUN_GATES_DOCS_ONLY, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL, RUN_GATES_INSTANT_SECS: above.
+#      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
+#      RUN_GATES_INSTANT_SECS: above.
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "run-gates: needs bash (it uses arrays); run it as: bash scripts/run-gates.sh" >&2
@@ -109,6 +128,10 @@ gate_counted() {
 
 # [B] extended regex for the paths a scoped run may cover; a change outside it runs FULL.
 SCOPED_PATHS='^(src|apps|packages|lib|docs|tests?)/|\.md$'
+# [B] docs-only reuse: extended regex of paths no gate reads; empty = off (see Reuse above).
+DOCS_ONLY=''
+# [B] extra cache-key input: a shell command whose stdout joins the key; empty = nothing.
+KEY_EXTRA=''
 
 SINCE=""
 LIST=0
@@ -169,8 +192,8 @@ LOCK_WAIT=$(num_or "${RUN_GATES_LOCK_WAIT:-}" 1800)
 LOCK_POLL=$(num_or "${RUN_GATES_LOCK_POLL:-}" 5)
 [ "$LOCK_POLL" -ge 1 ] || LOCK_POLL=1
 INSTANT_SECS=$(num_or "${RUN_GATES_INSTANT_SECS:-}" 10)
-DOCS_RX="${RUN_GATES_DOCS_ONLY:-}"
-[ -n "$DOCS_RX" ] || DOCS_RX='\.md$|^docs/'
+DOCS_RX="${RUN_GATES_DOCS_ONLY-$DOCS_ONLY}"
+KEY_EXTRA_CMD="${RUN_GATES_KEY_EXTRA-$KEY_EXTRA}"
 
 # Reads paths on stdin; drops blanks, .review-work/ and the log dir by LITERAL prefix
 # (never a regex built from a path).
@@ -189,20 +212,23 @@ filter_changed() {
   done
 }
 
-# Changed files are computed before the log dir is created, minus anything under the
-# log dirs themselves, so a run's own logs never count as a change.
-MODE=full
-CHANGED=""
-NOTE=""
 SCOPED_REQ=0
-if [ -n "$SINCE" ]; then
+[ -n "$SINCE" ] && SCOPED_REQ=1
+# Sets MODE, CHANGED and NOTE. The changed files are computed before the log dir is created,
+# minus anything under the log dirs themselves, so a run's own logs never count as a change.
+# Called again after a lock wait: the tree may have changed meanwhile.
+compute_scope() {
+  local diff_out untracked_out outside
+  MODE=full
+  CHANGED=""
+  NOTE=""
+  [ "$SCOPED_REQ" -eq 1 ] || return 0
   MODE=scoped
-  SCOPED_REQ=1
-  DIFF_OUT=$(git -c core.quotePath=false diff --name-only --no-renames "$SINCE" --) ||
+  diff_out=$(git -c core.quotePath=false diff --name-only --no-renames "$SINCE" --) ||
     usage "git diff against $SINCE failed; cannot list the changed files"
-  UNTRACKED_OUT=$(git -c core.quotePath=false ls-files --others --exclude-standard) ||
+  untracked_out=$(git -c core.quotePath=false ls-files --others --exclude-standard) ||
     usage "git ls-files failed; cannot list the untracked files"
-  CHANGED=$(printf '%s\n%s\n' "$DIFF_OUT" "$UNTRACKED_OUT" | filter_changed | sort -u)
+  CHANGED=$(printf '%s\n%s\n' "$diff_out" "$untracked_out" | filter_changed | sort -u)
   if [ -z "$CHANGED" ]; then
     NOTE="SCOPED: nothing changed since $SINCE"
   else
@@ -212,7 +238,8 @@ if [ -n "$SINCE" ]; then
       MODE=full
     fi
   fi
-fi
+}
+compute_scope
 
 # -- result cache and single-flight lock ----------------------------------------
 
@@ -231,13 +258,27 @@ LOCK_WAITED=0
 release_lock() {
   if [ "$LOCK_OWNED" -eq 1 ] && [ -n "$LOCK_DIR" ]; then
     LOCK_OWNED=0
-    rm -rf "${LOCK_DIR:?}" 2>/dev/null
+    # Only our own lock: a taker-over may have replaced it.
+    if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then rm -rf "${LOCK_DIR:?}" 2>/dev/null; fi
   fi
   return 0
 }
 trap release_lock EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# Sets MODE_ID, VARIANT and REC_DIR: the mode, the bound gates and the KEY_EXTRA output decide
+# which records can answer this run. Called again after a lock wait (the mode may have changed).
+compute_variant() {
+  local extra=""
+  MODE_ID=full
+  if [ "$MODE" = scoped ]; then
+    MODE_ID="scoped:$(git rev-parse --verify --quiet "$SINCE^{commit}")"
+  fi
+  if [ -n "$KEY_EXTRA_CMD" ]; then extra=$(bash -c "$KEY_EXTRA_CMD" 2>/dev/null </dev/null); fi
+  VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")")
+  REC_DIR="$CACHE_DIR/records/$VARIANT"
+}
 
 CACHE_ON=0
 CACHE_DIR="${RUN_GATES_CACHE_DIR:-}"
@@ -247,24 +288,21 @@ if [ -z "$CACHE_DIR" ]; then
 fi
 KEY=""
 REC_DIR=""
+VARIANT=""
+MODE_ID=full
+GATES_SIG=""
 KEY_EXCLUDES=(.review-work)
 if [ -n "$CACHE_DIR" ] && git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
   case "$CACHE_DIR" in /*) ;; *) CACHE_DIR="$TOP/$CACHE_DIR" ;; esac
-  GATES_SIG=""
   i=0
   while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
     GATES_SIG="$GATES_SIG${GATE_NAMES[$i]}"$'\037'"${GATE_MODES[$i]}"$'\037'"${GATE_CMDS[$i]}"$'\037'"${GATE_RXS[$i]}"$'\n'
     i=$((i + 1))
   done
-  MODE_ID=full
-  if [ "$MODE" = scoped ]; then
-    MODE_ID="scoped:$(git rev-parse --verify --quiet "$SINCE^{commit}")"
-  fi
-  VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")")
+  compute_variant
   TOP_H=$(hash_str "$TOP")
   MODE_H=$(hash_str "$MODE_ID")
   if [ -n "$VARIANT" ] && [ -n "$TOP_H" ] && [ -n "$MODE_H" ]; then
-    REC_DIR="$CACHE_DIR/records/$VARIANT"
     LOCK_DIR="$CACHE_DIR/locks/${TOP_H:0:16}-${MODE_H:0:16}"
     mkdir -p "$CACHE_DIR/records" "$CACHE_DIR/locks" 2>/dev/null && CACHE_ON=1
   fi
@@ -303,6 +341,14 @@ compute_key() {
   [ -n "$KEY" ]
 }
 
+# Everything a lock wait can invalidate, worked out again: scope, variant, tree. 1 = no key.
+refresh_state() {
+  compute_scope
+  compute_variant
+  [ -n "$VARIANT" ] || return 1
+  compute_key
+}
+
 # $1 = record file, $2 = tree it was recorded for, $3 = label ("" or "docs-only change since ").
 print_reused() {
   echo "REUSED $2 $3$(head -n 1 "$1")"
@@ -319,9 +365,12 @@ try_reuse() {
     print_reused "$rec" "$KEY" ""
     return 0
   fi
-  # shellcheck disable=SC2012 # record names are 40 hex chars
+  [ -n "$DOCS_RX" ] || return 1
+  # shellcheck disable=SC2012 # record names are 40-64 hex chars
   for t in $(ls -t "$REC_DIR" 2>/dev/null | head -n 30); do
-    [ "${#t}" -ge 40 ] && [ "$t" != "$KEY" ] || continue
+    # A record name goes to git unquoted below: only a tree id (lowercase hex) may.
+    case "$t" in *[!0-9a-f]*) continue ;; esac
+    [ "${#t}" -ge 40 ] && [ "${#t}" -le 64 ] && [ "$t" != "$KEY" ] || continue
     rec="$REC_DIR/$t"
     grep -Eq '^SUMMARY [0-9]+ passed, 0 failed' "$rec" 2>/dev/null || continue
     diff=$(git diff-tree -r --name-only "$t" "$KEY" 2>/dev/null) || continue
@@ -338,7 +387,7 @@ try_reuse() {
 # mkdir lock holding our pid. Sets LOCK_WAITED=1 when another live run held it. Returns 1 when
 # no lock could be taken (wait limit reached or the cache dir is unwritable): the run goes on.
 acquire_lock() {
-  local holder waited=0 takeovers=0
+  local holder waited=0 takeovers=0 retries=0
   LOCK_WAITED=0
   while :; do
     if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -346,7 +395,12 @@ acquire_lock() {
       LOCK_OWNED=1
       return 0
     fi
-    [ -d "$LOCK_DIR" ] || return 1
+    if [ ! -d "$LOCK_DIR" ]; then
+      # Released between the failed mkdir and here (or the cache dir is unwritable): retry.
+      retries=$((retries + 1))
+      [ "$retries" -le 5 ] || return 1
+      continue
+    fi
     holder=$(cat "$LOCK_DIR/pid" 2>/dev/null)
     if [ -z "$holder" ]; then
       sleep 1 # the owner may not have written its pid yet
@@ -358,7 +412,11 @@ acquire_lock() {
     if [ -z "$holder" ] || ! kill -0 "$holder" 2>/dev/null; then
       takeovers=$((takeovers + 1))
       [ "$takeovers" -le 5 ] || return 1
-      mv "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null && rm -rf "${LOCK_DIR:?}.stale.$$"
+      # Another waiter may have taken over first and written its own pid: only move a lock
+      # that still names the stale pid we saw.
+      if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$holder" ]; then
+        mv "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null && rm -rf "${LOCK_DIR:?}.stale.$$"
+      fi
       continue
     fi
     if [ "$LOCK_WAITED" -eq 0 ]; then
@@ -379,9 +437,10 @@ if [ "$CACHE_ON" -eq 1 ]; then
     if [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
     acquire_lock || true
     if [ "$LOCK_WAITED" -eq 1 ]; then
-      # The other run took its time; the tree may have changed and its result may be a hit.
-      compute_key || true
-      if [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
+      # The other run took its time: the changed files, the mode, the variant and the tree may
+      # all differ now, and its result may be a hit.
+      refresh_state || CACHE_ON=0
+      if [ "$CACHE_ON" -eq 1 ] && [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
     fi
   else
     CACHE_ON=0
@@ -430,7 +489,7 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
     passed=$((passed + 1))
   else
     instant=""
-    if [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: check the command/env before re-running)"; fi
+    if [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
     emit "FAIL $name ${secs}s $logfile ($why)$instant"
     failed=$((failed + 1))
   fi
@@ -438,11 +497,23 @@ done
 
 emit "SUMMARY $passed passed, $failed failed, $skipped skipped ($MODE)"
 
-# Only an all-PASS run is recorded, under the tree it started from; a FAIL is never cached.
+# Only an all-PASS run is recorded, under the tree it started from and only if the tree (and
+# the KEY_EXTRA output) is still the same now; a FAIL is never cached.
+RECORD=0
 if [ "$failed" -eq 0 ] && [ "$CACHE_ON" -eq 1 ] && [ -n "$KEY" ]; then
+  START_KEY=$KEY
+  START_VARIANT=$VARIANT
+  compute_variant
+  if ! compute_key || [ "$KEY" != "$START_KEY" ] || [ "$VARIANT" != "$START_VARIANT" ]; then
+    echo "run-gates: NOT CACHED tree changed during the run" >&2
+  else
+    RECORD=1
+  fi
+fi
+if [ "$RECORD" -eq 1 ]; then
   if mkdir -p "$REC_DIR" 2>/dev/null &&
     { iso_now && printf '%s' "$RESULT"; } >"$REC_DIR/.tmp.$$" 2>/dev/null &&
-    mv -f "$REC_DIR/.tmp.$$" "$REC_DIR/$KEY" 2>/dev/null; then
+    mv -f "$REC_DIR/.tmp.$$" "$REC_DIR/$START_KEY" 2>/dev/null; then
     # Keep the 50 newest records per variant.
     # shellcheck disable=SC2012
     ls -t "$REC_DIR" 2>/dev/null | tail -n +51 | while IFS= read -r old; do rm -f "${REC_DIR:?}/${old:?}"; done

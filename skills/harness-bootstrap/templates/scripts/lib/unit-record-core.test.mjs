@@ -102,6 +102,7 @@ test('parseState reads the header, the ledger and the findings', () => {
     branch: 'ep-27.04-foo',
     base: '1a2b3c4',
     claimed: '2026-10-24T03:10:00Z',
+    deliverableStarted: '',
     ownerWait: '1h20m',
   });
   assert.deepEqual(s.ledger, [{ step: '8 review — code-reviewer', status: 'ran', evidence: '3 findings' }]);
@@ -187,6 +188,7 @@ test('parseState reads a two-column header table as key/value rows, any column n
     branch: 'ep-27.04-role-switcher',
     base: '438801c',
     claimed: '2026-10-24T00:55:49Z',
+    deliverableStarted: '',
     ownerWait: 'Gate 1 asked | answered',
   });
   assert.equal(parseState(TABLE_STATE).ledger.length, 1);
@@ -740,4 +742,54 @@ test('the wrapper is read-only: the repository is byte-identical after a run', (
   const res = run(f, ['--state', f.stateFile, '--gates', f.gates]);
   assert.equal(res.status, 0, res.stderr);
   assert.deepEqual(snapshot(), before);
+});
+
+test('a multi-line --cost stays one table cell: CR/LF runs become a single space and the row keeps its 14 cells', () => {
+  const state = parseState('Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\nOwner wait: 20m\n');
+  const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW, cost: 'Cost $1.00 · Claude 0.1%\n\nClaude: $1.00\r\n  by model: opus | x\n' });
+  const rowLines = rec.split('\n').filter((l) => l.startsWith('| U-1 '));
+  assert.equal(rowLines.length, 1);
+  const cells = splitRow(rowLines[0]);
+  assert.equal(cells.length, 14);
+  assert.equal(cells[10], 'Cost $1.00 · Claude 0.1% Claude: $1.00   by model: opus | x');
+  // The same goes for a unit id or a ledger cell that carries a newline.
+  assert.equal(buildRecord({ state: parseState('Unit: A\n'), commits: [], diffstat: '', gatesSummary: null, now: NOW, cost: 'a\nb' }).split('\n').filter((l) => l.startsWith('| A ')).length, 1);
+});
+
+test('Deliverable started: opens the row\'s Elapsed, wall and owner-wait window; without it the window opens at Claimed', () => {
+  const d = '2026-10-24';
+  // Claimed 03:10, now 06:22. Deliverable 2 started 05:00: wall 1h22m. Pairs: 03:30-04:00 is before it
+  // (left out), 04:50-05:20 spans it (only 05:00-05:20 = 20m counts), 05:40-05:50 is after (10m).
+  const wait = `asked ${d}T03:30:00Z → answered ${d}T04:00:00Z; asked ${d}T04:50:00Z → answered ${d}T05:20:00Z; asked ${d}T05:40:00Z → answered ${d}T05:50:00Z`;
+  const head = 'Unit: U-1\nDeliverable: docs/b.md\nClaimed: 2026-10-24T03:10:00Z\n';
+  const rec = (extra) => buildRecord({ state: parseState(`${head}${extra}Owner wait: ${wait}\n`), commits: [], diffstat: '', gatesSummary: null, now: NOW });
+  const cellsOf = (r) => splitRow(r.split('\n').find((l) => l.startsWith('| U-1 ')));
+  const second = rec(`Deliverable started: ${d}T05:00:00Z\n`);
+  assert.match(second, /^- Elapsed: 52m work · 1h22m wall · owner wait 30m$/m);
+  assert.deepEqual(cellsOf(second).slice(1, 4), ['docs/b.md', '52m', '30m']);
+  // The first deliverable (no Deliverable started) is measured from Claimed, with every pair.
+  const first = rec('');
+  assert.match(first, /^- Elapsed: 2h02m work · 3h12m wall · owner wait 1h10m$/m);
+  assert.deepEqual(cellsOf(first).slice(2, 4), ['2h02m', '1h10m']);
+  // A deliverable start with no Claimed line still gives a window; an unreadable one is wall-unknown, never Claimed.
+  const noClaim = buildRecord({ state: parseState(`Unit: U-1\nDeliverable started: ${d}T05:00:00Z\nOwner wait: 22m\n`), commits: [], diffstat: '', gatesSummary: null, now: NOW });
+  assert.match(noClaim, /^- Elapsed: 1h00m work · 1h22m wall · owner wait 22m$/m);
+  const bad = rec('Deliverable started: soon\n');
+  assert.match(bad, /^- Elapsed: unknown wall · owner wait 1h10m — work time unknown$/m);
+  // The key is read like the others: case, spaces and hyphens ignored; a table row works too.
+  assert.equal(parseState('Deliverable-started: 2026-10-24T05:00:00Z\n').header.deliverableStarted, '2026-10-24T05:00:00Z');
+  assert.equal(parseState('| K | V |\n|-|-|\n| deliverable started | 2026-10-24T05:00:00Z |\n').header.deliverableStarted, '2026-10-24T05:00:00Z');
+  assert.equal(parseState('Deliverable: docs/b.md\n').header.deliverableStarted, '');
+});
+
+test('parseOwnerWait with a since time clips pairs to it: before is dropped, spanning starts there, an open pair counts from there', () => {
+  const d = '2026-10-24';
+  const since = `${d}T05:00:00Z`;
+  assert.equal(parseOwnerWait(`${d}T03:00:00Z → ${d}T04:00:00Z`, NOW, since).ms, 0);
+  assert.equal(parseOwnerWait(`${d}T04:30:00Z → ${d}T05:15:00Z`, NOW, since).ms, 15 * 60_000);
+  assert.equal(parseOwnerWait(`${d}T05:00:00Z → ${d}T05:15:00Z`, NOW, since).ms, 15 * 60_000);
+  assert.deepEqual(parseOwnerWait(`asked ${d}T04:00:00Z →`, NOW, since), { ms: 82 * 60_000, pairs: true, waiting: true });
+  assert.equal(parseOwnerWait(`${d}T03:00:00Z → ${d}T04:00:00Z`, NOW).ms, 60 * 60_000);
+  // A duration has no times, so since cannot clip it.
+  assert.equal(parseOwnerWait('1h, 20m', NOW, since).ms, 80 * 60_000);
 });

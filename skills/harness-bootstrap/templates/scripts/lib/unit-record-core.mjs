@@ -38,6 +38,7 @@ const HEADER_KEYS = {
   branch: 'branch',
   base: 'base',
   claimed: 'claimed',
+  deliverablestarted: 'deliverableStarted',
   ownerwait: 'ownerWait',
 };
 // A combined key (`Type · tier: Feature · Full`) is split on these, key and value alike.
@@ -137,6 +138,7 @@ export function parseState(text) {
     branch: '',
     base: '',
     claimed: '',
+    deliverableStarted: '',
     ownerWait: '',
   };
   const raw = { [LEDGER_HEADING]: [], [FINDINGS_HEADING]: [] };
@@ -286,8 +288,10 @@ const ISO = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+
  * pairs anywhere in the text are summed (prose around them, and a word such as "answered" before the
  * end time, are ignored); a start with no end counts up to `nowIso` and sets `waiting`. Pairs win
  * over a duration form (`1h20m`, `45m`, sums over `,` and `+`); a pair that runs backwards is null.
+ * With `sinceIso`, only the part of each pair after it counts: a pair that ended before it is left
+ * out and one that spans it starts there (a duration form has no times, so it cannot be clipped).
  */
-export function parseOwnerWait(text, nowIso) {
+export function parseOwnerWait(text, nowIso, sinceIso = null) {
   const re = new RegExp(`(${ISO})\\s*(?:→|->)\\s*(?:[A-Za-z][\\w-]*\\s+)?(${ISO})?`, 'g');
   const pairs = [...String(text ?? '').matchAll(re)];
   if (pairs.length === 0) {
@@ -296,16 +300,21 @@ export function parseOwnerWait(text, nowIso) {
   }
   let ms = 0;
   let waiting = false;
+  const since = sinceIso ? Date.parse(sinceIso) : NaN;
   for (const [, start, end] of pairs) {
     const span = intervalMs(start, end ?? nowIso);
     if (span === null) return null;
-    ms += span;
+    const from = Date.parse(start);
+    const to = from + span;
+    if (Number.isFinite(since) && to <= since) continue;
+    ms += Number.isFinite(since) && from < since ? to - since : span;
     if (!end) waiting = true;
   }
   return { ms, pairs: true, waiting };
 }
 
-const cell = (s) => String(s).replaceAll('|', '\\|');
+// A table cell holds one line: CR/LF runs become one space (a multi-line --cost would break the row).
+const cell = (s) => String(s).replace(/[\r\n]+/g, ' ').replaceAll('|', '\\|');
 
 /**
  * The record markdown. `commits` is [{sha, subject}], newest last. `base` and `head` default to the
@@ -332,15 +341,18 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
   const ownerWait =
     h.ownerWait.length > MAX_OWNER_WAIT ? `${h.ownerWait.slice(0, MAX_OWNER_WAIT)}…` : h.ownerWait || 'none recorded';
   const kind = [h.mode, h.type, h.tier].map((v) => cell(v || '?'));
-  // Elapsed in the log is work time: wall time since the claim minus the owner's wait.
-  const wallMs = h.claimed ? intervalMs(h.claimed, now) : null;
-  const wait = h.ownerWait ? parseOwnerWait(h.ownerWait, now) : null;
+  // Elapsed in the log is work time: wall time minus the owner's wait. The window opens at the
+  // deliverable's own start when the state file has one, else at the unit's claim, so deliverable k
+  // does not include deliverables 1..k-1 (nor the owner waits that happened before it).
+  const windowStart = h.deliverableStarted || h.claimed;
+  const wallMs = windowStart ? intervalMs(windowStart, now) : null;
+  const wait = h.ownerWait ? parseOwnerWait(h.ownerWait, now, h.deliverableStarted || null) : null;
   const workMs = wallMs !== null && wait !== null ? wallMs - wait.ms : null;
   // Interval pairs are shown as their total (the raw text is long); a duration is shown as written.
   const waitShown = wait?.pairs ? `${formatMs(wait.ms)}${wait.waiting ? ' (still waiting)' : ''}` : ownerWait;
   const wall = wallMs === null ? 'unknown' : formatMs(wallMs);
   let elapsedLine;
-  if (!h.claimed) elapsedLine = `${NO_CLAIMED} · owner wait ${ownerWait}`;
+  if (!windowStart) elapsedLine = `${NO_CLAIMED} · owner wait ${ownerWait}`;
   else if (wait === null)
     elapsedLine = `${wall} wall · owner wait not recorded — work time unknown${h.ownerWait ? ` (state has: ${ownerWait})` : ''}`;
   else if (workMs === null || workMs < 0)

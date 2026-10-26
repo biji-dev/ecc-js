@@ -17,6 +17,8 @@ import {
   fmtMinutes,
   formatLine,
   formatReport,
+  groupUnits,
+  ownerWaitMinutes,
   parseArgs,
   parseCost,
   parseDuration,
@@ -46,9 +48,9 @@ const table = (header, rows) =>
 const HEADER = ['Unit', 'Mode', 'Type', 'Tier', 'Elapsed', 'Cost', 'Scope', 'Friction'];
 const row = (unit, tier, elapsed, cost = '', scope = 'admitted 0', type = 'Code') => [unit, 'plan', type, tier, elapsed, cost, scope, ''];
 const LOG = table(HEADER, [
-  row('EP-1', 'Full', 'work 100m · owner 40m', '$10.00 · Claude 0.5% · Codex 1%', '3 slices'),
-  row('EP-2', 'Full', 'work 200m · owner 60m', '$20.00 · Claude 1.0% · Codex 2%', '4 slices'),
-  row('EP-3', 'Full', 'work 300m · owner 80m', '$30.00 · Claude 1.5% · Codex 3%', '5 slices'),
+  row('EP-1', 'Full', 'work 100m · owner 40m', '$10.00 · Claude 0.5% · Codex 1%'),
+  row('EP-2', 'Full', 'work 200m · owner 60m', '$20.00 · Claude 1.0% · Codex 2%'),
+  row('EP-3', 'Full', 'work 300m · owner 80m', '$30.00 · Claude 1.5% · Codex 3%'),
   row('harness/a', 'Full', 'work 400m · owner 100m', '$40.00 · Claude 2.0% · Codex 4%'),
   row('EP-5', 'Small (cold)', '30m', '$1.00 · Claude 0.1%'),
 ]);
@@ -122,7 +124,7 @@ test('parseLog reads a Tier column and the combined Unit · Mode · Type · Tier
 
 test('parseLog matches headers by prefix, case-insensitively, ignoring a leading star', () => {
   const rows = parseLog(table(['unit', 'TIER (as run)', '★ Elapsed (work)', 'Owner-wait', 'Cost (measured)'], [['U1', 'Full', '90m', '1h20m', '$5 · Claude 0.3% · Codex 2%']]));
-  assert.deepEqual(rows[0], { unit: 'U1', type: '', tier: 'full', work: 90, ownerWait: 80, claudePct: 0.3, codexPct: 2, cost: 5, slices: null });
+  assert.deepEqual(rows[0], { unit: 'U1', id: 'U1', type: '', tier: 'full', work: 90, ownerWait: 80, claudePct: 0.3, codexPct: 2, cost: 5 });
 });
 
 test('parseLog keeps an escaped pipe inside one cell instead of shifting the columns', () => {
@@ -130,12 +132,6 @@ test('parseLog keeps an escaped pipe inside one cell instead of shifting the col
   const [r] = parseLog(text);
   assert.equal(r.work, 50);
   assert.equal(r.claudePct, 0.2);
-});
-
-test('parseLog reads slices from a Slices column or from "<n> slices" in the Scope cell', () => {
-  assert.deepEqual(parseLog(LOG).map((r) => r.slices), [3, 4, 5, null, null]);
-  const bySlicesCol = parseLog(table(['Unit', 'Tier', 'Elapsed', 'Slices'], [['U', 'Full', '60m', '6'], ['V', 'Full', '60m', 'n/a']]));
-  assert.deepEqual(bySlicesCol.map((r) => r.slices), [6, null]);
 });
 
 test('parseLog skips unrelated tables, reads several logs tables, drops empty-unit rows and marks unreconcilable work', () => {
@@ -197,49 +193,83 @@ test('a log without a Cost column (or Elapsed owner part) gives no history for e
   assert.match(line, /Claude no history \(n=0, need 3\)/);
 });
 
-test('estimate scales a per-slice range to the requested slice count from rows that name their slices', () => {
-  const rows = parseLog(LOG);
-  const est = estimate(rows, { tier: 'full', slices: 6 });
-  assert.equal(est.perSlice.work.n, 3);
-  const perSlice = [100 / 3, 200 / 4, 300 / 5].map((v) => v * 6);
-  near(est.perSlice.work.median, perSlice.sort((a, b) => a - b)[1]);
-  assert.equal(estimate(rows, { tier: 'full' }).perSlice, null);
-  const none = estimate(parseLog(table(['Unit', 'Tier', 'Elapsed'], [['U', 'Full', '5m']])), { slices: 4 });
-  assert.equal(none.perSlice.work.message, 'no history (n=0, need 3)');
-});
-
 test('formatLine has the Gate 1 shape: tier, n, four ranges and the not-a-promise tail', () => {
   const line = formatLine(estimate(parseLog(LOG), { tier: 'full' }));
   assert.equal(
     line,
-    "Estimate (full, n=4): work 2h55m–5h25m · owner wait 55m–1h25m · Claude 0.9–1.6% · Codex 1.8–3.3% — a range from this project's log, not a promise",
+    "Estimate per unit (full, n=4 units): work 2h55m–5h25m · owner wait 55m–1h25m · Claude 0.9–1.6% · Codex 1.8–3.3% — a range from this project's log, not a promise",
   );
-  assert.match(formatLine(estimate(parseLog(LOG), {})), /^Estimate \(all tiers, n=5\)/);
+  assert.match(formatLine(estimate(parseLog(LOG), {})), /^Estimate per unit \(all tiers, n=5 units\)/);
   assert.equal(fmtMinutes(59.6), '1h00m');
   assert.equal(fmtMinutes(5), '5m');
 });
 
-test('formatReport adds the median detail and the per-slice block when slices are given', () => {
-  const text = formatReport(estimate(parseLog(LOG), { tier: 'full', slices: 2 }));
-  assert.match(text, /^Estimate \(full, n=4\)/);
+test('formatReport adds the median detail per metric', () => {
+  const text = formatReport(estimate(parseLog(LOG), { tier: 'full' }));
+  assert.match(text, /^Estimate per unit \(full, n=4 units\)/);
   assert.match(text, /work: n=4 · p25 2h55m · median 4h10m · p75 5h25m/);
-  assert.match(text, /Per slice, scaled to 2 slices:/);
+  assert.doesNotMatch(text, /slice/i);
 });
 
-test('parseArgs needs --log, validates tier, cohort and slices, and rejects unknown flags', () => {
-  const a = parseArgs(['--log', 'l.md', '--tier', 'Full', '--cohort', '^harness', '--slices', '5', '--json']);
+test('parseArgs needs --log, validates tier and cohort, and rejects unknown flags (--slices is gone)', () => {
+  const a = parseArgs(['--log', 'l.md', '--tier', 'Full', '--cohort', '^harness', '--json']);
   assert.equal(a.log, 'l.md');
   assert.equal(a.tier, 'full');
   assert.ok(a.cohort.test('Harness/x'));
-  assert.equal(a.slices, 5);
   assert.equal(a.json, true);
   assert.throws(() => parseArgs([]), /--log .* is required/);
   assert.throws(() => parseArgs(['--log']), /--log needs a value/);
   assert.throws(() => parseArgs(['--log', 'l', '--tier', 'huge']), /--tier must be one of small\|full/);
   assert.throws(() => parseArgs(['--log', 'l', '--cohort', '(']), /not a regular expression/);
-  assert.throws(() => parseArgs(['--log', 'l', '--slices', '0']), /whole number/);
-  assert.throws(() => parseArgs(['--log', 'l', '--slices', '2.5']), /whole number/);
+  assert.throws(() => parseArgs(['--log', 'l', '--slices', '3']), /unknown option --slices/);
   assert.throws(() => parseArgs(['--log', 'l', '--nope']), /unknown option --nope/);
+});
+
+test('owner wait is summed over every term unit-record writes: durations joined by + or , and ISO pairs', () => {
+  const d = '2026-10-24';
+  assert.equal(ownerWaitMinutes('10m + 60m'), 70);
+  assert.equal(ownerWaitMinutes('1h, 20m'), 80);
+  assert.equal(ownerWaitMinutes('1h20m'), 80);
+  assert.equal(ownerWaitMinutes(`asked ${d}T05:00:00Z → answered ${d}T05:30:00Z; asked ${d}T06:00:00Z → answered ${d}T07:20:00Z`), 110);
+  // Text unit-record's parser cannot read falls back to the first duration, then to nothing.
+  assert.equal(ownerWaitMinutes('~2h55'), 175);
+  assert.equal(ownerWaitMinutes('Gate 1 asked'), null);
+  assert.equal(ownerWaitMinutes(`asked ${d}T06:00:00Z → pending`), null);
+  const text = table(['Unit', 'Tier', 'Elapsed', 'Owner wait'], [['U1', 'Full', '10m', '10m + 60m'], ['U2', 'Full', '10m', '1h'], ['U3', 'Full', '10m', `${d}T05:00:00Z → ${d}T05:50:00Z`]]);
+  assert.deepEqual(parseLog(text).map((r) => r.ownerWait), [70, 60, 50]);
+  // The Elapsed-cell form (`work 100m · owner 40m`) is unchanged.
+  assert.equal(parseLog(LOG)[0].ownerWait, 40);
+});
+
+test('a unit with several deliverable rows is one sample: work, owner wait and cost are summed per unit id', () => {
+  const log = table(
+    ['Unit · Mode · Type · Tier', 'Deliverable', 'Elapsed', 'Owner wait', 'Cost'],
+    [
+      ['EP-1 · plan · Code · Full', 'a.md', '60m', '10m', '$10 · Claude 1% · Codex 1%'],
+      ['EP-1 · plan · Code · Full', 'b.md', '30m', '20m + 10m', '$5 · Claude 0.5% · Codex 0.5%'],
+      ['EP-1 · plan · Code · Full', 'c.md', '15m', '5m', 'Codex no ledger'],
+      ['EP-2 · plan · Code · Full', 'a.md', '100m', '40m', '$20 · Claude 2% · Codex 2%'],
+      ['EP-3 · plan · Code · Full', 'a.md', '200m', '60m', '$30 · Claude 3% · Codex 3%'],
+      ['EP-4 · plan · Docs · Small', 'a.md', '5m', '0m', ''],
+    ],
+  );
+  const records = parseLog(log);
+  assert.equal(records.length, 6);
+  assert.deepEqual(records.map((r) => r.id), ['EP-1', 'EP-1', 'EP-1', 'EP-2', 'EP-3', 'EP-4']);
+  const units = groupUnits(records);
+  assert.equal(units.length, 4);
+  const ep1 = units[0];
+  assert.deepEqual([ep1.id, ep1.rows, ep1.tier, ep1.work, ep1.ownerWait, ep1.cost, ep1.claudePct, ep1.codexPct], ['EP-1', 3, 'full', 105, 45, 15, 1.5, 1.5]);
+  assert.equal(groupUnits(records.filter((r) => r.id === 'EP-4'))[0].claudePct, null);
+  const est = estimate(records, { tier: 'full' });
+  assert.equal(est.rows, 3);
+  assert.equal(est.metrics.work.n, 3);
+  near(est.metrics.work.median, 105);
+  near(est.metrics.work.p25, 102.5);
+  near(est.metrics.ownerWait.median, 45);
+  assert.match(formatLine(est), /^Estimate per unit \(full, n=3 units\): work 1h43m–2h33m/);
+  // Without grouping EP-1 would be three samples (60, 30, 15 min of work), not one of 105.
+  assert.equal(estimate(records, { tier: 'full', cohort: /^EP-1 /i }).rows, 1);
 });
 
 function cli(args) {
@@ -253,7 +283,7 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   fs.writeFileSync(log, `# Harness log\n\n${LOG}\n`);
   const r = cli(['--log', log, '--tier', 'full']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^Estimate \(full, n=4\): work 2h55m–5h25m/);
+  assert.match(r.stdout, /^Estimate per unit \(full, n=4 units\): work 2h55m–5h25m/);
   const j = JSON.parse(cli(['--log', log, '--tier', 'small', '--json']).stdout);
   assert.equal(j.rows, 1);
   assert.match(j.line, /work no history \(n=1, need 3\)/);
@@ -263,5 +293,6 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   assert.equal(none.status, 2);
   assert.match(none.stderr, /no harness-log table/);
   assert.equal(cli(['--log', log, '--bogus']).status, 2);
+  assert.equal(cli(['--log', log, '--slices', '3']).status, 2);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['empty.md', 'log.md']);
 });

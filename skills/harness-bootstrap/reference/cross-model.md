@@ -132,11 +132,13 @@ still refused writes to the added directory.
 `[M]` **Widen in this order, each step measured:**
 
 1. **`--network` for a write kind whose tests need the local database** — only
-   after a Codex rules file forbids what network would open, because those rules
-   hold even with network on. `[B]` `~/.codex/rules/<project>.rules`:
+   after a Codex rules file forbids what network would open. The rules are a
+   backstop, not a boundary: they match an argv prefix, so `git -C . push` or
+   `env git push` may slip past one — keep the list wide and the pre-push hook. `[B]` `~/.codex/rules/<project>.rules`:
    `prefix_rule(pattern=["ssh"], decision="forbidden")`, and the same for `scp`,
-   `rsync`, `git push`, `pkill`, `docker compose down`, the project's destructive
-   scripts, and `git commit --no-verify`. Add a `pre-push` hook that refuses when the
+   `rsync`, `git push`, `git remote`, `curl`, `wget`, `gh`, `npm publish` (and the
+   project's package manager's publish), `pkill`, `docker compose down`, the
+   project's destructive scripts, and `git commit --no-verify`. Add a `pre-push` hook that refuses when the
    Codex sandbox's environment marker is set (check the variable on the installed
    CLI before relying on it).
 2. **An allow rule for the exact commit form the brief prescribes**

@@ -4,8 +4,10 @@
 // state-file sections, commit cap) live at the top of scripts/lib/unit-record-core.mjs.
 /**
  * Builds the unit's record from what is already true: the commits and diffstat from git, the last
- * SUMMARY line of the gate log, and the Base/Claimed/Owner wait lines, ledger and findings tables
- * of the unit's state file. The session pastes or redirects the output; nothing is hand-written.
+ * SUMMARY line of the gate log, and the Base/Claimed/Deliverable started/Owner wait lines, ledger
+ * and findings tables of the unit's state file. A `Deliverable started: <ISO>` line opens the row's
+ * Elapsed, wall and owner-wait window at that time (owner-wait pairs before it are left out); without
+ * it the window opens at `Claimed:`, so a unit's second deliverable would include its first. The session pastes or redirects the output; nothing is hand-written.
  *
  *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--json]
  *
@@ -13,7 +15,8 @@
  *   --state <file>   the unit's state file (docs/plans/<unit>.state.md by default layout)
  *   --base <sha>     the base to diff against (default: the state file's `Base:` line)
  *   --gates <file>   a run-gates log or captured output; absent -> "Gates: not run"
- *   --cost "<line>"  the one-line output of scripts/unit-cost.mjs; goes in the draft row's Cost cell
+ *   --cost "<line>"  the output of `scripts/unit-cost.mjs ... --line`; goes in the draft row's Cost cell
+ *                    (CR/LF in it become one space, so the row stays one line)
  *   --json           print { header, summary, commits, diffstat, gates, record } instead
  *
  * Commits are `git log --reverse <base>..HEAD`, the diffstat is `git diff --shortstat

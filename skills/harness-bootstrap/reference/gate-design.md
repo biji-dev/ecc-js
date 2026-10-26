@@ -203,7 +203,7 @@ loosen push.** A pushed merge is the one step the harness cannot take back.
    P or C decision (a divergence inside one deliverable's technique is T: decide,
    log, list it);
 3. a P or C decision that blocks the next step — a never-auto decision, a hidden
-   cost (`scope-guard.md`), spend past the Gate 1 estimate's upper bound;
+   cost that is a one-way door (`scope-guard.md`), spend past the Gate 1 estimate's upper bound;
 4. a third fix round on critical code (`escalate-adversarial`, below);
 5. Gate 2 when the merge policy says ask, and before every push;
 6. an Ops step — the runbook is approved once, for the SHA and the rollback it names.
@@ -260,7 +260,10 @@ line in the ledger. Its rules:
 | **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review; round 3 is an Opus adversarial brief |
 
 `[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
-writes, the other re-reads — fix rounds included.
+writes, the other re-reads — fix rounds included. It is required —
+`claude | codex | sonnet | mixed`; a round whose fix groups went to more than one
+executor is `mixed` and routes as the second family's, and critical code that
+Sonnet wrote gets the Opus reviewer as the second family's does.
 
 `[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every

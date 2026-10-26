@@ -15,7 +15,7 @@ const TEST_REL = path.join('lib', 'unit-record-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-record-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 31;
+const EXPECTED_TESTS = 34;
 
 let passed = 0;
 let failed = 0;
@@ -112,6 +112,9 @@ mutantFails('taking the first SUMMARY line instead of the last', 'all[all.length
 mutantFails('dropping the first-heading fallback for the unit', "header.unit === '' && title !== null", "false && title !== null");
 mutantFails('reading a two-column header table as nothing', 'kvTable = cells.length === 2;', 'kvTable = false;');
 mutantFails('printing wall time as work time', 'wallMs - wait.ms', 'wallMs');
+mutantFails('letting a newline in the cost line break the draft row', ".replace(/[\\r\\n]+/g, ' ')", '');
+mutantFails('measuring a deliverable from the unit claim', 'h.deliverableStarted || h.claimed', 'h.claimed');
+mutantFails('counting owner-wait pairs from before the deliverable started', 'if (Number.isFinite(since) && to <= since) continue;', '');
 mutantFails('listing every commit instead of capping the list', 'commits.slice(0, MAX_COMMITS)', 'commits');
 
 test('the draft log row has log-format.md\'s columns, in its order (Yield before Friction)', () => {

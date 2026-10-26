@@ -7,16 +7,19 @@
  * owed, so the main thread does not guess: nothing, the second model family, one Opus
  * code-reviewer over the whole unit, or an adversarial pass. The rules are in the core's header.
  *
- *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix [--head <ref>]
- *        [--tier small|full] [--writer claude|codex] [--max-fixed P0|P1|P2|P3] [--round N] [--json]
+ *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix --writer claude|codex|sonnet|mixed
+ *        [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]
  *
  *   --kind slice   after a slice passes its gate, before the next builds on it
  *   --kind unit    step 8, once, over the whole unit diff from the merge base
  *   --kind fix     once per fix round, over <sha-before-the-fixes>.. (pass the whole round once,
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
- *   --writer       who wrote the diff (for --kind fix: who wrote the fix); the other family reviews it,
- *                  so a codex fix is re-read by Claude
+ *   --writer       REQUIRED, never assumed: who wrote the diff (for --kind fix: who wrote the fix).
+ *                  claude = Opus | codex = the second family | sonnet = a Sonnet builder |
+ *                  mixed = several executors (a fix round split between Opus and Codex; routes like
+ *                  codex). Code is never reviewed only by the family that wrote it, and critical
+ *                  code written by anyone but Opus (codex, sonnet, mixed) gets an Opus reviewer
  *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
  *                  against <base> (committed, staged, unstaged and untracked changes; a review is
  *                  often owed before the commit; a binary file counts 0 lines but is a changed file)
@@ -33,7 +36,7 @@ import { join } from 'node:path';
 import { decide, formatLine, parseArgs, parseNumstat } from './lib/review-gate-core.mjs';
 
 const USAGE =
-  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix [--head <ref>] [--tier small|full] [--writer claude|codex] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
+  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer claude|codex|sonnet|mixed [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
 
 function fail(msg, withUsage) {
   process.stderr.write(`review-gate: ${msg}\n${withUsage ? `${USAGE}\n` : ''}`);

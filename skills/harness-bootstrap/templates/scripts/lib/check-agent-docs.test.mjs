@@ -25,8 +25,8 @@ const SHIPPED =
   process.env.CHECK_AGENT_DOCS_SCRIPT || join(dirname(fileURLToPath(import.meta.url)), '..', 'check-agent-docs.mjs');
 
 // The [B] budgets the suite runs under. Small, so over-budget fixtures stay small; skillLines is the shipped default.
-const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024 };
-const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile} },`;
+const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024, base: 6144 };
+const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile}, base: ${BUDGETS.base} },`;
 // The rest is the shipped default, which the fixtures below are written against.
 const CONFIG_BLOCK = `export const CONFIG = {
   ${BUDGETS_LINE}
@@ -545,6 +545,79 @@ test('secrets: a file name that holds a key is masked; task-<20 alnum> is not a 
     assert.ok(plain.all.includes(`.claude/skills/task-${FAKE}/SKILL.md`), `a file name was masked ${flags.join(' ')}: ${plain.all}`);
     assert.ok(!plain.all.includes('[masked]'), plain.all);
   }
+});
+
+// 9. base and --base
+test('base: the always-loaded total over its budget fails, though every file is under its own', () => {
+  const big = 'x'.repeat(3500);
+  const agents = `${baseFiles()['AGENTS.md']}${big}\n`;
+  expectOk({ 'AGENTS.md': agents, 'docs/notes.md': `${big}\n` });
+  const r = expectFail(
+    { 'AGENTS.md': agents, 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${big}\n` },
+    'base',
+    `every session loads \\d+ bytes from this repository, budget ${BUDGETS.base}`,
+  );
+  assert.doesNotMatch(r.err, /^FAIL budget: /m, r.all);
+});
+
+test('--base: CLAUDE.md, imports relative to the importer, AGENTS.md and rules without paths, largest first', () => {
+  const dir = fixture({
+    'CLAUDE.md': '@AGENTS.md\nSee @docs/a.md and `@docs/code.md` in code.\n```\n@docs/fenced.md\n```\n@~/.claude/mine.md\n@../outside.md\n',
+    'AGENTS.md': `${baseFiles()['AGENTS.md']}${'x'.repeat(150)}\n`,
+    '.claude/CLAUDE.md': '@../docs/c.md\n',
+    'docs/a.md': `@b.md\n${'a'.repeat(300)}\n`,
+    'docs/b.md': `${'b'.repeat(200)}\n`,
+    'docs/c.md': `${'c'.repeat(100)}\n`,
+    'docs/code.md': 'never loaded\n',
+    'docs/fenced.md': 'never loaded\n',
+    '.claude/rules/always.md': '---\ndescription: x\n---\nAlways.\n',
+  });
+  const r = run(dir, ['--base']);
+  assert.equal(r.status, 0, r.all);
+  const listed = r.out
+    .split('\n')
+    .slice(1)
+    .map((l) => l.trim().replace(/^\d+\s+/, ''))
+    .filter(Boolean);
+  assert.deepEqual(listed, [
+    'docs/a.md (imported by CLAUDE.md)',
+    'AGENTS.md (imported by CLAUDE.md)',
+    'docs/b.md (imported by docs/a.md)',
+    'CLAUDE.md',
+    'docs/c.md (imported by .claude/CLAUDE.md)',
+    '.claude/rules/always.md (a rule without paths:)',
+    '.claude/CLAUDE.md',
+  ]);
+  assert.match(r.out, new RegExp(`^check-agent-docs --base: every session loads \\d+ bytes from this repository, target ${BUDGETS.base}$`, 'm'));
+  assert.equal(run(dir).status, 1, 'the checks still fail the rule without paths: --base is a report');
+});
+
+test('--base: imports go five hops deep and no further', () => {
+  const chain = {};
+  for (let i = 1; i <= 6; i += 1) chain[`docs/d${i}.md`] = `@d${i + 1}.md\n`;
+  const r = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/d1.md\n', ...chain }), ['--base', '--json']);
+  const files = JSON.parse(r.out).files.map((f) => f.file);
+  assert.ok(files.includes('docs/d5.md'), files.join(' '));
+  assert.ok(!files.includes('docs/d6.md'), files.join(' '));
+});
+
+test('--base --json: the files, their total, the target and the excess', () => {
+  const r = run(fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` }), ['--base', '--json']);
+  assert.equal(r.status, 0, r.all);
+  const parsed = JSON.parse(r.out);
+  assert.equal(parsed.total, parsed.files.reduce((n, f) => n + f.bytes, 0));
+  assert.equal(parsed.target, BUDGETS.base);
+  assert.equal(parsed.over, parsed.total - BUDGETS.base);
+  assert.ok(parsed.over > 0);
+  assert.deepEqual(Object.keys(parsed.files[0]).sort(), ['bytes', 'file', 'via']);
+});
+
+test('base: an install with no base budget skips the check, and --base says no target is set', () => {
+  const script = withConfig(`, base: ${BUDGETS.base} }`, ' }');
+  const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
+  assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
+  assert.equal(run(dir, [], script).status, 0);
+  assert.match(run(dir, ['--base'], script).out, /no target set \(budgets\.base\)/);
 });
 
 // --rules-for

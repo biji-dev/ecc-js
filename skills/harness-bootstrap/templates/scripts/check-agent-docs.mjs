@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap check-agent-docs (generated YYYY-MM-DD). Verify gate for the shared agent instruction files.
-// [M] mechanism (ship as-is): everything below the CONFIG block - the eight checks, the glob matcher,
-//     `--rules-for` and `--json`.
+// [M] mechanism (ship as-is): everything below the CONFIG block - the nine checks, the glob matcher,
+//     `--rules-for`, `--base` and `--json`.
 // [B] binding (re-derived per project): the CONFIG block only. Generation sets each budget to the
 //     file's current size rounded up, so a budget is a ratchet: a check fails only ABOVE it.
 //
@@ -14,17 +14,21 @@
 //   paths        backticked repo paths exist on disk (a gitignored path counts as present)
 //   frontmatter  skills and agents carry valid frontmatter; read-only agents hold no write tools
 //   secrets      no credential-shaped strings in the instruction files
+//   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
+//                AGENTS.md and rule files without `paths:` (skipped when budgets.base is unset)
 //
 // `--rules-for <file...>` prints the rule files whose `paths:` globs match the given paths and exits 0.
-// `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text.
+// `--base` prints those always-loaded files with their bytes and the target, and exits 0.
+// `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text (with --base: the files).
 import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, normalize, relative, isAbsolute, sep } from 'node:path';
 
 // ---- [B] binding: re-derive per project -------------------------------------------------------
 export const CONFIG = {
-  // Bytes (files) and lines (skillLines). Set to the current size rounded up at generation time.
-  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192 },
+  // Bytes (files and base) and lines (skillLines). Set to the current size rounded up at generation time;
+  // base is the always-loaded total, lowered as it shrinks (each 10K tokens is about 2% of main-thread spend).
+  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192, base: 49152 },
   rulesDir: '.claude/rules',
   indexFile: 'AGENTS.md', // holds the area-rules index
   skillDirs: ['.claude/skills', '.agents/skills'],
@@ -182,6 +186,7 @@ function proseLines(text) {
 const args = process.argv.slice(2);
 const wantJson = args.includes('--json');
 const rulesForAt = args.indexOf('--rules-for');
+const wantBase = args.includes('--base') && rulesForAt === -1;
 
 const failures = [];
 let checks = 0;
@@ -322,6 +327,45 @@ function main() {
       const globs = parsePaths(read(f)) ?? [];
       if (targets.some((t) => globs.some((g) => matchGlob(t, g)))) console.log(f);
     }
+    return;
+  }
+
+  // The files every session loads from this repository, as Claude Code resolves them: CLAUDE.md (at the
+  // root or in .claude/), each file it imports with `@` (relative to the importing file, never inside code,
+  // five hops deep), AGENTS.md (Codex reads it directly), and each rule file without `paths:` (a path-scoped
+  // rule loads only when a matching file is read). `~/` and absolute imports are per machine, not counted.
+  const base = new Map();
+  const load = (f, via, depth) => {
+    if (base.has(f) || !isFile(f)) return;
+    base.set(f, via);
+    if (depth >= 5) return;
+    for (const line of proseLines(read(f))) {
+      for (const m of line.replace(/`[^`]*`/g, ' ').matchAll(/(?:^|\s)@([^\s`]+)/g)) {
+        const target = m[1].replace(/[),.;:]+$/, '');
+        if (target.startsWith('~') || isAbsolute(target)) continue;
+        const p = normalize(join(dirname(f), target)).split(sep).join('/');
+        if (p !== '..' && !p.startsWith('../')) load(p, `imported by ${f}`, depth + 1);
+      }
+    }
+  };
+  for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) load(f, 'loaded', 0);
+  for (const f of ruleFiles) if (!parsePaths(read(f))?.length) load(f, 'a rule without paths:', 0);
+  const baseFiles = [...base].map(([file, via]) => ({ file, via, bytes: size(file) }));
+  const baseTotal = baseFiles.reduce((n, f) => n + f.bytes, 0);
+  const baseTarget = CONFIG.budgets.base;
+
+  // `--base`: the always-loaded files, largest first, against the target; then exit.
+  if (wantBase) {
+    baseFiles.sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file));
+    const over = baseTarget === undefined ? null : Math.max(0, baseTotal - baseTarget);
+    if (wantJson) {
+      console.log(JSON.stringify({ total: baseTotal, target: baseTarget ?? null, over, files: baseFiles }, null, 2));
+      return;
+    }
+    const target = baseTarget === undefined ? 'no target set (budgets.base)' : `target ${baseTarget}`;
+    console.log(`check-agent-docs --base: every session loads ${baseTotal} bytes from this repository, ${target}`);
+    for (const f of baseFiles) console.log(`  ${String(f.bytes).padStart(8)}  ${f.file}${f.via === 'loaded' ? '' : ` (${f.via})`}`);
+    if (over) console.log(`  ${over} bytes over the target - move content into path-scoped rules, skills or reference files`);
     return;
   }
 
@@ -534,6 +578,17 @@ function main() {
       fail('secrets', f, line, `looks like a secret (${name}); value masked`);
     }
   }
+
+  // 9. base
+  if (baseTarget !== undefined) {
+    verify(
+      baseTotal <= baseTarget,
+      'base',
+      '',
+      0,
+      `every session loads ${baseTotal} bytes from this repository, budget ${baseTarget} - \`--base\` lists the files`,
+    );
+  }
 }
 
-if (ROOT && rulesForAt === -1) finish();
+if (ROOT && rulesForAt === -1 && !wantBase) finish();

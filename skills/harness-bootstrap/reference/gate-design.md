@@ -47,6 +47,22 @@ Default if unanswered: <option> (park-and-carry: work that depends on it waits)
 > of owner wait. One 124-item owner round, about 75 of them technical, was answered
 > in one line: "use your recommendation". A sheet nobody reads is not a review.
 
+`[M]` **How the cards reach the owner depends on the context**, which the budget
+hook's figure line gives (`context.md` › The window, the gate wait and the base):
+
+- **Under 150K:** the question tool — `AskUserQuestion`, or `ExitPlanMode` for a plan.
+- **At 150K or more:** write each open card to the state file's decision log as a
+  `Q-n` row, give the cards as text after the `/clear` offer and its resume command,
+  and **end the turn**. The answer comes back as text, and the `Q-n` rows become
+  `DEC` rows. In plan mode, `ExitPlanMode` follows the answer, while the owner is
+  there.
+
+> Origin, the v5 context study (21 days, nine installs): 183 requests after a gap
+> of more than an hour rewrote their whole context — $267, 9.6% of main-thread
+> spend. Past about 125K an idle compaction costs less than the rewrite it saves,
+> but it runs only after an ended turn: 0 of 44 idle compactions came while a
+> question was pending, and 39 of the 183 waits were on one.
+
 ## Tiers — decided at claim, after the task type
 
 `[M]` For a Code unit (`runner.md` › Task type first), state the tier in the claim

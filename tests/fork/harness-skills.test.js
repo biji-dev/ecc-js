@@ -311,31 +311,31 @@ function transcript(tokens, extra = []) {
 
 function runHook(event, file, raw) {
   const input = raw ?? JSON.stringify({ hook_event_name: event, transcript_path: file });
-  const env = { ...process.env };
-  delete env.CONTEXT_BUDGET_WARN;
-  delete env.CONTEXT_BUDGET_LIMIT;
+  // Hermetic: no developer settings file or window variable moves the limit.
+  const env = { ...process.env, HOME: tmp('ctx-budget-home-') };
+  for (const key of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR']) delete env[key];
   const result = spawnSync(process.execPath, [BUDGET], { input, encoding: 'utf8', env });
   return { status: result.status, out: result.stdout ? JSON.parse(result.stdout) : null };
 }
 
 test('under the warning budget: the model gets the figure, Stop prints nothing', () => {
-  const file = transcript(249_000);
+  const file = transcript(219_000);
   const prompt = runHook('UserPromptSubmit', file);
   assert.strictEqual(prompt.status, 0);
-  assert.match(prompt.out.hookSpecificOutput.additionalContext, /~249K \(under 250K\)/);
+  assert.match(prompt.out.hookSpecificOutput.additionalContext, /~219K \(under 220K/);
   assert.strictEqual(runHook('Stop', file).out, null);
 });
 
 test('past the warning budget: Stop tells the user to plan a compaction', () => {
-  const { status, out } = runHook('Stop', transcript(251_000));
+  const { status, out } = runHook('Stop', transcript(221_000));
   assert.strictEqual(status, 0);
-  assert.match(out.systemMessage, /past 250K/);
+  assert.match(out.systemMessage, /past 220K/);
 });
 
 test('past the limit: the model is told to persist state and keep working, never to hand off', () => {
-  const { out } = runHook('UserPromptSubmit', transcript(401_000));
+  const { out } = runHook('UserPromptSubmit', transcript(261_000));
   const text = out.hookSpecificOutput.additionalContext;
-  assert.match(text, /over the 400K budget/);
+  assert.match(text, /over the 260K budget/);
   assert.doesNotMatch(text.replace(/never ask for a new session/gi, ''), /new session|hand ?off/i);
 });
 

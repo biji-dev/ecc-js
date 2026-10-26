@@ -380,9 +380,11 @@ version or release step · where artifacts live.
 ## The implementer agent
 
 `[M]` Generated to `.claude/agents/implementer.md`: `model: opus`, `effort: high`,
-`tools: Read, Edit, Write, Grep, Glob, Bash`. Dispatched with `model` and `effort`
-passed explicitly — `"sonnet"` for a cold slice. Its file carries the **Tool
-discipline** section verbatim (`context.md`) and says:
+`tools: Read, Edit, Write, Grep, Glob, Bash`, `autoCompactWindow: 250000` — a
+backstop; the slice keeps it small (`context.md` › The window, the gate wait and
+the base). Dispatched with `model` and `effort` passed explicitly — `"sonnet"` for
+a cold slice. Its file carries the **Tool discipline** section verbatim
+(`context.md`) and says:
 
 - work only in the worktree the brief names, by absolute path;
 - read `AGENTS.md` and every rule file the brief lists (`--rules-for`);

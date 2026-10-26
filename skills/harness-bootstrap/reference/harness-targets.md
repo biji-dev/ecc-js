@@ -66,7 +66,9 @@ to `scripts/` and run as a verify gate. It checks the `@AGENTS.md` import, the
 budgets, that every `paths:` glob matches a tracked file, that the index and the
 rule files agree both ways, that links and backticked paths resolve, skill and
 agent frontmatter (a "read-only" agent listing `Bash`, `Edit` or `Write` fails),
-and secret patterns (masked in its output). Its test,
+secret patterns (masked in its output), and the base: the bytes every session loads
+from the repository, against a ratcheted target — `--base` lists the files
+(`context.md` › The window, the gate wait and the base). Its test,
 `templates/scripts/lib/check-agent-docs.test.mjs`, ships beside it. Its `CONFIG`
 block is `[B]`.
 

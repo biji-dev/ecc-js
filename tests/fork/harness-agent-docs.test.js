@@ -1,6 +1,6 @@
 /**
  * Tests for skills/harness-bootstrap/templates/scripts/check-agent-docs.mjs (biji-dev/ecc-js):
- * runs the template's own node:test suite, then proves the rule-index check is load-bearing with a mutant.
+ * runs the template's own node:test suite, then proves the rule-index and base checks are load-bearing with mutants.
  */
 
 const assert = require('assert');
@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 56;
+const EXPECTED_PASS = 61;
 
 let passed = 0;
 let failed = 0;
@@ -111,7 +111,7 @@ test('the template test suite passes against a copy whose [B] CONFIG an install 
   // A new repository binds more than the budgets: its own state-file path and path prefixes.
   const original = fs.readFileSync(SCRIPT, 'utf8');
   const bindings = [
-    [/^  budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192 },"],
+    [/^  budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192, base: 30720 },"],
     [/^  statePattern: .*$/m, "  statePattern: 'harness/units/**/*.state.md',"],
     [/^  pathPrefixes: .*$/m, "  pathPrefixes: ['frontend/', 'tests/', 'harness/', '.claude/', '.agents/'],"],
   ];
@@ -150,6 +150,50 @@ test('mutant without the rule-index check misses the index mismatch the shipped 
   const result = runScript(mutant, dir);
   assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
   assert.match(result.out, /^check-agent-docs: OK \(\d+ checks\)$/m);
+});
+
+/** A copy of the shipped script with one line replaced. */
+function mutantOf(from, to) {
+  const original = fs.readFileSync(SCRIPT, 'utf8');
+  assert.ok(original.includes(from), `not in the shipped file: ${from}`);
+  const mutant = path.join(tmp('agent-docs-mutant-'), 'check-agent-docs.mjs');
+  fs.writeFileSync(mutant, original.replace(from, to));
+  return mutant;
+}
+
+/** A clean repo whose CLAUDE.md imports a 60 KB notes file: every file is under its budget, the base is not. */
+function heavyBaseFixture() {
+  const dir = tmp('agent-docs-base-');
+  git(dir, 'init', '-q', '-b', 'main');
+  const files = {
+    'AGENTS.md': '# Agents\n',
+    'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\nSee `@docs/code.md` too.\n',
+    'docs/notes.md': `${'n'.repeat(60 * 1024)}\n`,
+    'docs/code.md': 'never loaded\n',
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  git(dir, 'add', '-A');
+  return dir;
+}
+
+test('mutant without the base check passes a repo whose imports are over the base the shipped file catches', () => {
+  const dir = heavyBaseFixture();
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^FAIL base: every session loads \d+ bytes from this repository, budget 49152/m);
+  assert.doesNotMatch(shipped.err, /^FAIL budget: /m);
+  const result = runScript(mutantOf('if (baseTarget !== undefined) {', 'if (false) {'), dir);
+  assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
+});
+
+test('mutant that reads @ inside code spans lists a file the shipped --base does not', () => {
+  const dir = heavyBaseFixture();
+  assert.doesNotMatch(runScript(SCRIPT, dir, ['--base']).out, /docs\/code\.md/);
+  const mutant = mutantOf("line.replace(/`[^`]*`/g, ' ').matchAll", 'line.replace(/`/g, " ").matchAll');
+  assert.match(runScript(mutant, dir, ['--base']).out, /docs\/code\.md \(imported by CLAUDE\.md\)/);
 });
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

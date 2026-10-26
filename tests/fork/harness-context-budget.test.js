@@ -1,6 +1,7 @@
 /**
  * Tests for the harness-bootstrap context-budget hook template (biji-dev/ecc-js):
- * PostToolUse banding, no-handoff wording, exported newBand, and a mutation check.
+ * PostToolUse banding, the gate line, the limit taken from the auto-compact window,
+ * no-handoff wording, exported newBand, and mutation checks.
  */
 
 const assert = require('assert');
@@ -42,16 +43,30 @@ function transcript(tokens) {
   return file;
 }
 
+// Hermetic: no developer settings file or window variable reaches the hook unless a test passes one.
+const EMPTY_HOME = tmp('ctx-budget-home-');
+
+/** A directory holding `.claude/<name>` files with the given contents (objects are written as JSON). */
+function settingsDir(files) {
+  const dir = tmp('ctx-budget-p-');
+  fs.mkdirSync(path.join(dir, '.claude'));
+  for (const [name, body] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, '.claude', name), typeof body === 'string' ? body : JSON.stringify(body));
+  }
+  return dir;
+}
+
 /** Run a hook script (default: the shipped template) with an isolated state dir. */
 function runHook(event, tokens, stateDir, opts = {}) {
   const input = JSON.stringify({
     hook_event_name: event,
     transcript_path: transcript(tokens),
-    session_id: opts.session || 'sess-1'
+    session_id: opts.session || 'sess-1',
+    ...(opts.cwd ? { cwd: opts.cwd } : {})
   });
-  const env = { ...process.env, CONTEXT_BUDGET_STATE_DIR: stateDir };
-  delete env.CONTEXT_BUDGET_WARN;
-  delete env.CONTEXT_BUDGET_LIMIT;
+  const env = { ...process.env, CONTEXT_BUDGET_STATE_DIR: stateDir, HOME: opts.home || EMPTY_HOME };
+  for (const key of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR']) delete env[key];
+  Object.assign(env, opts.env);
   const result = spawnSync(process.execPath, [opts.script || BUDGET], { input, encoding: 'utf8', env });
   assert.strictEqual(result.status, 0, `exit ${result.status}: ${result.stderr}`);
   return result.stdout ? JSON.parse(result.stdout) : null;
@@ -65,53 +80,124 @@ console.log('\nharness context-budget: PostToolUse banding');
 
 test('PostToolUse past WARN speaks once per band and again in the next band', () => {
   const dir = tmp('ctx-budget-s-');
-  const first = runHook('PostToolUse', 260_000, dir);
+  const first = runHook('PostToolUse', 230_000, dir);
   assert.strictEqual(first.hookSpecificOutput.hookEventName, 'PostToolUse');
-  assert.match(first.hookSpecificOutput.additionalContext, /past the 250K mark/);
-  assert.strictEqual(runHook('PostToolUse', 262_000, dir), null);
-  const next = runHook('PostToolUse', 290_000, dir);
+  assert.match(first.hookSpecificOutput.additionalContext, /past the 220K mark/);
+  assert.strictEqual(runHook('PostToolUse', 232_000, dir), null);
+  const next = runHook('PostToolUse', 251_000, dir);
   assert.ok(next && next.hookSpecificOutput.additionalContext);
 });
 
 test('PostToolUse: two sessions in the same band and state dir each speak once', () => {
   const dir = tmp('ctx-budget-s-');
-  assert.ok(runHook('PostToolUse', 260_000, dir, { session: 'sess-a' }), 'session a speaks');
-  assert.ok(runHook('PostToolUse', 261_000, dir, { session: 'sess-b' }), 'session b speaks despite a having spoken');
-  assert.strictEqual(runHook('PostToolUse', 262_000, dir, { session: 'sess-a' }), null, 'session a stays quiet in its band');
-  assert.strictEqual(runHook('PostToolUse', 263_000, dir, { session: 'sess-b' }), null, 'session b stays quiet in its band');
+  assert.ok(runHook('PostToolUse', 230_000, dir, { session: 'sess-a' }), 'session a speaks');
+  assert.ok(runHook('PostToolUse', 231_000, dir, { session: 'sess-b' }), 'session b speaks despite a having spoken');
+  assert.strictEqual(runHook('PostToolUse', 232_000, dir, { session: 'sess-a' }), null, 'session a stays quiet in its band');
+  assert.strictEqual(runHook('PostToolUse', 233_000, dir, { session: 'sess-b' }), null, 'session b stays quiet in its band');
 });
 
 test('PostToolUse: a lower band after a compact is news (falling sequence)', () => {
   const dir = tmp('ctx-budget-s-');
   assert.ok(runHook('PostToolUse', 310_000, dir), '310K speaks');
-  assert.ok(runHook('PostToolUse', 260_000, dir), '260K speaks again because the band changed');
-  assert.strictEqual(runHook('PostToolUse', 262_000, dir), null, 'and is quiet within the new band');
+  assert.ok(runHook('PostToolUse', 230_000, dir), '230K speaks again because the band changed');
+  assert.strictEqual(runHook('PostToolUse', 232_000, dir), null, 'and is quiet within the new band');
 });
 
-test('PostToolUse below WARN prints nothing', () => {
+test('PostToolUse: crossing WARN inside one band is news (the level changed)', () => {
   const dir = tmp('ctx-budget-s-');
-  assert.strictEqual(runHook('PostToolUse', 200_000, dir), null);
-  assert.strictEqual(runHook('PostToolUse', 249_000, dir), null);
+  assert.match(runHook('PostToolUse', 205_000, dir).hookSpecificOutput.additionalContext, /goes out as text/);
+  const warn = runHook('PostToolUse', 221_000, dir);
+  assert.ok(warn, '221K is in the 200-225K band too, and still speaks');
+  assert.match(warn.hookSpecificOutput.additionalContext, /past the 220K mark/);
+  assert.strictEqual(runHook('PostToolUse', 223_000, dir), null);
+});
+
+test('PostToolUse below GATE_TEXT prints nothing', () => {
+  const dir = tmp('ctx-budget-s-');
+  assert.strictEqual(runHook('PostToolUse', 100_000, dir), null);
+  assert.strictEqual(runHook('PostToolUse', 149_000, dir), null);
+});
+
+test('past GATE_TEXT and under WARN: the gate line, once per band on PostToolUse, never on Stop', () => {
+  const dir = tmp('ctx-budget-s-');
+  const line = /^\[context-budget\] ~(\d+)K \(under 220K; past 150K an owner gate goes out as text, then the turn ends\)\.$/;
+  assert.match(runHook('UserPromptSubmit', 180_000, dir).hookSpecificOutput.additionalContext, line);
+  assert.match(runHook('PostToolUse', 151_000, dir).hookSpecificOutput.additionalContext, line);
+  assert.strictEqual(runHook('PostToolUse', 160_000, dir), null, 'quiet within the 150-175K band');
+  assert.match(runHook('PostToolUse', 176_000, dir).hookSpecificOutput.additionalContext, line);
+  assert.strictEqual(runHook('Stop', 180_000, dir), null);
 });
 
 test('past the limit on UserPromptSubmit: quotable figure, never a new session', () => {
-  const out = runHook('UserPromptSubmit', 401_000, tmp('ctx-budget-s-'));
+  const out = runHook('UserPromptSubmit', 261_000, tmp('ctx-budget-s-'));
   const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /over the 400K budget/);
+  assert.match(ctx, /over the 260K budget \(harness file, "Context budget"\)/);
+  assert.match(ctx, /can land on any turn/, 'no window is set, so nothing is claimed imminent');
   assert.match(ctx, /never ask for a new session/i);
 });
 
 test('Stop past WARN: systemMessage names the mark and never a new session', () => {
-  const out = runHook('Stop', 251_000, tmp('ctx-budget-s-'));
-  assert.match(out.systemMessage, /past 250K/);
+  const out = runHook('Stop', 221_000, tmp('ctx-budget-s-'));
+  assert.match(out.systemMessage, /past 220K/);
   assert.doesNotMatch(out.systemMessage, /new session/i);
 });
 
-test('below WARN: only UserPromptSubmit speaks', () => {
+test('below GATE_TEXT: only UserPromptSubmit speaks', () => {
   const dir = tmp('ctx-budget-s-');
-  assert.match(runHook('UserPromptSubmit', 100_000, dir).hookSpecificOutput.additionalContext, /^\[context-budget\] ~100K \(under 250K\)\.$/);
+  assert.match(runHook('UserPromptSubmit', 100_000, dir).hookSpecificOutput.additionalContext, /^\[context-budget\] ~100K \(under 220K\)\.$/);
   assert.strictEqual(runHook('Stop', 100_000, dir), null);
   assert.strictEqual(runHook('PostToolUse', 100_000, dir), null);
+});
+
+console.log('\nharness context-budget: the limit follows the auto-compact window');
+
+test('autoCompactWindow 300000 in the project: at 230K the warning names the 260K budget', () => {
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 300000 } });
+  const ctx = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /past the 220K mark; the budget is 260K \(40K under the 300K auto-compact window\)/);
+  const over = runHook('UserPromptSubmit', 262_000, tmp('ctx-budget-s-'), { cwd: project }).hookSpecificOutput.additionalContext;
+  assert.match(over, /over the 260K budget \(40K under the 300K auto-compact window\)\. Auto-compaction is imminent/);
+});
+
+test('a 400K window moves the limit to 360K: 300K is past the mark, not over', () => {
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 400000 } });
+  const ctx = runHook('UserPromptSubmit', 300_000, tmp('ctx-budget-s-'), { cwd: project }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /past the 220K mark; the budget is 360K \(40K under the 400K auto-compact window\)/);
+});
+
+test('order: the window variable, then settings.local.json, settings.json and the user settings', () => {
+  const both = settingsDir({ 'settings.local.json': { autoCompactWindow: 350000 }, 'settings.json': { autoCompactWindow: 300000 } });
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
+  const figure = (opts) => runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), opts).hookSpecificOutput.additionalContext.match(/the budget is (\d+)K/)?.[1];
+  assert.strictEqual(figure({ cwd: both, home }), '310', 'settings.local.json beats settings.json');
+  assert.strictEqual(figure({ cwd: settingsDir({ 'settings.json': { autoCompactWindow: 300000 } }), home }), '260', 'the project beats the user');
+  assert.strictEqual(figure({ home }), '460', 'the user settings when the project sets none');
+  assert.strictEqual(figure({ cwd: both, home, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '450k' } }), '410', 'the variable beats every file, "450k" included');
+  assert.strictEqual(figure({ home, env: { CLAUDE_PROJECT_DIR: both } }), '310', 'CLAUDE_PROJECT_DIR names the project too');
+});
+
+test('a project "auto" ends the lookup: the user\'s window does not apply, the default 260K does', () => {
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 'auto' } });
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
+  const ctx = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project, home }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /the budget is 260K \(harness file, "Context budget"\)/);
+});
+
+test('an unreadable settings file is skipped; CONTEXT_BUDGET_LIMIT beats the window', () => {
+  const project = settingsDir({ 'settings.json': '{ not json' });
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 300000 } });
+  const ctx = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project, home }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /the budget is 260K \(40K under the 300K auto-compact window\)/);
+  const pinned = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project, home, env: { CONTEXT_BUDGET_LIMIT: '280000' } });
+  assert.match(pinned.hookSpecificOutput.additionalContext, /the budget is 280K \(harness file, "Context budget"\)/);
+});
+
+test('a 200K window pulls the warning down to its 160K limit', () => {
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 200000 } });
+  const ctx = runHook('UserPromptSubmit', 170_000, tmp('ctx-budget-s-'), { cwd: project }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /over the 160K budget \(40K under the 200K auto-compact window\)/);
+  const under = runHook('UserPromptSubmit', 140_000, tmp('ctx-budget-s-'), { cwd: project }).hookSpecificOutput.additionalContext;
+  assert.match(under, /^\[context-budget\] ~140K \(under 160K\)\.$/);
 });
 
 console.log('\nharness context-budget: no hand-off wording');
@@ -120,7 +206,7 @@ test('no event/level combination recommends a new session or hand-off', () => {
   const banned = /(start|open|begin) a new session|new session at|or a new session|hand ?off/i;
   const bannedWide = /hand[- ]?(off|over)|(new|fresh) (session|conversation)/i;
   for (const event of ['Stop', 'UserPromptSubmit', 'PostToolUse']) {
-    for (const tokens of [100_000, 260_000, 420_000]) {
+    for (const tokens of [100_000, 180_000, 230_000, 420_000]) {
       const out = runHook(event, tokens, tmp('ctx-budget-s-'));
       // "never ask for a new session" is the one allowed occurrence, and it contains "or a new session"
       // as a substring, so strip it before applying the banned pattern.
@@ -160,30 +246,59 @@ test('the hook still runs when its path goes through a symlinked directory', () 
   const script = path.join(link, 'context-budget.mjs');
   const out = runHook('UserPromptSubmit', 100_000, tmp('ctx-budget-s-'), { script });
   assert.ok(out, 'the hook printed nothing through the symlink');
-  assert.match(out.hookSpecificOutput.additionalContext, /^\[context-budget\] ~100K \(under 250K\)\.$/);
-  const post = runHook('PostToolUse', 260_000, tmp('ctx-budget-s-'), { script });
-  assert.match(post.hookSpecificOutput.additionalContext, /past the 250K mark/);
+  assert.match(out.hookSpecificOutput.additionalContext, /^\[context-budget\] ~100K \(under 220K\)\.$/);
+  const post = runHook('PostToolUse', 230_000, tmp('ctx-budget-s-'), { script });
+  assert.match(post.hookSpecificOutput.additionalContext, /past the 220K mark/);
 });
 
 console.log('\nharness context-budget: mutation');
 
-test('mutation: a band comparison that never matches makes the second call print again', () => {
+/** A copy of the shipped hook with one line replaced. */
+function mutant(from, to) {
   const source = fs.readFileSync(BUDGET, 'utf8');
-  const from = 'if (band === last) return false;';
-  const to = 'if (band !== band) return false;';
-  assert.ok(source.includes(from), 'the band comparison exists in the shipped file');
-  const mutant = source.replace(from, to);
-  assert.notStrictEqual(mutant, source, 'the replacement applied');
+  assert.ok(source.includes(from), `not in the shipped file: ${from}`);
   const script = path.join(tmp('ctx-budget-m-'), 'context-budget.mjs');
-  fs.writeFileSync(script, mutant);
+  fs.writeFileSync(script, source.replace(from, to));
+  return script;
+}
+
+test('mutation: a band comparison that never matches makes the second call print again', () => {
+  const script = mutant('if (band === last.band && level === last.level) return false;', 'if (band !== band) return false;');
   const dir = tmp('ctx-budget-s-');
-  assert.ok(runHook('PostToolUse', 260_000, dir, { script }));
-  const second = runHook('PostToolUse', 262_000, dir, { script });
+  assert.ok(runHook('PostToolUse', 230_000, dir, { script }));
+  const second = runHook('PostToolUse', 232_000, dir, { script });
   assert.ok(second, 'the mutant prints a second time in the same band');
   // and the shipped file stays quiet for the same sequence
   const dir2 = tmp('ctx-budget-s-');
-  runHook('PostToolUse', 260_000, dir2);
-  assert.strictEqual(runHook('PostToolUse', 262_000, dir2), null);
+  runHook('PostToolUse', 230_000, dir2);
+  assert.strictEqual(runHook('PostToolUse', 232_000, dir2), null);
+});
+
+test('mutation: a limit that ignores the window reads 300K as over a 260K budget under a 400K window', () => {
+  const script = mutant('window ? window - MARGIN : DEFAULT_LIMIT', 'DEFAULT_LIMIT');
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 400000 } });
+  const out = runHook('UserPromptSubmit', 300_000, tmp('ctx-budget-s-'), { cwd: project, script });
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /the budget is 360K/, 'the mutant must lose the derived limit');
+});
+
+test('mutation: user settings read before the project make the project lose', () => {
+  const script = mutant(
+    'for (const file of [...files, join(home, \'.claude\', \'settings.json\')]) {',
+    'for (const file of [join(home, \'.claude\', \'settings.json\'), ...files]) {'
+  );
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 300000 } });
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
+  const out = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project, home, script });
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /the budget is 260K/, 'the mutant must read the user window first');
+});
+
+test('mutation: a gate line on Stop too is caught (Stop stays quiet under WARN)', () => {
+  const script = mutant(
+    "if (event !== 'UserPromptSubmit' && !(event === 'PostToolUse' && ctx >= gate)) return null;",
+    "if (event !== 'UserPromptSubmit' && !(event !== 'UserPromptSubmit' && ctx >= gate)) return null;"
+  );
+  assert.ok(runHook('Stop', 180_000, tmp('ctx-budget-s-'), { script }), 'the mutant speaks on Stop');
+  assert.strictEqual(runHook('Stop', 180_000, tmp('ctx-budget-s-')), null);
 });
 
 console.log(`\nPassed: ${passed}`);

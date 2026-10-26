@@ -240,6 +240,13 @@ second run of the same gates waits for the first.
 > always owed. No run repeated after a merge whose tree equalled the verified tip;
 > the merges were never the waste.
 
+**At an owner gate past 150K, the cards go out as text and the turn ends.** The
+open cards go to the state file as `Q-n` rows first; under 150K the question tool
+stays (`gate-design.md` › Who decides).
+> Origin, the v5 context study: 183 requests after a gap of more than an hour
+> rewrote their whole context, 9.6% of main-thread spend. Idle compaction runs only
+> after an ended turn — 0 of 44 came while a question was pending.
+
 **Wait on a completion notice, never a sleep loop; shrink a screenshot before
 reading it.**
 > Origin, the cost study: one release session ran 41 sleep-or-poll commands while a

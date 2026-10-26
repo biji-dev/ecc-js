@@ -82,6 +82,14 @@ Handing critical code to the second family or Sonnet is the user's call alone, a
 its review is then an Opus reviewer per slice. Each Build and Fix spec states its
 executor in `## Executor`.
 
+**Size each slice to one executor context: about 70 tool calls, a peak under
+200K.** A larger slice splits before dispatch. An executor that compacts loses what
+it read: after a subagent compaction, 147 of the next 170 Reads went back to files
+already read. A per-agent `autoCompactWindow` is a backstop, never the plan.
+> Origin: one project's study found subagents at 76% of its spend, all of it out of
+> sight of the main-thread budget hook, and it has sliced to about 70 calls since.
+> Across nine installs in 21 days, 108 of 575 implementer runs passed 200K.
+
 State the decision and the model for each role in one line before going on.
 
 ### Phase B — Specs (main session)

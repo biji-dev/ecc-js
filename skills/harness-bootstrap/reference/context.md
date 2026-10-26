@@ -103,9 +103,67 @@ corrected from the transcript, never the other way round.
 `[M]` **The state file has a byte budget** (`scope-guard.md`); the agent-docs lint
 enforces it. A state file that grows past it is being used as a log.
 
-`[B]` Warning and limit figures — start at 250K and 400K, and let the log move
-them. The state file's path. Where the platform's automatic compaction is
-configured (Claude Code: `autoCompactWindow` in `.claude/settings.json`).
+## The window, the gate wait and the base
+
+**Evidence: 21 days of transcripts from nine installs (2026-10-05 to 26) — 28,322
+main-thread requests, $2,774, 288 compactions — and a replay of their measured
+growth at other windows, within 0.1% of the actual spend at the configured ones.**
+
+`[M]` **Three levers set what a long session costs, and the window is the
+smallest.**
+
+| Lever | Measured | What the harness does |
+|---|---|---|
+| the auto-compact window | against the replay of the configured windows: 300K −4.0% of main-thread spend; 250K −5.4%, with 539 compactions against 361; 200K −1.6%; 150K +69%; 1M +20% | `autoCompactWindow: 300000` |
+| cache expiry while the owner is away | 183 requests after a gap of more than an hour rewrote their whole context: $267, 9.6% of main-thread spend | the gate wait, below |
+| the base | a compaction lands at about 106K; a fresh session starts at 22–108K, by project | the base budget, below |
+
+`[M]` Compaction fires about 33K under the window (at 367K under 400K, at 297K
+under 330K) and lands near the 106K base, so a window under 250K buys little
+headroom and many compactions. 300K over 250K: a third fewer compactions (361
+against 539), each about 66 seconds and the chat's detail, and the cheaper of the
+two if the compaction call itself turns out uncached (−1.8% against −0.4%).
+
+`[M]` **The gate wait.** Claude Code's prompt cache lives an hour. Its idle
+compaction compacts a conversation left idle about 54 minutes, before the cache
+expires, so the owner's answer does not rewrite it all — but only after an ended
+turn: **0 of 44 idle compactions came while an `AskUserQuestion` or `ExitPlanMode`
+was pending.** So at an owner gate with the context at **150K or more**, the cards
+go to the state file as `Q-n` rows and out as text, the `/clear` offer first, and
+the turn ends (`gate-design.md` › Who decides). Under 150K the question tool stays:
+rewriting the context costs less than compacting it below about 125K (the $0.15
+compaction call against rewriting what lies above the 106K base at $8 a million).
+
+`[M]` **Idle compaction** is on by default for a conversation of 200K or more;
+`CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=150000`, a machine setting, lowers that to the
+gate wait's figure, and `/config` › Idle compaction turns it off. Taking the `/clear`
+offer at the gate is better still: the state file is the resume point, so there is
+nothing left to compact.
+
+`[M]` **The base budget.** Each 10K tokens trimmed from what every session loads
+saves about 2% of main-thread spend and $0.08 per compaction. The repository's share
+— `CLAUDE.md`, the files it imports with `@`, `AGENTS.md`, and any rule file without
+`paths:` — is `check-agent-docs.mjs --base`, held to a ratcheted target
+(`budgets.base`); MCP servers, plugins and user files add the rest, per machine.
+Measured fresh bases in four repositories: 108K (one with its harness in a 144 KB `CLAUDE.md`), 91K,
+82K, ecc-js 68K; a worktree session 22–28K.
+
+`[M]` **Subagents: the slice before the window.** Subagents were 59% of the spend
+($4,003). A 250K window on the implementer would save about 7% of its cost, but
+after a subagent compaction 147 of its next 170 Reads re-read files it had already
+read (86%, over 59 compactions, against 25% in the control). So the slice keeps a
+subagent small — about 70 tool calls and a peak under 200K (`delegate-tasks`) — and
+the implementer's `autoCompactWindow: 250000` is only a backstop (`runner.md` › The
+implementer agent). Reviewers and auditors get none: they would save 5% or less,
+and a compaction mid-review loses what they read.
+> Origin: one project slices to about 70 calls and a 200K peak since its own study
+> found subagents at 76% of its spend, with the main-thread hook seeing none of it.
+
+`[B]` The window (`autoCompactWindow` in Claude Code's settings — local, project,
+then user; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` beats all three), the hook's warning
+(220K) and its margin under the window (40K; with no window set, a 260K limit), the
+gate wait's figure (150K), the base target, the state file's path. The retro
+re-measures them (`learning.md`).
 
 ## The budget hook — opt-in
 
@@ -114,13 +172,18 @@ and `PostToolUse`. It reads the main thread's last `usage` record from the
 transcript tail and:
 
 - below the warning budget, gives the model a one-line figure for the switch line
-  (on `UserPromptSubmit` only);
+  (on `UserPromptSubmit`), and from 150K adds that an owner gate goes out as text
+  and the turn ends — on `PostToolUse` too, so a long autonomous turn hears it
+  before it reaches the gate;
 - past it, tells the user on `Stop` and the model on the other two to offer a
   `/compact` at the next step boundary — or `/clear` and the runner's resume command
   when the run is waiting on the owner — and keep working, never to ask for a new
   session;
-- on `PostToolUse`, speaks only when the context crosses into a new 25K band, so a
-  long tool loop hears about it without hearing it every call;
+- takes its limit from the auto-compact window, 40K under it, read where Claude
+  Code reads it: `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then `.claude/settings.local.json`,
+  `.claude/settings.json` and the user's settings; with none set, or `auto`, 260K;
+- on `PostToolUse`, speaks only when the context crosses into a new 25K band or a
+  new level, so a long tool loop hears about it without hearing it every call;
 - never blocks, and exits 0 on any error.
 
 Install only when the owner agrees: copy it to `.claude/hooks/context-budget.mjs`
@@ -137,7 +200,7 @@ and add to `.claude/settings.json`:
 ```
 
 Merge into existing `hooks` arrays; never replace them. `CONTEXT_BUDGET_WARN` and
-`CONTEXT_BUDGET_LIMIT` override the figures; `CONTEXT_BUDGET_STATE_DIR` moves the
+`CONTEXT_BUDGET_LIMIT` override the figures (a limit set this way ignores the window); `CONTEXT_BUDGET_STATE_DIR` moves the
 band state (default: the system temp directory). Other agents have no equivalent
 hook surface yet — the switch line and the compaction rule still apply there.
 

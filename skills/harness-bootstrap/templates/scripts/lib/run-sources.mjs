@@ -1,0 +1,143 @@
+// harness-bootstrap run sources (generated YYYY-MM-DD). Where a run's measurements are on disk.
+// [M] mechanism (ships as-is): everything below the [B] block. [B] binding: the block right below.
+/**
+ * Finds the Claude Code transcripts (a session's main file and its subagents, by session id or by
+ * the repository a session ran in) and the Codex run ledger, for unit-cost.mjs and retro.mjs.
+ * Read-only: it lists and reads files and runs read-only git (`rev-parse`, `worktree list`, and for
+ * retro-gather `blame` and `log`); it never writes.
+ */
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+// ---- [B] project bindings
+// [B] Where the Codex ledger lives, relative to the main checkout (the same name as in codex-run.mjs).
+export const LEDGER_DIR = '.codex-runs';
+// ---- end [B]
+
+// How much of a transcript is read to find the directory its session ran in.
+const HEAD_BYTES = 64 * 1024;
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** Read-only git with no inherited GIT_* variable, so a git hook's GIT_DIR cannot redirect the lookup. */
+export function gitRead(args, cwd) {
+  const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_') && k !== 'GIT_OPTIONAL_LOCKS') delete env[k];
+  return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 });
+}
+
+/** A session's main file and its subagent files in project directory `dir`, as [{ file, ctx }]. */
+export function transcriptFiles(dir, id) {
+  const files = [{ file: path.join(dir, `${id}.jsonl`), ctx: { kind: 'main', session: id } }];
+  const subDir = path.join(dir, id, 'subagents');
+  if (fs.existsSync(subDir)) {
+    for (const name of fs.readdirSync(subDir).filter((n) => n.endsWith('.jsonl')).sort()) {
+      const meta = readJson(path.join(subDir, name.replace(/\.jsonl$/, '.meta.json')));
+      files.push({
+        file: path.join(subDir, name),
+        ctx: {
+          kind: 'sub',
+          agentId: `${id}/${name}`,
+          agentType: meta.agentType ?? null,
+          session: id,
+          description: typeof meta.description === 'string' ? meta.description : null,
+        },
+      });
+    }
+  }
+  return files;
+}
+
+/** The session's main file and its subagent files, found by scanning <projectsDir>/*\/<id>.jsonl. */
+export function sessionFiles(projectsDir, id) {
+  let projects;
+  try {
+    projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch (e) {
+    throw new Error(`cannot read projects dir ${projectsDir}: ${e.code ?? e.message}`, { cause: e });
+  }
+  const dir = projects.map((p) => path.join(projectsDir, p.name)).find((p) => fs.existsSync(path.join(p, `${id}.jsonl`)));
+  if (!dir) throw new Error(`session ${id} not found under ${projectsDir}`);
+  return transcriptFiles(dir, id);
+}
+
+/** Main checkout root, so worktrees share one ledger (the same resolution as codex-run.mjs). */
+export function defaultLedger(cwd = process.cwd()) {
+  try {
+    const common = gitRead(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd).trim();
+    return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');
+  } catch {
+    return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');
+  }
+}
+
+/** The repository's worktree paths, the main checkout first; just `top` when git cannot list them. */
+export function worktreePaths(top) {
+  try {
+    const paths = gitRead(['worktree', 'list', '--porcelain'], top)
+      .split('\n')
+      .filter((l) => l.startsWith('worktree '))
+      .map((l) => l.slice('worktree '.length));
+    return paths.length ? paths : [top];
+  } catch {
+    return [top];
+  }
+}
+
+/** The working directory a transcript's session ran in: the first `cwd` in its first 64 KB, else null. */
+export function firstCwd(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(HEAD_BYTES);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(buf.toString('utf8', 0, n));
+    return m ? JSON.parse(`"${m[1]}"`) : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+// Claude Code names a project directory after the session's working directory, every character
+// other than a letter or digit turned into `-` (/a/b.c -> -a-b-c).
+const projectDirName = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
+
+/**
+ * The sessions that ran inside one of `roots` (the repository and its worktrees), as
+ * [{ id, files: [{ file, ctx }] }], skipping main files last modified before `sinceMs`. A directory is
+ * read only when its name could belong to a root, and a session is kept only when its own `cwd` is
+ * inside one: `shop` must not take `shopbiz`'s sessions.
+ */
+export function projectSessions(projectsDir, roots, sinceMs = 0) {
+  const names = roots.map(projectDirName);
+  let dirs;
+  try {
+    dirs = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return [];
+  }
+  const inside = (cwd) => roots.some((r) => cwd === r || cwd.startsWith(`${r}${path.sep}`));
+  const out = [];
+  for (const d of dirs) {
+    if (!names.some((n) => d.name === n || d.name.startsWith(`${n}-`))) continue;
+    const dir = path.join(projectsDir, d.name);
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')).sort()) {
+      const file = path.join(dir, name);
+      if (fs.statSync(file).mtimeMs < sinceMs) continue;
+      const cwd = firstCwd(file);
+      if (cwd === null || !inside(cwd)) continue;
+      const id = name.slice(0, -'.jsonl'.length);
+      out.push({ id, files: transcriptFiles(dir, id) });
+    }
+  }
+  return out;
+}

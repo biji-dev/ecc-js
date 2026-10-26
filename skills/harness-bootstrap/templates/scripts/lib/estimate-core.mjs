@@ -137,34 +137,58 @@ export function ownerWaitMinutes(cell) {
 const norm = (c) => c.toLowerCase().replace(/^[\s*★]+/, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
 const findCol = (names, prefix) => names.findIndex((n) => n.startsWith(prefix));
 
-/** The log text -> one record per usable table row, from every table that has Unit and Elapsed/Cost columns. */
-export function parseLog(text) {
-  const tables = [];
+/**
+ * Every markdown table in `text`: its normalised header names and its rows, each with its 1-based
+ * line. A row with no header of its own -- rows appended below a later table -- continues the
+ * nearest earlier table with as many columns as it has cells, or is dropped.
+ */
+export function tables(text) {
+  const out = [];
   let prev = null;
   let current = null;
-  for (const line of text.split(/\r?\n/)) {
+  let loose = [];
+  const adopt = () => {
+    for (const r of loose) out.findLast((x) => x.names.length === r.cells.length)?.rows.push(r);
+    loose = [];
+  };
+  for (const [i, line] of String(text ?? '').split(/\r?\n/).entries()) {
     if (!line.trim().startsWith('|')) {
+      if (!current) adopt();
       prev = null;
       current = null;
+      loose = [];
       continue;
     }
     const cells = splitRow(line);
     if (cells.length > 0 && cells.every((c) => SEPARATOR.test(c))) {
       if (prev && !current) {
         current = { names: prev.map(norm), rows: [] };
-        tables.push(current);
+        out.push(current);
+        loose = [];
       }
       continue;
     }
-    if (current) current.rows.push(cells);
+    if (current) current.rows.push({ cells, line: i + 1 });
+    else loose.push({ cells, line: i + 1 });
     prev = cells;
   }
+  if (!current) adopt();
+  return out;
+}
+
+/**
+ * The log text -> one record per usable table row, from every table that has Unit and Elapsed/Cost
+ * columns. With `raw`, a record also carries its 1-based `line` and its table's normalised column
+ * `names` and raw `cells`, so a reader of other columns (retro-core) parses the log the same way.
+ * `columns` replaces COLUMNS for a reader that cannot see this project's binding (the weekly job).
+ */
+export function parseLog(text, { raw = false, columns = COLUMNS } = {}) {
   const records = [];
-  for (const { names, rows } of tables) {
-    const col = Object.fromEntries(Object.entries(COLUMNS).map(([k, v]) => [k, findCol(names, v)]));
+  for (const { names, rows } of tables(text)) {
+    const col = Object.fromEntries(Object.entries(columns).map(([k, v]) => [k, findCol(names, v)]));
     if (col.unit === -1 || (col.elapsed === -1 && col.cost === -1)) continue;
     const at = (cells, k) => (col[k] === -1 ? '' : (cells[col[k]] ?? ''));
-    for (const cells of rows) {
+    for (const { cells, line } of rows) {
       const first = cells[col.unit] ?? '';
       if (!first) continue;
       const parts = first.split('·').map((s) => s.trim());
@@ -175,7 +199,7 @@ export function parseLog(text) {
       const usable = !UNUSABLE.test(at(cells, 'elapsed'));
       records.push({
         unit: first,
-        id: parts[0],
+        id: parts[0].replace(/^[`*]+|[`*]+$/g, ''),
         type: at(cells, 'type'),
         tier,
         work: usable ? elapsed.work : null,
@@ -183,6 +207,7 @@ export function parseLog(text) {
         claudePct: cost.claudePct,
         codexPct: cost.codexPct,
         cost: cost.cost,
+        ...(raw ? { line, names, cells } : {}),
       });
     }
   }

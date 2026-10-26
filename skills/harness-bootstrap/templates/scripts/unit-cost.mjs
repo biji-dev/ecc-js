@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // harness-bootstrap unit-cost (generated YYYY-MM-DD). Prints what one unit cost, measured, not guessed.
 // [M] mechanism (ships as-is): everything. The [B] bindings (price table, cache-write multipliers,
-// dollars per percent of the weekly limit) live at the top of scripts/lib/unit-cost-core.mjs.
+// dollars per percent of the weekly limit) live at the top of scripts/lib/unit-cost-core.mjs, the
+// ledger directory at the top of scripts/lib/run-sources.mjs.
 /**
  * Reads the unit's Claude Code transcripts (main thread plus every subagent) and the Codex run
  * ledger, and prints the cost, the Claude % and the Codex % for the harness log row.
@@ -36,7 +37,6 @@
  *
  * Read-only. It prints; it never writes into the repo or the transcripts.
  */
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,10 +54,8 @@ import {
   summarizeTimes,
   summaryLine,
 } from './lib/unit-cost-core.mjs';
+import { defaultLedger, sessionFiles } from './lib/run-sources.mjs';
 import { parseSteps } from './lib/unit-step-core.mjs';
-
-// [B] Where the ledger lives, relative to the main checkout (the same name as in codex-run.mjs).
-const LEDGER_DIR = '.codex-runs';
 
 const USAGE =
   'usage: node scripts/unit-cost.mjs --session <id>[,<id>...] [--projects-dir <dir>] [--since <ISO>] [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--times] [--by-step <steps file> [--unit <id>]] [--json | --line]';
@@ -72,58 +70,6 @@ function readText(file) {
     return fs.readFileSync(file, 'utf8');
   } catch (e) {
     throw new Error(`cannot read ${file}: ${e.code ?? e.message}`, { cause: e });
-  }
-}
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-/** The session's main file and its subagent files, as [{ file, ctx }]. */
-function sessionFiles(projectsDir, id) {
-  let projects;
-  try {
-    projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
-  } catch (e) {
-    throw new Error(`cannot read projects dir ${projectsDir}: ${e.code ?? e.message}`, { cause: e });
-  }
-  const dir = projects.map((p) => path.join(projectsDir, p.name)).find((p) => fs.existsSync(path.join(p, `${id}.jsonl`)));
-  if (!dir) throw new Error(`session ${id} not found under ${projectsDir}`);
-  const files = [{ file: path.join(dir, `${id}.jsonl`), ctx: { kind: 'main', session: id } }];
-  const subDir = path.join(dir, id, 'subagents');
-  if (fs.existsSync(subDir)) {
-    for (const name of fs.readdirSync(subDir).filter((n) => n.endsWith('.jsonl')).sort()) {
-      const meta = readJson(path.join(subDir, name.replace(/\.jsonl$/, '.meta.json')));
-      files.push({
-        file: path.join(subDir, name),
-        ctx: {
-          kind: 'sub',
-          agentId: `${id}/${name}`,
-          agentType: meta.agentType ?? null,
-          session: id,
-          description: typeof meta.description === 'string' ? meta.description : null,
-        },
-      });
-    }
-  }
-  return files;
-}
-
-/** Main checkout root, so worktrees share one ledger (the same resolution as codex-run.mjs). */
-function defaultLedger(cwd = process.cwd()) {
-  try {
-    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');
-  } catch {
-    return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');
   }
 }
 

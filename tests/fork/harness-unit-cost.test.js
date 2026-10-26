@@ -14,6 +14,7 @@ const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scr
 const TEST_REL = path.join('lib', 'unit-cost-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-cost-core.mjs');
 const CLI_REL = 'unit-cost.mjs';
+const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
 const EXPECTED_TESTS = 44;
@@ -111,7 +112,7 @@ mutantFails('counting a quota delta across a reset', 'Math.abs(b.resetsAt - a.re
 mutantFails('counting a negative quota delta', 'if (i.hi <= i.lo) continue;', '');
 mutantFails('counting overlapping quota intervals twice', 'if (l <= hi) hi = Math.max(hi, h);', 'if (false) hi = Math.max(hi, h);');
 mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {", 'if (false) {');
-mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", CLI_REL);
+mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", SOURCES_REL);
 mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
 mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
@@ -123,7 +124,7 @@ mutantFails('counting a compaction outside the window', "events.filter((e) => e.
 mutantFails('taking a new session\'s first turn for an expiry rewrite', 'const prev = lastTurn.get(r.session);\n    lastTurn.set(r.session, r.ts);', 'const prev = lastTurn.get(0);\n    lastTurn.set(0, r.ts);');
 mutantFails('placing a tagged subagent by its first turn', 'tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt', 'false ? label(tag) : stepAt');
 mutantFails("honouring another unit's tag", 'tag && (unit === null || tag.unit === unit) ? label(tag)', 'tag ? label(tag)');
-mutantFails('dropping the dispatch description from the meta file', "description: typeof meta.description === 'string' ? meta.description : null,", 'description: null,', CLI_REL);
+mutantFails('dropping the dispatch description from the meta file', "description: typeof meta.description === 'string' ? meta.description : null,", 'description: null,', SOURCES_REL);
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

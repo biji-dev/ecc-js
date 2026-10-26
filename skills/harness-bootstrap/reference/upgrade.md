@@ -107,7 +107,8 @@ guard the upgrade installs (`commit-guard.md` › Land order). Fix the runner in
 same upgrade, or do not install the hook yet.
 
 `[M]` After applying, write `.agents/harness-manifest.json` and commit it with the
-change:
+change (then register the repository for the weekly job, `learning.md` › The weekly
+job):
 
 ```json
 { "schema": 1, "skill": "harness-bootstrap", "skillVersion": 4, "generated": "<date>",

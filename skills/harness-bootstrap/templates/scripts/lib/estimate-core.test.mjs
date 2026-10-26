@@ -148,6 +148,29 @@ test('parseLog skips unrelated tables, reads several logs tables, drops empty-un
   assert.deepEqual(parseLog('no table here'), []);
 });
 
+test('rows with no header of their own continue the nearest earlier table with as many columns', () => {
+  const text = [
+    '| U0 | Full | 9m |',
+    '',
+    table(['Unit', 'Tier', 'Elapsed'], [['U1', 'Full', '10m']]),
+    '',
+    table(['Signal', 'Change'], [['a', 'b']]),
+    '',
+    '| U2 | Full | a stray | pipe | 20m |',
+    '| U3 | Full | 20m |',
+    '| two | cells |',
+    '| U4 | Small | 5m |',
+  ].join('\n');
+  // U0 has no earlier table to continue; U2's stray pipes and the two-cell row match no log table.
+  assert.deepEqual(parseLog(text, { raw: true }).map((r) => [r.unit, r.work, r.line]), [['U1', 10, 5], ['U3', 20, 12], ['U4', 5, 14]]);
+});
+
+test('the unit id drops the code ticks and bold around it; the Unit cell keeps them', () => {
+  const [r] = parseLog(table(['Task', 'Elapsed'], [['`T-SEC-016`', '15m']]), { columns: { unit: 'task', elapsed: 'elapsed' } });
+  assert.deepEqual([r.unit, r.id, r.work], ['`T-SEC-016`', 'T-SEC-016', 15]);
+  assert.equal(parseLog(table(['Unit', 'Elapsed'], [['**EP-3** · plan', '5m']]))[0].id, 'EP-3');
+});
+
 test('filterRows keeps one tier and matches the cohort regex against the Unit or Type cell', () => {
   const rows = parseLog(LOG);
   assert.equal(filterRows(rows, { tier: 'full' }).length, 4);

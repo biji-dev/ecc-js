@@ -44,7 +44,9 @@ back. This is how the review lineup in `gate-design.md` was set; keep measuring 
 8b's `unit-cost.mjs --times --by-step <steps file>` prints it: wall, owner-wait and
 work time, compactions, the cache-hit share, cache-expiry rewrites, and dollars and
 time per runner step (`runner.md` › Step markers). Quote the line that explains an
-outlier in Friction.
+outlier in Friction. The week's units side by side are the retro's digest
+(`learning.md` › The retro), which reads the log's Defects, Missed by harness and
+Friction cells as they are written here.
 
 **Two of the same friction** means fix the machinery, not the habit. If the log
 says *"fix the machinery"* twice, the next run starts by fixing it.

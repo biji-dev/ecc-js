@@ -9,8 +9,8 @@ metadata:
 
 # Harness bootstrap
 
-Six phases against a target repository (0, A–E). The harness has **one core and
-two work-unit modes**:
+Six phases against a target repository (0, A–E), and a seventh across them (F).
+The harness has **one core and two work-unit modes**:
 
 - **Plan mode** — the unit is a plan task with a stable id. Born in a regulated
   rental platform (21+ logged tasks) and adopted by a multi-tenant agent platform
@@ -49,7 +49,8 @@ use the folder this `SKILL.md` was read from.
 | B · policy, risk map, merge policy | `reference/policy-derivation.md`; the merge default in `gate-design.md`; the marker syntax in `upgrade.md` |
 | C · generate | `templates/agents-rules.md`, `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md` |
 | C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md` |
-| E · growth | `vendor-skill.md` |
+| E · growth | `vendor-skill.md`, `learning.md` |
+| F · across projects | `learning.md` › Phase F |
 
 Every reference line is marked **`[M]` mechanism** — ship it — or **`[B]`
 binding** — re-derive it from this project. Generating means writing files that
@@ -273,6 +274,8 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `scripts/unit-step.mjs` + `scripts/lib/unit-step-core.mjs` + its test | `templates/scripts/unit-step.mjs`, `templates/scripts/lib/unit-step-core.mjs`, `templates/scripts/lib/unit-step-core.test.mjs` | each runner step's start and end, one line each in the unit's steps file beside its state file (`runner.md` › Step markers); bind `STEPS_DIR` to the state file's directory |
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |
 | `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); with `--times` and `--by-step`, where the time and money went; bind the price table and the dollars-per-percent calibration |
+| `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under `docs/harness/reports/`: KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
+| `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts and Codex ledger are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
 | `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks` | `commit-guard.md`, `templates/harness-guard.sh` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`, and run the id self-test (`commit-guard.md`) against every plan id and branch. Test the shipped file |
@@ -339,7 +342,10 @@ the reviewed policy; and that the core table is complete. One fix round, one
 re-review, both in the install report. The install then lands like a harness unit:
 its own `harness/<slug>` branch, `--no-ff` on the owner's word, a log row, push the
 owner's. On its first run this review found five P1
-defects the generator could not see in its own output.
+defects the generator could not see in its own output. Once it lands, register the
+repository for the weekly job: `node <skill dir>/scripts/retro-weekly.mjs --register
+<repo>` writes only `~/.agents/harness/repos.json`, and `--dry-run` shows what the
+next run will read (`learning.md` › The weekly job).
 
 **Local skills, not global.** They live in the project so they can name its facts
 and grow from its runs. `.claude/skills/`, `.claude/agents/` and `.agents/skills/`
@@ -371,9 +377,22 @@ makes, and none could have been generated up front.
 
 **Rules from the log.** Each incident that produces a rule adds it to `AGENTS.md`
 (rule + why + link) and its story to `docs/harness/rule-origins.md`. Over time earned rules
-outnumber generated ones — which is the point. Optionally, once a quarter, a fresh
-agent audits every rule against the log: which fired, which never did, which the log
-contradicts.
+outnumber generated ones — which is the point. Once a quarter, or when a weekly review
+proposes it, a fresh agent audits every rule against the log: which fired, which never
+did, which the log contradicts.
+
+**The retro, weekly.** `scripts/retro.mjs` writes the week's digest; the weekly job
+exports every registered project's and has a fresh Opus review them, read-only and
+capped. Its proposals are routed, never asked: a T proposal becomes a queued
+`harness/<slug>` unit, a C proposal goes into the next Gate 2 brief under "Harness
+learning" (`learning.md`).
+
+### Phase F — Across projects
+
+Run in this skill's own repository when a weekly review proposes a promotion, or
+monthly. Promote mechanism that two or more projects found, or a template logic
+error found once — never one project's thresholds — and cite the digests it rests
+on. The output is the next harness round's plan (`learning.md` › Phase F).
 
 ## Examples
 

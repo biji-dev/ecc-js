@@ -70,7 +70,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 
 ```
 0a resume      a held registry row or an existing unit branch = a stopped run; verify each step against evidence
-0  claim       type · tier · unit · overlap · branch (+ worktree) · lock · state file
+0  claim       due-checks · type · tier · unit · overlap · branch (+ worktree) · lock · state file
 1  ground      plan mode: sync both ways, follow the trace, read follow-ups owed
                change mode: investigate → plan + Impact Analysis + Scope block → plan check (Full)
                                                           ══ GATE 1 ══  one decision sheet
@@ -86,7 +86,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8b record      written last, from the diff, as fields
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
                                                           ══ GATE 2 ══  by the merge policy
-9  land        guard → land commit → release the lock → merge → push on the owner's word
+9  land        guard → land commit → release the lock → merge → push on the owner's word → due-checks
 10 teardown    stop what was started; close the state file; offer /compact; next unit
 ```
 
@@ -122,6 +122,45 @@ work time and the dollars per step (`log-format.md`).
 > measured unit's record step took 19% of its $78.41, found only by rebuilding its steps
 > from the transcripts by hand.
 
+## Due-checks
+
+`[M]` **Step 0 starts with `node scripts/harness-due.mjs --claim <row id>`; step 9
+ends with `node scripts/harness-due.mjs`.** It reads the log, the follow-ups doc,
+the reports, git and the free disk, prints one line for each thing the harness owes,
+and never asks a question. What each line makes the runner do:
+
+| Line | The runner |
+|---|---|
+| `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
+| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit, a `harness/<slug>` unit |
+| `DUE disk` | starts the approved machine-sweep categories in the background; with none approved, the line goes in the next owner brief |
+| `DUE worktrees` | removes each one no registry row names (`git worktree remove`, never `--force`) |
+| `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
+
+`[M]` **No queue is stored.** The checks re-read the files each time, so a unit
+that is due stays due until its report is committed, and nothing has to remember
+it. Reports are committed under `docs/harness/reports/`, never a gitignored
+directory: a report nobody can count does not exist for the next check.
+> Origin: 13 preflights and sweeps in two projects caught real problems, and each
+> ran because someone asked: the owner asked six times, two sweeps ran overdue
+> ("overdue by four days and fourteen landings"), one project kept its
+> reports in a gitignored directory, and another's note that a sweep was due lived
+> in a session's memory only. On 2026-10-26 the check read 10 landings since
+> one project's last sweep, five days earlier.
+
+`[B]` In `scripts/lib/harness-due-core.mjs`: `MAIN`, `LOG`, `FOLLOW_UPS`, `REPORTS`
+(`null` for a kind the project does not run), `PHASE_OF`, `CADENCE`, `P3_AGE_DAYS`,
+`DISK_MIN_GB`, `WORKTREE_IDLE_HOURS`, `COMMANDS`.
+
+## The hygiene unit
+
+`[M]` **`DUE hygiene` queues a `harness/hygiene-<date>` unit: the P3 batch over the
+follow-ups doc's oldest P3s, dead code and unused dependencies, docs drift over the
+whole tree, the archive, and the residue** (`hygiene.md`). It is a Code unit with
+the tiers, Full when it deletes in critical code. It ends by committing
+`docs/harness/reports/hygiene-<date>.md`, which restarts the count. With no
+hygiene unit bound, `DUE p3` queues the P3 batch alone.
+
 ## Which steps each tier runs
 
 | Step | Trivial | Small | Full |
@@ -134,7 +173,7 @@ work time and the dollars per step (`log-format.md`).
 | 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
-| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the sweep | the same (`gate-design.md`) |
+| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the P3 batch | the same (`gate-design.md`) |
 | 8 verify | scoped | FULL once before merge | FULL |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
@@ -153,6 +192,8 @@ evidence; redoing a step is cheap and never wrong. Commit uncommitted work first
 as its own commit. Never reclaim a row you do not own.
 
 **Step 0 — claim.**
+- `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
+  this row opens stops the claim before anything is held.
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
   role, and on Small the Scope block.
@@ -291,8 +332,8 @@ DOM snapshot; send screenshots to a model that reads images.
   > Origin: about 6% of claimed gaps in the third project were artefacts — a
   > scaled measurement, harness timing, another worktree's test run.
 - `[M]` **Triage by scope class, then severity**: OUT → follow-ups whatever its
-  severity; P3 → **the sweep**, never a fix round, unless on a line this round already
-  changes.
+  severity; P3 → **the P3 batch**, never a fix round, unless on a line this round
+  already changes.
 - `[M]` **Fix rounds** are bounded by `gate-design.md`, and each fix gets a
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
@@ -302,9 +343,10 @@ DOM snapshot; send screenshots to a model that reads images.
   mixed`, required on every kind.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
-- `[M]` **The P3 sweep** runs once per slice set, after the fix rounds: one Sonnet
+- `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
   fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
-  targeted tests, no re-review.
+  targeted tests, no re-review (`review-gate.mjs` says `p3-batch`). The P3s a unit
+  defers go to the follow-ups doc, and the hygiene unit batches them.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
   attributed against the merge base, working tree included. `run-gates.sh` reuses an
   all-PASS result for the same tree (`REUSED <tree>`) — and for a tree that differs
@@ -366,6 +408,8 @@ waits on the owner, offer `/clear` with the resume command (`context.md`).
   merge whose tree equals the verified tip.
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file; `git merge` does not read stdin.
+- `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
+  unit the close announces.
 
 **Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
 — ran in the background and were awaited by their completion notice, never a sleep

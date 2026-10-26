@@ -1,11 +1,29 @@
 # Reference: the workstream sweep
 
-**Evidence: 1 real run.** That run was unusually valuable — it found a bug in its
-own reconciler and disproved a standing claim in its own instructions — but one
-run is one run. Install only where the project has a register of open questions
-with a `blocks` relation, and non-code work that gates code work.
+**Evidence: 8 runs in two projects** — one project's seven (2026-09-12 to 2026-10-21)
+and the other's one (2026-10-18). The first found a bug in its own reconciler and
+disproved a standing claim in its own instructions; later ones tracked one
+field-measurement warning for four sweeps running before it failed a phase's entry
+check. Install wherever there is a register of open questions with a `blocks`
+relation, or non-code work that gates code work — the default since v5. In change
+mode the register is the follow-ups doc (› Change mode).
 
 **`[M]` mechanism · `[B]` binding**
+
+## When it runs
+
+`[M]` **`harness-due.mjs` says `DUE sweep` seven days or five landings after the
+newest report** `[B]`, and the runner queues it as the next unit (`runner.md` ›
+Due-checks); before a phase preflight too. A landing is a log row or a mainline
+merge, whichever counts more.
+> Origin: all eight runs happened because someone asked. Two ran overdue —
+> "overdue by seven landings" (2026-09-24), then "by four days and fourteen
+> landings" (2026-10-11), whose report opened with "the weekly cadence is enforced
+> by nothing mechanical".
+
+`[M]` **The report is committed** at `docs/harness/reports/sweep-<date>.md`, never
+in a gitignored directory: job 3 compares against the last report, and the next
+due-check counts from it.
 
 ## The risk it exists for
 
@@ -57,5 +75,16 @@ Storing it creates a second owner for a fact the log already holds.
 `[M]` Also report: which tripwires fired and whether any fired twice, and the
 deferral queue's **growth rate** — the slope matters more than the level.
 
-`[B]` Register locations · merge-commit shapes · the task-id pattern · what
-counts as non-code work.
+## Change mode
+
+`[M]` **The register is the follow-ups doc.** Job 1 reconciles its Status column —
+`scheduled <unit>` against that unit's merge, `fixed <sha>` against the commit,
+never the other way; job 2 warns on rows scheduled for a unit that is close and
+not started; job 3 reports the queue by status and its growth.
+
+`[B]` Register locations · merge-commit shapes, read from `git log --merges
+--format=%s` on the real history, never from the convention (one project: `Merge
+task/p2-16: …` and `P3-12 landed: …` — its 430e3af8 catches all three shapes; the other:
+`Merge l-core/T-DATA-037: …` — its first sweep missed a merge named by its branch
+and id ranges such as `T-MOD-001..007`, fixed in 19c0abf) · the task-id pattern ·
+what counts as non-code work.

@@ -188,6 +188,9 @@ a `SKILL.md`: frontmatter must be the first line.
 | `agent-effort-unpinned` | add `effort: high` to the agent file's frontmatter: without it the agent inherits the session's level, and a session at `max` reaches every reviewer |
 | `agent-model-unpinned` | add `model:` to the agent file's frontmatter (`opus` for judgment, `sonnet` for bounded work): one dispatch in ten names no model, and without a pin those run on the session's Opus |
 | `effort-above-high` | lower it to `high` — an agent file at `xhigh` or `max`, or `CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel` above `high` in the project's settings; raise effort per question, never per session (`gate-design.md`) |
+| `preflight-missing` | run the phase preflight for the phase under way (`preflight.md`) and commit its report under `docs/harness/reports/`; its escalations go to the next Gate 1 |
+| `sweep-overdue`, `retro-overdue`, `hygiene-overdue` | install `harness-due.mjs` where it is absent (steps 0 and 9 run it), commit each report under `docs/harness/reports/` — never a gitignored directory — and make the overdue one the next unit |
+| `p3-queue-aging` | a hygiene unit: its P3 batch takes the oldest cold-code rows, each re-verified against the mainline first (`hygiene.md`). Follow-ups spread over many files are bound or merged into one doc first |
 | `foundation-stage-has-tests` | the pass-signal unit landed and the flip did not run: claim the flip as a `harness/` unit (`foundation.md`) |
 
 ## Version table

@@ -221,10 +221,10 @@ test('fix: kind fix needs a valid --max-fixed', () => {
   assert.doesNotThrow(() => decide({ files: [f(COLD, 1)], kind: 'slice' }));
 });
 
-test('fix 1: a round that fixed only P3s is a sweep with no re-review, whatever the diff', () => {
+test('fix 1: a round that fixed only P3s is the P3 batch with no re-review, whatever the diff', () => {
   for (const files of [[f(HOT, 300)], [f(COLD, 3)], [f(TEST_FILE, 9)]]) {
     const r = bound(() => decide({ files, kind: 'fix', maxFixed: 'P3' }));
-    assert.equal(r.decision, 'sweep');
+    assert.equal(r.decision, 'p3-batch');
     assert.deepEqual(r.reviewers, []);
     assert.match(r.reason, /P3s never open a fix round/);
   }
@@ -257,11 +257,11 @@ test('fix 8: the specialist whose trigger the fix hits joins its re-review', () 
   assert.equal(r2.decision, 'review');
   assert.deepEqual(r2.reviewers, ['security-reviewer']);
   assert.match(r2.reason, /triggered specialist/);
-  // critical, round 3: adversarial plus the specialist; P3 stays a sweep
+  // critical, round 3: adversarial plus the specialist; P3 stays the P3 batch
   const hot = [f('src/core/migrations/0002.sql', 90)];
   const r3 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P1', round: 3 }));
   assert.deepEqual(r3.reviewers, ['second-family-adversarial', 'database-reviewer']);
-  assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'sweep');
+  assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'p3-batch');
 });
 
 test('fix 4: round 3+ on critical code escalates to the adversarial pass', () => {

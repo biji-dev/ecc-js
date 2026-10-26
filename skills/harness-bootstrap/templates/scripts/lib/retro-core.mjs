@@ -201,10 +201,11 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
   });
 }
 
-/** The follow-ups doc -> rows by Status, the open ones that name a P3, and the age in days of the oldest open row. */
+/** The follow-ups doc -> rows by Status, the open ones that name a P3, and the age in days of the oldest open row and the oldest open P3. */
 export function followUpsSummary(text, lineDates = new Map(), now = Date.now()) {
-  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, openP3: 0, oldestOpenDays: null };
+  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null };
   let oldest = null;
+  let oldestP3 = null;
   for (const { names, rows } of tables(text)) {
     const st = names.findIndex((n) => n.startsWith('status'));
     if (st === -1) continue;
@@ -212,12 +213,16 @@ export function followUpsSummary(text, lineDates = new Map(), now = Date.now()) 
       const kind = /^(open|scheduled|fixed|dropped)\b/i.exec(String(cells[st] ?? '').trim())?.[1].toLowerCase() ?? 'other';
       out[kind] += 1;
       if (kind !== 'open') continue;
-      if (cells.some((c) => /\bP3\b/.test(c))) out.openP3 += 1;
+      const p3 = cells.some((c) => /\bP3\b/.test(c));
+      if (p3) out.openP3 += 1;
       const at = lineDates.get(line);
-      if (Number.isFinite(at) && (oldest === null || at < oldest)) oldest = at;
+      if (!Number.isFinite(at)) continue;
+      if (oldest === null || at < oldest) oldest = at;
+      if (p3 && (oldestP3 === null || at < oldestP3)) oldestP3 = at;
     }
   }
   if (oldest !== null) out.oldestOpenDays = Math.floor((now - oldest) / DAY);
+  if (oldestP3 !== null) out.oldestOpenP3Days = Math.floor((now - oldestP3) / DAY);
   return out;
 }
 

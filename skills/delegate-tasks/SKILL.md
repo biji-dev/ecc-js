@@ -184,7 +184,7 @@ Templates for every kind are in `reference/spec-templates.md`.
 7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
    code) **fenced to the current slice's listed files, never a folder** — a fixer
    once wrote the next wave's strings. **Review findings:** P3s never open a fix
-   round — they wait for one batched Sonnet sweep, with no re-review; fix groups
+   round — they wait for one Sonnet P3 batch, with no re-review; fix groups
    whose files do not overlap go in one brief per area; the re-review reads the fix
    diff only, by the reviewer whose finding was fixed — the second family first,
    Opus again only on critical code with a P1 fixed (a harness's `review-gate.mjs`

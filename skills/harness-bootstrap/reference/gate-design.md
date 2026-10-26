@@ -253,7 +253,7 @@ in one line and start it.
 | **P0** | data loss, a security or isolation breach, wrong money, an outage | always |
 | **P1** | a correctness defect the unit introduces, or a blocker for its "Done when" | always |
 | **P2** | a robustness gap, an edge case, a missing test for a real path | if IN scope |
-| **P3** | a nit, a style point | **never opens one** — the batched sweep, or rides along on a line the round already changes |
+| **P3** | a nit, a style point | **never opens one** — the P3 batch, or rides along on a line the round already changes |
 
 `[M]` Agents that report CRITICAL / HIGH / MEDIUM / LOW map to P0 / P1 / P2 / P3.
 Severity decides whether a finding enters a fix round; the scope class decides
@@ -269,7 +269,7 @@ line in the ledger. Its rules:
 
 | Round fixed | Cold code | Critical code |
 |---|---|---|
-| P3 only | **no fix round** — `sweep` | **no fix round** — `sweep` |
+| P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch` |
 | P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
 | any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
@@ -281,10 +281,12 @@ writes, the other re-reads — fix rounds included. It is required —
 executor is `mixed` and routes as the second family's, and critical code that
 Sonnet wrote gets the Opus reviewer as the second family's does.
 
-`[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
+`[M]` **P3s never open a fix round.** They wait for **the P3 batch, one per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
 P3 still IN scope, with no re-review; a P3 on a line the round already changes rides
-along in that round.
+along in that round. P3s deferred to the follow-ups doc get their own batch in the
+hygiene unit (`hygiene.md`). It was called the P3 sweep until v5, a name the
+workstream sweep (`sweep.md`) also uses.
 > Origin: in one 50-slice milestone, 20 of 50 fix rounds were opened by P3s alone,
 > each re-reviewed by Opus (`rules.md` §1 › Cost).
 
@@ -318,7 +320,7 @@ that left the building cannot.
 | Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` |
 | Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** |
 | **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) · per-slice review · the review of a Small unit · re-reviews of Claude-written fixes · the adversarial pass (carrying lane B) | the second family (`cross-model.md`) |
-| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 sweep · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** |
 | The blast-radius auditor (lane B) | **Opus**, only when the second family is unavailable (`degraded`) |
 
 `[M]` **An `executor:` override beats this table** (`runner.md` › Executor

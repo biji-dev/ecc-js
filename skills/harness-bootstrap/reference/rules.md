@@ -198,7 +198,7 @@ machine-down time separately.
 
 ### Cost
 
-**P3s never start a fix round.** They wait for one batched sweep per slice set,
+**P3s never start a fix round.** They wait for the P3 batch, one per slice set,
 with no re-review; a P3 on a line the round already changes rides along.
 > Origin, the cost study: in one 50-slice milestone, 20 of the 50 fix rounds were
 > opened by P3 findings alone, each followed by an Opus re-review — about four hours
@@ -376,7 +376,7 @@ This section exists so a generator does not repeat the pattern.
 | *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Tiers now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
 | *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`). |
 | An Opus code-reviewer over every slice | 63 per-slice runs in one milestone found no P0 or P1; both of its P1s came from the silent-failure lens and the second family. Across 14 days the code-reviewer cost the most of any Opus reviewer and found 8 unique P0/P1. The second family reviews each slice now; one Opus reviewer reads the whole unit diff at step 8 (`gate-design.md`). |
-| Fix every finding at once, nits included | 20 of one milestone's 50 fix rounds were opened by P3s alone, each re-reviewed. P3s wait for one sweep now (§1). |
+| Fix every finding at once, nits included | 20 of one milestone's 50 fix rounds were opened by P3s alone, each re-reviewed. P3s wait for one P3 batch now (§1). |
 | A generic language reviewer, a blast-radius auditor and a docs lane as separate Opus reviewers on every Full unit | Over 14 days they found 1, 0 and 3 unique P0/P1 between them; the docs lane's findings were mostly P3 drift. The language lens folds into the code-reviewer's brief, lane B rides in the second family's adversarial pass, and docs drift is a script (`docs-drift.mjs`). |
 | Two generic review commands on every diff by default | They reviewed one diff a third and fourth time — 92 and 31 agents on a single change request. Opt-in now, for a refactor-heavy slice or when the owner asks. |
 | The full verification after every slice | 39 full runs, 8.4 hours, on one change request. Once per unit now (§1). |

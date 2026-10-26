@@ -119,7 +119,7 @@ export function parseArgs(argv) {
  *               (P0 counts as P1) and `round` counts fix rounds on this area from 1. For this
  *               kind `writer` is who wrote THE FIX: a codex, sonnet or mixed fix on critical code
  *               is re-read by Opus ('review'); a codex or mixed cold fix by a Sonnet reviewer.
- * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'sweep' |
+ * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'p3-batch' |
  *           'second-family+opus' | 'escalate-adversarial'.
  * `files` is [{ path, lines }]; `reviewers` is the ordered list of reviewers to run (maybe empty).
  */
@@ -213,9 +213,9 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   // kind 'fix'
   if (maxFixed === 'P3')
     return out(
-      'sweep',
+      'p3-batch',
       [],
-      'P3s never open a fix round: batch them into one sweep per slice set, no re-review',
+      'P3s never open a fix round: they wait for the P3 batch, one per slice set, no re-review',
     );
   if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
   const r = fixRound({ critical, maxFixed, round, prodLines, writer });

@@ -118,7 +118,7 @@ test('the suite is unaffected by GIT_DIR / GIT_INDEX_FILE of a caller repo (as i
   assert.deepStrictEqual(snapshot(), before, 'the suite wrote into the repository named by GIT_DIR');
 });
 
-test('mutant: a P3-only fix round that is no longer a sweep makes the suite fail', () => {
+test('mutant: a P3-only fix round that is no longer the P3 batch makes the suite fail', () => {
   mutantRun("maxFixed === 'P3')", "maxFixed === 'P3x')");
 });
 

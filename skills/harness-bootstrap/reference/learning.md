@@ -115,7 +115,9 @@ repository with `--register <repo>` (it writes only that file).
    server), `--tools Read,Grep,Glob`, `--permission-mode dontAsk`,
    `--max-budget-usd 5`, `--no-session-persistence`. The script writes its answer
    to `proposals-<YYYY-Www>.md`, so the run needs no write tool.
-3. **Notice.** A desktop notification names the file.
+3. **Notice.** A desktop notification names the file, and in each project a
+   proposal names, `harness-due.mjs` prints `NEW proposals <week>` at every claim
+   and landing until `--seen <week>` records it read (`runner.md` › Due-checks).
 
 `[M]` Where a repository keeps its files: the registry entry's own values, else the
 manifest's `roles`, else the first of the usual paths it tracks; its plans are

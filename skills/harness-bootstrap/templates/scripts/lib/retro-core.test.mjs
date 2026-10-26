@@ -164,7 +164,7 @@ test('logRecords adds Defects, Missed by harness and Friction, empties every way
   assert.deepEqual(recs[0].defects, { p0: 0, p1: 1 });
 });
 
-test('followUpsSummary counts rows by status, the open ones naming a P3, and the oldest open row\'s age', () => {
+test('followUpsSummary counts rows by status, the open ones naming a P3, and the oldest open row\'s and open P3\'s age', () => {
   const text = table(['#', 'Area', 'Why it waits', 'Filed by', 'Status'], [
     ['1', 'a.ts:3', 'P3 naming', 'EP-1', 'open'],
     ['2', 'b.ts', 'later', 'EP-1', 'scheduled EP-4'],
@@ -173,9 +173,10 @@ test('followUpsSummary counts rows by status, the open ones naming a P3, and the
     ['5', 'e.ts', 'wait', 'EP-3', 'Open'],
     ['6', 'f.ts', '?', 'EP-3', 'parked'],
   ]);
-  const dates = new Map([[3, NOW - 20 * DAY], [7, NOW - 3 * DAY]]);
-  assert.deepEqual(followUpsSummary(text, dates, NOW), { open: 2, scheduled: 1, fixed: 1, dropped: 1, other: 1, openP3: 1, oldestOpenDays: 20 });
+  const dates = new Map([[3, NOW - 20 * DAY], [7, NOW - 30 * DAY]]);
+  assert.deepEqual(followUpsSummary(text, dates, NOW), { open: 2, scheduled: 1, fixed: 1, dropped: 1, other: 1, openP3: 1, oldestOpenDays: 30, oldestOpenP3Days: 20 });
   assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenDays, null);
+  assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenP3Days, null);
 });
 
 test('stateSummary counts the decision log by Class and By, open questions apart, and the P3s still to do', () => {

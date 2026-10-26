@@ -195,6 +195,9 @@ as its own commit. Never reclaim a row you do not own.
 **Step 0 — claim.**
 - `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
   this row opens stops the claim before anything is held.
+- `[M]` **The host, once a session:** `node scripts/harness-host.mjs`. Its first line
+  gives each role's model on this host for the claim line and the switch line, and
+  each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
   role, and on Small the Scope block.

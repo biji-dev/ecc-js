@@ -5,6 +5,18 @@ check, order and waves, fence check, command gates run separately, at most three
 fenced fix rounds, a per-slice reviewer on another model, integration by the session
 that wrote the specs. Only the execution engine changes.
 
+## Dispatch, by host
+
+| | Claude Code | Codex | ZCode |
+|---|---|---|---|
+| judgment · bounded model | Opus · Sonnet | gpt-6.1-sol · gpt-6-luna | GLM-5.3 · GLM-5.3-Flash |
+| a builder (Build, Fix, Control) | one Agent call per spec, `model` and `effort: "high"` passed | per spec, the brief on stdin: `codex-run implement-cold` in a harness, `codex exec -s workspace-write` standalone (below); a `.codex/agents/<name>.toml` subagent carries `model` and `model_reasoning_effort` | a dynamic workflow, `subagent_model` (below) |
+| a check (Check, Plan) | an Agent call with `tools: Read, Grep, Glob` | `codex-run lane-a` or `investigate` in a harness, `codex exec -s read-only` standalone: a TOML agent bounds no sandbox | a workflow agent; `tools` is not enforced, so spot-check its citations |
+| the second family | Codex, through `codex-run` | Claude, through `claude-run` (read-only) | Codex, through `codex-run`; Claude, through `claude-run`, when Codex is out |
+
+In a harness the models are `.agents/harness-models.json`'s, and
+`node scripts/harness-host.mjs` prints the host's line. Kimi's form is the last section.
+
 ## ZCode — dynamic workflow
 
 ZCode pins a builder model only on a dynamic workflow (`subagent_model`); ad-hoc

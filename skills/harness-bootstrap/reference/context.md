@@ -55,7 +55,8 @@ carries out an approved deploy runs on Sonnet (below).
 
 `[M]` **A switch line before each step**, one line, then continue:
 `Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact or clear offered) · Reason`.
-The main session runs at `high`. An `Effort` above `high` with no reason in the line
+Model and Effort are the host's, from `harness-host.mjs`'s first line. The main
+session runs at `high`. An `Effort` above `high` with no reason in the line
 is itself a finding: say so and ask the owner to lower it (`/effort high`) — a
 session left at `max` passes it to every subagent (`gate-design.md`).
 

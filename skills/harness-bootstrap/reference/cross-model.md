@@ -146,9 +146,11 @@ still refused writes to the added directory.
 3. Nothing beyond that. A task that needs a browser, a running service or steering
    goes to a Sonnet builder.
 
-`[M]` **Briefs for Codex never ask it to call Claude.** Its automatic approval
-reviewer refused two attempts to send a diff out to `claude -p` — correctly; the
-cross-family review is the session's to dispatch.
+`[M]` **When Claude Code coordinates, briefs for Codex never ask it to call
+Claude.** Its automatic approval reviewer refused two attempts to send a diff out to
+`claude -p` — correctly; the cross-family review is the session's to dispatch. Under
+a Codex host the session is Codex, and it calls Claude itself, through `claude-run`
+(below).
 
 ## Without the wrapper
 
@@ -162,11 +164,45 @@ codex exec -s read-only -o .review-work/xmodel/verdict.md - < .review-work/xmode
 It counts as run only if the verdict file is non-empty and the log carries no
 error or usage-limit line. Inline the rule text the reviewer needs.
 
-## Other harnesses as the second family
+## When the host is not Claude Code — `templates/scripts/claude-run.mjs`
 
-`[M]` The rule is about families, not products. A project run from Codex gets its
-decorrelated pass from Claude (`claude -p` read-only, or a Claude reviewer agent),
-by the same table. `harness-targets.md` lists which agents the project uses.
+`[M]` The rule is about families, not products. A session run from Codex gets its
+decorrelated pass from Claude; one run from ZCode gets it from Codex, or from Claude
+when Codex is out (`gate-design.md` › Model and effort). **Every Claude call from
+such a host goes through `claude-run.mjs`**, the mirror of `codex-run`:
+`templates/scripts/claude-run.mjs`, `lib/claude-run-core.mjs` and its `node --test`
+suite, which stubs `claude` and spends nothing. It imports `lib/harness-host-core.mjs`.
+
+- **Read-only kinds only:** `review` (the diff against `--base`, written beside the
+  verdict for the reviewer to Read; `--prompt` adds a focus), `adversarial`
+  (`--critical` → `xhigh`), `plan-blind`, `investigate` and `lane-a`. Writing is
+  never a kind: the host builds, and Claude reviews.
+- **One argv:** `claude -p --restricted --strict-mcp-config --tools Read,Grep,Glob
+  --allowedTools Read,Grep,Glob --permission-mode dontAsk --model <m> --effort <e>
+  --max-budget-usd <cap> --no-session-persistence --output-format json`, with the
+  prompt on stdin. `--restricted` drops the command and web tools and every settings
+  file, and keeps the file tools inside the working directory.
+- **An honest exit**, read from the JSON result rather than the exit code: 0 a
+  non-empty verdict; 1 failed (the budget cap reached, an error result, a timeout); 2
+  usage, or the host is Claude Code, whose second family is Codex; 3 unavailable (no
+  binary, not logged in, no network, a usage limit → the fallback, recorded
+  `degraded`); 4 reserved by the owner's switch, `CLAUDE_RUN=on|essential|off`.
+- **Never inside a sandbox with no network.** It needs the network and `~/.claude`,
+  which Codex's `workspace-write` sandbox blocks, so it runs only outside the sandbox,
+  on an approval. Codex's approval reviewer refused that twice for a diff (above):
+  the owner approves the first run, or saves a rule for `node scripts/claude-run.mjs`
+  — a machine setting, the owner's. Inside the sandbox it reads
+  `CODEX_SANDBOX_NETWORK_DISABLED=1` and exits 3 at once.
+  > Origin, measured on one machine: `claude -p` inside that sandbox ran 177 s, then
+  > returned `is_error` with "API Error: Can't reach the API server — check your
+  > internet or DNS (ENOTFOUND)", at $0.
+- **A JSONL ledger** of every run but a dry run, with the dollars each one spent.
+
+`[B]` Bindings: the `CATALOG` block (the `--model` aliases by role) and `BUDGET_USD`
+($5 a run by default) at the top of the core, `LEDGER_DIR` in the wrapper, and
+`CLAUDE_BIN` when the CLI is not on `PATH`. **Install:** the three files to
+`scripts/` and `scripts/lib/` beside `harness-host`, `node --test
+scripts/lib/claude-run-core.test.mjs` once, and `.claude-runs/` in `.gitignore`.
 
 ## Escalation — a hard problem
 

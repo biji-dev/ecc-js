@@ -62,6 +62,11 @@ const DUE_REPORTS = {
   retro: ['docs/harness/reports/retro-<week>.md'],
   hygiene: ['docs/harness/reports/hygiene-<date>.md'],
 };
+// harness-host's models file (templates/harness-models.json), the hosts it may name, and the wrapper
+// each second family runs through (templates/scripts/lib/harness-host-core.mjs holds the same).
+const MODELS_FILE = '.agents/harness-models.json';
+const MODEL_HOSTS = { claude: true, codex: true, zcode: true, kimi: true };
+const WRAPPER_OF = { codex: 'scripts/codex-run.mjs', claude: 'scripts/claude-run.mjs' };
 const DUE_VALUE = { preflight: /^[A-Za-z]+-?\d+$/, sweep: /^\d{4}-\d{2}-\d{2}$/, retro: /^\d{4}-W\d{2}$/, hygiene: /^\d{4}-\d{2}-\d{2}$/ };
 const DUE_DAYS = { sweep: 7, retro: 7, hygiene: 14, p3: 14 };
 const PHASE_OF = /^([A-Za-z]+-?\d+)[-.]\w/;
@@ -709,6 +714,8 @@ function buildReport() {
     }
   }
 
+  hostHazards(manifest, haz);
+
   // hooks
   for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
     const t = read(rel);
@@ -836,6 +843,47 @@ function buildReport() {
     policy,
     hazards,
   };
+}
+
+// models by host: harness-host.mjs reads the models file; each second family runs through its
+// wrapper (from files alone -- the login checks are harness-host's)
+/** The models file's hosts, or null; a missing or malformed file is host-models-missing where harness-host needs it. */
+function hostModelsOf(haz) {
+  const text = read(MODELS_FILE);
+  if (text === null) {
+    if (isFile('scripts/harness-host.mjs')) haz('host-models-missing', `scripts/harness-host.mjs reads ${MODELS_FILE}, which is missing: no host has models for its roles`, MODELS_FILE);
+    return null;
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* reported below */ }
+  if (parsed && parsed.schema === 1 && parsed.hosts && typeof parsed.hosts === 'object' && !Array.isArray(parsed.hosts)) return parsed.hosts;
+  haz('host-models-missing', parsed ? 'not a schema 1 models file with a hosts object' : 'invalid JSON', MODELS_FILE);
+  return null;
+}
+
+/** second-family-absent for one host: none named, or its wrapper not installed (an installed fallback is named). */
+function secondFamilyHazard(host, entry, haz) {
+  const second = entry && entry.second;
+  if (!second) {
+    haz('second-family-absent', `${host} names no second family: every cross-family pass is degraded by design`, MODELS_FILE);
+    return;
+  }
+  const wrapper = WRAPPER_OF[second];
+  if (!wrapper || isFile(wrapper)) return;
+  const fallback = entry.fallback;
+  const fbWrapper = fallback && WRAPPER_OF[fallback];
+  const then = fbWrapper && isFile(fbWrapper) ? `; the fallback, ${fallback}, takes its passes` : `: every cross-family pass on ${host} is degraded`;
+  haz('second-family-absent', `${host}'s second family, ${second}, runs through ${wrapper}, which is not installed${then}`, MODELS_FILE);
+}
+
+function hostHazards(manifest, haz) {
+  const hostModels = hostModelsOf(haz);
+  if (!hostModels) return;
+  const targets = manifest && Array.isArray(manifest.targets) ? manifest.targets : [];
+  for (const t of targets) {
+    if (Object.prototype.hasOwnProperty.call(MODEL_HOSTS, t) && !hostModels[t]) haz('host-models-missing', `the manifest targets ${t} and ${MODELS_FILE} has no ${t} entry`, MODELS_FILE);
+  }
+  for (const [host, entry] of Object.entries(hostModels)) secondFamilyHazard(host, entry, haz);
 }
 
 function manifestEntry(entry) {

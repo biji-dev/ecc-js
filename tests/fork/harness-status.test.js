@@ -1319,6 +1319,59 @@ test('mutants: the older report places and the phase-under-way rule each matter'
   assert.ok(ids(report(repo, firstPhase)).includes('preflight-missing'), 'only the phase under way is checked');
 });
 
+// ── hosts ────────────────────────────────────────────────────────────────────
+
+console.log('\nharness-status: hosts');
+
+const MODELS = '.agents/harness-models.json';
+const role = model => ({ model, effort: 'high' });
+const models = hosts => JSON.stringify({ schema: 1, hosts });
+const THREE = {
+  claude: { main: role('opus'), bounded: role('sonnet'), second: 'codex' },
+  codex: { main: role('gpt-6.1-sol'), bounded: role('gpt-6-luna'), second: 'claude' },
+  zcode: { main: { model: 'GLM-5.3' }, bounded: { model: 'GLM-5.3-Flash' }, second: 'codex', fallback: 'claude' },
+};
+
+test('host-models-missing: harness-host with no models file, a file that is not one, a manifest target with no entry', () => {
+  const repo = mk({ 'scripts/harness-host.mjs': '// x\n' });
+  const missing = hazardsOf(report(repo), 'host-models-missing');
+  assert.strictEqual(missing.length, 1, JSON.stringify(missing));
+  assert.strictEqual(missing[0].path, MODELS);
+  assert.match(missing[0].detail, /^scripts\/harness-host\.mjs reads \.agents\/harness-models\.json, which is missing/);
+  write(repo, MODELS, '{');
+  assert.strictEqual(hazardsOf(report(repo), 'host-models-missing')[0].detail, 'invalid JSON');
+  write(repo, MODELS, JSON.stringify({ schema: 1, hosts: [] }));
+  assert.match(hazardsOf(report(repo), 'host-models-missing')[0].detail, /^not a schema 1 models file/);
+  write(repo, MODELS, models({ claude: THREE.claude }));
+  write(repo, 'scripts/codex-run.mjs', '// x\n');
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['change'], targets: ['claude', 'codex'], entries: [] }));
+  const target = hazardsOf(report(repo), 'host-models-missing');
+  assert.deepStrictEqual(target.map(h => h.detail), ['the manifest targets codex and .agents/harness-models.json has no codex entry']);
+  assert.deepStrictEqual(hazardsOf(report(mk({})), 'host-models-missing'), [], 'an install without harness-host owes no models file');
+});
+
+test('second-family-absent: a host that names none, or whose second family\'s wrapper is not installed; an installed fallback is named', () => {
+  const repo = mk({ [MODELS]: models(THREE), 'scripts/codex-run.mjs': '// x\n' });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
+    "codex's second family, claude, runs through scripts/claude-run.mjs, which is not installed: every cross-family pass on codex is degraded",
+  ]);
+  fs.rmSync(path.join(repo, 'scripts', 'codex-run.mjs'));
+  write(repo, 'scripts/claude-run.mjs', '// x\n');
+  assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
+    "claude's second family, codex, runs through scripts/codex-run.mjs, which is not installed: every cross-family pass on claude is degraded",
+    "zcode's second family, codex, runs through scripts/codex-run.mjs, which is not installed; the fallback, claude, takes its passes",
+  ]);
+  write(repo, MODELS, models({ zcode: { ...THREE.zcode, second: null, fallback: null } }));
+  assert.match(hazardsOf(report(repo), 'second-family-absent')[0].detail, /^zcode names no second family: every cross-family pass is degraded by design$/);
+});
+
+test('mutant: the wrapper check skipped -> second-family-absent is never raised', () => {
+  const mutant = mutantOf('if (!wrapper || isFile(wrapper)) return;', 'return;');
+  const repo = mk({ [MODELS]: models(THREE) });
+  assert.ok(hazardsOf(report(repo), 'second-family-absent').length > 0);
+  assert.deepStrictEqual(hazardsOf(report(repo, mutant), 'second-family-absent'), []);
+});
+
 // ── mutation ─────────────────────────────────────────────────────────────────
 
 console.log('\nharness-status: mutation');

@@ -330,15 +330,29 @@ pre-existing finding seen for the first time does not.
 
 `[M]` Key models on the **same** signals as the gates — the risk map and the
 policy. The split is by **recoverability**: a wrong number can be corrected; data
-that left the building cannot.
+that left the building cannot. Every host has a judgment model, a bounded model and a
+second family, and the roles are the same on each.
 
-| Role | Claude Code default |
-|---|---|
-| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` |
-| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** |
-| **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) · per-slice review · the review of a Small unit · re-reviews of Claude-written fixes · the adversarial pass (carrying lane B) | the second family (`cross-model.md`) |
-| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** |
-| The blast-radius auditor (lane B) | **Opus**, only when the second family is unavailable (`degraded`) |
+| Role | Claude Code | Codex | ZCode |
+|---|---|---|---|
+| Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` | **gpt-6.1-sol**, `high` | **GLM-5.3** |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+| **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) | Codex (`codex-run`) | the bounded model below: `claude-run` has no write kind | Codex (`codex-run`) |
+| Per-slice review · the review of a Small unit · re-reviews of fixes the host's family wrote · the adversarial pass (carrying lane B) | Codex (`codex-run`) | Claude (`claude-run`) | Codex (`codex-run`); Claude (`claude-run`) when Codex is out |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
+| The blast-radius auditor (lane B), only when the second family is unavailable (`degraded`) | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+
+`[M]` **The cross-family rule is unchanged** (`cross-model.md`): whatever one family
+writes, the other reviews. `[B]` `.agents/harness-models.json` holds this table's
+models for the hosts the project runs (`templates/harness-models.json`, re-derived
+from each host's CLI). `scripts/harness-host.mjs` names the host and reads it; its
+first line, `host codex · main gpt-6.1-sol high · second family claude`, is what the
+switch line's Model and Effort quote (`context.md`), and its `HAZARD` lines name an
+effort above `high`, a second family that cannot run, and a host with no models.
+> Origin, the v5 study: this table named Claude Code's models only, and nothing
+> detected the host. Measured on one machine: Codex started every session at `xhigh`
+> from its `config.toml`, and a Codex run started from a Claude Code shell still
+> carried `CLAUDECODE`, so that one variable names the wrong host.
 
 `[M]` **An `executor:` override beats this table** (`runner.md` › Executor
 override) — owner first, then the risk routing above, then the default — with one
@@ -358,6 +372,9 @@ silently gets the cheapest reviewer.
 file's `effort:` beats the session's level; without it, a session raised to `max`
 reaches every reviewer. **Never leave the main session at `xhigh` or `max`**: raise it
 for one hard question, then lower it (`rules.md` §1 › Cost).
+On Codex the agent TOML's `model_reasoning_effort` is that pin, and the session's
+own level comes from `config.toml`; on ZCode only a workflow's `subagent_model` pins
+a builder (`harness-targets.md`).
 
 `[M]` **Effort floor `high`** on every dispatch and the main session; never `low` or
 `medium` on the Claude side. **`xhigh` only with the reason in the brief** — an

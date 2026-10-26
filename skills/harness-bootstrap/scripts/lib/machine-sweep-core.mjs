@@ -33,8 +33,8 @@ export const STORE_IDLE_DAYS = 30;
 // A recorded process is stopped only this long after it was recorded, and never while its
 // repository holds a registry row.
 export const RECORDED_IDLE_HOURS = 6;
-// A second run stops while the first runs, however long that takes. A lock whose process is gone
-// is a finished or crashed run's; one holding no readable process id, a torn one's after this long.
+// A second run stops while the first runs, however long that takes. A lock entry whose process is
+// gone is a finished or crashed run's; one naming no process id, a stray one's after this long.
 export const LOCK_STALE_MINUTES = 60;
 // The ignored paths a removed worktree may lose (harness-due's REBUILDABLE).
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
@@ -383,9 +383,10 @@ const CLONE_ROOT = /^\/var\/folders\/[^/]+\/[^/]+\/X\/com\.google\.Chrome\.code_
  * the home directory (or Chrome's clone directory); and nothing where the agents keep sessions or
  * the harness keeps state. A computed path that went wrong -- an empty variable, a home of `/` --
  * fails here before anything is removed. The same holds again where the links lead (`real`, the
- * CLI's realpath): a cache directory, or one above it, linked into the sessions would otherwise
- * carry the removal there. The target's own name is never followed: removing a link removes the
- * link. A `real` that throws refuses.
+ * CLI's native realpath): a cache directory, or one above it, linked into the sessions would
+ * otherwise carry the removal there. That check starts from the target as written, so a `..`
+ * after a link climbs from where the link leads, as the removal would. The target's own name is
+ * never followed: removing a link removes the link. A `real` that throws refuses.
  */
 export function deletable(target, root, home, real = (p) => p) {
   const inside = (child, parent) => {
@@ -404,23 +405,48 @@ export function deletable(target, root, home, real = (p) => p) {
   if (!allowed(t, r, h)) return false;
   let physical;
   try {
-    physical = [path.join(path.resolve(real(path.dirname(t))), path.basename(t)), path.resolve(real(r)), path.resolve(real(h))];
+    // path.resolve(target) above cancels `x/..` as text; the filesystem climbs from where x leads
+    physical = [path.join(path.resolve(real(path.dirname(target))), path.basename(target)), path.resolve(real(r)), path.resolve(real(h))];
   } catch {
     return false;
   }
   return allowed(...physical);
 }
 
-/** The process id a lock file holds, or null when it holds none readable. */
+/** The process id a lock entry's name (`<pid>-<start>`, or a bare pid) holds, or null when it holds none. */
 export function lockPid(text) {
-  const m = /^\s*([1-9]\d*)\s*$/.exec(String(text ?? ''));
+  const m = /^\s*([1-9]\d*)(?:-[0-9a-z]+)?\s*$/.exec(String(text ?? ''));
   return m ? Number(m[1]) : null;
 }
 
+/** The name of a run's lock entry: its pid and its start, so a reused pid never names an older run's entry. */
+export const lockEntry = (pid, now) => `${pid}-${now.toString(36)}`;
+
 /**
- * Whether a lock is a dead run's, to replace: the process it holds is gone (`alive`, the CLI's
- * kill -0), or it holds none readable and was `written` over LOCK_STALE_MINUTES ago. Age alone
- * never frees a live run's lock: du, `brew cleanup` and the docker prunes may each take ten minutes.
+ * What a run does with the lock directory's `entries` ([{ name, written }]) once its own entry,
+ * `mine`, is among them: `remove` the entries of runs that are gone (staleLock; an entry with this
+ * run's pid and another start is an earlier boot's), and stop when any other entry is a live run's
+ * (`holder`, its pid or 'unknown'), else go on. Each run writes its entry before it lists the
+ * directory and removes no live run's entry, so of two runs that start together each finds the
+ * other's and both stop: the takeover of a dead run's lock can never let two runs free at once.
+ */
+export function lockDecision({ mine, entries, alive, now }, minutes = LOCK_STALE_MINUTES) {
+  const own = lockPid(mine);
+  const remove = [];
+  let holder = null;
+  for (const e of entries) {
+    if (e.name === mine) continue;
+    const pid = lockPid(e.name);
+    if (pid === own || staleLock({ pid, alive: pid !== null && alive(pid), written: e.written, now }, minutes)) remove.push(e.name);
+    else if (holder === null) holder = pid ?? 'unknown';
+  }
+  return { remove, holder };
+}
+
+/**
+ * Whether a lock entry is a dead run's, to remove: the process it names is gone (`alive`, the CLI's
+ * kill -0), or it names none and was `written` over LOCK_STALE_MINUTES ago. Age alone never frees
+ * a live run's entry: du, `brew cleanup` and the docker prunes may each take ten minutes.
  */
 export function staleLock({ pid, alive, written, now }, minutes = LOCK_STALE_MINUTES) {
   if (Number.isInteger(pid)) return !alive;

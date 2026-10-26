@@ -43,7 +43,8 @@ import {
   formatReport,
   heldRows,
   inUse,
-  lockPid,
+  lockDecision,
+  lockEntry,
   logEntry,
   mainCheckout,
   mcpOrphans,
@@ -58,7 +59,6 @@ import {
   readApprovals,
   recordedToStop,
   settled,
-  staleLock,
   staleStores,
   unusedBrowsers,
   worktreeVerdict,
@@ -465,7 +465,8 @@ function measure(id, m) {
 /** Carries out one step of a plan; returns the bytes it freed, or 1 for a process it signalled. Throws on a refused or failed step. */
 function step(p, m) {
   if (p.rm) {
-    if (!deletable(p.rm, p.root, m.home, (x) => fs.realpathSync(x))) throw new Error(`refused ${p.rm}: outside ${p.root} or protected`);
+    // the native realpath climbs a `..` after a link as the removal does; fs.realpathSync cancels it as text
+    if (!deletable(p.rm, p.root, m.home, (x) => fs.realpathSync.native(x))) throw new Error(`refused ${p.rm}: outside ${p.root} or protected`);
     fs.rmSync(p.rm, { recursive: true, force: true });
     return p.bytes ?? 0;
   }
@@ -503,31 +504,37 @@ function alive(pid) {
   }
 }
 
-/** The sweep's lock: { release }, or { holder } when another sweep holds it (staleLock decides). */
+/**
+ * The sweep's lock: { release }, or { holder } when another sweep holds it. Each run writes its own
+ * entry in machine-sweep.locks/, then lists the directory (lockDecision decides): it removes only
+ * the entries of runs that are gone and, beside a live one, its own, so no run ever removes a live
+ * run's entry and two runs never free at once.
+ */
 function lock(dir) {
-  const file = path.join(dir, 'machine-sweep.lock');
-  fs.mkdirSync(dir, { recursive: true });
-  const text = read(file);
-  // a lock that exists but cannot be read holds no readable pid: its age decides
-  const st = lstat(file);
-  if (st) {
-    const pid = lockPid(text);
-    // this run's own pid in the lock is an earlier boot's: no sweep runs under it
-    if (!staleLock({ pid, alive: pid !== null && pid !== process.pid && alive(pid), written: st.mtimeMs, now: Date.now() })) return { holder: pid ?? 'unknown' };
-    // only the lock judged stale: another sweep may have replaced it since
-    if (read(file) === text) fs.rmSync(file, { force: true });
-  }
+  const locks = path.join(dir, 'machine-sweep.locks');
+  const mine = lockEntry(process.pid, Date.now());
+  const own = path.join(locks, mine);
   try {
-    fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
+    fs.mkdirSync(locks, { recursive: true });
+    fs.writeFileSync(own, `${process.pid}\n`, { flag: 'wx' });
   } catch {
-    return { holder: lockPid(read(file)) ?? 'unknown' };
+    return { holder: 'unknown' };
   }
-  // a lock another sweep took since is that sweep's to remove
-  return {
-    release: () => {
-      if (lockPid(read(file)) === process.pid) fs.rmSync(file, { force: true });
-    },
-  };
+  let entries;
+  try {
+    entries = fs.readdirSync(locks).map((name) => ({ name, written: lstat(path.join(locks, name))?.mtimeMs ?? null }));
+  } catch {
+    // a directory it cannot list may hold a live run's entry
+    fs.rmSync(own, { force: true });
+    return { holder: 'unknown' };
+  }
+  const { remove, holder } = lockDecision({ mine, entries, alive, now: Date.now() });
+  for (const name of remove) fs.rmSync(path.join(locks, name), { force: true });
+  if (holder !== null) {
+    fs.rmSync(own, { force: true });
+    return { holder };
+  }
+  return { release: () => fs.rmSync(own, { force: true }) };
 }
 
 function apply(args, m, state) {

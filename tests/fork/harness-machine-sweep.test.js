@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'machine-sweep-core.mjs');
 const CLI_REL = path.join('scripts', 'machine-sweep.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 24;
+const EXPECTED_TESTS = 26;
 
 let passed = 0;
 let failed = 0;
@@ -107,8 +107,17 @@ mutantFails("a linked worktree's record reading its own registry", "read(path.jo
 mutantFails('a failed ps or lsof read as no process', 'if (!rows || !cwds) return null;', 'rows ??= []; cwds ??= [];');
 mutantFails("a live sweep's lock taken by its age", '  if (Number.isInteger(pid)) return !alive;\n', '');
 mutantFails('a failed ps before the signal read as the planned process', 'if (!now.ok || now.out.trim() !== p.command.trim()) return 0;', 'if (now.out.trim() !== p.command.trim()) return 0;', CLI_REL);
-mutantFails("a run's end removing a lock another sweep took", 'if (lockPid(read(file)) === process.pid) fs.rmSync(file, { force: true });', 'fs.rmSync(file, { force: true });', CLI_REL);
+mutantFails("a run's end removing the entry another sweep wrote", 'return { release: () => fs.rmSync(own, { force: true }) };', 'return { release: () => fs.rmSync(locks, { recursive: true, force: true }) };', CLI_REL);
+mutantFails('a run going on beside a live one', "    else if (holder === null) holder = pid ?? 'unknown';\n", '');
+mutantFails("an earlier boot's entry with this run's pid held as a live run's", 'if (pid === own || staleLock(', 'if (staleLock(');
+mutantFails('a removal checked where its path reads as text, not where a `..` after a link climbs', 'real(path.dirname(target))), path.basename(target))', 'real(path.dirname(t))), path.basename(t))');
 mutantFails('a dry run that frees', "        if (args.dryRun) {\n          lines.push(`would  ${id}: ${describe(p)}`);\n          continue;\n        }\n", '', CLI_REL);
+
+// No CLI path yields a `..` (measure() joins its paths), so this pins the wiring the core test needs.
+test('the CLI checks a removal with the native realpath, which climbs a `..` after a link as the removal does', () => {
+  const src = fs.readFileSync(path.join(SKILL, CLI_REL), 'utf8');
+  assert.match(src, /deletable\(p\.rm, p\.root, m\.home, \(x\) => fs\.realpathSync\.native\(x\)\)/);
+});
 
 test('CLI smoke: the report on an empty home says each category is absent and writes nothing', () => {
   const home = tmp('machine-sweep-cli-');

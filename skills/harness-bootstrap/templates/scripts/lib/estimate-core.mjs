@@ -182,11 +182,18 @@ export function tables(text) {
  * `names` and raw `cells`, so a reader of other columns (retro-core) parses the log the same way.
  * `columns` replaces COLUMNS for a reader that cannot see this project's binding (the weekly job).
  */
+const isLogTable = (col) => col.unit !== -1 && (col.elapsed !== -1 || col.cost !== -1);
+
+/** Whether the text holds a harness-log table, rows or not: a fresh install's log has headers only. */
+export function hasLogTable(text, { columns = COLUMNS } = {}) {
+  return tables(text).some(({ names }) => isLogTable(Object.fromEntries(Object.entries(columns).map(([k, v]) => [k, findCol(names, v)]))));
+}
+
 export function parseLog(text, { raw = false, columns = COLUMNS } = {}) {
   const records = [];
   for (const { names, rows } of tables(text)) {
     const col = Object.fromEntries(Object.entries(columns).map(([k, v]) => [k, findCol(names, v)]));
-    if (col.unit === -1 || (col.elapsed === -1 && col.cost === -1)) continue;
+    if (!isLogTable(col)) continue;
     const at = (cells, k) => (col[k] === -1 ? '' : (cells[col[k]] ?? ''));
     for (const { cells, line } of rows) {
       const first = cells[col.unit] ?? '';

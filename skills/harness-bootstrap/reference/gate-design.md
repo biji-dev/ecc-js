@@ -63,6 +63,22 @@ hook's figure line gives (`context.md` › The window, the gate wait and the bas
 > but it runs only after an ended turn: 0 of 44 idle compactions came while a
 > question was pending, and 39 of the 183 waits were on one.
 
+## The intake sheet — Gate 1 ahead of time
+
+`[M]` **An idea with no request is drafted into one first** (`intake.md`), and the
+owner answers it on one sheet before unit 1 is claimed: the deliverables with their
+`Demo:` lines, every P and C card, the never-auto and risk-map hits with the tier
+they set, the estimate, unit 1's Scope block, the queue, and *Decided*. The context
+rule above decides how the sheet reaches the owner.
+
+`[M]` **That sheet is unit 1's Gate 1.** The `Approved:` line it leaves in the
+request names the unit, the tier and the sha of the Scope block the owner saw; at
+unit 1's Gate 1, `node scripts/intake.mjs --gate1` compares them with the claim.
+Unchanged → auto, its line in the ledger. Anything else — another unit, a re-tier,
+an edited Scope block, a request edited after its approval, a default in place of
+the owner's answer — re-opens Gate 1 as an ordinary sheet. Later units' Gate 1s run
+as usual; the cards the intake answered are decision rows, never asked again.
+
 ## Tiers — decided at claim, after the task type
 
 `[M]` For a Code unit (`runner.md` › Task type first), state the tier in the claim
@@ -178,6 +194,7 @@ Never impose a column the project does not have.
 | **Owner taste** — identity, copy, naming | ask | ask |
 | A re-tier during the run | re-ask | re-ask, at the new tier |
 | The foundation stage (`foundation.md`) — before the flip | every unit Full: ask | ask, **never auto** |
+| **Unit 1 of an approved intake**, `intake.mjs --gate1` saying `auto` | auto — its sheet asked ahead of time: its `Never-auto:` and `Risk map:` lines and its cards answer the Gate 1 ask of every row above they cover | by the merge policy; every row above still applies |
 
 `[M]` **The project's own rules tighten these rows, never loosen them.** A document
 that requires every change reviewed by another agent puts a reviewer on Trivial too;

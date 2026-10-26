@@ -52,6 +52,7 @@ never by feel. Check in this order; unsure → the heavier type.
 |---|---|---|
 | **Ops** | a deploy, migration run, production data fix or credential rotation, even with no repo change | its runbook, owner approval first; the runbook's mechanical steps on a Sonnet runner, judgment calls in the Opus session (`context.md`) |
 | **Answer** | nothing changes — a question, an investigation, a review, a status, a plan only | no steps; the answer quotes its evidence. **A bug's cause, even with no fix, takes step 1's root-cause route** |
+| **Intake** | new behaviour no request and no plan row covers, with an open P or C decision or more than one deliverable | `intake.md`: capture, ground, draft in the project's own shape, the second family's review, one owner sheet, register and queue — no code; unit 1's Gate 1 is then `intake.mjs --gate1`'s |
 | **Docs-light** | every changed path is prose, and no test or script reads it | write, format, lint, commit; one ledger row |
 | **Docs-heavy** | the same, but a rule file, a runbook, a change request, or ~200+ lines others act on | Docs-light + one review by the other model family + one fix pass |
 | **Code** | anything else — docs mixed with code, a doc a test reads, a hook | the tiers (`gate-design.md`) and the sequence below |
@@ -167,7 +168,7 @@ hygiene unit bound, `DUE p3` queues the P3 batch alone.
 |---|---|---|---|
 | 0 claim | type + tier in the claim line | + Scope block, frozen when stated | + Scope block for Gate 1 |
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
-| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner |
+| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
 | 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
@@ -266,6 +267,11 @@ as its own commit. Never reclaim a row you do not own.
    override).
 
 Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`).
+
+`[M]` **Unit 1 of an approved intake runs `node scripts/intake.mjs --gate1 <request>
+--state <state file>` first.** `Gate 1: auto — …` skips the sheet, quoted in the
+ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
+(`intake.md` › Unit 1's Gate 1).
 
 **Step 2 — implement.**
 - `[M]` **An executor per slice, from the risk map** (`gate-design.md`): critical
@@ -485,8 +491,8 @@ starts at 15 slices or 10k changed production lines and the log moves it
 `[M]` Close out in the document itself: the milestone row marked shipped with scope
 corrections, wrong claims struck through in place.
 
-`[M]` No request yet → writing it is the work (`superpowers:brainstorming`, where
-installed).
+`[M]` **No request yet → the Intake type** (`intake.md`): the request is drafted in the
+project's own shape with every P and C decision on one owner sheet, before unit 1.
 
 `[M]` **A request against the specification** — documents the owner decides — is
 the owner's. A unit that finds a gap may *draft* a new request in the shape the

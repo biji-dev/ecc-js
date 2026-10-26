@@ -800,7 +800,7 @@ function buildReport() {
   overdue('retro', isFile('scripts/retro.mjs'));
   overdue('hygiene', isFile('scripts/harness-due.mjs'));
   // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
-  const fuRel = roleFile('followUps', FOLLOW_UP_FILES);
+  const fuRel = roleFile('follow-ups', FOLLOW_UP_FILES);
   const fuText = fuRel ? read(fuRel) : null;
   if (fuText !== null) {
     let openP3 = 0;

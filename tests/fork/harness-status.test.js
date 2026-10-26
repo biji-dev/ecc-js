@@ -1301,6 +1301,10 @@ test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may
   assert.match(hazardsOf(report(repo), 'p3-queue-aging')[0].detail, /the newest hygiene report is 15 days old/);
   const closed = mk({ 'docs/harness/follow-ups.md': `${rows.slice(0, 2).concat(rows[3]).join('\n')}\n` });
   assert.deepStrictEqual(hazardsOf(report(closed), 'p3-queue-aging'), []);
+  // the follow-ups doc the manifest's roles name, outside the usual paths (one install keeps it at docs/qa/known-issues.md)
+  const roles = { 'follow-ups': 'docs/qa/known-issues.md' };
+  const named = mk({ 'docs/qa/known-issues.md': `${rows.join('\n')}\n`, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles }) });
+  assert.strictEqual((hazardsOf(report(named), 'p3-queue-aging')[0] || {}).path, 'docs/qa/known-issues.md');
 });
 
 test('mutants: the older report places and the phase-under-way rule each matter', () => {

@@ -33,7 +33,8 @@ export const STORE_IDLE_DAYS = 30;
 // A recorded process is stopped only this long after it was recorded, and never while its
 // repository holds a registry row.
 export const RECORDED_IDLE_HOURS = 6;
-// A second run waits for the first; a lock older than this is a crashed run's.
+// A second run stops while the first runs, however long that takes. A lock whose process is gone
+// is a finished or crashed run's; one holding no readable process id, a torn one's after this long.
 export const LOCK_STALE_MINUTES = 60;
 // The ignored paths a removed worktree may lose (harness-due's REBUILDABLE).
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
@@ -145,9 +146,12 @@ const cmpVersion = (x, y) => {
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 };
 
-/** A releases directory's names -> the ones to remove: older than `current`, past the newest KEEP_RELEASES - 1 of those, none in `inUse`. */
+/**
+ * A releases directory's names -> the ones to remove: older than `current`, past the newest
+ * KEEP_RELEASES - 1 of those, none in `inUse`; none at all when `inUse` is null (unknown).
+ */
 export function olderReleases(names, current, inUse = new Set(), keep = KEEP_RELEASES) {
-  if (!current || !VERSION.test(current) || !names.includes(current)) return [];
+  if (inUse === null || !current || !VERSION.test(current) || !names.includes(current)) return [];
   const older = names.filter((n) => n !== current && VERSION.test(n) && cmpVersion(n, current) < 0).sort(cmpVersion);
   return older.slice(0, Math.max(0, older.length - (keep - 1))).filter((n) => !inUse.has(n));
 }
@@ -310,10 +314,32 @@ export function parseWorktrees(text) {
 /** A path as `ps` and `realpath` may print it: macOS's /var is /private/var. */
 const canon = (p) => String(p).replace(/^\/private\//, '/');
 
-/** The directories among `dirs` that a running process's executable or cwd lives in. */
+/**
+ * The directories among `dirs` that a running process's executable or cwd lives in. null when
+ * `rows` or `cwds` is null -- ps or lsof failed -- so a failed reading is unknown, never none.
+ */
 export function inUse(dirs, rows, cwds = []) {
+  if (!rows || !cwds) return null;
   const under = (p, d) => canon(p) === canon(d) || canon(p).startsWith(`${canon(d)}/`);
   return new Set(dirs.filter((d) => rows.some((r) => under(r.command, d)) || cwds.some((c) => under(c, d))));
+}
+
+/** Chrome's clones ({ name, written }) under `root` to remove: settled, none a running Chrome uses; null when `rows` is null (ps failed). */
+export function clonesToRemove(entries, root, rows, now) {
+  const busy = inUse(entries.map((e) => path.join(root, e.name)), rows);
+  if (!busy) return null;
+  return { remove: settled(entries, now).filter((e) => !busy.has(path.join(root, e.name))).map((e) => e.name), busy: busy.size };
+}
+
+/**
+ * The checkout whose registry holds a recorded repository's rows: the main one, as the commit
+ * guard finds it from git's common directory (`commonDir`). A linked worktree records its own top
+ * level, but the registry is untracked and lives in the main checkout. null when git could not
+ * say: the caller counts the repository held.
+ */
+export function mainCheckout(repo, commonDir) {
+  if (!commonDir) return null;
+  return path.basename(commonDir) === '.git' ? path.dirname(commonDir) : repo;
 }
 
 /** A registry's held rows: inside the active markers (the whole file without them), first cell a number of 1 or more -- as harness-status reads them. */
@@ -340,7 +366,9 @@ export function worktreeVerdict(w, { now, idleHours = WORKTREE_IDLE_HOURS, rebui
   const kept = (w.ignored ?? []).filter((p) => !rebuildable.test(p));
   if (kept.length) return `keep: ignored files that are not rebuildable (${kept.slice(0, 3).join(', ')}${kept.length > 3 ? ', …' : ''})`;
   if (held.some((row) => [w.path, w.rel, w.branch].some((s) => s && row.includes(s)))) return 'keep: a held registry row names it';
-  if (inUse([w.path], [], cwds).size) return 'keep: a process runs inside it';
+  const busy = inUse([w.path], [], cwds);
+  if (!busy) return 'keep: could not tell which processes run in it (lsof failed)';
+  if (busy.size) return 'keep: a process runs inside it';
   if (!Number.isFinite(w.active) || now - w.active < idleHours * HOUR) return `keep: used in the last ${idleHours} h`;
   return 'remove';
 }
@@ -354,20 +382,49 @@ const CLONE_ROOT = /^\/var\/folders\/[^/]+\/[^/]+\/X\/com\.google\.Chrome\.code_
  * Whether `target` may be deleted: strictly inside its category's `root`; the root strictly inside
  * the home directory (or Chrome's clone directory); and nothing where the agents keep sessions or
  * the harness keeps state. A computed path that went wrong -- an empty variable, a home of `/` --
- * fails here before anything is removed.
+ * fails here before anything is removed. The same holds again where the links lead (`real`, the
+ * CLI's realpath): a cache directory, or one above it, linked into the sessions would otherwise
+ * carry the removal there. The target's own name is never followed: removing a link removes the
+ * link. A `real` that throws refuses.
  */
-export function deletable(target, root, home) {
+export function deletable(target, root, home, real = (p) => p) {
   const inside = (child, parent) => {
     const rel = path.relative(parent, child);
     return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
   };
+  const allowed = (t, r, h) => {
+    if (!inside(t, r)) return false;
+    if (CLONE_ROOT.test(canon(r))) return true;
+    if (h === path.parse(h).root || !inside(r, h)) return false;
+    return !PROTECTED.test(path.relative(h, t).split(path.sep).join('/'));
+  };
   const t = path.resolve(target);
   const r = path.resolve(root);
-  if (!inside(t, r)) return false;
-  if (CLONE_ROOT.test(canon(r))) return true;
   const h = path.resolve(home);
-  if (h === path.parse(h).root || !inside(r, h)) return false;
-  return !PROTECTED.test(path.relative(h, t).split(path.sep).join('/'));
+  if (!allowed(t, r, h)) return false;
+  let physical;
+  try {
+    physical = [path.join(path.resolve(real(path.dirname(t))), path.basename(t)), path.resolve(real(r)), path.resolve(real(h))];
+  } catch {
+    return false;
+  }
+  return allowed(...physical);
+}
+
+/** The process id a lock file holds, or null when it holds none readable. */
+export function lockPid(text) {
+  const m = /^\s*([1-9]\d*)\s*$/.exec(String(text ?? ''));
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Whether a lock is a dead run's, to replace: the process it holds is gone (`alive`, the CLI's
+ * kill -0), or it holds none readable and was `written` over LOCK_STALE_MINUTES ago. Age alone
+ * never frees a live run's lock: du, `brew cleanup` and the docker prunes may each take ten minutes.
+ */
+export function staleLock({ pid, alive, written, now }, minutes = LOCK_STALE_MINUTES) {
+  if (Number.isInteger(pid)) return !alive;
+  return Number.isFinite(written) && now - written > minutes * 60_000;
 }
 
 /** Bytes as the report prints them. */
@@ -376,10 +433,16 @@ export function fmtBytes(n) {
   return n >= GB ? `${(n / GB).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
 }
 
+/** One orphaned dev process as the report lists it; `ports` null: lsof failed. */
+function devLine(r) {
+  const ports = r.ports === null ? '  ports unknown (lsof failed)' : r.ports?.length ? `  listening on ${r.ports.join(', ')}` : '';
+  return `  ${String(r.pid).padEnd(6)} up ${r.etime.padEnd(11)} ${fmtBytes(r.rss).padStart(7)}  ${r.command.slice(0, 96)}${r.cwd ? `  (in ${r.cwd})` : ''}${ports}`;
+}
+
 /**
  * The report: free disk, one line per category (its size, `≤` where freeing it keeps what is in
  * use, `?` where its size says nothing of what it frees, or why it is absent), the orphaned dev
- * processes, and how to approve.
+ * processes (null: ps failed), and how to approve.
  */
 export function formatReport({ free, total, measured, approved, dev = [] }) {
   const on = new Set(approved);
@@ -398,8 +461,8 @@ export function formatReport({ free, total, measured, approved, dev = [] }) {
     lines.push(`${m.id.padEnd(width)}  ${size.padStart(8)}  ${on.has(m.id) ? 'approved' : '        '}  ${what}`);
   }
   lines.push('', `reclaimable: ${upTo ? 'at most' : 'about'} ${fmtBytes(sum)}`);
-  lines.push('', `orphaned dev processes, listed and never stopped here: ${dev.length || 'none'}`);
-  for (const r of dev) lines.push(`  ${String(r.pid).padEnd(6)} up ${r.etime.padEnd(11)} ${fmtBytes(r.rss).padStart(7)}  ${r.command.slice(0, 96)}${r.cwd ? `  (in ${r.cwd})` : ''}${r.ports?.length ? `  listening on ${r.ports.join(', ')}` : ''}`);
+  lines.push('', `orphaned dev processes, listed and never stopped here: ${dev === null ? 'unknown (ps failed)' : dev.length || 'none'}`);
+  for (const r of dev ?? []) lines.push(devLine(r));
   lines.push('', "Approving is the owner's, once: node <this skill>/scripts/machine-sweep.mjs --approve <category>[,<category>…]");
   return `${lines.join('\n')}\n`;
 }

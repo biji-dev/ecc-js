@@ -15,7 +15,7 @@ const TEST_REL = path.join('lib', 'run-counted-core.test.mjs');
 const CORE_REL = path.join('lib', 'run-counted-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 16;
+const EXPECTED_TESTS = 18;
 
 let passed = 0;
 let failed = 0;
@@ -100,6 +100,8 @@ mutantFails(
   'problems: hits.length > 1 ? [`${hits.length} ${kind} summary lines in the output (one expected)`] : [] };',
   'problems: [] };',
 );
+mutantFails('reading only the last of two node summaries', 'if (plans > 1 || ls.slice(0, plan).some(isTests)) problems.push(', 'if (false) problems.push(');
+mutantFails('reading a second node summary by its # tests line alone', 'if (plans > 1 || ls.slice(0, plan).some(isTests))', 'if (ls.slice(0, plan).some(isTests))');
 mutantFails('letting a skip through', "  'skipped',\n  'todo',", "  'todo',");
 mutantFails('letting a flaky test through', "  'flaky',\n", '');
 mutantFails('ignoring the node skip and todo markers', 'for (const m of summary.markers ?? [])', 'for (const m of [])');

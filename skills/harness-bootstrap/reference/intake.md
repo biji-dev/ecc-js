@@ -31,7 +31,9 @@ Branch cell), and lands by the merge policy once the owner has approved it.
 ## The six steps
 
 `[M]` **1 · Capture.** The owner's words go into the draft verbatim, dated, as its
-first lines. Never paraphrased: the request is checked against them later.
+first lines, quoted with `>` under at most a `#` title line. Never paraphrased: the
+request is checked against them later. The quote is how the check tells them apart:
+an open-question word in the capture is the owner's, never a stray.
 
 `[M]` **2 · Ground.** What exists: the code it would touch, the docs that describe
 that behaviour, the follow-ups doc's rows it closes or collides with, and every
@@ -95,11 +97,14 @@ into a decision row (`By: owner`, or `default` where the owner let it stand).
 - Approved → `intake.mjs --check` once more, then one line in the request:
 
 ```
-Approved: <YYYY-MM-DD> · owner · <unit>/DEC-n · unit <unit 1's id> · tier <tier> · scope <sha>
+Approved: <YYYY-MM-DD> · owner · <unit>/DEC-n · unit <unit 1's id> · tier <tier> · scope <sha> · request <sha>
 ```
 
-`[M]` The `scope` sha is the one `--check` printed for the Scope block the owner
-saw. A park-and-carry default is never approval: an unanswered sheet waits.
+`[M]` The `scope` and `request` shas are the ones `--check` printed for the Scope
+block and the request the owner saw. The request sha covers every line but the
+`Approved:` line, so writing it moves nothing, and any later edit — a deliverable,
+a card's answer, the estimate — re-opens the sheet. A park-and-carry default is
+never approval: an unanswered sheet waits.
 
 `[M]` **6 · Register, then queue.** Enter the request wherever the project registers
 requests — its register, its index, its plan's rows — and queue its units there,
@@ -116,8 +121,8 @@ node scripts/intake.mjs --gate1 <request> --state <unit 1's state file>
 ```
 
 - `Gate 1: auto — <request> approved <date> by the owner (<ref>) for <unit> at <tier>;
-  its Scope block is unchanged (sha <sha>)` → no sheet. The ledger's Gate 1 row quotes
-  the line as its evidence.
+  the request and its Scope block are unchanged (request <sha>, scope <sha>)` → no
+  sheet. The ledger's Gate 1 row quotes the line as its evidence.
 - `Gate 1: owner — <what changed>` → the ordinary Gate 1 sheet, which opens with
   that line: another unit, a re-tier, an edited Scope block, a request edited after
   its approval, or no approval at all.
@@ -135,9 +140,12 @@ is an owner stop (`gate-design.md` › Owner stops), and an edited Scope block m
 
 `[M]` `scripts/intake.mjs` reads files and prints; it never writes. `--check`:
 one line per property — deliverables, cards by class, the estimate, the never-auto
-and risk-map lines, unit 1's Scope block and its sha, the approval — then a
-`PROBLEM` line for each one missing and the verdict. Exit 0 ready or approved, 1 a
-property missing, 2 usage. `--gate1`: exit 0 auto, 1 the owner decides.
+and risk-map lines, unit 1's Scope block and its sha, the request's sha, the
+approval — then a `PROBLEM` line for each one missing and the verdict. An In scope,
+Out of scope or Done when label with nothing after it is missing too. An
+open-question word is a problem anywhere but the capture and a card's own lines.
+Exit 0 ready or approved, 1 a property missing, 2 usage. `--gate1`: exit 0 auto, 1
+the owner decides.
 
 `[B]` In `scripts/lib/intake-core.mjs`: `STRAY`, the words that mark a question this
 project's documents leave open.

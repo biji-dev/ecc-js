@@ -13,12 +13,14 @@
  *   --check <file>   every property the sheet needs: each deliverable's Demo: line, every P and C
  *                    decision as a card (recommendation, two or three options, a default), the
  *                    Never-auto:, Risk map: and Estimate: lines, unit 1's Scope block and its sha,
- *                    and no question left open outside a card. Once the owner approves, the
- *                    session writes `Approved: <date> · owner · <unit>/DEC-n · unit <id> · tier
- *                    <tier> · scope <sha>` into the request, the sha copied from this report
+ *                    the request's sha, and no question left open outside the capture and the
+ *                    cards. Once the owner approves, the session writes `Approved: <date> · owner ·
+ *                    <unit>/DEC-n · unit <id> · tier <tier> · scope <sha> · request <sha>` into
+ *                    the request, both shas copied from this report
  *   --gate1 <file>   with --state: `Gate 1: auto — …` when the claimed unit is the approved one, at
- *                    its tier, with the approved Scope block, and the request's block is unchanged;
- *                    else `Gate 1: owner — <what changed>`. The ledger's Gate 1 row quotes the line
+ *                    its tier, with the approved Scope block, and the request and its block are
+ *                    unchanged; else `Gate 1: owner — <what changed>`. The ledger's Gate 1 row
+ *                    quotes the line
  *   --json           the result object instead of lines
  *
  * exit: --check 0 ready or approved | 1 a property is missing; --gate1 0 auto | 1 the owner decides;

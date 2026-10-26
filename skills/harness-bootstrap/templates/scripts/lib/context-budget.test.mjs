@@ -26,7 +26,7 @@ const tmp = (prefix) => {
 
 const HOME = tmp('context-budget-home-');
 const ENV = { ...process.env, HOME };
-for (const k of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CONTEXT_BUDGET_STATE_DIR', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR']) delete ENV[k];
+for (const k of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CONTEXT_BUDGET_STATE_DIR', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR', 'CLAUDE_CONFIG_DIR']) delete ENV[k];
 // The hook's figures, as it reads them under that environment (its WARN is read at import).
 delete process.env.CONTEXT_BUDGET_WARN;
 const { GATE_TEXT, budgetFigures } = await import(pathToFileURL(HOOK).href);

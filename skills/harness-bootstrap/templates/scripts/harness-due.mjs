@@ -97,7 +97,10 @@ function withDates(top, rel) {
   return { text: fs.readFileSync(file, 'utf8'), dates: blameDates(top, rel) };
 }
 
-/** Each bound kind's reports as [{ rel, time }]: the last commit that touched it, else its file time. */
+/**
+ * Each bound kind's reports as [{ rel, time }]: the last commit that touched it. A report no commit
+ * holds is left out, whatever its file time: a unit stays due until its report is committed.
+ */
 function readReports(top) {
   const out = {};
   for (const [kind, template] of Object.entries(REPORTS)) {
@@ -111,7 +114,7 @@ function readReports(top) {
     }
     const found = matchReports(template, names);
     const times = found.length ? lastCommitTimes(top, [dir]) : new Map();
-    out[kind] = found.map((r) => ({ rel: r.rel, time: times.get(r.rel) ?? mtime(path.join(top, r.rel)) }));
+    out[kind] = found.filter((r) => times.has(r.rel)).map((r) => ({ rel: r.rel, time: times.get(r.rel) }));
   }
   return out;
 }
@@ -124,9 +127,12 @@ function mainCheckout(top) {
   return path.basename(dir) === '.git' ? path.dirname(dir) : top;
 }
 
-/** The mainline's merges, newest first, as [{ t, subject }]: the landings, and the phases they name. */
+/**
+ * The mainline's merges, newest first, as [{ t, subject }]: the landings, and the phases they name.
+ * First-parent only: a landed branch that merged the mainline into itself is one landing, not two.
+ */
 function readMerges(top) {
-  return (git(['log', '--merges', '--format=%ct%x09%s', MAIN], top) ?? '').split('\n').flatMap((line) => {
+  return (git(['log', '--merges', '--first-parent', '--format=%ct%x09%s', MAIN], top) ?? '').split('\n').flatMap((line) => {
     const tab = line.indexOf('\t');
     return tab === -1 ? [] : [{ t: Number(line.slice(0, tab)) * 1000, subject: line.slice(tab + 1) }];
   });

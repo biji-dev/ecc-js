@@ -72,9 +72,9 @@ they set, the estimate, unit 1's Scope block, the queue, and *Decided*. The cont
 rule above decides how the sheet reaches the owner.
 
 `[M]` **That sheet is unit 1's Gate 1.** The `Approved:` line it leaves in the
-request names the unit, the tier and the sha of the Scope block the owner saw; at
-unit 1's Gate 1, `node scripts/intake.mjs --gate1` compares them with the claim.
-Unchanged → auto, its line in the ledger. Anything else — another unit, a re-tier,
+request names the unit, the tier, and the shas of the Scope block and of the whole
+request the owner saw; at unit 1's Gate 1, `node scripts/intake.mjs --gate1`
+compares them with the claim. Unchanged → auto, its line in the ledger. Anything else — another unit, a re-tier,
 an edited Scope block, a request edited after its approval, a default in place of
 the owner's answer — re-opens Gate 1 as an ordinary sheet. Later units' Gate 1s run
 as usual; the cards the intake answered are decision rows, never asked again.
@@ -135,13 +135,18 @@ session dispatches what it names, with `model` and `effort` passed.
 > cheapest per unique P0/P1 and stay. **Track it:** the log's *Yield by source*
 > (`log-format.md`) says which source to drop or restore next.
 
-`[M]` **What `review-gate.mjs` names, and what the session dispatches:**
-`second-family-review` → `codex-run.mjs review`; `second-family-adversarial` →
-`codex-run.mjs adversarial --prompt <brief>` (`--critical` on critical code);
-`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on that
-model; `opus-adversarial` → the Opus `blast-radius-auditor` with the adversarial
-brief (the round-3 pass over a fix the second family wrote); every other name → the agent of that name (`pr-test-analyzer` on Sonnet). Each
-dispatch passes `model` and `effort: "high"`.
+`[M]` **What `review-gate.mjs` names, and what the session dispatches.** The names
+and the words of its reasons are Claude Code's: on another host, Opus is that host's
+main model, Sonnet its bounded model, and the second family its own (› Model and
+effort). `second-family-review` → the second family's wrapper with `review`:
+`codex-run.mjs` on Claude Code and ZCode (`claude-run.mjs` on ZCode when Codex is
+out), `claude-run.mjs` on Codex; `second-family-adversarial` → the same wrapper with
+`adversarial --prompt <brief>` (`--critical` on critical code);
+`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on the
+main / bounded model; `opus-adversarial` → the `blast-radius-auditor` on the main
+model with the adversarial brief (the round-3 pass over a fix the second family
+wrote); every other name → the agent of that name (`pr-test-analyzer` on the
+bounded model). Each dispatch passes `model` and `effort: "high"`.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
@@ -293,10 +298,12 @@ line in the ledger. Its rules:
 | **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review; round 3 is an Opus adversarial brief |
 
 `[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
-writes, the other re-reads — fix rounds included. It is required —
-`claude | codex | sonnet | mixed`; a round whose fix groups went to more than one
-executor is `mixed` and routes as the second family's, and critical code that
-Sonnet wrote gets the Opus reviewer as the second family's does.
+writes, the other re-reads — fix rounds included. It is required and names the
+writer's role on this host — `main | bounded | second | mixed` (on Claude Code
+also `claude | sonnet | codex`), each role's model per host in › Model and effort
+below; a round whose fix groups went to more than one executor is `mixed` and
+routes as `second`, and critical code that Sonnet wrote gets the Opus reviewer as
+the second family's does.
 
 `[M]` **P3s never open a fix round.** They wait for **the P3 batch, one per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
@@ -321,7 +328,7 @@ owner's to order, and it is the adversarial pass.
 overlap go to one executor in one brief; groups that share files run in sequence.
 Fix groups on critical code go to Opus; the rest to the second family's `fix-cold`
 where it has quota, else Sonnet — and the review gate then runs with
-`--writer codex`.
+`--writer second`.
 
 `[M]` **A P0 or P1 introduced by the fix itself trips the stop** (`rules.md` §2). A
 pre-existing finding seen for the first time does not.
@@ -358,7 +365,8 @@ effort above `high`, a second family that cannot run, and a host with no models.
 override) — owner first, then the risk routing above, then the default — with one
 guard: an override that hands critical or never-auto code to the second family or
 Sonnet is a **C** decision, only the owner's, and its slices run with `--writer`
-set so the review gate names an Opus reviewer.
+set to the role that wrote them (`second` or `bounded`) so the review gate names
+an Opus reviewer.
 > Origin, the v4 usage study: the second family wrote code 7 times in 14 days
 > against 502 Opus implementer spawns, while its weekly meter sat at 5–30% most days.
 > Its write runs cost 0.5–2% of its week each, so at that plan it can carry about a

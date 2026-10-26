@@ -1,6 +1,7 @@
 // harness-bootstrap harness-due tests (generated YYYY-MM-DD). Run: node --test scripts/lib/harness-due-core.test.mjs
 // [M] mechanism (ships as-is): every test. [B] binding: none -- the tests pass their own templates and
-// patterns, or read the bindings, never their values; a wrapper test a binding cannot express skips.
+// patterns, or read the bindings, never their values; a wrapper test a binding cannot express asserts
+// that binding's own behaviour instead, never skips (a skip fails the project's counted gate).
 // Hermetic: the wrapper tests run in a temp git repo with every GIT_* variable stripped,
 // GIT_CONFIG_GLOBAL=/dev/null, a fixed identity and dated commits, and a temp --home.
 import assert from 'node:assert/strict';
@@ -10,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { blameDates } from './retro-gather.mjs';
 import {
   CADENCE,
   FOLLOW_UPS,
@@ -365,17 +367,28 @@ function run(f, args, cwd = f.repo) {
   return spawnSync(process.execPath, [RUNNER, '--now', '2026-10-26T12:00:00Z', '--home', f.home, ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
 }
 
+// The claim of P2-01 stops only where a preflight is bound and P2-01 is in another phase than the log's rows.
 const canClaim = REPORTS.preflight !== null && phaseOf('P2-01') !== null && phaseOf('P1-01') !== null && phaseOf('P1-01') !== phaseOf('P2-01');
 
-test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is named, never stopped', { skip: !canClaim && 'PHASE_OF does not read P1-01 and P2-01 as two phases' }, () => {
+test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is named, never stopped', () => {
   const f = fixture();
   const opens = run(f, ['--claim', 'P2-01']);
+  if (!canClaim) {
+    // the binding's own behaviour: it stops only for a bound preflight in a phase of its own
+    const stops = REPORTS.preflight !== null && phaseOf('P2-01') !== null && phaseOf('P1-01') !== phaseOf('P2-01');
+    assert.equal(opens.status, stops ? 1 : 0, opens.stderr);
+    if (REPORTS.preflight === null || phaseOf('P2-01') === null) assert.doesNotMatch(opens.stdout, /^DUE preflight/m);
+    return;
+  }
   assert.equal(opens.status, 1, opens.stderr);
   assert.match(opens.stdout, new RegExp(`^DUE preflight P2 — no report at ${fill(REPORTS.preflight, 'P2').replace(/[.]/g, '\\.')}, and P2-01 opens the phase: the claim waits for it — `, 'm'));
   const underWay = run(f, ['--claim', 'P1-08']);
   assert.equal(underWay.status, 0, underWay.stderr);
   assert.match(underWay.stdout, /^DUE preflight P1 — no report at .*, and the phase is under way \(7 log rows, 0 merges\) — /m);
+  // a report on disk that no commit holds clears nothing: the unit stays due until its report is committed
   f.write(fill(REPORTS.preflight, 'P2'), '# Preflight P2\n');
+  const unsaved = run(f, ['--claim', 'P2-01']);
+  assert.equal(unsaved.status, 1, unsaved.stdout + unsaved.stderr);
   f.git(['add', '.']);
   f.git(['commit', '-q', '-m', 'P2 preflight'], '2026-10-24T10:00:00Z');
   const cleared = run(f, ['--claim', 'P2-01', '--json']);
@@ -383,6 +396,53 @@ test('the wrapper: claiming the row that opens a phase with no preflight stops w
   const json = JSON.parse(cleared.stdout);
   assert.equal(json.blocking, 0);
   assert.ok(!json.due.some((d) => d.kind === 'preflight'));
+});
+
+test('the wrapper: a sweep report that no commit holds does not clear the sweep; committed, it does', () => {
+  const f = fixture();
+  if (REPORTS.sweep !== null) f.write(fill(REPORTS.sweep, '2026-10-25'), '# Sweep\n');
+  const unsaved = run(f, []);
+  assert.equal(unsaved.status, 0, unsaved.stderr);
+  if (REPORTS.sweep !== null && CADENCE.sweep.days <= 8) assert.match(unsaved.stdout, /^DUE sweep — 8 d, 5 landings since .*2026-10-18.* — /m);
+  if (REPORTS.sweep === null) return;
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-m', 'sweep'], '2026-10-25T10:00:00Z');
+  assert.doesNotMatch(run(f, []).stdout, /^DUE sweep/m);
+});
+
+test('the wrapper: a landed branch that merged the mainline into itself is one landing, not two', () => {
+  const f = fixture();
+  f.git(['checkout', '-q', '-b', 'task/p1-09']);
+  f.write('own.txt', 'own');
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-m', 'own work'], '2026-10-24T09:00:00Z');
+  f.git(['checkout', '-q', MAIN]);
+  f.write('main.txt', 'main moved');
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-m', 'main moved on'], '2026-10-24T10:00:00Z');
+  f.git(['checkout', '-q', 'task/p1-09']);
+  f.git(['merge', '-q', '--no-ff', '-m', 'Merge main into task/p1-09', MAIN], '2026-10-24T11:00:00Z');
+  f.git(['checkout', '-q', MAIN]);
+  f.git(['merge', '-q', '--no-ff', '-m', 'Merge task/p1-09', 'task/p1-09'], '2026-10-24T12:00:00Z');
+  const res = run(f, ['--claim', 'P1-09']);
+  assert.equal(res.status, 0, res.stderr);
+  if (REPORTS.preflight !== null && phaseOf('P1-09') !== null) {
+    assert.match(res.stdout, /^DUE preflight P1 — no report at .*, and the phase is under way \(7 log rows, 1 merge\) — /m);
+  }
+});
+
+test('blameDates dates a committed line by its commit and a line not committed yet by nothing', () => {
+  const f = fixture();
+  const file = path.join(f.repo, LOG);
+  assert.ok([...blameDates(f.repo, LOG).values()].every(Number.isFinite));
+  // line 5 is the first log row, edited here; line 12 is a row appended here; neither is committed
+  fs.writeFileSync(file, `${fs.readFileSync(file, 'utf8').replace('P1-01 · plan · Code · Small | 60m', 'P1-01 · plan · Code · Small | 61m')}${logRow('P1-09')}\n`);
+  const dates = blameDates(f.repo, LOG);
+  assert.equal(dates.size, 12);
+  assert.equal(dates.get(5), null);
+  assert.equal(dates.get(12), null);
+  assert.equal(dates.get(6), at('17T10:00:00'));
+  assert.equal(dates.get(7), at('19T10:00:00'));
 });
 
 test('the wrapper: a sweep report 8 days back with 5 landings since is due; the unread proposals are NEW until --seen', () => {
@@ -402,7 +462,7 @@ test('the wrapper: a sweep report 8 days back with 5 landings since is due; the 
   assert.equal(f.git(['status', '--porcelain']), '');
 });
 
-test('the wrapper: a merged worktree is residue only with commits of its own, no change, and rebuildable ignored files or links alone', { skip: WORKTREE_IDLE_HOURS > 48 && 'WORKTREE_IDLE_HOURS is over the fixture\'s 60 h' }, () => {
+test('the wrapper: a merged worktree is residue only with commits of its own, no change, and rebuildable ignored files or links alone', () => {
   const f = fixture();
   f.write('.gitignore', '.worktrees/\nnode_modules/\n.env.local\n');
   f.git(['add', '.gitignore']);
@@ -431,7 +491,9 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
     fs.utimesSync(path.join(f.repo, '.worktrees', name, '.git'), past, past);
     fs.utimesSync(path.join(f.repo, '.git', 'worktrees', name, 'logs', 'HEAD'), past, past);
   }
-  const res = run(f, ['--json']);
+  // idle for WORKTREE_IDLE_HOURS and 12 more, whatever the binding: the clock moves, not the fixture's commits
+  const now = new Date(past.getTime() + (WORKTREE_IDLE_HOURS + 12) * HOUR).toISOString();
+  const res = run(f, ['--json', '--now', now]);
   assert.equal(res.status, 0, res.stderr);
   const line = JSON.parse(res.stdout).due.find((d) => d.kind === 'worktrees');
   const named = (line?.why.split(': ')[1] ?? '').split(', ').map((p) => path.basename(p)).sort();

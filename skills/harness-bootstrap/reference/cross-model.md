@@ -14,8 +14,10 @@ cleared, and the wrapper exists because Codex's own exit code lied both ways.
 gets its decorrelated pass from Codex; Codex-written code (a cold slice, a fix, a
 doc sweep) gets a Claude reviewer — Opus on critical code at once, and on cold code
 the unit review covers it (a Sonnet `code-reviewer` for a Small unit or a cold fix),
-as `review-gate.mjs --writer codex` says. `--writer` is who wrote the diff under
-review: the slice, the unit, or the fix.
+as `review-gate.mjs --writer second` says. `--writer` is the role that wrote the
+diff under review — the slice, the unit, or the fix: `main | bounded | second |
+mixed` (on Claude Code also `claude | sonnet | codex`), each role's model per host
+in `gate-design.md` › Model and effort.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
@@ -56,7 +58,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
 | 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass for a third round the owner orders | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |
-| 2 implement, 8 fixes, 8a docs | **the first builder for cold work** — cold slices (`implement-cold`), fixes outside critical code (`fix-cold`), tests for cold code, doc rewrites (`docs`) — reviewed by Claude as `review-gate.mjs --writer codex` says; hot code only on the owner's `executor: codex` override, then an Opus reviewer per slice | any |
+| 2 implement, 8 fixes, 8a docs | **the first builder for cold work** — cold slices (`implement-cold`), fixes outside critical code (`fix-cold`), tests for cold code, doc rewrites (`docs`) — reviewed by Claude as `review-gate.mjs --writer second` says; hot code only on the owner's `executor: codex` override, then an Opus reviewer per slice | any |
 
 `[M]` The **blind** in blind dual plan is the point: the second plan is written
 without seeing the first. Every item only one side has is verified in code before

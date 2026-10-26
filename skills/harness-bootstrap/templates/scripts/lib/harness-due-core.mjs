@@ -154,7 +154,7 @@ export function preflightDue({ claim, reports = [], logIds = [], merges = [], te
 
 /**
  * A recurring kind: due when its newest report is CADENCE days old, or CADENCE landings behind.
- * `reports` are { rel, time } (time: its last commit, else its file time); with none, the count
+ * `reports` are { rel, time } (time: its last commit; a report no commit holds is never one); with none, the count
  * starts at `logBorn`, the log's first commit. A landing is a log row (`landed`, the commit time
  * of each row) or a mainline merge (`merged`, each merge's time), whichever counts more: a row the
  * log's table does not parse still merged.

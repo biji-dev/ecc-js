@@ -20,6 +20,7 @@ set -u
 STATE=.unit-stack.env
 
 # >>> unit-stack [B] - the slot range, the disk floor and everything a slot owns
+REGISTRY=.claude/registry.md # the registry, relative to the main checkout: the commit guard's REGISTRY (harness-guard.sh)
 SLOTS="1 2 3 4 5 6"
 MIN_FREE_GB=5   # a stack's volumes and an image build need room: a full disk once hung Docker Desktop for every project
 HEALTH_WAIT=300 # seconds `up` waits for stack_healthy
@@ -69,7 +70,7 @@ cd "$TOP" || die "cannot enter $TOP"
 HERE=$(pwd -P)
 COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "git 2.31 or later is needed"
 MAIN=$(cd "$COMMON/.." && pwd -P)
-REGISTRY="$MAIN/.claude/registry.md"
+REG="$MAIN/$REGISTRY"
 
 valid_slot() {
   case " $SLOTS " in *" $1 "*) [ -n "$1" ] ;; *) return 1 ;; esac
@@ -89,11 +90,17 @@ served_by() {
   (cd "$src" 2>/dev/null && pwd -P) || printf '%s\n' "$src"
 }
 
+# A missing registry is a wrong binding, never "nothing held": that would hand out claimed slots. Callers
+# outside a command substitution call it too, so the refusal ends the script (an exit in $(...) would not).
+need_registry() {
+  [ -f "$REG" ] || die "no registry at $REG: bind REGISTRY in the [B] block of scripts/unit-stack.sh (the commit guard's REGISTRY)"
+}
+
 # "<slot>|<Worktree cell>" for each held row whose Resources cell names a slot. Held rows, the header and the
 # Worktree cell are read as the commit guard reads them (harness-guard.sh): inside the active markers, first
 # cell 1 or more, columns by the header row.
 registry_slots() {
-  [ -f "$REGISTRY" ] || return 0
+  need_registry
   awk '
     function cells(s) {
       sub(/[ \t\r]+$/, "", s)
@@ -140,7 +147,7 @@ registry_slots() {
         }
         print s "|" wt
       }
-    }' "$REGISTRY"
+    }' "$REG"
 }
 
 # The checkout a Worktree cell names, as a real path: empty, main and . are the main checkout; anything else
@@ -185,6 +192,7 @@ EOF
 # worktree, 1 when none runs. Needs slot_vars set.
 check_owner() {
   local other src
+  need_registry
   other=$(held_elsewhere "$UNIT_SLOT")
   [ -z "$other" ] || die "slot $UNIT_SLOT is held by the registry row of $other"
   src=$(served_by)
@@ -203,6 +211,7 @@ load_state() {
 
 cmd_free_slot() {
   local s p held busy
+  need_registry
   held=$(registry_slots | cut -d'|' -f1)
   for s in $SLOTS; do
     printf '%s\n' "$held" | grep -qx "$s" && continue
@@ -226,6 +235,7 @@ cmd_up() {
     [ "$UNIT_SLOT" = "$s" ] || die "this worktree already runs slot $UNIT_SLOT; down it first"
   fi
   slot_vars "$s"
+  need_registry
   held_here "$s" || die "no held registry row names slot $s for this worktree: claim it first (Resources: slot $s)"
   if ! check_owner; then
     for p in $UNIT_PORTS; do listening "$p" && die "port $p is in use by another process"; done

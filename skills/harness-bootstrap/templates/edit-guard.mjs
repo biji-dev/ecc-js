@@ -15,18 +15,65 @@
 // as a block. Input that does not parse, or names no path, exits 0: the hook never blocks on its
 // own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted.
 // A PostToolUse formatter reads the same paths: import { editedPaths } from this file.
-import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // [B] Repo-relative paths (`/` separators) an agent never edits: env files that hold secrets (a
 // committed template, .env.example, .env.sample or .env.template, stays editable) and installed
-// packages. A project adds its own: a lock file, an auth-state directory, generated code.
-export const PROTECTED = [/(^|\/)\.env(\.(?!example$|sample$|template$)[^/]*)?$/, /(^|\/)node_modules(\/|$)/];
+// packages. A project adds its own: a lock file, an auth-state directory, generated code. Every
+// pattern takes `i`, a project's own too: macOS and Windows volumes are case-insensitive by default,
+// so `.ENV` is `.env` there and `NODE_MODULES/x` writes into node_modules.
+export const PROTECTED = [/(^|\/)\.env(\.(?!example$|sample$|template$)[^/]*)?$/i, /(^|\/)node_modules(\/|$)/i];
 
-/** Every path one tool call writes, moves or deletes: `{ abs, rel }`, rel repo-relative when inside `root`. */
+/** `p` relative to `root` with `/` separators when inside it, else `p` itself. */
+function repoRel(root, p) {
+  const rel = relative(root, p);
+  const inside = rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  return (inside ? rel : p).split(sep).join('/');
+}
+
+/**
+ * The path the file system writes for `written`: the deepest part that exists, links resolved, then
+ * the rest as written (a new file's parent may not exist yet). A link to nothing is followed too: a
+ * write through it creates its target. Nothing is normalised before its links are followed: the file
+ * system takes `jump/..` from where `jump` leads, and resolve() (like the JS realpathSync, which
+ * calls it) drops `jump/..` as text; realpathSync.native asks the file system.
+ */
+function physicalPath(written) {
+  let head = written;
+  let rest = [];
+  let hops = 0;
+  for (;;) {
+    try {
+      return join(realpathSync.native(head), ...rest);
+    } catch {
+      // not there yet, or a link to nothing
+    }
+    let target = null;
+    try {
+      if (lstatSync(head).isSymbolicLink()) target = readlinkSync(head);
+    } catch {
+      // absent
+    }
+    if (target !== null && hops++ < 40) {
+      head = isAbsolute(target) ? target : `${dirname(head)}${sep}${target}`;
+      continue;
+    }
+    const parent = dirname(head);
+    if (parent === head) return written;
+    rest = [basename(head), ...rest];
+    head = parent;
+  }
+}
+
+/**
+ * Every path one tool call writes, moves or deletes: `{ abs, rel, real }`, rel repo-relative when
+ * inside `root`, real the same for the path the file system writes. Both are checked: resolve() and
+ * relative() only normalise text, so `deps/x` with `deps -> node_modules` reads as an ordinary path.
+ */
 export function editedPaths(input, root = ROOT) {
   const toolInput = input?.tool_input ?? {};
   const base = typeof input?.cwd === 'string' && input.cwd !== '' ? input.cwd : root;
@@ -40,24 +87,36 @@ export function editedPaths(input, root = ROOT) {
       if (m) raw.push(m[1].trim());
     }
   }
+  let realRoot = root;
+  try {
+    realRoot = realpathSync.native(root);
+  } catch {
+    // keep the root as given
+  }
   return raw.map((p) => {
     const abs = isAbsolute(p) ? p : resolve(base, p);
-    const rel = relative(root, abs);
-    const inside = rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
-    return { abs, rel: (inside ? rel : abs).split(sep).join('/') };
+    const rel = repoRel(root, abs);
+    let real = rel;
+    try {
+      real = repoRel(realRoot, physicalPath(isAbsolute(p) ? p : `${resolve(base)}${sep}${p}`));
+    } catch {
+      // the lexical path still decides: never less than before
+    }
+    return { abs, rel, real };
   });
 }
 
 /** The first protected path the call edits, or null. */
 export function protectedHit(input, root = ROOT) {
-  return editedPaths(input, root).find(({ rel }) => PROTECTED.some((re) => re.test(rel))) ?? null;
+  return editedPaths(input, root).find(({ rel, real }) => PROTECTED.some((re) => re.test(rel) || re.test(real))) ?? null;
 }
 
 function main() {
   try {
     const hit = protectedHit(JSON.parse(readFileSync(0, 'utf8') || '{}'));
     if (!hit) return 0;
-    process.stderr.write(`BLOCKED (protected-path): ${hit.rel} is a path an agent never edits (secrets or installed packages); ask the owner.\n`);
+    const via = hit.real === hit.rel ? '' : ` (it writes ${hit.real})`;
+    process.stderr.write(`BLOCKED (protected-path): ${hit.rel}${via} is a path an agent never edits (secrets or installed packages); ask the owner.\n`);
     return 2;
   } catch {
     return 0; // never block on a parse failure

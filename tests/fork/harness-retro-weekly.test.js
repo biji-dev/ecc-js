@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'retro-weekly-core.mjs');
 const CLI_REL = path.join('scripts', 'retro-weekly.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 17;
+const EXPECTED_TESTS = 20;
 
 let passed = 0;
 let failed = 0;
@@ -98,6 +98,9 @@ mutantFails('taking a manifest role outside the repository', "typeof roleValue =
 mutantFails('dropping the escape of quotes in the notice', "replace(/[\\\\\"]/g, '\\\\$&')", "replace(/^$/g, '')");
 mutantFails('running the review outside retro/', '    cwd: retroDir,\n    encoding', '    cwd: path.dirname(retroDir),\n    encoding', CLI_REL);
 mutantFails('a dry run that exports', '  if (opts.dryRun) return dryRun({ opts, reg, retroDir, week, claude });\n', '', CLI_REL);
+mutantFails('a cron line that redirects into a log directory that may not exist', 'mkdir -p ${shq(path.dirname(logFile))} && ', '');
+mutantFails('a cron line without the Claude Code config directory', "configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''", "''");
+mutantFails('reading the transcripts from ~/.claude whatever CLAUDE_CONFIG_DIR says', "path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')", "path.join(os.homedir(), '.claude', 'projects')", CLI_REL);
 mutantFails('exiting 0 when the review failed', 'return failed.length || (opts.review && !review.ok && !review.skipped) ? 1 : 0;', 'return failed.length ? 1 : 0;', CLI_REL);
 
 test('CLI smoke: --print-schedule names the installed copy and --list says when nothing is registered', () => {

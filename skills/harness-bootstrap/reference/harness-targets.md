@@ -57,7 +57,9 @@ size today, rounded up, and the lint fails only above it. A 118 KB `CLAUDE.md` m
 not fail on day one; it must not grow either.
 
 `[M]` **Area rules are indexed in `AGENTS.md`**, one line each:
-``- `<file>.md` — <what it covers> (`<first path glob>` …)``. Sub-agents and other
+``- `<file>.md` — <what it covers> (`<first path glob>` …)``; a rule in a
+subdirectory (Claude Code loads `.claude/rules/` at any depth) by its path under the
+rules dir, `web/react.md`. Sub-agents and other
 agents do not load path-scoped rules on their own, so **every brief names the ones
 that apply** — `node scripts/check-agent-docs.mjs --rules-for <files>` lists them.
 
@@ -131,7 +133,10 @@ call it; never maintain the same sequence in three skill files.
   `Write`, `MultiEdit` and `NotebookEdit`, installed to `.claude/hooks/edit-guard.mjs`.
   It reads the paths from stdin (`tool_input.file_path`, `notebook_path`) and refuses,
   with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets and
-  installed packages, while a committed `.env.example` stays editable. It replaces
+  installed packages, while a committed `.env.example` stays editable. It tests the
+  path as written and the path the write lands on, through symlinks, and matches
+  without case (macOS and Windows volumes ignore it): `.ENV`, or `deps/` linked to
+  `node_modules/`, is refused too. It replaces
   inline hooks on `$CLAUDE_FILE_PATHS`, which Claude Code does not set: one project's
   `.env` guard and formatter read it, so neither ever ran (the 2.1.308 binary holds no
   such name). A `PostToolUse` formatter imports its `editedPaths`.
@@ -206,7 +211,10 @@ call it; never maintain the same sequence in three skill files.
   work into a workflow (the `delegate-tasks` skill describes one).
 - **The second family** is Codex, through `codex-run.mjs`; Claude, through
   `claude-run.mjs`, when Codex is out. ZCode sets `CLAUDE_*` variables too, so
-  `harness-host.mjs` reads any `ZCODE_*` variable first.
+  `harness-host.mjs` reads any `ZCODE_*` variable first. No ZCode variable is
+  verified yet (none was found in its app or its logs), so until one is, a ZCode
+  session reads as `claude`: set `HARNESS_HOST=zcode` in the environment ZCode gives
+  its shells, never in a shell profile the other hosts read too.
 - Check whether the session model reads images before planning a visual step.
 - **When ZCode is the main runtime,** the Claude Code hooks (command and edit
   guards, context budget) do not protect it, and "pass `model` and `effort` on every
@@ -231,4 +239,5 @@ then any `ZCODE_*` variable, then `CODEX_THREAD_ID` or `CODEX_SANDBOX`, then
 `CLAUDECODE`. A host started from another inherits its variables — a Codex run
 started from a Claude Code shell carries `CLAUDECODE` — so the inner host's own
 variables go first; `HARNESS_HOST` settles anything else. Kimi sets none: it needs
-`HARNESS_HOST=kimi`.
+`HARNESS_HOST=kimi`. ZCode needs `HARNESS_HOST=zcode` until a `ZCODE_*` variable is
+verified in its shells (ZCode, above).

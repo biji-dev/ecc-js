@@ -70,7 +70,7 @@ function runHook(event, tokens, stateDir, opts = {}) {
     ...(opts.cwd ? { cwd: opts.cwd } : {})
   });
   const env = { ...process.env, CONTEXT_BUDGET_STATE_DIR: stateDir, HOME: opts.home || EMPTY_HOME };
-  for (const key of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR']) delete env[key];
+  for (const key of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR', 'CLAUDE_CONFIG_DIR']) delete env[key];
   Object.assign(env, opts.env);
   const result = spawnSync(process.execPath, [opts.script || BUDGET], { input, encoding: 'utf8', env });
   assert.strictEqual(result.status, 0, `exit ${result.status}: ${result.stderr}`);
@@ -179,6 +179,18 @@ test('order: the window variable, then settings.local.json, settings.json and th
   assert.strictEqual(figure({ home }), '460', 'the user settings when the project sets none');
   assert.strictEqual(figure({ cwd: both, home, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '450k' } }), '410', 'the variable beats every file, "450k" included');
   assert.strictEqual(figure({ home, env: { CLAUDE_PROJECT_DIR: both } }), '310', 'CLAUDE_PROJECT_DIR names the project too');
+});
+
+test('CLAUDE_CONFIG_DIR holds the user settings: its 200K window decides, not ~/.claude\'s', () => {
+  const config = tmp('ctx-budget-c-');
+  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ autoCompactWindow: 200000 }));
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
+  const ctx = runHook('UserPromptSubmit', 170_000, tmp('ctx-budget-s-'), { home, env: { CLAUDE_CONFIG_DIR: config } }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /over the 160K budget \(40K under the 200K auto-compact window\)/);
+  const project = settingsDir({ 'settings.json': { autoCompactWindow: 300000 } });
+  const figure = (opts) => runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), opts).hookSpecificOutput.additionalContext.match(/the budget is (\d+)K/)?.[1];
+  assert.strictEqual(figure({ cwd: project, home, env: { CLAUDE_CONFIG_DIR: config } }), '260', 'the project still beats the user');
+  assert.strictEqual(figure({ home, env: { CLAUDE_CONFIG_DIR: '' } }), '460', 'an empty CLAUDE_CONFIG_DIR means ~/.claude');
 });
 
 test('a project "auto" ends the lookup: the user\'s window does not apply, the default 260K does', () => {
@@ -315,13 +327,22 @@ test('mutation: a limit that ignores the window reads 300K as over a 260K budget
 
 test('mutation: user settings read before the project make the project lose', () => {
   const script = mutant(
-    'for (const file of [...files, join(home, \'.claude\', \'settings.json\')]) {',
-    'for (const file of [join(home, \'.claude\', \'settings.json\'), ...files]) {'
+    'for (const file of [...files, join(env.CLAUDE_CONFIG_DIR || join(home, \'.claude\'), \'settings.json\')]) {',
+    'for (const file of [join(env.CLAUDE_CONFIG_DIR || join(home, \'.claude\'), \'settings.json\'), ...files]) {'
   );
   const project = settingsDir({ 'settings.json': { autoCompactWindow: 300000 } });
   const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
   const out = runHook('UserPromptSubmit', 230_000, tmp('ctx-budget-s-'), { cwd: project, home, script });
   assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /the budget is 260K/, 'the mutant must read the user window first');
+});
+
+test('mutation: a user lookup that ignores CLAUDE_CONFIG_DIR reads ~/.claude\'s window instead', () => {
+  const script = mutant("join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'settings.json')", "join(home, '.claude', 'settings.json')");
+  const config = tmp('ctx-budget-c-');
+  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ autoCompactWindow: 200000 }));
+  const home = settingsDir({ 'settings.json': { autoCompactWindow: 500000 } });
+  const out = runHook('UserPromptSubmit', 170_000, tmp('ctx-budget-s-'), { home, env: { CLAUDE_CONFIG_DIR: config }, script });
+  assert.doesNotMatch(out.hookSpecificOutput.additionalContext, /over the 160K budget/, 'the mutant must miss the config dir window');
 });
 
 test('mutation: a gate line on Stop too is caught (Stop stays quiet under WARN)', () => {

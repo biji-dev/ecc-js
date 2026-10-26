@@ -811,7 +811,7 @@ function buildReport() {
   overdue('retro', isFile('scripts/retro.mjs'));
   overdue('hygiene', isFile('scripts/harness-due.mjs'));
   // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
-  const fuRel = roleFile('followUps', FOLLOW_UP_FILES);
+  const fuRel = roleFile('follow-ups', FOLLOW_UP_FILES);
   const fuText = fuRel ? read(fuRel) : null;
   if (fuText !== null) {
     let openP3 = 0;
@@ -877,7 +877,8 @@ function secondFamilyHazard(host, entry, haz) {
   const fallback = entry.fallback;
   const fbWrapper = fallback && WRAPPER_OF[fallback];
   const then = fbWrapper && isFile(fbWrapper) ? `; the fallback, ${fallback}, takes its passes` : `: every cross-family pass on ${host} is degraded`;
-  haz('second-family-absent', `${host}'s second family, ${second}, runs through ${wrapper}, which is not installed${then}`, MODELS_FILE);
+  // the template lists every host: one the project never runs on is an entry to drop, not a wrapper to install
+  haz('second-family-absent', `${host}'s second family, ${second}, runs through ${wrapper}, which is not installed${then} (if the project never runs on ${host}, drop its entry)`, MODELS_FILE);
 }
 
 function hostHazards(manifest, haz) {

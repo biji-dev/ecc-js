@@ -18,7 +18,7 @@ const CORE_REL = path.join('lib', 'claude-run-core.mjs');
 const CLI_REL = 'claude-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 8;
+const EXPECTED_TESTS = 9;
 
 let passed = 0;
 let failed = 0;
@@ -101,6 +101,7 @@ mutantFails('running under a Claude Code host', "if (host === 'claude')", 'if (f
 mutantFails('starting claude in a sandbox with no network', "if (env.CODEX_SANDBOX_NETWORK_DISABLED === '1')", 'if (false)');
 mutantFails('reading an error result as a verdict', '  if (r.is_error) {', '  if (false) {');
 mutantFails('reporting the budget cap as a bare subtype', "if (r.subtype === 'error_max_budget_usd') return", "if (false) return");
+mutantFails('calling an error result failed without reading its errors', 'errors.some((e) => UNAVAILABLE.test(e))', 'false');
 mutantFails('reserving the review under CLAUDE_RUN=essential', "if (m === 'essential' && !ROUTES[kind].essential)", "if (m === 'essential')");
 mutantFails('taking max effort from a flag', "if (a.effort === 'max') throw", 'if (false) throw');
 mutantFails('a dry run that goes on to run', '    console.log(JSON.stringify(shown, null, 2));\n    return EXIT.ok;', '    console.log(JSON.stringify(shown, null, 2));', CLI_REL);

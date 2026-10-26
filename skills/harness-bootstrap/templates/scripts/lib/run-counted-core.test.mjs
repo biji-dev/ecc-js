@@ -126,6 +126,68 @@ test('node (TAP): an escaped # is no directive; an unknown, repeated or missing 
   assert.deepEqual(parseSummary('node', ok.replace('# todo 0\n', '')).problems, ['the node summary has no # todo line']);
 });
 
+// node 26.5.0, `node --test --test-reporter=tap` twice in one gate command: a failing run, then a
+// green one whose exit is the command's. The location and stack lines are cut.
+const TAP_FAIL = [
+  'TAP version 13',
+  '# Subtest: broken',
+  'not ok 1 - broken',
+  '  ---',
+  '  duration_ms: 0.6405',
+  "  type: 'test'",
+  "  failureType: 'testCodeFailure'",
+  "  code: 'ERR_ASSERTION'",
+  '  ...',
+  '1..1',
+  '# tests 1',
+  '# suites 0',
+  '# pass 0',
+  '# fail 1',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 37.519541',
+].join('\n');
+const TAP_SUITE = [
+  'TAP version 13',
+  '# Subtest: group',
+  '    # Subtest: inner',
+  '    ok 1 - inner',
+  '      ---',
+  '      duration_ms: 0.25675',
+  "      type: 'test'",
+  '      ...',
+  '    1..1',
+  'ok 1 - group',
+  '  ---',
+  '  duration_ms: 0.65525',
+  "  type: 'suite'",
+  '  ...',
+  '1..1',
+  '# tests 1',
+  '# suites 1',
+  '# pass 1',
+  '# fail 0',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 41.441',
+].join('\n');
+
+test("node (TAP): two runs in one output are two summaries, so a green last run cannot hide the first run's failure", () => {
+  const s = parseSummary('node', `${TAP_FAIL}\n${TAP_SUITE}\n`);
+  assert.deepEqual(s.problems, ['2 node summaries in the output (one expected)']);
+  assert.equal(verdict({ kind: 'node', min: 1, exitCode: 0, summary: s }).ok, false);
+  // a summary whose plan line is lost still counts by its # tests line
+  assert.deepEqual(parseSummary('node', `${TAP_FAIL.replace('1..1\n', '')}\n${TAP_SUITE}\n`).problems, ['2 node summaries in the output (one expected)']);
+  // a first run that died after its plan line, before its counters, still counts by its plan
+  const died = `${TAP_FAIL.replace('# tests 1\n', '')}\n${TAP_SUITE}\n`;
+  assert.deepEqual(parseSummary('node', died).problems, ['2 node summaries in the output (one expected)']);
+  assert.equal(verdict({ kind: 'node', min: 1, exitCode: 0, summary: parseSummary('node', died) }).ok, false);
+  // a suite's own plan is indented: one run is one summary
+  assert.deepEqual(parseSummary('node', TAP_SUITE), { passed: 1, failed: 0, cancelled: 0, skipped: 0, todo: 0, unknown: [], problems: [], markers: [] });
+});
+
 test('pytest: the final counts line in any order, bare (-q) or between = rules; deselected and xfailed count', () => {
   assert.deepEqual(parseSummary('pytest', '============== 1 failed, 1 passed, 1 skipped, 1 xfailed in 0.02s ===============\n'), { passed: 1, failed: 1, skipped: 1, xfailed: 1, unknown: [], problems: [] });
   assert.deepEqual(parseSummary('pytest', '.                                                                        [100%]\n1 passed, 3 deselected in 0.00s\n'), { passed: 1, deselected: 3, unknown: [], problems: [] });
@@ -282,6 +344,20 @@ test("the wrapper over node's own runner: TAP passes, a skipped suite fails, the
   assert.equal(spec.status, 1);
   assert.match(spec.stdout, /the node kind reads --test-reporter=tap/);
   assert.equal(tap('a.test.mjs', ['--test-name-pattern=one']).status, 2);
+});
+
+test('the wrapper over two node runs in one command: the first failed, the last exited 0, and the gate fails', () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'fail.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('broken', () => { assert.equal(1, 2); });\n");
+  fs.writeFileSync(path.join(d, 'pass.test.mjs'), "import { test } from 'node:test';\ntest('fine', () => {});\n");
+  const both = path.join(d, 'both.mjs');
+  const runs = ['fail.test.mjs', 'pass.test.mjs'].map((f) => path.join(d, f));
+  fs.writeFileSync(both, `import { spawnSync } from 'node:child_process';\nlet code = 0;\nfor (const f of ${JSON.stringify(runs)}) code = spawnSync(process.execPath, ['--test', '--test-reporter=tap', f], { stdio: 'inherit' }).status;\nprocess.exitCode = code;\n`);
+  const r = wrap(['--kind', 'node', '--min', '1', '--', process.execPath, both]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^# fail 1$/m);
+  assert.match(r.stdout, /^run-counted: FAIL 2 node summaries in the output \(one expected\)$/m);
+  assert.doesNotMatch(r.stdout, /^COUNTED/m);
 });
 
 test('the wrapper: a --test flag in its own NODE_OPTIONS fails before the command runs; a usage error exits 2', () => {

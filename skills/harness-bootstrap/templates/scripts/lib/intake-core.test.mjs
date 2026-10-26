@@ -16,6 +16,7 @@ import {
   parseApproval,
   parseArgs,
   parseCards,
+  requestHash,
   scopeBlock,
 } from './intake-core.mjs';
 
@@ -82,9 +83,19 @@ function state({ unit = 'CR-030-1', tier = 'Small', scope = SCOPE } = {}) {
 }
 
 const sha = (text) => scopeBlock(text).hash;
+// `request` is the sha of the unapproved request the line is appended to.
 const approvedLine = (over = {}) => {
-  const f = { date: '2026-10-27', by: 'owner', ref: 'CR-030/DEC-1', unit: 'unit CR-030-1', tier: 'tier Small', scope: `scope ${sha(SCOPE)}`, ...over };
-  return `Approved: ${[f.date, f.by, f.ref, f.unit, f.tier, f.scope].filter(Boolean).join(' · ')}`;
+  const f = {
+    date: '2026-10-27',
+    by: 'owner',
+    ref: 'CR-030/DEC-1',
+    unit: 'unit CR-030-1',
+    tier: 'tier Small',
+    scope: `scope ${sha(SCOPE)}`,
+    request: `request ${requestHash(request())}`,
+    ...over,
+  };
+  return `Approved: ${[f.date, f.by, f.ref, f.unit, f.tier, f.scope, f.request].filter(Boolean).join(' · ')}`;
 };
 
 test('parseArgs takes --check or --gate1 with --state, and refuses everything else', () => {
@@ -182,11 +193,11 @@ test('a second Scope block ends the first: unit 1 is the first block', () => {
 test('parseApproval reads the last Approved: line and names what it lacks', () => {
   const a = parseApproval(`${approvedLine({ by: 'default' })}\n${approvedLine()}`);
   assert.deepEqual(
-    { date: a.date, by: a.by, ref: a.ref, unit: a.unit, tier: a.tier, scope: a.scope, lacks: a.lacks },
-    { date: '2026-10-27', by: 'owner', ref: 'CR-030/DEC-1', unit: 'CR-030-1', tier: 'Small', scope: sha(SCOPE), lacks: [] },
+    { date: a.date, by: a.by, ref: a.ref, unit: a.unit, tier: a.tier, scope: a.scope, request: a.request, lacks: a.lacks },
+    { date: '2026-10-27', by: 'owner', ref: 'CR-030/DEC-1', unit: 'CR-030-1', tier: 'Small', scope: sha(SCOPE), request: requestHash(request()), lacks: [] },
   );
   assert.equal(parseApproval('no approval here'), null);
-  assert.deepEqual(parseApproval(approvedLine({ unit: '', scope: '' })).lacks, ['unit', 'scope']);
+  assert.deepEqual(parseApproval(approvedLine({ unit: '', scope: '', request: '' })).lacks, ['unit', 'scope', 'request']);
   assert.ok(checkRequest(request({ approved: approvedLine({ tier: '' }) })).problems.some((p) => /Approved: line lacks tier/.test(p)));
 });
 
@@ -198,13 +209,83 @@ test('an approved request whose Scope block was edited afterwards re-opens the s
   assert.ok(edited.problems.some((p) => /unit 1's Scope block changed since the approval \(approved [0-9a-f]{8}, now [0-9a-f]{8}\): the sheet re-opens/.test(p)), edited.problems.join('\n'));
 });
 
+test('a request edited anywhere after its approval re-opens Gate 1; the Approved: line itself never moves its sha', () => {
+  const approved = request({ approved: approvedLine() });
+  assert.equal(checkRequest(approved).request, checkRequest(request()).request);
+  const edits = [
+    ['a deliverable', approved.replace('the 12 orders shown', 'the 12 orders shown and their totals')],
+    ['a card\'s answer', approved.replace('Recommend: A — a dated name', 'Recommend: B — a dated name')],
+    ['the Estimate: line', approved.replace(/^Estimate: .*$/m, 'Estimate: 2-4 h (n=5)')],
+  ];
+  for (const [what, edited] of edits) {
+    const g = gate1(edited, state(), 'r.md');
+    assert.equal(g.auto, false, `auto after editing ${what}: ${g.line}`);
+    assert.match(g.line, /^Gate 1: owner — .*the request changed since the approval \(approved [0-9a-f]{8}, now [0-9a-f]{8}\)/);
+    const r = checkRequest(edited);
+    assert.equal(r.approval.unchanged, false, what);
+    assert.ok(
+      r.problems.some((p) => /^the request changed since the approval \(approved [0-9a-f]{8}, now [0-9a-f]{8}\): the sheet re-opens$/.test(p)),
+      `${what}: ${r.problems.join('\n')}`,
+    );
+  }
+});
+
+test('the request sha drops only trailing whitespace: an added indent is an edit, trailing spaces are not', () => {
+  const option = '  A orders-<date>.csv — pros: sorts · cons: none · reversal cost: edit + tests · data: —';
+  const approved = request({ approved: approvedLine() });
+  assert.ok(approved.includes(`\n${option}\n`));
+  const indented = approved.replace(option, `  ${option}`);
+  assert.notEqual(requestHash(indented), requestHash(approved));
+  const g = gate1(indented, state(), 'r.md');
+  assert.equal(g.auto, false, g.line);
+  assert.match(g.line, /the request changed since the approval \(approved [0-9a-f]{8}, now [0-9a-f]{8}\)/);
+  const trailing = approved.replace(option, `${option}   `);
+  assert.equal(requestHash(trailing), requestHash(approved));
+  assert.equal(gate1(trailing, state(), 'r.md').auto, true);
+});
+
+test('an open-question word in the capture or inside a card is no stray; one in a later paragraph or quote is', () => {
+  const words = (text) => text.replace('by hand"', 'by hand; the format is TBD"');
+  const cards = CARDS.replace('data: the schema', 'data: TBD');
+  assert.deepEqual(checkRequest(words(request({ cards }))).problems, []);
+  for (const extra of ['The retention period is TBD.', '> The retention period is TBD.']) {
+    const r = checkRequest(words(request({ cards, extra })));
+    assert.deepEqual(
+      r.problems.map((p) => p.replace(/^line \d+: /, '')),
+      [`an open question outside a card — ${extra}`],
+      r.problems.join('\n'),
+    );
+  }
+});
+
+test('only a # title may sit above the capture: a quote under a deeper heading is no capture', () => {
+  const quote = '> The retention period is TBD.';
+  for (const title of ['## Grounding', '###### Grounding']) {
+    const text = request().replace(/^# CR-030 .*$/m, title).replace(/^> Owner, .*$/m, quote);
+    assert.deepEqual(checkRequest(text).problems, [`line 3: an open question outside a card — ${quote}`], title);
+  }
+  assert.deepEqual(checkRequest(request().replace(/^> Owner, .*$/m, quote)).problems, [], 'under the # title it is the capture');
+});
+
+test('an empty In scope:, Out of scope: or Done when: label is a problem; a wrapped value is content', () => {
+  const empty = SCOPE.replace(/^Done when: .*$/m, 'Done when:');
+  const r = checkRequest(request({ scope: empty }));
+  assert.ok(r.problems.some((p) => p === 'unit 1\'s Scope block has an empty Done when: line'), r.problems.join('\n'));
+  assert.deepEqual(scopeBlock(empty).missing, []);
+  assert.deepEqual(scopeBlock(empty).empty, ['Done when']);
+  assert.deepEqual(scopeBlock(SCOPE.replace(/^In scope: .*$/m, 'In scope:   ')).empty, ['In scope']);
+  const wrapped = SCOPE.replace(/^Done when: (.*)$/m, 'Done when:\n  $1');
+  assert.deepEqual(scopeBlock(wrapped).empty, []);
+  assert.deepEqual(checkRequest(request({ scope: wrapped })).problems, []);
+});
+
 test('gate1 is auto only for the approved unit, at its tier, with the approved Scope block', () => {
   const req = request({ approved: approvedLine() });
   const auto = gate1(req, state(), 'docs/changes/CR-030.md');
   assert.equal(auto.auto, true);
   assert.equal(
     auto.line,
-    `Gate 1: auto — docs/changes/CR-030.md approved 2026-10-27 by the owner (CR-030/DEC-1) for CR-030-1 at Small; its Scope block is unchanged (sha ${sha(SCOPE)})`,
+    `Gate 1: auto — docs/changes/CR-030.md approved 2026-10-27 by the owner (CR-030/DEC-1) for CR-030-1 at Small; the request and its Scope block are unchanged (request ${requestHash(request())}, scope ${sha(SCOPE)})`,
   );
   const cases = [
     [request(), state(), /the request carries no Approved: line/],
@@ -233,12 +314,17 @@ test('formatCheck prints one line per property, then the verdict', () => {
     'estimate — no history (n=0, need 3)',
     'never-auto — none · risk map — none — src/orders/ is cold',
     `scope 1 — In scope · Out of scope · Done when · sha ${sha(SCOPE)}`,
+    `request — sha ${requestHash(request())}`,
     'approval — none yet: the owner sheet approves it',
     'intake: ready for the owner sheet',
   ]);
   const approved = formatCheck(checkRequest(request({ approved: approvedLine() })), 'r.md');
-  assert.match(approved, /^approval — 2026-10-27 by owner \(CR-030\/DEC-1\) for CR-030-1 at Small; the Scope block is unchanged$/m);
+  assert.match(approved, /^approval — 2026-10-27 by owner \(CR-030\/DEC-1\) for CR-030-1 at Small; the request and its Scope block are unchanged$/m);
   assert.match(approved, /^intake: approved$/m);
+  assert.match(
+    formatCheck(checkRequest(request({ approved: approvedLine({ request: '' }) })), 'r.md'),
+    /^approval — 2026-10-27 by owner \(CR-030\/DEC-1\) for CR-030-1 at Small; cannot tell whether it changed: the Approved: line lacks request$/m,
+  );
   const missing = formatCheck(checkRequest(request().replace(/^Estimate: .*\n/m, '')), 'r.md');
   assert.match(missing, /^PROBLEM no Estimate: line/m);
   assert.match(missing, /^intake: 1 problem — not ready for the owner sheet$/m);

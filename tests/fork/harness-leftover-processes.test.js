@@ -151,6 +151,22 @@ function runHook(event, dir, { script = QUIET, pressure = '0', session = 's', tm
     assert.ok(!(out?.systemMessage ?? '').includes(`pid ${decoy.pid}`), 'a process whose arguments name an emulator is not one');
   }, { skip: process.platform === 'win32' && 'ps lists no command lines' });
 
+  await test("the sweep pointer names the installed copy only where the owner installed it, the skill's script otherwise", () => {
+    const dir = checkout().root;
+    const message = (home) => {
+      const env = { ...process.env, LEFTOVER_PRESSURE: '2', TMPDIR: tmp('leftover-t-'), HOME: home };
+      delete env.CLAUDE_PROJECT_DIR;
+      const res = spawnSync(process.execPath, [QUIET], { input: JSON.stringify({ hook_event_name: 'Stop', cwd: dir, session_id: 's' }), env, encoding: 'utf8', timeout: 30000 });
+      assert.strictEqual(res.status, 0, res.stderr);
+      return JSON.parse(res.stdout).systemMessage;
+    };
+    assert.match(message(tmp('leftover-h-')), /The machine is tight \(memory pressure warn\)\. the harness-bootstrap skill's scripts\/machine-sweep\.mjs --report lists the rest \(machine\.md\)\.$/);
+    const installed = tmp('leftover-h-');
+    fs.mkdirSync(path.join(installed, '.agents', 'harness', 'machine-sweep'), { recursive: true });
+    fs.writeFileSync(path.join(installed, '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'), '');
+    assert.match(message(installed), /The machine is tight \(memory pressure warn\)\. node ~\/\.agents\/harness\/machine-sweep\/machine-sweep\.mjs --report lists the rest\.$/);
+  });
+
   await test('mutation: dropping the worktree exclusion names another session\'s listener', async () => {
     const script = quiet('if (main && cwd.startsWith(worktrees)) continue;', '');
     const co = checkout();

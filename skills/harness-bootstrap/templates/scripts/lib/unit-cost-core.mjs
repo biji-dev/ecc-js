@@ -345,34 +345,42 @@ export function unionMs(spans) {
  * it: the session had stopped and was waiting on the owner. Lines nobody typed (a background task's
  * notice, command output) start no wait, so time the run spent on its own work stays work. Events of
  * several sessions can be merged: the gap before the next session's first prompt is owner wait too.
+ * The wall is the first to the last event inside the window, but a wait is paired over every event
+ * and clipped to that wall, so one that starts before `since` or ends after `until` still counts
+ * the part inside the window; the counts are the window's own events.
  */
 export function summarizeTimes(events, { since = null, until = null } = {}) {
-  const ev = events.filter((e) => inWindow(e.ts, since, until)).sort((x, y) => x.ts - y.ts);
+  const all = [...events].sort((x, y) => x.ts - y.ts);
+  const ev = all.filter((e) => inWindow(e.ts, since, until));
   const out = { wallMs: 0, waitMs: 0, workMs: 0, questions: 0, unanswered: 0, prompts: 0, questionMs: 0, promptMs: 0 };
   if (ev.length === 0) return out;
+  const lo = ev[0].ts;
+  const hi = ev.at(-1).ts;
+  const inside = (a, b) => Math.max(0, Math.min(b, hi) - Math.max(a, lo));
   const spans = [];
   const asks = new Map();
   let lastWork = null;
-  for (const e of ev) {
+  for (const e of all) {
+    const mine = inWindow(e.ts, since, until);
     if (e.type === 'ask') {
-      out.questions += 1;
+      if (mine) out.questions += 1;
       asks.set(e.id, e.ts);
     } else if (e.type === 'result' && asks.has(e.id)) {
       spans.push([asks.get(e.id), e.ts]);
-      out.questionMs += e.ts - asks.get(e.id);
+      out.questionMs += inside(asks.get(e.id), e.ts);
       asks.delete(e.id);
     } else if (e.type === 'prompt') {
-      out.prompts += 1;
+      if (mine) out.prompts += 1;
       if (lastWork !== null && e.ts > lastWork) {
         spans.push([lastWork, e.ts]);
-        out.promptMs += e.ts - lastWork;
+        out.promptMs += inside(lastWork, e.ts);
       }
     }
     if (e.type === 'turn' || e.type === 'result') lastWork = e.ts;
   }
-  out.unanswered = asks.size;
-  out.wallMs = ev.at(-1).ts - ev[0].ts;
-  out.waitMs = unionMs(spans);
+  out.unanswered = [...asks.values()].filter((ts) => inWindow(ts, since, until)).length;
+  out.wallMs = hi - lo;
+  out.waitMs = unionMs(spans.map(([a, b]) => [Math.max(a, lo), Math.min(b, hi)]));
   out.workMs = Math.max(0, out.wallMs - out.waitMs);
   return out;
 }
@@ -435,15 +443,29 @@ export function parseTag(description) {
   return m ? { unit: m[1], step: m[2], round: m[3] ? Number(m[3]) : 1 } : null;
 }
 
+/** Each subagent's earliest readable turn time, by key; a row without one never sets it. */
+function firstTurns(rows, agentKey) {
+  const first = new Map();
+  for (const r of rows) {
+    if (r.kind !== 'sub' || !Number.isFinite(r.ts)) continue;
+    const cur = first.get(agentKey(r));
+    if (cur === undefined || r.ts < cur) first.set(agentKey(r), r.ts);
+  }
+  return first;
+}
+
 /**
  * Rows plus the unit's step markers -> dollars and time per runner step. A main-thread turn belongs to
  * the step interval it falls in. A subagent belongs to the step its dispatch tag names when the tag is
  * this unit's; otherwise to the interval its first turn falls in. Anything outside every interval is
- * `unmarked`. A step's wall time is its intervals summed, so a step run in two rounds shows both.
+ * `unmarked`. A step's wall time is its intervals summed, so a step run in two rounds shows both; with
+ * a window, each interval counts only the part inside it.
  */
 export function summarizeSteps(rows, markers, { unit = null, since = null, until = null } = {}) {
-  const used = dedupeRows(rows).filter((r) => inWindow(r.ts, since, until));
-  const lastTs = used.reduce((m, r) => (Number.isFinite(r.ts) ? Math.max(m, r.ts) : m), -Infinity);
+  const deduped = dedupeRows(rows);
+  const used = deduped.filter((r) => inWindow(r.ts, since, until));
+  // An open step runs to the last turn anywhere, not the window's last: the window clips it below.
+  const lastTs = deduped.reduce((m, r) => (Number.isFinite(r.ts) ? Math.max(m, r.ts) : m), -Infinity);
   const { intervals, problems } = stepIntervals(markers, Number.isFinite(lastTs) ? lastTs : null);
   const stepAt = (ts) => {
     const iv = intervals.find((i) => ts >= i.start && (i.end === null || ts < i.end || (i.open && ts <= i.end)));
@@ -454,14 +476,16 @@ export function summarizeSteps(rows, markers, { unit = null, since = null, until
     if (!slots.has(key)) slots.set(key, { usd: 0, mainUsd: 0, subUsd: 0, turns: 0, agents: new Set(), wallMs: 0 });
     return slots.get(key);
   };
-  for (const iv of intervals) slot(label(iv)).wallMs += iv.end === null ? 0 : iv.end - iv.start;
-  const agentKey = (r) => r.agentId ?? r.agentType ?? 'unknown';
-  const firstTurn = new Map();
-  for (const r of used) {
-    if (r.kind === 'sub' && (!firstTurn.has(agentKey(r)) || r.ts < firstTurn.get(agentKey(r)))) firstTurn.set(agentKey(r), r.ts);
+  const winLo = since === null || since === undefined ? -Infinity : Date.parse(since);
+  const winHi = until === null || until === undefined ? Infinity : Date.parse(until);
+  for (const iv of intervals) {
+    slot(label(iv)).wallMs += iv.end === null ? 0 : Math.max(0, Math.min(iv.end, winHi) - Math.max(iv.start, winLo));
   }
+  // An agent is placed by its first turn and its tag wherever they fall; only cost and turns are the window's.
+  const agentKey = (r) => r.agentId ?? r.agentType ?? 'unknown';
+  const firstTurn = firstTurns(deduped, agentKey);
   const agentStep = new Map();
-  for (const r of used) {
+  for (const r of deduped) {
     if (r.kind !== 'sub' || agentStep.has(agentKey(r))) continue;
     const tag = parseTag(r.agentDescription);
     agentStep.set(agentKey(r), tag && (unit === null || tag.unit === unit) ? label(tag) : stepAt(firstTurn.get(agentKey(r))));

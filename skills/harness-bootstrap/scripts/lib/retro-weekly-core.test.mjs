@@ -198,9 +198,27 @@ test('launchdPlist: the label, every argument escaped, the weekly slot, PATH and
 
 test('scheduleLines and shellLine: the cron line quoted for a shell, the schtasks line for the same slot', () => {
   const { cron, schtasks } = scheduleLines({ programArguments: ['/usr/bin/node', '/h/x y/retro-weekly.mjs', '--run'], logFile: '/h/out.log' });
-  assert.equal(cron, "0 9 * * 1 /usr/bin/node '/h/x y/retro-weekly.mjs' --run >> /h/out.log 2>&1");
+  assert.equal(cron, "0 9 * * 1 mkdir -p /h && /usr/bin/node '/h/x y/retro-weekly.mjs' --run >> /h/out.log 2>&1");
   assert.equal(schtasks, 'schtasks /Create /F /SC WEEKLY /D MON /ST 09:00 /TN harness-retro-weekly /TR "/usr/bin/node \\"/h/x y/retro-weekly.mjs\\" --run"');
   assert.equal(shellLine(['a', "it's", '$X']), "a 'it'\\''s' '$X'");
+});
+
+test('the cron line makes the log\'s directory first: with it missing the shell fails the redirect and the job never starts', posixOnly, () => {
+  const logFile = path.join(tmpDir('retro-weekly-cron-'), 'retro', 'weekly.out.log');
+  const { cron } = scheduleLines({ programArguments: [process.execPath, '-e', 'console.log("ran")'], logFile });
+  assert.match(cron, /^0 9 \* \* 1 mkdir -p \S+ && /);
+  const res = spawnSync('/bin/sh', ['-c', cron.split(' ').slice(5).join(' ')], { encoding: 'utf8' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(fs.readFileSync(logFile, 'utf8'), 'ran\n');
+});
+
+test('a set CLAUDE_CONFIG_DIR goes into the LaunchAgent\'s environment and in front of the cron command; unset, neither carries it', () => {
+  const args = { programArguments: ['/n/node', '/h/retro-weekly.mjs', '--run'], logFile: '/h/out.log' };
+  const plist = launchdPlist({ ...args, pathEnv: '/n:/usr/bin', configDir: '/c/my config' });
+  assert.match(plist, /<key>EnvironmentVariables<\/key><dict><key>PATH<\/key><string>\/n:\/usr\/bin<\/string><key>CLAUDE_CONFIG_DIR<\/key><string>\/c\/my config<\/string><\/dict>/);
+  assert.equal(scheduleLines({ ...args, configDir: '/c/my config' }).cron, "0 9 * * 1 mkdir -p /h && CLAUDE_CONFIG_DIR='/c/my config' /n/node /h/retro-weekly.mjs --run >> /h/out.log 2>&1");
+  assert.doesNotMatch(launchdPlist({ ...args, pathEnv: '/n' }), /CLAUDE_CONFIG_DIR/);
+  assert.doesNotMatch(scheduleLines(args).cron, /CLAUDE_CONFIG_DIR/);
 });
 
 test('importsOf lists the relative modules a file imports or re-exports, across lines, and nothing else', () => {
@@ -219,6 +237,7 @@ test('importsOf lists the relative modules a file imports or re-exports, across 
 function cleanEnv(extra = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  delete env.CLAUDE_CONFIG_DIR; // the owner's, not the test's: a test that wants one passes it in `extra`
   return { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', HOME: tmpDir('retro-weekly-home-'), ...extra };
 }
 
@@ -329,4 +348,20 @@ test('--install --dry-run lists the self-contained copy and the schedule; --prin
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /not registered/);
   assert.equal(cli(f, ['--frobnicate']).status, 2);
+});
+
+test('CLAUDE_CONFIG_DIR is where the transcripts are read and what the schedule carries; empty or unset, it is ~/.claude', posixOnly, () => {
+  const f = fixture();
+  assert.equal(cli(f, ['--register', f.repo]).status, 0);
+  const config = tmpDir('retro-weekly-config-');
+  const dir = path.join(config, 'projects', f.repo.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 's1.jsonl'), `${JSON.stringify({ type: 'user', cwd: f.repo, timestamp: new Date().toISOString() })}\n`);
+  const sessions = (extra) => /exported demo: .* \(\d+ units, (\d+) sessions\)/.exec(cli(f, ['--run', '--no-review', '--no-notify'], extra).stdout)?.[1];
+  assert.equal(sessions({ CLAUDE_CONFIG_DIR: config }), '1');
+  assert.equal(sessions({ CLAUDE_CONFIG_DIR: '' }), '0');
+  assert.equal(sessions({}), '0');
+  const sched = cli(f, ['--print-schedule', '--claude', f.claude], { CLAUDE_CONFIG_DIR: config });
+  assert.match(sched.stdout, new RegExp(`^cron .*: 0 9 \\* \\* 1 mkdir -p \\S+ && CLAUDE_CONFIG_DIR=${config.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm'));
+  assert.doesNotMatch(cli(f, ['--print-schedule', '--claude', f.claude]).stdout, /CLAUDE_CONFIG_DIR/);
 });

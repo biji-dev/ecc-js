@@ -31,9 +31,10 @@
  *   and is a marker that fails the run: node registers no children for a skipped suite, so
  *   `describe.skip` reports `# skipped 0` and its result line is the only trace. A console line
  *   a test prints is a TAP comment written before the plan line, so it is never read as a
- *   counter. `--test-name-pattern`, `--test-skip-pattern`, `--test-only` and `--test-shard` in a
- *   node command are a usage error, and the same flags in `NODE_OPTIONS` stop the run: each
- *   drops tests without counting them.
+ *   counter; a second top-level plan or `# tests <n>` line anywhere is a second summary (a
+ *   suite's own plan is indented). `--test-name-pattern`, `--test-skip-pattern`, `--test-only`
+ *   and `--test-shard` in a node command are a usage error, and the same flags in `NODE_OPTIONS`
+ *   stop the run: each drops tests without counting them.
  * - pytest: the whole line `<n> <word>, … in <t>s`, bare or between `=` rules.
  * - bun: the block of ` <n> pass`, ` <n> skip`, ` <n> todo`, ` <n> filtered out`, ` <n> fail`
  *   lines (with its `expect() calls` and `snapshots` lines) that ends at `Ran <n> tests across
@@ -222,6 +223,12 @@ function parseNode(text) {
   }
   if (!seen.tests) return null;
   const problems = [];
+  // Two runs in one command print two summaries, and the counters after the last plan are the last
+  // run's alone: a red first run would pass. A repeat after the last plan is the twice check's.
+  const isTests = (l) => NODE_COUNTER.exec(l)?.[1] === 'tests';
+  const plans = ls.filter((l) => NODE_PLAN.test(l)).length;
+  const runs = Math.max(plans, ls.filter(isTests).length);
+  if (plans > 1 || ls.slice(0, plan).some(isTests)) problems.push(`${runs} node summaries in the output (one expected)`);
   const twice = NODE_KNOWN.filter((w) => seen[w]?.length > 1);
   if (twice.length) problems.push(`more than one node summary in the output (# ${twice.join(', # ')} repeated)`);
   const missing = ['tests', ...NODE_SUMMED].filter((w) => !seen[w]);

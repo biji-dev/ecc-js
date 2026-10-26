@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'intake-core.mjs');
 const CLI_REL = 'intake.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 13;
+const EXPECTED_TESTS = 18;
 
 let passed = 0;
 let failed = 0;
@@ -100,7 +100,12 @@ mutantFails('reading the first Approved: line instead of the last', 'lines.at(-1
 mutantFails('taking a default for the owner\'s approval', "if (a.by !== 'owner')", 'if (false)');
 mutantFails('missing a re-tier since the approval', "if (a.tier && (st.Tier ?? '').toLowerCase() !== a.tier.toLowerCase())", 'if (false)');
 mutantFails('trusting the request\'s block without the state file\'s', 'else if (a.scope && own.hash !== a.scope)', 'else if (false)');
-mutantFails('missing a request edited after its approval', 'if (scope && approval.scope && !approval.unchanged) {', 'if (false) {');
+mutantFails('missing a request edited after its approval', 'if (scope && approval.scope && !scopeSame) {', 'if (false) {');
+mutantFails('missing an edit outside the Scope block after the approval', 'a.request && now !== a.request ?', 'false ?');
+mutantFails('dropping leading whitespace from the request sha', 'map((l) => l.trimEnd())', 'map((l) => l.trim())');
+mutantFails('testing the capture and the cards for stray questions', 'if (capture.has(i) || covered.has(i)) return;', '');
+mutantFails('taking a section heading for the title above the capture', 'const TITLE = /^\\s*#\\s/;', 'const TITLE = /^\\s*#{1,6}\\s/;');
+mutantFails('counting an empty Scope label as present', 'empty: REQUIRED.filter((l) => fields.has(l) && !squash(fields.get(l))),', 'empty: [],');
 mutantFails('exiting 0 when the owner decides Gate 1', 'if (!result.auto) process.exitCode = 1;', '', CLI_REL);
 
 test('CLI smoke: a ready draft, then the approved unit 1 gets an automatic Gate 1', () => {
@@ -113,11 +118,12 @@ test('CLI smoke: a ready draft, then the approved unit 1 gets an automatic Gate 
   const check = spawnSync(process.execPath, [path.join(SCRIPTS, CLI_REL), '--check', path.join(dir, 'req.md')], { encoding: 'utf8' });
   assert.strictEqual(check.status, 0, check.stdout + check.stderr);
   const sha = check.stdout.match(/ sha ([0-9a-f]{8})$/m)[1];
-  fs.writeFileSync(path.join(dir, 'req.md'), `${draft}\nApproved: 2026-10-27 · owner · toy/DEC-1 · unit toy-1 · tier Small · scope ${sha}\n`);
+  const req = check.stdout.match(/^request — sha ([0-9a-f]{8})$/m)[1];
+  fs.writeFileSync(path.join(dir, 'req.md'), `${draft}\nApproved: 2026-10-27 · owner · toy/DEC-1 · unit toy-1 · tier Small · scope ${sha} · request ${req}\n`);
   fs.writeFileSync(path.join(dir, 'toy-1.state.md'), `Unit: toy-1\nTier: Small\n\n## Scope\n\n${scope}\n`);
   const g1 = spawnSync(process.execPath, [path.join(SCRIPTS, CLI_REL), '--gate1', path.join(dir, 'req.md'), '--state', path.join(dir, 'toy-1.state.md')], { encoding: 'utf8' });
   assert.strictEqual(g1.status, 0, g1.stdout + g1.stderr);
-  assert.match(g1.stdout, new RegExp(`^Gate 1: auto — .*req\\.md approved 2026-10-27 by the owner \\(toy/DEC-1\\) for toy-1 at Small; its Scope block is unchanged \\(sha ${sha}\\)$`, 'm'));
+  assert.match(g1.stdout, new RegExp(`^Gate 1: auto — .*req\\.md approved 2026-10-27 by the owner \\(toy/DEC-1\\) for toy-1 at Small; the request and its Scope block are unchanged \\(request ${req}, scope ${sha}\\)$`, 'm'));
 });
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

@@ -15,7 +15,8 @@
  * options:
  *   --since / --until   the window (default: from the end of the last digest's window, else one week
  *                       back, up to now)
- *   --projects-dir <d>  the Claude Code transcripts (default ~/.claude/projects)
+ *   --projects-dir <d>  the Claude Code transcripts (default $CLAUDE_CONFIG_DIR/projects when that is
+ *                       set, else ~/.claude/projects)
  *   --ledger <path>     the Codex ledger (default: the main checkout's .codex-runs/ledger.jsonl)
  *   --dry-run           print the digest; write nothing
  *   --json              print the digest's data as JSON; write nothing
@@ -54,7 +55,7 @@ function main() {
       log: LOG,
       followUps: FOLLOW_UPS,
       plansDirs: [PLANS_DIR],
-      projectsDir: args.projectsDir ?? path.join(os.homedir(), '.claude', 'projects'),
+      projectsDir: args.projectsDir ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'),
       ledger: args.ledger,
       sinceMs: Date.parse(win.baselineSince),
     });

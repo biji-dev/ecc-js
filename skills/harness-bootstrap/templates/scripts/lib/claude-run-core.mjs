@@ -201,6 +201,18 @@ function lastResult(stdout) {
 
 const firstLine = (s) => String(s ?? '').trim().split('\n')[0].slice(0, 200);
 
+/**
+ * A result that is not a success. An error_during_execution result keeps its reasons in `errors`: a
+ * login, a limit or the network there makes the pass "unavailable" (the fallback), not a failure.
+ */
+function errorResult(r, cost, out) {
+  const errors = (Array.isArray(r.errors) ? r.errors : []).map((e) => (typeof e === 'string' ? e : e?.message)).filter((e) => typeof e === 'string');
+  const first = firstLine(errors[0]);
+  const kind = r.subtype || 'an error result';
+  const unavailable = r.terminal_reason === 'api_error' || errors.some((e) => UNAVAILABLE.test(e));
+  return out(unavailable ? 'unavailable' : 'failed', first ? `${kind}: ${first}` : kind, cost);
+}
+
 /** The run's outcome from its JSON result, never from the exit code alone. */
 export function classify({ exitCode, stdout, spawnError, timedOut, timeoutMin, budgetUsd = BUDGET_USD, binary = 'claude' }) {
   const out = (outcome, reason, extra = {}) => ({ outcome, exit: EXIT[outcome], reason, ...extra });
@@ -210,7 +222,7 @@ export function classify({ exitCode, stdout, spawnError, timedOut, timeoutMin, b
   if (!r) return out('failed', `no result in the output (exit ${exitCode})`);
   const cost = { costUsd: Number.isFinite(r.total_cost_usd) ? r.total_cost_usd : null, turns: r.num_turns ?? null };
   if (r.subtype === 'error_max_budget_usd') return out('failed', `the $${budgetUsd} budget cap was reached`, cost);
-  if (r.subtype !== 'success') return out('failed', r.subtype || 'an error result', cost);
+  if (r.subtype !== 'success') return errorResult(r, cost, out);
   if (r.is_error) {
     const why = firstLine(r.result) || 'an error result';
     return out(r.terminal_reason === 'api_error' || UNAVAILABLE.test(why) ? 'unavailable' : 'failed', why, cost);

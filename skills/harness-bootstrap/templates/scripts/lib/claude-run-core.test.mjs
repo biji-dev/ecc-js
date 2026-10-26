@@ -125,6 +125,24 @@ test('classify: an honest outcome from the JSON result, whatever the exit code s
   assert.equal(classify({ timedOut: true, timeoutMin: 45 }).reason, 'timed out after 45 min');
 });
 
+test('classify: an error result is read for its errors before the run is called failed', () => {
+  const errored = (errors, o = {}) => classify({ exitCode: 1, stdout: result({ subtype: 'error_during_execution', is_error: true, result: undefined, errors, ...o }) });
+  const login = errored(['Not logged in · Please run /login']);
+  assert.deepEqual([login.outcome, login.exit], ['unavailable', EXIT.unavailable]);
+  assert.equal(login.reason, 'error_during_execution: Not logged in · Please run /login');
+  const denied = errored(['Tool permission denied\nsecond line']);
+  assert.deepEqual([denied.outcome, denied.exit], ['failed', EXIT.failed]);
+  assert.equal(denied.reason, 'error_during_execution: Tool permission denied');
+  // an entry may be an object, and any entry (not only the first) can say the run never reached the model
+  assert.equal(errored([{ message: 'Claude usage limit reached' }]).reason, 'error_during_execution: Claude usage limit reached');
+  assert.equal(errored([{ message: 'Claude usage limit reached' }]).outcome, 'unavailable');
+  assert.equal(errored(['Tool permission denied', 'API Error: Can\'t reach the API server']).outcome, 'unavailable');
+  assert.equal(errored(['Tool permission denied'], { terminal_reason: 'api_error' }).outcome, 'unavailable');
+  // no entry: the subtype alone, as before
+  assert.deepEqual([errored([]).outcome, errored([]).reason], ['failed', 'error_during_execution']);
+  assert.deepEqual([errored(undefined).outcome, errored(undefined).reason], ['failed', 'error_during_execution']);
+});
+
 test('reviewPrompt: the diff file and its base, the one severity scale, the session\'s focus last', () => {
   const p = reviewPrompt({ diffRel: '.review-work/claude-review/diff.patch', base: 'main' });
   assert.match(p, /\.review-work\/claude-review\/diff\.patch/);

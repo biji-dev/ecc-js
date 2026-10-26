@@ -1316,6 +1316,10 @@ test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may
   assert.match(hazardsOf(report(repo), 'p3-queue-aging')[0].detail, /the newest hygiene report is 15 days old/);
   const closed = mk({ 'docs/harness/follow-ups.md': `${rows.slice(0, 2).concat(rows[3]).join('\n')}\n` });
   assert.deepStrictEqual(hazardsOf(report(closed), 'p3-queue-aging'), []);
+  // the follow-ups doc the manifest's roles name, outside the usual paths (one install keeps it at docs/qa/known-issues.md)
+  const roles = { 'follow-ups': 'docs/qa/known-issues.md' };
+  const named = mk({ 'docs/qa/known-issues.md': `${rows.join('\n')}\n`, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles }) });
+  assert.strictEqual((hazardsOf(report(named), 'p3-queue-aging')[0] || {}).path, 'docs/qa/known-issues.md');
 });
 
 test('mutants: the older report places and the phase-under-way rule each matter', () => {
@@ -1368,13 +1372,13 @@ test('host-models-missing: harness-host with no models file, a file that is not 
 test('second-family-absent: a host that names none, or whose second family\'s wrapper is not installed; an installed fallback is named', () => {
   const repo = mk({ [MODELS]: models(THREE), 'scripts/codex-run.mjs': '// x\n' });
   assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
-    "codex's second family, claude, runs through scripts/claude-run.mjs, which is not installed: every cross-family pass on codex is degraded",
+    "codex's second family, claude, runs through scripts/claude-run.mjs, which is not installed: every cross-family pass on codex is degraded (if the project never runs on codex, drop its entry)",
   ]);
   fs.rmSync(path.join(repo, 'scripts', 'codex-run.mjs'));
   write(repo, 'scripts/claude-run.mjs', '// x\n');
   assert.deepStrictEqual(hazardsOf(report(repo), 'second-family-absent').map(h => h.detail), [
-    "claude's second family, codex, runs through scripts/codex-run.mjs, which is not installed: every cross-family pass on claude is degraded",
-    "zcode's second family, codex, runs through scripts/codex-run.mjs, which is not installed; the fallback, claude, takes its passes",
+    "claude's second family, codex, runs through scripts/codex-run.mjs, which is not installed: every cross-family pass on claude is degraded (if the project never runs on claude, drop its entry)",
+    "zcode's second family, codex, runs through scripts/codex-run.mjs, which is not installed; the fallback, claude, takes its passes (if the project never runs on zcode, drop its entry)",
   ]);
   write(repo, MODELS, models({ zcode: { ...THREE.zcode, second: null, fallback: null } }));
   assert.match(hazardsOf(report(repo), 'second-family-absent')[0].detail, /^zcode names no second family: every cross-family pass is degraded by design$/);

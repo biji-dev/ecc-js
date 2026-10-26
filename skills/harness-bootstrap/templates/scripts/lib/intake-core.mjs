@@ -10,8 +10,8 @@
  *
  * WHY. One change request that started without its decisions up front added 16 open questions
  * mid-flow, over five owner rounds; one 45.7-hour stop had three of them waiting on the owner.
- * The sheet answers them before the first unit is claimed, and the Scope block it approved is
- * hashed, so "unchanged" is a comparison and never a judgement.
+ * The sheet answers them before the first unit is claimed, and the request it approved and its
+ * Scope block are both hashed, so "unchanged" is a comparison and never a judgement.
  */
 import crypto from 'node:crypto';
 
@@ -39,11 +39,14 @@ const APPROVED = line('Approved');
 const DEMO = /\bDemo:\s+\S/;
 const FENCE = /^\s*(?:```|~~~)/;
 const HEADING = /^\s*#{1,6}\s/;
+// The request's title: one `#`, never a section heading.
+const TITLE = /^\s*#\s/;
 const VALUE_FLAGS = { '--check': 'check', '--gate1': 'gate1', '--state': 'state' };
 
 const canonical = (label) => LABELS.find((l) => l.toLowerCase() === label.toLowerCase());
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const sha8 = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 8);
 
 /** `--check <request>` or `--gate1 <request> --state <state file>`, and `--json`; anything else is an error. */
 export function parseArgs(argv) {
@@ -78,6 +81,7 @@ export function parseArgs(argv) {
  * line joining the label above it. A blank line ends it unless a label comes next; a heading, a
  * fence, an unlabelled paragraph or a label seen twice (the next unit's block) ends it too.
  * `hash` is the first 8 hex of the sha256 of its lines in LABELS order, whitespace squashed.
+ * `missing` names a required label that is absent, `empty` one present with nothing after it.
  */
 export function scopeBlock(text) {
   const lines = String(text ?? '').split(/\r?\n/);
@@ -111,19 +115,22 @@ export function scopeBlock(text) {
     line: start + 1,
     fields: Object.fromEntries(LABELS.filter((l) => fields.has(l)).map((l) => [l, squash(fields.get(l))])),
     missing: REQUIRED.filter((l) => !fields.has(l)),
-    hash: crypto.createHash('sha256').update(ordered.join('\n')).digest('hex').slice(0, 8),
+    empty: REQUIRED.filter((l) => fields.has(l) && !squash(fields.get(l))),
+    hash: sha8(ordered.join('\n')),
   };
 }
 
-/** Decision cards (gate-design.md › Who decides): `<id> · <class> · <question>`, then its body up to the next card, heading or fence. */
-export function parseCards(text) {
+/** The cards, and the 0-based index of every line a card covers: its own line and its body. */
+function readCards(text) {
   const cards = [];
+  const covered = new Set();
   let card = null;
   for (const [i, l] of String(text ?? '').split(/\r?\n/).entries()) {
     const m = l.match(CARD_RE);
     if (m) {
       card = { id: m[1], cls: m[2], question: m[3], line: i + 1, recommend: false, options: 0, dflt: false };
       cards.push(card);
+      covered.add(i);
       continue;
     }
     if (!card) continue;
@@ -131,22 +138,62 @@ export function parseCards(text) {
       card = null;
       continue;
     }
+    covered.add(i);
     if (RECOMMEND.test(l)) card.recommend = true;
     else if (DEFAULT.test(l)) card.dflt = true;
     else if (OPTION_RE.test(l)) card.options += 1;
   }
-  return cards;
+  return { cards, covered };
 }
 
-/** The last `Approved: <date> · <by> · [<ref>] · unit <id> · tier <tier> · scope <sha>` line, or null. */
+/** Decision cards (gate-design.md › Who decides): `<id> · <class> · <question>`, then its body up to the next card, heading or fence. */
+export function parseCards(text) {
+  return readCards(text).cards;
+}
+
+/** The capture's line indexes: the first blockquote, the draft's first content after at most one `#` title line. */
+function captureLines(lines) {
+  const out = new Set();
+  let i = 0;
+  const blanks = () => {
+    while (i < lines.length && !lines[i].trim()) i += 1;
+  };
+  blanks();
+  if (i < lines.length && TITLE.test(lines[i])) {
+    i += 1;
+    blanks();
+  }
+  for (; i < lines.length && /^\s*>/.test(lines[i]); i += 1) out.add(i);
+  return out;
+}
+
+/**
+ * The request's sha: the first 8 hex of the sha256 of its lines, trailing whitespace and trailing
+ * blank lines dropped, Approved: lines left out -- so writing the approval never moves it, and
+ * any other edit does.
+ */
+export function requestHash(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => !APPROVED.test(l));
+  while (lines.length > 0 && !lines.at(-1)) lines.pop();
+  return sha8(lines.join('\n'));
+}
+
+/** `[reason]` when the request is not the one approved, else `[]`; an approval with no request sha moves nothing here. */
+function requestMoved(a, text) {
+  const now = requestHash(text);
+  return a.request && now !== a.request ? [`the request changed since the approval (approved ${a.request}, now ${now})`] : [];
+}
+
+/** The last `Approved: <date> · <by> · [<ref>] · unit <id> · tier <tier> · scope <sha> · request <sha>` line, or null. */
 export function parseApproval(text) {
   const lines = String(text ?? '').split(/\r?\n/).filter((l) => APPROVED.test(l));
   if (lines.length === 0) return null;
   const fields = lines.at(-1).match(APPROVED)[1].split('·').map((f) => f.trim());
   const named = (word) => fields.find((f) => f.startsWith(`${word} `))?.slice(word.length + 1).trim() || null;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(fields[0]) ? fields[0] : null;
-  const by = fields[1] && !/^(unit|tier|scope) /.test(fields[1]) ? fields[1] : null;
+  const by = fields[1] && !/^(unit|tier|scope|request) /.test(fields[1]) ? fields[1] : null;
   const scope = named('scope');
+  const request = named('request');
   const out = {
     date,
     by,
@@ -154,8 +201,9 @@ export function parseApproval(text) {
     unit: named('unit'),
     tier: named('tier'),
     scope: scope && /^[0-9a-f]{8}$/.test(scope) ? scope : null,
+    request: request && /^[0-9a-f]{8}$/.test(request) ? request : null,
   };
-  out.lacks = ['date', 'by', 'unit', 'tier', 'scope'].filter((k) => !out[k]);
+  out.lacks = ['date', 'by', 'unit', 'tier', 'scope', 'request'].filter((k) => !out[k]);
   return out;
 }
 
@@ -184,9 +232,12 @@ export function checkRequest(text) {
   const value = (re) => lines.map((l) => l.match(re)).find(Boolean)?.[1] ?? null;
   const deliverables = lines.flatMap((l, i) => (DEMO.test(l) ? [{ line: i + 1, text: l.trim() }] : []));
   if (deliverables.length === 0) problems.push('no deliverable has a Demo: line — each deliverable names what the owner opens, does and sees');
-  const cards = parseCards(text);
+  const { cards, covered } = readCards(text);
   problems.push(...cardProblems(cards));
+  // The capture is the owner's words verbatim, and a card is where an open question belongs.
+  const capture = captureLines(lines);
   lines.forEach((l, i) => {
+    if (capture.has(i) || covered.has(i)) return;
     if (STRAY.test(l)) problems.push(`line ${i + 1}: an open question outside a card — ${l.trim()}`);
   });
   const estimate = value(ESTIMATE);
@@ -197,16 +248,31 @@ export function checkRequest(text) {
   if (!riskMap) problems.push('no Risk map: line — the critical or hot modules it touches, or none');
   const scope = scopeBlock(text);
   if (!scope) problems.push('no Scope block — unit 1 needs In scope:, Out of scope: and Done when: lines');
-  else for (const l of scope.missing) problems.push(`unit 1's Scope block lacks ${l}:`);
+  else {
+    for (const l of scope.missing) problems.push(`unit 1's Scope block lacks ${l}:`);
+    for (const l of scope.empty) problems.push(`unit 1's Scope block has an empty ${l}: line`);
+  }
+  const request = requestHash(text);
   let approval = parseApproval(text);
   if (approval) {
     for (const k of approval.lacks) problems.push(`the Approved: line lacks ${k}`);
-    approval = { ...approval, unchanged: Boolean(scope && approval.scope === scope.hash) };
-    if (scope && approval.scope && !approval.unchanged) {
+    const scopeSame = Boolean(scope && approval.scope === scope.hash);
+    approval = { ...approval, unchanged: scopeSame && approval.request === request };
+    if (scope && approval.scope && !scopeSame) {
       problems.push(`unit 1's Scope block changed since the approval (approved ${approval.scope}, now ${scope.hash}): the sheet re-opens`);
     }
+    problems.push(...requestMoved(approval, text).map((p) => `${p}: the sheet re-opens`));
   }
-  return { deliverables, cards, estimate, neverAuto, riskMap, scope, approval, problems };
+  return { deliverables, cards, estimate, neverAuto, riskMap, scope, request, approval, problems };
+}
+
+/** How the approval compares: a sha it carries that differs is a change; a sha it lacks cannot be compared. */
+function since(a, r) {
+  const scopeMoved = a.scope && (!r.scope || a.scope !== r.scope.hash);
+  if (scopeMoved || (a.request && a.request !== r.request)) return 'changed since the approval';
+  const lacks = ['scope', 'request'].filter((k) => !a[k]);
+  if (lacks.length > 0) return `cannot tell whether it changed: the Approved: line lacks ${lacks.join(', ')}`;
+  return 'the request and its Scope block are unchanged';
 }
 
 /** The --check report: one line per property, then `intake: ready for the owner sheet`, `intake: approved` or the problem count. */
@@ -223,11 +289,12 @@ export function formatCheck(r, file) {
   out.push(`estimate — ${r.estimate ?? 'none'}`);
   out.push(`never-auto — ${r.neverAuto ?? 'none written'} · risk map — ${r.riskMap ?? 'none written'}`);
   if (r.scope) out.push(`scope 1 — ${Object.keys(r.scope.fields).join(' · ')} · sha ${r.scope.hash}`);
+  out.push(`request — sha ${r.request}`);
   const a = r.approval;
   if (!a) out.push('approval — none yet: the owner sheet approves it');
   else {
     const ref = a.ref ? ` (${a.ref})` : '';
-    out.push(`approval — ${a.date ?? '?'} by ${a.by ?? '?'}${ref} for ${a.unit ?? '?'} at ${a.tier ?? '?'}; the Scope block is ${a.unchanged ? 'unchanged' : 'changed'}`);
+    out.push(`approval — ${a.date ?? '?'} by ${a.by ?? '?'}${ref} for ${a.unit ?? '?'} at ${a.tier ?? '?'}; ${since(a, r)}`);
   }
   for (const p of r.problems) out.push(`PROBLEM ${p}`);
   if (r.problems.length > 0) out.push(`intake: ${plural(r.problems.length, 'problem')} — not ready for the owner sheet`);
@@ -257,8 +324,9 @@ function stateScope(text) {
 }
 
 /**
- * Unit 1's Gate 1: auto only when the owner approved the request, the request's Scope block is the
- * one approved, and the claim is that unit, at that tier, with that block -- any change re-opens it.
+ * Unit 1's Gate 1: auto only when the owner approved the request, the request and its Scope block
+ * are the ones approved, and the claim is that unit, at that tier, with that block -- any change
+ * re-opens it.
  */
 export function gate1(requestText, stateText, file) {
   const a = parseApproval(requestText);
@@ -272,6 +340,7 @@ export function gate1(requestText, stateText, file) {
     if (a.lacks.length > 0) reasons.push(`the Approved: line lacks ${a.lacks.join(', ')}`);
     if (!req) reasons.push('the request has no Scope block for unit 1');
     else if (a.scope && req.hash !== a.scope) reasons.push(`the request's Scope block changed since the approval (approved ${a.scope}, now ${req.hash})`);
+    reasons.push(...requestMoved(a, requestText));
     if (a.unit && st.Unit !== a.unit) reasons.push(`the approval covers ${a.unit}, this claim is ${st.Unit || 'a state file with no Unit: line'}`);
     if (a.tier && (st.Tier ?? '').toLowerCase() !== a.tier.toLowerCase()) reasons.push(`the tier is ${st.Tier || 'unstated'}, approved at ${a.tier}: a re-tier re-asks`);
     if (!own) reasons.push('the state file has no Scope block');
@@ -282,6 +351,6 @@ export function gate1(requestText, stateText, file) {
   return {
     auto: true,
     reasons,
-    line: `Gate 1: auto — ${file} approved ${a.date} by the owner${ref} for ${a.unit} at ${a.tier}; its Scope block is unchanged (sha ${a.scope})`,
+    line: `Gate 1: auto — ${file} approved ${a.date} by the owner${ref} for ${a.unit} at ${a.tier}; the request and its Scope block are unchanged (request ${a.request}, scope ${a.scope})`,
   };
 }

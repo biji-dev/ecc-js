@@ -12,8 +12,8 @@
 // Silent when nothing runs; never blocks, never fails the turn. LEFTOVER_PRESSURE overrides the
 // memory reading (0, 2 or 4), for tests.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -125,7 +125,10 @@ async function main() {
   }
   if (!found.length && !tight) return;
   const list = found.join('; ');
-  const sweep = 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --report lists the rest';
+  // the installed copy exists only once the owner approved a category (machine.md)
+  const sweep = existsSync(join(homedir(), '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'))
+    ? 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --report lists the rest'
+    : "the harness-bootstrap skill's scripts/machine-sweep.mjs --report lists the rest (machine.md)";
   if (input.hook_event_name === 'Stop') {
     const parts = [];
     if (found.length) parts.push(`Still running from this checkout: ${list}`);

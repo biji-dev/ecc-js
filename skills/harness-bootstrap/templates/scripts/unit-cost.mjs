@@ -14,7 +14,7 @@
  * options:
  *   --session <ids>      one or more session ids (comma-separated); the files are found by scanning
  *                        <projects-dir>/*\/<id>.jsonl, subagents in <id>/subagents/*.jsonl
- *   --projects-dir <d>   default ~/.claude/projects
+ *   --projects-dir <d>   default $CLAUDE_CONFIG_DIR/projects when set, else ~/.claude/projects
  *   --since / --until    only turns (and Codex runs) inside this ISO window
  *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
  *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
@@ -80,7 +80,8 @@ function main() {
   const extra = {};
   try {
     args = parseArgs(process.argv.slice(2));
-    const projectsDir = args.projectsDir ?? path.join(os.homedir(), '.claude', 'projects');
+    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const projectsDir = args.projectsDir ?? path.join(configDir, 'projects');
     const texts = args.session.flatMap((id) =>
       sessionFiles(projectsDir, id).map(({ file, ctx }) => ({ ctx, text: readText(file) })),
     );

@@ -293,19 +293,22 @@ export function agentCosts(rows) {
   return [...byId.values()];
 }
 
+const agentKey = (r) => r.agentId ?? r.agentType ?? 'unknown';
+
 /**
  * A marked unit's transcript rows: those of the sessions that wrote its markers (every session when
- * none did), from its first marker to its last -- or to `until` while a step is still open.
+ * none did), from its first marker to its last -- or to `until` while a step is still open. A
+ * dispatch `owners` gives this unit (dispatchOwners) is the unit's whole, whatever its session and
+ * however long it outlives the unit's last marker.
  */
-export function rowsForUnit(rows, sessionUnits, unit, markers, until) {
+export function rowsForUnit(rows, sessionUnits, unit, markers, until, owners = new Map()) {
   const sessions = new Set([...sessionUnits].filter(([, units]) => units.has(unit)).map(([s]) => s));
   const ts = markers.map((m) => m.ts);
   const lo = Math.min(...ts);
   const hi = stepIntervals(markers).intervals.some((iv) => iv.open) ? Date.parse(until) : Math.max(...ts);
-  return rows.filter((r) => (sessions.size === 0 || sessions.has(r.session)) && r.ts >= lo && r.ts <= hi);
+  const own = (r) => r.kind === 'sub' && owners.get(agentKey(r)) === unit;
+  return rows.filter((r) => own(r) || ((sessions.size === 0 || sessions.has(r.session)) && r.ts >= lo && r.ts <= hi));
 }
-
-const agentKey = (r) => r.agentId ?? r.agentType ?? 'unknown';
 
 /** agent -> the one unit its dispatch belongs to: its tag's, else the only one of `ids` its description names. */
 export function dispatchOwners(agents, ids) {
@@ -594,13 +597,14 @@ export function buildRetro(g, { project, now, since = null, until = null, column
   for (const [id, markers] of g.steps) if (markers.some((m) => inWin(m.ts))) currentIds.add(id);
   const ids = new Set([...records.map((r) => r.id), ...g.steps.keys()]);
   const agents = agentCosts(g.rows);
+  const owners = dispatchOwners(agents, ids);
   const spans = new Map();
   for (const [id, markers] of g.steps) {
     if (markers.length === 0) continue;
     const { intervals } = stepIntervals(markers, Date.parse(win.until));
-    spans.set(id, { rows: rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until), intervals });
+    spans.set(id, { rows: rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until, owners), intervals });
   }
-  const claimed = claimRows(spans, dispatchOwners(agents, ids));
+  const claimed = claimRows(spans, owners);
   const all = [];
   for (const id of ids) {
     const s = unitSteps(id, { markers: g.steps.get(id) ?? [], rows: claimed.get(id) ?? [], agents });

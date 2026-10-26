@@ -54,7 +54,8 @@ seven days back) to now. A second run in the same week rewrites that week's dige
   out.
 - A turn held by the step intervals of two units goes to the unit whose step started
   last (planning the next unit while this one waits on Gate 2 is the next unit's
-  work); a dispatch goes to the unit its tag or description names.
+  work); a dispatch goes to the unit its tag or description names, all of it, though
+  it outlives the unit's last marker or runs in another session.
 - ZCode transcripts and the sessions of a Codex host are not read. A ZCode project's
   digest comes from its log, steps and state files and its ledger (one project on its
   first run: 48 log rows, no transcripts).

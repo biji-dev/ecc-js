@@ -17,7 +17,7 @@ const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 26;
+const EXPECTED_TESTS = 27;
 
 let passed = 0;
 let failed = 0;
@@ -99,7 +99,9 @@ mutantFails('starting the week on Sunday', 'd.getUTCDate() - ((d.getUTCDay() + 6
 mutantFails("starting the window at this week's own digest", '.filter((p) => p.week !== week && Date.parse(p.until) < end)', '.filter((p) => Date.parse(p.until) < end)');
 mutantFails("taking a sibling repository's sessions", 'if (cwd === null || !inside(cwd)) continue;', 'if (cwd === null) continue;', SOURCES_REL);
 mutantFails('giving an overlapping turn to the unit that started first', 'if (iv && !(best.get(id(r))?.start >= iv.start))', 'if (iv && !best.has(id(r)))');
-mutantFails("charging a unit for another unit's dispatch", 'const claimed = claimRows(spans, dispatchOwners(agents, ids));', 'const claimed = claimRows(spans);');
+mutantFails("charging a unit for another unit's dispatch", 'const claimed = claimRows(spans, owners);', 'const claimed = claimRows(spans);');
+mutantFails("dropping a tagged dispatch's turns after its unit's last marker", 'return rows.filter((r) => own(r) || ', 'return rows.filter((r) => ');
+mutantFails("a unit's span built without its dispatches", 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until, owners)', 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until)');
 mutantFails('matching a unit id inside a longer one', '(?![A-Za-z0-9]|\\\\.[A-Za-z0-9])', '');
 mutantFails('cutting a marker command\'s unit id short', '(?=[\\s"\\\\]|$)/g', '/g');
 mutantFails('keeping stop-word pairs as friction themes', ' && !STOP.has(a) && !STOP.has(b)', '');

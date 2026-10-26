@@ -477,6 +477,25 @@ test('buildRetro and formatDigest: every section in order, the numbers from the 
   assert.deepEqual([back.week, back.until, back.kpis.log.units], ['2026-W44', '2026-10-26T12:00:00.000Z', 2]);
 });
 
+test("buildRetro: a dispatch tagged for a unit counts whole, its turns after the unit's last marker and in another session too", () => {
+  const t = at('22T10:00:00');
+  const sub = (mins, session) => row({ ts: t + mins * 60_000, kind: 'sub', agentId: 'x', desc: '[EP-2 s8b r1] record writer', session, cost: 5 });
+  const g = {
+    log: { text: table(LOG_HEAD, [logRow('EP-2', 'Full', 120, 20)]), dates: datesFor('22T10:00:00') },
+    followUps: null,
+    states: [],
+    steps: new Map([['EP-2', [marker(t, '2', 'start'), marker(t + 30 * 60_000, '8b', 'start'), marker(t + 40 * 60_000, '8b', 'done')]]]),
+    rows: [row({ ts: t + 60_000, cost: 3 }), sub(35, 's1'), sub(50, 's1'), sub(55, 's2')],
+    events: [],
+    sessionUnits: new Map([['s1', new Set(['EP-2'])]]),
+    sessions: 2,
+    ledger: [],
+    previous: [],
+  };
+  const ep2 = buildRetro(g, { project: 'demo', now: NOW }).steps.find((u) => u.unit === 'EP-2');
+  assert.deepEqual([ep2.total, ep2.steps.find((s) => s.step === '8b').usd], [18, 15]);
+});
+
 test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and the data block kept', () => {
   const d = fixtureData();
   const long = (i) => `${'a long cell that quotes the log at length '.repeat(10)}${i}`;

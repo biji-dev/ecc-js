@@ -1082,6 +1082,21 @@ test('12. lineage-neutral harness files are legacy entries and do not change the
   assert.deepStrictEqual(report(man).entries, []);
 });
 
+test('12b. v5\'s project files are lineage-neutral legacy entries too', () => {
+  const files = [
+    'scripts/unit-step.mjs', 'scripts/retro.mjs', 'scripts/harness-due.mjs', 'scripts/run-counted.mjs', 'scripts/unit-stack.sh',
+    'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
+    '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
+  ];
+  const rep = report(mk(Object.fromEntries(files.map(f => [f, 'x\n']))));
+  assert.strictEqual(rep.lineage.verdict, 'none');
+  for (const f of files) {
+    const row = rep.entries.find(e => e.path === f);
+    assert.ok(row, `no entry for ${f}`);
+    assert.strictEqual(row.status, 'legacy');
+  }
+});
+
 test('13. a gitignored scaffold that is absent reads ignored, not missing', () => {
   const manifest = JSON.stringify({ schema: 1, modes: ['plan'], entries: [{ path: '.claude/registry.md', kind: 'scaffold' }, { path: 'docs/log.md', kind: 'scaffold' }] });
   const repo = mk({ '.agents/harness-manifest.json': manifest, '.gitignore': '.claude/registry.md\n' });

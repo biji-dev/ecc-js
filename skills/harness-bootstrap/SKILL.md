@@ -1,10 +1,10 @@
 ---
 name: harness-bootstrap
-description: Use when setting up, adopting, auditing or upgrading a gated agent harness in any repository — documents only, new, or already in production — a plan-driven task runner (registry lock, commit guard, two human gates, conformance and claim auditors, harness log) or a tiered change workflow (task type, Trivial/Small/Full tiers, risk map, scope guard, cross-check lanes, step ledger). Also when asking whether a project is ready for one, or when a repository already carries an older harness (a registry, a task-runner or change-workflow skill, crosscheck lanes, an agent-workflow guide) that should be brought up to date without losing what it earned. Claude Code first (Opus for judgment, Sonnet for bounded work); Codex, ZCode and Kimi supported. Not for tuning agent configuration (that is harness-audit).
+description: Use when setting up, adopting, auditing or upgrading a gated agent harness in any repository — documents only, new, or already in production — a plan-driven task runner (registry lock, commit guard, two human gates, conformance and claim auditors, harness log) or a tiered change workflow (task type, Trivial/Small/Full tiers, risk map, scope guard, cross-check lanes, step ledger). Also when asking whether a project is ready for one, or when a repository already carries an older harness (a registry, a task-runner or change-workflow skill, crosscheck lanes, an agent-workflow guide) that should be brought up to date without losing what it earned. Runs on any host — Claude Code, Codex, ZCode or Kimi — with that host's judgment and bounded models and another model family as the second (Opus, Sonnet and Codex on Claude Code). Not for tuning agent configuration (that is harness-audit).
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 4
+  version: 5
 ---
 
 # Harness bootstrap
@@ -36,8 +36,9 @@ batch of specs (`delegate-tasks`, which this harness uses as its engine).
 
 ## How It Works
 
-Run it from inside the target repository, in the main session on **Opus** — every
-phase is judgment. `reference/` holds the pattern; read what each phase names
+Run it from inside the target repository, in the main session on the host's
+**judgment model** (Opus on Claude Code; each host's in `gate-design.md` › Model and
+effort) — every phase is judgment. `reference/` holds the pattern; read what each phase names
 rather than working from memory of how another project did it. In Claude Code the
 files are under `${CLAUDE_PLUGIN_ROOT}/skills/harness-bootstrap/`; in other agents,
 use the folder this `SKILL.md` was read from.
@@ -60,8 +61,8 @@ instructions, and an adapter is a place to guess wrong.
 
 ### Who orchestrates
 
-The generated **runner skill** holds the sequence and the **main session** (Opus)
-coordinates it: tier, gates, plan, slicing, briefs, triage, scope guard, commits.
+The generated **runner skill** holds the sequence and the **main session** (the
+judgment model) coordinates it: tier, gates, plan, slicing, briefs, triage, scope guard, commits.
 It hands every bounded segment — slices, fixes, review and audit fan-outs,
 countable inventories — to the **`delegate-tasks`** skill, whose gates are commands,
 never claims. On Full, the review fan-out may run as the project's **review
@@ -103,8 +104,8 @@ map (Phase B derives them), the importer threshold, the Hot-small tier, tripwire
 numbers, medians. The milestone cap **starts** at 15 slices or 10k changed production
 lines (`gate-design.md` › Milestone size) and the log moves it. Budgets on
 instruction files **ratchet from their current size**. Importing another project's numbers hands a team rules whose
-reasons they have not lived. The **model split** is the exception — Opus where a
-miss cannot be corrected forward, Sonnet for work bounded by an exit condition, the second family where it finds the
+reasons they have not lived. The **model split** is the exception — the judgment model (Opus) where a
+miss cannot be corrected forward, the bounded one (Sonnet) for work bounded by an exit condition, the second family where it finds the
 most for the least and as the first builder of cold work (`gate-design.md`) — because it is mechanism, not a threshold.
 Any slice's executor can be overridden (`runner.md` › Executor override).
 
@@ -345,7 +346,7 @@ and on the coverage map, covered by the tests that ship with them in `scripts/li
 which the counted `harness` gate runs.
 
 **Review the install before committing it.** A fresh agent that did not write it
-(Opus, read-only) checks that every path, command, flag, agent and section reference
+(the judgment model, read-only) checks that every path, command, flag, agent and section reference
 resolves; that `AGENTS.md`, the runner, the agents, the guard and `run-gates.sh`
 agree with one another; that no generated line contradicts the project's own rules or
 the reviewed policy; and that the core table is complete. One fix round, one

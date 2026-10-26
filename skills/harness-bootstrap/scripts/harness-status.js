@@ -52,6 +52,10 @@ const NEUTRAL_FILES = [
   'scripts/review-gate.mjs', 'scripts/docs-drift.mjs', 'scripts/unit-record.mjs', 'scripts/unit-cost.mjs', 'scripts/estimate.mjs',
   '.claude/hooks/context-budget.mjs', '.claude/hooks/command-guard.mjs', 'docs/plans/decision-log.md',
   'docs/harness/follow-ups.md', 'docs/follow-ups.md', 'docs/guides/agent-workflow.md',
+  // v5
+  'scripts/unit-step.mjs', 'scripts/retro.mjs', 'scripts/harness-due.mjs', 'scripts/run-counted.mjs', 'scripts/unit-stack.sh',
+  'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
+  '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
 ];
 // harness-due's checks, from files alone (templates/scripts/lib/harness-due-core.mjs holds the
 // generated defaults): where its reports are -- the v5 default first, then the paths earlier

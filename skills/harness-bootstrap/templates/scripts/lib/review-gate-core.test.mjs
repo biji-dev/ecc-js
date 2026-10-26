@@ -16,7 +16,8 @@ import {
   NON_PRODUCTION,
   TESTS,
   TRIGGERS,
-  decide,
+  WRITERS,
+  decide as decideCore,
   formatLine,
   isCritical,
   isProduction,
@@ -26,6 +27,8 @@ import {
 
 const RUNNER = fileURLToPath(new URL('../review-gate.mjs', import.meta.url));
 
+// `writer` has no default in the core; the tests that are not about the writer name Opus ('claude').
+const decide = (o) => decideCore({ writer: 'claude', ...o });
 const f = (p, lines) => ({ path: p, lines });
 const COLD = 'src/ui/panel.tsx';
 const HOT = 'src/core/engine.ts';
@@ -116,8 +119,9 @@ test('slice 3: critical code written by the second family gets a Claude reviewer
   );
   assert.equal(r.decision, 'required');
   assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
-  assert.match(r.reason, /critical code written by the second family: a Claude reviewer now/);
-  assert.match(r.reason, /should not go to the second family/);
+  assert.match(r.reason, /critical code written by the second family \(an owner override, executor: codex\): Opus reviews it now/);
+  assert.doesNotMatch(r.reason, /should not go/);
+  assert.ok(r.reason.endsWith(`now (${HOT})`), r.reason);
   assert.deepEqual(r.critical, [HOT]);
 });
 
@@ -300,6 +304,77 @@ test('fix 7: critical code with a P1 fixed in more than FIX_LINES lines adds Opu
   }
 });
 
+// ---- a fix written by the second family is re-read by Claude
+
+const codexFix = (files, maxFixed, round = 1) =>
+  bound(() => decide({ files, kind: 'fix', writer: 'codex', maxFixed, round }));
+
+test('fix codex 1: a cold round 1 fix by the second family goes to a Sonnet reviewer', () => {
+  const r = codexFix([f(COLD, 80)], 'P1');
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer']);
+  assert.match(r.reason, /cold fix round 1 written by the second family: a Claude reviewer \(Sonnet\) re-reads the fix/);
+});
+
+test('fix codex 2: a cold round 2+ fix by the second family is still skipped', () => {
+  for (const round of [2, 3, 7]) {
+    const r = codexFix([f(COLD, 80)], 'P1', round);
+    assert.equal(r.decision, 'skip', `round ${round}`);
+    assert.deepEqual(r.reviewers, []);
+    assert.match(r.reason, /regression tests prove it/);
+  }
+});
+
+test('fix codex 3: critical P2 fixed by the second family is re-read by Opus, however big', () => {
+  const r = codexFix([f(HOT, FIX_LINES * 5)], 'P2', 2);
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, /P2 fixed: the fix was written by the second family, so Opus reads it/);
+});
+
+test('fix codex 4: critical P1 fixed in at most FIX_LINES lines is re-read by Opus, no second family', () => {
+  for (const maxFixed of ['P1', 'P0']) {
+    const r = codexFix([f(HOT, FIX_LINES)], maxFixed);
+    assert.equal(r.decision, 'review', maxFixed);
+    assert.deepEqual(r.reviewers, ['opus-code-reviewer'], maxFixed);
+    assert.match(r.reason, new RegExp(`<= ${FIX_LINES} production lines: the fix was written by the second family`));
+  }
+});
+
+test('fix codex 5: critical P1 fixed in more than FIX_LINES lines is re-read by Opus alone', () => {
+  const r = codexFix([f(HOT, FIX_LINES + 1)], 'P1');
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, new RegExp(`> ${FIX_LINES} production lines: the fix was written by the second family`));
+  assert.match(r.reason, /at most two Opus rounds/);
+});
+
+test('fix codex 6: critical round 3+ by the second family is an Opus adversarial pass, same tripwire wording', () => {
+  for (const round of [3, 5]) {
+    const r = codexFix([f(HOT, 5)], 'P1', round);
+    assert.equal(r.decision, 'escalate-adversarial', `round ${round}`);
+    assert.deepEqual(r.reviewers, ['opus-adversarial']);
+    assert.match(r.reason, /owner-stop tripwire/);
+    assert.match(r.reason, /an adversarial pass by Opus \(the fix was not written by Opus\), never another standard code-review round/);
+    // the reason names the reviewer the routing names
+    const claude = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round }));
+    assert.deepEqual(claude.reviewers, ['second-family-adversarial']);
+    assert.match(claude.reason, /an adversarial pass by the second family, never another standard code-review round/);
+  }
+});
+
+test('fix codex 7: triggered specialists still join a codex fix re-review', () => {
+  const r = decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', writer: 'codex', maxFixed: 'P1' });
+  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer', 'security-reviewer']);
+});
+
+test('unit codex: a full unit written by the second family keeps Opus first and says it is the cross-family review', () => {
+  const r = decide({ files: [f(COLD, 20)], kind: 'unit', writer: 'codex' });
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer', 'second-family-adversarial']);
+  assert.match(r.reason, /; the unit was written by the second family, so the Opus code-reviewer is the cross-family review$/);
+  assert.doesNotMatch(decide({ files: [f(COLD, 20)], kind: 'unit' }).reason, /second family/);
+});
+
 // ---- result shape and notChecked
 
 test('an unbound CRITICAL says so in every result; a bound one does not', () => {
@@ -357,7 +432,7 @@ test('invalid kind, tier, writer and round are errors the wrapper turns into exi
   assert.throws(() => decide({ ...ok, kind: 'first' }), /--kind must be one of slice\|unit\|fix/);
   assert.throws(() => decide({ ...ok, kind: undefined }), /--kind/);
   assert.throws(() => decide({ ...ok, tier: 'medium' }), /--tier must be one of small\|full/);
-  assert.throws(() => decide({ ...ok, writer: 'gemini' }), /--writer must be one of claude\|codex/);
+  assert.throws(() => decide({ ...ok, writer: 'gemini' }), /--writer is required and must be one of claude\|codex\|sonnet\|mixed/);
   for (const round of [0, -1, 1.5, NaN, Infinity])
     assert.throws(() => decide({ ...ok, round }), /--round must be an integer >= 1/, String(round));
 });
@@ -367,7 +442,7 @@ test('parseArgs: defaults, values, and the usage errors', () => {
     base: 'abc',
     kind: 'unit',
     tier: 'full',
-    writer: 'claude',
+    writer: null,
     round: 1,
     maxFixed: null,
     json: false,
@@ -422,8 +497,10 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim();
   };
-  const gate = (...args) =>
+  const rawGate = (...args) =>
     spawnSync(process.execPath, [RUNNER, ...args], { cwd: repo, env, encoding: 'utf8' });
+  // --writer is required; the calls that are not about it name Opus
+  const gate = (...args) => rawGate(...(args.includes('--writer') ? args : [...args, '--writer', 'claude']));
 
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(repo, 'README.md'), 'x\n');
@@ -473,6 +550,22 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
     assert.match(res.stderr, /usage: review-gate\.mjs --base <sha> --kind slice\|unit\|fix/, args.join(' '));
   }
 
+  // --writer is required for every kind: missing or unknown is a usage error naming the values.
+  for (const args of [
+    ['--base', base, '--kind', 'slice'],
+    ['--base', base, '--kind', 'unit', '--tier', 'small'],
+    ['--base', base, '--kind', 'fix', '--max-fixed', 'P1'],
+    ['--base', base, '--kind', 'slice', '--writer', 'gemini'],
+  ]) {
+    res = rawGate(...args);
+    assert.equal(res.status, 2, args.join(' '));
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /--writer is required and must be one of claude\|codex\|sonnet\|mixed/, args.join(' '));
+    assert.match(res.stderr, /usage: review-gate\.mjs/, args.join(' '));
+  }
+  res = rawGate('--base', base, '--kind', 'slice', '--writer', 'mixed');
+  assert.equal(res.status, 0, res.stderr);
+
   // A git failure (a base that is not a commit) is exit 2 with the message on stderr.
   res = gate('--base', 'no-such-ref', '--kind', 'slice');
   assert.equal(res.status, 2);
@@ -483,4 +576,71 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   assert.match(res.stderr, /review-gate: git failed: README\.md is not a commit/);
   res = gate('--base', base, '--head', 'README.md', '--kind', 'unit');
   assert.equal(res.status, 2);
+});
+
+// ---- the writer is never assumed; sonnet and mixed are writers too
+
+test('writer: it has no default -- missing, empty or unknown is an error for every kind', () => {
+  for (const kind of ['slice', 'unit', 'fix'])
+    for (const writer of [undefined, null, '', 'gemini'])
+      assert.throws(
+        () => decideCore({ files: [f(COLD, 5)], kind, maxFixed: 'P1', writer }),
+        /--writer is required and must be one of claude\|codex\|sonnet\|mixed/,
+        `${kind} ${String(writer)}`,
+      );
+  assert.deepEqual(WRITERS, ['claude', 'codex', 'sonnet', 'mixed']);
+  assert.throws(() => decideCore({ files: [], kind: 'slice' }), /--writer is required/);
+  assert.equal(parseArgs(['--base', 'a']).writer, null, 'parseArgs does not invent a writer');
+});
+
+test('writer sonnet 1: a critical slice written by Sonnet gets an Opus reviewer now', () => {
+  const r = bound(() => decide({ files: [f(HOT, 5), f(COLD, 5)], kind: 'slice', writer: 'sonnet' }));
+  assert.equal(r.decision, 'required');
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, /critical code written by Sonnet .*: Opus reviews it now/);
+  assert.ok(r.reason.endsWith(`now (${HOT})`), r.reason);
+});
+
+test('writer sonnet 2: a cold slice written by Sonnet goes to the second family, a different family', () => {
+  const r = bound(() => decide({ files: [f(COLD, 80)], kind: 'slice', writer: 'sonnet' }));
+  assert.equal(r.decision, 'second-family');
+  assert.deepEqual(r.reviewers, ['second-family-review']);
+});
+
+test('writer sonnet 3: a small unit by Sonnet is read by the second family; critical fixes are re-read by Opus', () => {
+  const unit = decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer: 'sonnet' });
+  assert.deepEqual(unit.reviewers, ['second-family-review']);
+  const cold = decide({ files: [f(COLD, 80)], kind: 'fix', maxFixed: 'P1', writer: 'sonnet' });
+  assert.equal(cold.decision, 'second-family');
+  assert.deepEqual(cold.reviewers, ['second-family-review']);
+  const hot = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', writer: 'sonnet' }));
+  assert.equal(hot.decision, 'review');
+  assert.deepEqual(hot.reviewers, ['opus-code-reviewer']);
+  assert.match(hot.reason, /the fix was written by Sonnet, so Opus reads it/);
+});
+
+test('writer mixed 1: a critical fix round from several executors is re-read by Opus, never the second family alone', () => {
+  for (const [maxFixed, lines] of [['P1', FIX_LINES], ['P1', FIX_LINES + 1], ['P2', FIX_LINES * 5]]) {
+    const r = bound(() => decide({ files: [f(HOT, lines)], kind: 'fix', maxFixed, writer: 'mixed' }));
+    assert.equal(r.decision, 'review', `${maxFixed} ${lines}`);
+    assert.deepEqual(r.reviewers, ['opus-code-reviewer'], `${maxFixed} ${lines}`);
+    assert.match(r.reason, /the fix was written by several executors, so Opus reads it/);
+  }
+  const r3 = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round: 3, writer: 'mixed' }));
+  assert.deepEqual(r3.reviewers, ['opus-adversarial']);
+  // a critical slice from several executors gets Opus now
+  const slice = bound(() => decide({ files: [f(HOT, 5)], kind: 'slice', writer: 'mixed' }));
+  assert.equal(slice.decision, 'required');
+  assert.deepEqual(slice.reviewers, ['opus-code-reviewer']);
+});
+
+test('writer mixed 2: a cold mixed fix round or slice is never a second-family-only review', () => {
+  const fix = decide({ files: [f(COLD, 80)], kind: 'fix', maxFixed: 'P1', writer: 'mixed' });
+  assert.equal(fix.decision, 'review');
+  assert.deepEqual(fix.reviewers, ['sonnet-code-reviewer']);
+  assert.ok(!fix.reviewers.some((x) => x.startsWith('second-family')));
+  const slice = bound(() => decide({ files: [f(COLD, 80)], kind: 'slice', writer: 'mixed' }));
+  assert.equal(slice.decision, 'defer');
+  const unit = decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer: 'mixed' });
+  assert.deepEqual(unit.reviewers, ['sonnet-code-reviewer']);
 });

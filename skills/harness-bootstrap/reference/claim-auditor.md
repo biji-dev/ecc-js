@@ -80,7 +80,9 @@ claim got in.
 - *A test covers X* → read the body, not the title; ask whether it structurally
   *could* cover X.
 - *A measurement* → take it again, now, against a **named commit**, and paste the
-  output. Counts against a moving tree once took six rounds to settle.
+  output. Counts against a moving tree once took six rounds to settle. A gate count
+  the FULL verify already printed for the same tree is read from its output (or its
+  `REUSED` line), never re-run whole; re-run the one test that carries the count.
 - *Work was done* → `git log`, `git diff`, `grep` the tree.
 - *A cause* → confirm the mechanism, not the symptom.
 - *Fixed in one place* → check every sibling document that repeats the fact.

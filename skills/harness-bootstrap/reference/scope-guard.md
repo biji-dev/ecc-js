@@ -65,37 +65,51 @@ reason, or it does not change.
 
 `[M]` **Push back.** Reject a finding that does not reproduce or is OUT; send back
 a slice that deviated from its brief; tell the owner plainly when a request widens
-the scope or contradicts a recorded decision, and propose OUT or a later unit. The
-owner decides; the decision is logged.
+the scope or contradicts a recorded decision, and propose OUT or a later unit. A
+widening is a P decision: the owner decides, on a decision card; the decision is
+logged.
 
 `[M]` **A choice with a hidden cost is spelled out before it is taken** — an option
-implying a new table, migration, endpoint, dependency or second platform says so in
-the option text.
+implying a new table, migration, endpoint, dependency or second platform says so:
+in the card's option text when it is P or C, in the decision row's `Reversal`
+cell when it is T. A hidden cost that is a one-way door — a migration, a public
+contract, a second platform — makes the choice C, never T (`gate-design.md` ›
+Who decides).
 > Origin: an owner's "fix it here, fully" once added a table nobody had named.
 
 ## The decision sheet — Gate 1
 
-`[M]` Every open question the plan raises is listed **once**, at Gate 1, each with a
-proposed default and what it changes. Approval accepts every default the owner does
-not change.
+`[M]` **Classify every open decision first** — P, C, T or H (`gate-design.md` ›
+Who decides). Only **P and C** go on the sheet, each **once**, as a decision card:
+the recommendation and why, two or three options with pros, cons, reversal cost and
+the data behind them, and the default. Approval accepts every default the owner
+does not change. **T** decisions are taken now and listed under *Decided* — one
+line each with its reversal cost — so the owner can strike one; **H** never
+appears.
 
-`[M]` A question found later is batched — at most one owner round per working day —
-unless it changes what the next step does or decides a never-auto category; then
-it is asked now, with a recommended default. A non-blocking one gets its default
-written as a decision row of kind `default`, goes on the next owner round's sheet,
-and work continues. The owner's answer confirms it or replaces it with a
-`reversal` row.
+`[M]` A P or C question found later is batched — at most one owner round per
+working day — unless it blocks the next step or decides a never-auto category; then
+it is asked now, as a card. A non-blocking one gets its default written as a
+decision row of kind `default`, goes on the next owner round's sheet, and work
+continues. The owner's answer confirms it or replaces it with a `reversal` row. A T
+decision found later is decided, logged and listed at Gate 2 under **Decided for
+you**.
 
-`[M]` **Uncertainty is a reason to ask, never a reason to hand the session back.**
-Ask with a default; never resolve silently and report it later.
+`[M]` **Uncertainty about intent is a reason to ask, never a reason to hand the
+session back** — ask with a card; never resolve a P or C silently and report it
+later. **Uncertainty about technique is not** — decide it, write why, and list it.
 
 ## The decision log
 
 `[M]` In the unit's state file, one table, rewritten in place:
 
 ```
-| ID | Date | Decision | By (owner / default / agent) | Why | Rejected alternative | Kind (scope-in / scope-out / reversal / default) |
+| ID | Date | Class (P / C / T) | Decision | By (owner / default / agent) | Why | Rejected alternative | Reversal cost | Kind (scope-in / scope-out / reversal / default) |
 ```
+
+`By: agent` is allowed only on a T row. `Reversal cost` says what undoing it takes —
+`edit + tests`, `a migration`, `a customer-visible change`; a cost beyond `edit +
+tests` makes the row C, not T.
 
 plus **Scope changes** (each BLOCKER or CRITICAL admitted, with its id) and **Pushed
 back** (each rejected finding or recommendation: source, one line, reason).
@@ -134,6 +148,9 @@ Unit: <id>
 Mode: <plan | change>
 Type: <type>
 Tier: <tier>
+Deliverable: <n of m — its one-line name>
+Deliverable started: <ISO time this deliverable's context began>
+Demo: <open · do · expect>
 Branch: <b>
 Base: <merge-base sha>
 Claimed: <ISO time from the registry row>
@@ -145,6 +162,10 @@ Owner wait: <e.g. 1h20m>
 ## Decisions        the decision log
 ## Next             the step done and the step next
 ```
+
+`Deliverable:` and `Demo:` name the deliverable this coordinator context is on
+(`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
+each new deliverable; the record measures the row's time from it.
 
 Header lines come before the first `##`, one `Key: value` each. `Source` is the
 reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,

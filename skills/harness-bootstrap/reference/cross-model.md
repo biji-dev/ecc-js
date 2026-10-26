@@ -11,10 +11,11 @@ cleared, and the wrapper exists because Codex's own exit code lied both ways.
 ## The rule
 
 `[M]` **Whatever one model family writes, the other reviews.** Claude-written code
-gets its decorrelated pass from Codex; Codex-written code (a cold slice, a doc
-sweep) gets a Claude reviewer — Opus on critical code at once, and on cold code the
-unit review covers it (a Sonnet `code-reviewer` for a Small unit), as
-`review-gate.mjs` says.
+gets its decorrelated pass from Codex; Codex-written code (a cold slice, a fix, a
+doc sweep) gets a Claude reviewer — Opus on critical code at once, and on cold code
+the unit review covers it (a Sonnet `code-reviewer` for a Small unit or a cold fix),
+as `review-gate.mjs --writer codex` says. `--writer` is who wrote the diff under
+review: the slice, the unit, or the fix.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
@@ -22,11 +23,19 @@ a per-slice review of cold code, Opus for critical code, the adversarial pass an
 lane B — and the ledger says **degraded**, quoting the wrapper's reason. The owed
 pass runs at the next unit's equivalent step over both diffs.
 
-`[M]` **Use it where it finds the most.** In the cost study the second family found
-43% of all valid P0/P1 — half of them in re-reviews — at no cost to the Claude quota,
-yet sat at 5–28% of its own weekly quota while Opus reviewed every slice. Its quota
-is real but finite: the wrapper's budget guard (below) keeps the essential kinds
-running when it runs low.
+`[M]` **Use it where it finds the most, then let it build.** In the cost study the
+second family found 43% of all valid P0/P1 — half of them in re-reviews — at no cost
+to the Claude quota, yet sat at 5–28% of its own weekly quota while Opus reviewed
+every slice. **It is the first builder for cold work** — cold slices, fixes outside
+critical code, tests for cold code, doc rewrites — while its budget guard allows;
+Sonnet takes the same work when it is reserved, or when the task needs a browser, a
+service it cannot reach, or steering mid-run. Its quota is real but finite: the
+wrapper's budget guard (below) keeps the essential kinds running when it runs low.
+> Origin, the v4 usage study: in 14 days the second family wrote code 7 times
+> against 502 Opus implementer runs. A write run cost 0.5–2% of its weekly meter and
+> took 4–9 minutes; reviews alone reached 72–78% in a busy week. At that plan it can
+> carry about a fifth of the implementation — read the meter in the ledger, and
+> treat more as the owner's plan decision.
 > Origin: one change request in the third project waited on a five-day Codex
 > outage.
 
@@ -47,7 +56,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
 | 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass for a third round the owner orders | Small, Full |
 | 8 visual | optional **dual UI critique** — the second family and a fresh Opus critic, blind to each other, from the same screenshots and measurements | Full, UI diffs |
-| 2 implement | **cold slices** may go to the second family (`implement-cold`, `docs`), reviewed by Claude as `review-gate.mjs --writer codex` says | any |
+| 2 implement, 8 fixes, 8a docs | **the first builder for cold work** — cold slices (`implement-cold`), fixes outside critical code (`fix-cold`), tests for cold code, doc rewrites (`docs`) — reviewed by Claude as `review-gate.mjs --writer codex` says; hot code only on the owner's `executor: codex` override, then an Opus reviewer per slice | any |
 
 `[M]` The **blind** in blind dual plan is the point: the second plan is written
 without seeing the first. Every item only one side has is verified in code before
@@ -101,6 +110,45 @@ run `node --test scripts/lib/codex-run-core.test.mjs` once (it is hermetic: temp
 `HOME` and `CODEX_HOME`, and a stub `codex` first on `PATH`, so it never spends
 quota), and add `.codex-runs/` to `.gitignore`. Install the agent-docs
 lint too (`harness-targets.md`) or drop `RULES_FOR`.
+
+## The sandbox — why, and how far to widen it
+
+`[M]` **The wrapper picks the sandbox from the kind, and never offers full
+access.** Review kinds run `read-only`, so a reviewer cannot edit what it judges;
+`implement-cold`, `fix-cold` and `docs` run `workspace-write` inside the worktree;
+network is off unless `--network`. Never `danger-full-access` or
+`--dangerously-bypass-approvals-and-sandbox`: none of the Claude-side guards reach
+Codex — the command guard and every Claude Code hook run only inside Claude Code,
+and git hooks fall to `--no-verify` — so with the sandbox gone nothing stands
+between Codex and the ssh keys, the agent socket, `git push` and the network.
+
+`[M]` **What the sandbox costs, measured** (v4 usage study, 273 runs): no failed
+run was caused by it; read-only reviews could not run tests (temp-dir `EPERM`) in
+about six verdicts — the session runs the tests anyway, a review is a claim; one
+write run could not commit (`index.lock`), and the leftovers report caught it.
+`--add-dir` does **not** help a read-only kind: on codex-cli 0.163 a read-only run
+still refused writes to the added directory.
+
+`[M]` **Widen in this order, each step measured:**
+
+1. **`--network` for a write kind whose tests need the local database** — only
+   after a Codex rules file forbids what network would open. The rules are a
+   backstop, not a boundary: they match an argv prefix, so `git -C . push` or
+   `env git push` may slip past one — keep the list wide and the pre-push hook. `[B]` `~/.codex/rules/<project>.rules`:
+   `prefix_rule(pattern=["ssh"], decision="forbidden")`, and the same for `scp`,
+   `rsync`, `git push`, `git remote`, `curl`, `wget`, `gh`, `npm publish` (and the
+   project's package manager's publish), `pkill`, `docker compose down`, the
+   project's destructive scripts, and `git commit --no-verify`. Add a `pre-push` hook that refuses when the
+   Codex sandbox's environment marker is set (check the variable on the installed
+   CLI before relying on it).
+2. **An allow rule for the exact commit form the brief prescribes**
+   (`git commit -F <file>`), keeping the leftovers report.
+3. Nothing beyond that. A task that needs a browser, a running service or steering
+   goes to a Sonnet builder.
+
+`[M]` **Briefs for Codex never ask it to call Claude.** Its automatic approval
+reviewer refused two attempts to send a diff out to `claude -p` — correctly; the
+cross-family review is the session's to dispatch.
 
 ## Without the wrapper
 

@@ -8,7 +8,10 @@
 // code-reviewer found 0 P0/P1 in a 50-slice milestone, and 20 of its 50 fix rounds were opened by
 // P3 findings only. So: a slice goes to the second family, ONE Opus code-reviewer runs over the
 // whole unit diff, P3s never open a fix round, Opus re-reviews only critical code with a P1
-// fixed, at most two Opus rounds, and a re-review is scoped to the fix.
+// fixed, at most two Opus rounds, and a re-review is scoped to the fix. A fix written by the
+// second family is re-read by Claude, never by the family that wrote it. Critical code written by
+// anyone but Opus (the second family, Sonnet, or a mix) gets an Opus reviewer per slice. The
+// writer is never assumed: every decision names who wrote the diff (`--writer`, required).
 //
 // Decides from FACTS about a diff (paths, production lines, what a fix round fixed) which review
 // it is owed, so the main thread does not guess. No I/O here, so the test can pin each rule.
@@ -35,8 +38,18 @@ export const FIX_LINES = 40; // a critical P1 fix at or under this many producti
 
 export const KINDS = ['slice', 'unit', 'fix'];
 export const TIERS = ['small', 'full'];
-export const WRITERS = ['claude', 'codex'];
+// who wrote the diff: claude = Opus (main thread / implementer), codex = the second family,
+// sonnet = a Sonnet builder, mixed = several executors (a fix round split between Opus and Codex)
+export const WRITERS = ['claude', 'codex', 'sonnet', 'mixed'];
 export const SEVERITIES = ['P0', 'P1', 'P2', 'P3'];
+
+const WRITER_NAMES = {
+  claude: 'Opus',
+  codex: 'the second family',
+  sonnet: 'Sonnet',
+  mixed: 'several executors',
+};
+const secondFamilyWrote = (writer) => writer === 'codex' || writer === 'mixed'; // routes like codex
 
 const UNBOUND_NOTE = 'CRITICAL unbound — every path treated as cold';
 
@@ -66,10 +79,11 @@ export function parseNumstat(text) {
 
 /**
  * CLI arguments → options. Throws on an unknown option or a missing value; `--base` is required.
- * `kind` is validated by `decide`, so a bad or missing kind is the same usage error everywhere.
+ * `kind` and `writer` are validated by `decide` (`writer` has no default), so a bad or missing
+ * one is the same usage error everywhere.
  */
 export function parseArgs(argv) {
-  const a = { tier: 'full', writer: 'claude', round: 1, maxFixed: null, json: false };
+  const a = { tier: 'full', writer: null, round: 1, maxFixed: null, json: false };
   const names = {
     '--base': 'base',
     '--head': 'head',
@@ -98,17 +112,21 @@ export function parseArgs(argv) {
 /**
  * kind 'slice': after a slice passes its gate, before the next builds on it.
  * kind 'unit':  step 8, once, over the whole unit diff from the merge base.
+ * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet |
+ * mixed (several executors, e.g. a fix round split between Opus and Codex; routes like codex).
  * kind 'fix':   once per fix round, over `<sha-before-the-fixes>..` (pass the whole round once,
  *               after its last fix group); `maxFixed` is the highest severity the round fixed
- *               (P0 counts as P1) and `round` counts fix rounds on this area from 1.
+ *               (P0 counts as P1) and `round` counts fix rounds on this area from 1. For this
+ *               kind `writer` is who wrote THE FIX: a codex, sonnet or mixed fix on critical code
+ *               is re-read by Opus ('review'); a codex or mixed cold fix by a Sonnet reviewer.
  * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'sweep' |
  *           'second-family+opus' | 'escalate-adversarial'.
  * `files` is [{ path, lines }]; `reviewers` is the ordered list of reviewers to run (maybe empty).
  */
-export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed = null, round = 1 }) {
+export function decide({ files, kind, tier = 'full', writer, maxFixed = null, round = 1 }) {
   if (!KINDS.includes(kind)) throw new Error(`--kind must be one of ${KINDS.join('|')}`);
   if (!TIERS.includes(tier)) throw new Error(`--tier must be one of ${TIERS.join('|')}`);
-  if (!WRITERS.includes(writer)) throw new Error(`--writer must be one of ${WRITERS.join('|')}`);
+  if (!WRITERS.includes(writer)) throw new Error(`--writer is required and must be one of ${WRITERS.join('|')} (who wrote the diff)`);
   if (!Number.isInteger(round) || round < 1) throw new Error('--round must be an integer >= 1');
   if (kind === 'fix' && !SEVERITIES.includes(maxFixed))
     throw new Error(`--max-fixed must be one of ${SEVERITIES.join('|')} for --kind fix`);
@@ -139,18 +157,28 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
 
   if (kind === 'slice') {
     if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
-    if (writer === 'codex' && critical.length === 0)
+    if (secondFamilyWrote(writer) && critical.length === 0)
       return out(
         'defer',
         [],
-        'cold slice written by the second family: the unit review covers it',
+        writer === 'codex'
+          ? 'cold slice written by the second family: the unit review covers it'
+          : 'cold slice written partly by the second family: the unit review covers it',
       );
-    if (writer === 'codex')
+    if (writer !== 'claude' && critical.length > 0) {
+      const named = `${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}`;
+      const by =
+        writer === 'codex'
+          ? 'the second family (an owner override, executor: codex)'
+          : writer === 'sonnet'
+            ? 'Sonnet (an owner override, executor: sonnet)'
+            : 'several executors (the second family among them)';
       return out(
         'required',
         ['opus-code-reviewer'],
-        `critical code written by the second family: a Claude reviewer now (${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}; critical code should not go to the second family)`,
+        `critical code written by ${by}: Opus reviews it now (${named})`,
       );
+    }
     return out(
       'second-family',
       ['second-family-review'],
@@ -161,7 +189,8 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
   if (kind === 'unit') {
     if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
     if (tier === 'small') {
-      const base = writer === 'claude' ? 'second-family-review' : 'sonnet-code-reviewer';
+      // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Sonnet
+      const base = secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review';
       return out(
         'review',
         [base, ...specialists],
@@ -174,7 +203,11 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
       ...specialists,
       ...(files.some((f) => isTest(f.path)) ? ['pr-test-analyzer'] : []),
     ];
-    return out('review', reviewers, 'full unit: one review pass over the whole unit diff');
+    return out(
+      'review',
+      reviewers,
+      `full unit: one review pass over the whole unit diff${secondFamilyWrote(writer) ? '; the unit was written by the second family, so the Opus code-reviewer is the cross-family review' : ''}`,
+    );
   }
 
   // kind 'fix'
@@ -185,7 +218,7 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
       'P3s never open a fix round: batch them into one sweep per slice set, no re-review',
     );
   if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
-  const r = fixRound({ critical, maxFixed, round, prodLines });
+  const r = fixRound({ critical, maxFixed, round, prodLines, writer });
   // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)
   if (specialists.length === 0) return out(r.decision, r.reviewers, r.reason);
   if (r.decision === 'skip')
@@ -193,23 +226,50 @@ export function decide({ files, kind, tier = 'full', writer = 'claude', maxFixed
   return out(r.decision, [...r.reviewers, ...specialists], r.reason);
 }
 
-/** A fix round's decision before triggered specialists join it. */
-function fixRound({ critical, maxFixed, round, prodLines }) {
+/** A fix round's decision before triggered specialists join it. `writer` wrote the fix. */
+function fixRound({ critical, maxFixed, round, prodLines, writer }) {
   const d = (decision, reviewers, reason) => ({ decision, reviewers, reason });
+  // the fix is not Opus's (the second family's, Sonnet's, or a mix): critical code gets an Opus
+  // reviewer; a cold fix from the second family gets a Claude one
+  const notOpus = writer !== 'claude';
+  const byCodex = secondFamilyWrote(writer);
   if (critical.length === 0) {
-    if (round === 1)
+    if (round === 1) {
+      if (byCodex)
+        return d(
+          'review',
+          ['sonnet-code-reviewer'],
+          'cold fix round 1 written by the second family: a Claude reviewer (Sonnet) re-reads the fix',
+        );
       return d('second-family', ['second-family-review'], 'cold fix round 1: the second family re-reviews the fix');
+    }
     return d('skip', [], 'cold fix round: its regression tests prove it, not another review');
   }
   if (round >= 3)
     return d(
       'escalate-adversarial',
-      ['second-family-adversarial'],
-      `fix round ${round} on critical code: a third review round is the owner-stop tripwire -- ask the owner; the round the owner orders is an adversarial pass, never another Opus review`,
+      [notOpus ? 'opus-adversarial' : 'second-family-adversarial'],
+      `fix round ${round} on critical code: a third review round is the owner-stop tripwire -- ask the owner; the round the owner orders is ${notOpus ? 'an adversarial pass by Opus (the fix was not written by Opus)' : 'an adversarial pass by the second family'}, never another standard code-review round`,
     );
+  const small = prodLines <= FIX_LINES;
+  if (notOpus) {
+    const by = `the fix was written by ${WRITER_NAMES[writer]}, so Opus reads it`;
+    if (maxFixed === 'P2') return d('review', ['opus-code-reviewer'], `critical code, P2 fixed: ${by}`);
+    if (small)
+      return d(
+        'review',
+        ['opus-code-reviewer'],
+        `critical code, P1 fixed in ${prodLines} <= ${FIX_LINES} production lines: ${by}`,
+      );
+    return d(
+      'review',
+      ['opus-code-reviewer'],
+      `critical code, P1 fixed in ${prodLines} > ${FIX_LINES} production lines: ${by}; at most two Opus rounds`,
+    );
+  }
   if (maxFixed === 'P2')
     return d('second-family', ['second-family-review'], 'critical code, P2 fixed: the second family re-reviews');
-  if (prodLines <= FIX_LINES)
+  if (small)
     return d(
       'second-family',
       ['second-family-review'],

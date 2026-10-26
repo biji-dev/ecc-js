@@ -14,6 +14,39 @@ claim audit has run.
 `[M]` **An unanswered gate question is park-and-carry, never consent.** Record it
 in the registry `Step` and the state file, and pick it up when the owner answers.
 
+## Who decides — four classes, one owner question format
+
+`[M]` **Ask the owner only what only the owner can decide.** Every decision the run
+meets gets exactly one class, written in its decision row (`scope-guard.md`):
+
+| Class | What it is | What happens |
+|---|---|---|
+| **P** — product | scope, behaviour a user sees, copy, naming, price, visual identity, what ships when | **ask**, as a decision card |
+| **C** — confirmation | a one-way door (data that cannot be restored, a store build, a durable public name, a production write), a contradiction of the specification, a framework, vendor or platform choice, a never-auto decision, spend above the Gate 1 estimate | **ask**, as a decision card |
+| **T** — technical | recoverable and product-neutral: a timeout, a limit, an index, a test layout, an internal name, a retry window, which model runs a slice | **the session decides**, writes the row (`By: agent`, why, rejected alternative, reversal cost), and lists it in the Gate 2 brief under **Decided for you** — the owner may reverse any of them there |
+| **H** — process | approve a step, another review round, a tripwire that a rule already answers, "summary now or later", "did the harness miss anything" | **never a question** — the rule decides (Owner stops, below) and the ledger records it |
+
+`[M]` **The test is recoverability and product-neutrality, not "is it technical".**
+A technical choice whose reversal is a migration, a re-issued credential or a
+customer-visible change is **C**, and its card says so. Unsure between T and C →
+**C**.
+
+`[M]` **A decision card** — one per P or C decision, never a bare question:
+
+```
+<id> · <class> · <one-line question>
+Recommend: <option> — <why, one line>
+  A <option> — pros · cons · reversal cost · data (a count, a measured number, a cited line)
+  B <option> — …
+Default if unanswered: <option> (park-and-carry: work that depends on it waits)
+```
+
+> Origin, the v4 usage study (10–25 Oct, three projects): 373 owner questions —
+> 51% process, 30% technical, 10% product, 9% genuine confirmation; the owner took
+> the recommended option 89% of the time and overrode 2 defaults in total; 121 hours
+> of owner wait. One 124-item owner round, about 75 of them technical, was answered
+> in one line: "use your recommendation". A sheet nobody reads is not a review.
+
 ## Tiers — decided at claim, after the task type
 
 `[M]` For a Code unit (`runner.md` › Task type first), state the tier in the claim
@@ -74,7 +107,8 @@ session dispatches what it names, with `model` and `effort` passed.
 `second-family-review` → `codex-run.mjs review`; `second-family-adversarial` →
 `codex-run.mjs adversarial --prompt <brief>` (`--critical` on critical code);
 `opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on that
-model; every other name → the agent of that name (`pr-test-analyzer` on Sonnet). Each
+model; `opus-adversarial` → the Opus `blast-radius-auditor` with the adversarial
+brief (the round-3 pass over a fix the second family wrote); every other name → the agent of that name (`pr-test-analyzer` on Sonnet). Each
 dispatch passes `model` and `effort: "high"`.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
@@ -82,18 +116,30 @@ the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` o
 cold code and an Opus one on critical code; the adversarial pass becomes the Opus
 `blast-radius-auditor` plus an Opus adversarial brief; every row is `degraded`.
 
-## Milestone size — split before it outgrows a session
+## Milestone size — deliverables, split before they outgrow a context
 
-`[M]` **A unit whose slicing table will not fit one session splits at Gate 1** into
-sub-milestones. Each has its own slicing table, its own step 8 over its own diff and
-its own `/clear` boundary (`context.md`); the state file keeps only the current
-sub-milestone, and closed ones move to the decision log and the follow-ups doc.
+`[M]` **Gate 1 cuts a unit into deliverables** — each one something the owner can
+open, use or run, with a **`Demo:` line**: what to open, what to do, what to expect
+(`Demo: /settings/plans as a Gratis tenant → staff 3 shows "paused" → resume after
+upgrade`). A deliverable holds one or more slices; **inside it the slices stay
+technical** — disjoint file sets, contract first, twins in parallel. A unit too small
+to split is one deliverable.
+
+`[M]` **One deliverable per coordinator context.** Each has its own slicing table,
+its own step 8 over its own diff, its own Gate 2 with the demo evidence (a
+screenshot, the named tests, the live-walk transcript) and its own `/clear`
+boundary at that Gate 2 (`context.md`); the state file keeps only the current
+deliverable, and closed ones move to the decision log and the follow-ups doc.
+> Origin, the v4 usage study: slices already ran in fresh sub-agents; the
+> coordinator was the polluted context (207K tokens on average, 78 full rebuilds),
+> and slices were cut by layer — contract, mock, shell, labels — so the owner saw
+> nothing until the unit's Gate 2.
 > Origin, the cost study: one milestone of 59.6k lines and 50 slices ran in one main
 > session — 20 compactions, a 211K average context and a 493 KB state file.
 
-`[B]` The cap — **start at 15 slices or 10k changed production lines** (tests
-excluded, `git diff --numstat`), whichever comes first, and let the log move it. It
-goes in the `earned` block with the other slots.
+`[B]` The cap per deliverable — **start at 15 slices or 10k changed production
+lines** (tests excluded, `git diff --numstat`), whichever comes first, and let the
+log move it. It goes in the `earned` block with the other slots.
 
 ## The gate table
 
@@ -125,7 +171,9 @@ one that requires a human on every merge removes the Small auto-merge.
 line** — a schema test reading an emitted file runs the emit before it, or a failed
 emit leaves it passing on a stale file.
 
-`[M]` **Ambiguous resolves to `ask`.** Auto-approval requires a clean **reviewer**
+`[M]` **An ambiguous gate row resolves to `ask`** — and the ask carries only the
+unit's P and C cards, its deliverables and its estimate (`runner.md` › Gate 1);
+T decisions ride along as a list, never as questions. Auto-approval requires a clean **reviewer**
 result, not only a clean conformance verdict. **An override is scoped:** write in
 one line what it covers; new findings re-arm the stop.
 
@@ -149,18 +197,36 @@ loosen push.** A pushed merge is the one step the harness cannot take back.
 
 `[M]` **Stop for the owner only at:**
 
-1. Gate 1 when the tier or the table says ask;
-2. a divergence from the approved plan;
-3. a decision inside a never-auto category, or one with a hidden cost
-   (`scope-guard.md`);
-4. a question that changes what the next step does;
-5. Gate 2 when the merge policy says ask, and before every push.
+1. Gate 1 when the tier or the table says ask — one sheet: the P and C cards, the
+   deliverables with their `Demo:` lines, the estimate (`runner.md`);
+2. a divergence from the approved plan that changes a deliverable, its `Demo:` or a
+   P or C decision (a divergence inside one deliverable's technique is T: decide,
+   log, list it);
+3. a P or C decision that blocks the next step — a never-auto decision, a hidden
+   cost that is a one-way door (`scope-guard.md`), spend past the Gate 1 estimate's upper bound;
+4. a third fix round on critical code (`escalate-adversarial`, below);
+5. Gate 2 when the merge policy says ask, and before every push;
+6. an Ops step — the runbook is approved once, for the SHA and the rollback it names.
 
 `[M]` **Not a stop:** finishing a step, a full context (offer `/compact` and keep
 working, `context.md`), the second family being unavailable (degraded, recorded),
 findings arriving (triage is the session's), a red gate that can be attributed, a
-non-blocking question (a `default` decision row, batched), and "what next?" —
-announce the next step in one line and start it.
+T decision (decide, log, list it at Gate 2), a non-blocking P or C question (its
+default goes in a `default` row, batched), and "what next?" — announce the next step
+in one line and start it.
+
+`[M]` **What were H questions, as rules:**
+
+- **Another review round** — `review-gate.mjs` decides; only its
+  `escalate-adversarial` is a stop.
+- **A tripwire a rule already answers** proceeds by that rule and is logged — a
+  second `FALSE CLAIMS` round on record prose only is quote-or-delete and land; a
+  tripwire stops only when its answer is P or C.
+- **Summaries and records** are written at the step that owns them, never asked.
+- **★ Missed by harness** is filled from what the owner volunteered at Gate 2;
+  nothing volunteered → `—`, not a question.
+- **Merge** goes by the merge policy; **push** stays the owner's, asked once with
+  Gate 2.
 
 ## Severity — one scale
 
@@ -191,6 +257,13 @@ line in the ledger. Its rules:
 | P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
 | any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
+| **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review; round 3 is an Opus adversarial brief |
+
+`[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
+writes, the other re-reads — fix rounds included. It is required —
+`claude | codex | sonnet | mixed`; a round whose fix groups went to more than one
+executor is `mixed` and routes as the second family's, and critical code that
+Sonnet wrote gets the Opus reviewer as the second family's does.
 
 `[M]` **P3s never open a fix round.** They wait for **one batched sweep per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
@@ -211,7 +284,9 @@ owner's to order, and it is the adversarial pass.
 
 `[M]` **One fix brief per area, not per finding.** Fix groups whose files do not
 overlap go to one executor in one brief; groups that share files run in sequence.
-Fix groups on critical code go to Opus; the rest to Sonnet.
+Fix groups on critical code go to Opus; the rest to the second family's `fix-cold`
+where it has quota, else Sonnet — and the review gate then runs with
+`--writer codex`.
 
 `[M]` **A P0 or P1 introduced by the fix itself trips the stop** (`rules.md` §2). A
 pre-existing finding seen for the first time does not.
@@ -225,10 +300,20 @@ that left the building cannot.
 | Role | Claude Code default |
 |---|---|
 | Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` |
-| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor | **Opus** |
-| Implementer of cold slices and delegated builders · fixers outside critical code · the P3 sweep · the conformance auditor · `pr-test-analyzer` · doc rewrites · a run-and-report runner · release runbooks | **Sonnet** |
-| Per-slice review · the review of a Small unit · re-reviews of fixes · the adversarial pass (carrying lane B) · cold slices where it has quota (`implement-cold`) | the second family (`cross-model.md`) |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** |
+| **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) · per-slice review · the review of a Small unit · re-reviews of Claude-written fixes · the adversarial pass (carrying lane B) | the second family (`cross-model.md`) |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 sweep · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** |
 | The blast-radius auditor (lane B) | **Opus**, only when the second family is unavailable (`degraded`) |
+
+`[M]` **An `executor:` override beats this table** (`runner.md` › Executor
+override) — owner first, then the risk routing above, then the default — with one
+guard: an override that hands critical or never-auto code to the second family or
+Sonnet is a **C** decision, only the owner's, and its slices run with `--writer`
+set so the review gate names an Opus reviewer.
+> Origin, the v4 usage study: the second family wrote code 7 times in 14 days
+> against 502 Opus implementer spawns, while its weekly meter sat at 5–30% most days.
+> Its write runs cost 0.5–2% of its week each, so at that plan it can carry about a
+> fifth of the implementation — measure, do not assume more.
 
 `[M]` **Pass the model explicitly on every dispatch.** Agent files often pin their
 own model, which beats the session's — without an override, the highest-risk unit

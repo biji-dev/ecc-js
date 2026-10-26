@@ -7,7 +7,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..', '..');
 const TEMPLATE = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'run-gates.sh');
@@ -81,15 +81,24 @@ function makeRepo(runnerText) {
   return dir;
 }
 
-function run(repo, args, { logDir, env: extraEnv } = {}) {
-  const env = gitEnv(extraEnv);
+/**
+ * Runs the runner in `repo`. By default the result cache is off and instant-failure notes are
+ * off, so one test's earlier run never answers another's and FAIL lines keep the plain shape;
+ * pass `cache: true` to use the real cache, and `env` to override anything.
+ */
+function runnerEnv(repo, args, { logDir, env: extraEnv, cache } = {}) {
+  const base = { RUN_GATES_INSTANT_SECS: '0' };
+  if (!cache) base.RUN_GATES_NO_CACHE = '1';
+  const env = gitEnv({ ...base, ...extraEnv });
   delete env.RUN_GATES_LOG_DIR;
+  if (cache && !(extraEnv && 'RUN_GATES_NO_CACHE' in extraEnv)) delete env.RUN_GATES_NO_CACHE;
   if (logDir) env.RUN_GATES_LOG_DIR = logDir;
-  const r = spawnSync('bash', [path.join(repo, 'scripts', 'run-gates.sh'), ...args], {
-    cwd: repo,
-    env,
-    encoding: 'utf8',
-  });
+  return { cmd: ['bash', [path.join(repo, 'scripts', 'run-gates.sh'), ...args]], env };
+}
+
+function run(repo, args, opts = {}) {
+  const { cmd, env } = runnerEnv(repo, args, opts);
+  const r = spawnSync(cmd[0], cmd[1], { cwd: repo, env, encoding: 'utf8' });
   const lines = r.stdout.split('\n').filter(l => l !== '');
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, lines };
 }
@@ -583,6 +592,505 @@ test('gate_counted: wrong arg count, empty regex or command, bad mode or bad reg
     assert.strictEqual(r.status, 99, `${line}: ${r.stdout}${r.stderr}`);
     assert.ok(r.stderr.includes("gate 't'"), `${line}: ${r.stderr}`);
   }
+});
+
+// ── result cache, single-flight lock, instant failures ───────────────────────
+
+console.log('\nrun-gates.sh: result cache, lock and instant failures');
+
+const REUSED_RX = /^REUSED [0-9a-f]{40} \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+const DOCS = { RUN_GATES_DOCS_ONLY: '\\.md$|^docs/' }; // docs-only reuse is opt-in
+const DOCS_ONLY_RX = /^REUSED [0-9a-f]{40} docs-only change since \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+
+/** How many times a gate appended to `file`. */
+function count(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).length : 0;
+}
+
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForFile(file, ms = 10000) {
+  const end = Date.now() + ms;
+  while (!fs.existsSync(file)) {
+    assert.ok(Date.now() < end, `timed out waiting for ${file}`);
+    sleepMs(50);
+  }
+}
+
+/** Starts a run in the background, stdout and stderr going to one file; returns { child, out }. */
+function spawnRun(repo, args, opts = {}) {
+  const { cmd, env } = runnerEnv(repo, args, opts);
+  const out = path.join(tmp('run-gates-out-'), 'out');
+  const fd = fs.openSync(out, 'w');
+  const child = spawn(cmd[0], cmd[1], { cwd: repo, env, stdio: ['ignore', fd, fd] });
+  fs.closeSync(fd);
+  return { child, out };
+}
+
+function waitForText(file, text, ms = 15000) {
+  const end = Date.now() + ms;
+  while (!(fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes(text))) {
+    assert.ok(Date.now() < end, `timed out waiting for "${text}" in ${file}`);
+    sleepMs(50);
+  }
+}
+
+/** True once no lock directory is left, i.e. the run holding it has exited. */
+function waitLocksGone(repo, ms = 15000) {
+  const locks = path.join(repo, '.git', 'run-gates-cache', 'locks');
+  const end = Date.now() + ms;
+  while (fs.existsSync(locks) && fs.readdirSync(locks).length > 0) {
+    assert.ok(Date.now() < end, 'timed out waiting for the lock to be released');
+    sleepMs(50);
+  }
+}
+
+/** A repo whose one gate appends a line to a counter file kept outside the repo. */
+function counterRepo(gateBody = '') {
+  const dir = tmp('run-gates-cache-');
+  const counter = path.join(dir, 'count');
+  const repo = makeRepo(withGates(SOURCE, [`gate t always '${gateBody}echo x >> ${counter}'`, "gate u full 'true'"]));
+  return { dir, counter, repo };
+}
+
+test('header documents the cache, the lock and the instant note', () => {
+  const header = SOURCE.slice(0, SOURCE.indexOf('set -u'));
+  const words = ['--no-cache', 'REUSED', 'docs-only', 'WAITING for run', 'RUN_GATES_CACHE_DIR', 'instant:',
+    'NOT CACHED', 'RUN_GATES_KEY_EXTRA', 'ignored inputs', 'share the cache', 'outside the working tree'];
+  for (const word of words) {
+    assert.ok(header.includes(word), `header mentions ${word}`);
+  }
+});
+
+test('cache: a second identical run prints REUSED and does not execute the gate', () => {
+  const { counter, repo } = counterRepo();
+  const a = run(repo, [], { cache: true });
+  assert.strictEqual(a.status, 0, a.stdout + a.stderr);
+  assert.strictEqual(count(counter), 1);
+  assert.ok(a.lines[0].startsWith('logs: '), a.lines[0]);
+  const b = run(repo, [], { cache: true });
+  assert.strictEqual(b.status, 0, b.stdout + b.stderr);
+  assert.strictEqual(count(counter), 1, 'gate was not executed again');
+  assert.ok(REUSED_RX.test(b.lines[0]), b.lines[0]);
+  assert.deepStrictEqual(b.lines.slice(1), a.lines.slice(1), 'original result lines and SUMMARY');
+  assert.strictEqual(b.lines[b.lines.length - 1], 'SUMMARY 2 passed, 0 failed, 0 skipped (full)');
+  assert.ok(!b.lines.some(l => l.startsWith('logs: ')), 'a reused run creates no log dir');
+});
+
+test('cache: a docs-only change since the recorded tree reuses it when a docs pattern is bound', () => {
+  const { counter, repo } = counterRepo();
+  const a = run(repo, [], { cache: true });
+  fs.writeFileSync(path.join(repo, 'README.md'), '# changed docs\n');
+  fs.mkdirSync(path.join(repo, 'docs'));
+  fs.writeFileSync(path.join(repo, 'docs', 'guide.txt'), 'new guide\n');
+  const b = run(repo, [], { cache: true, env: DOCS });
+  assert.strictEqual(b.status, 0, b.stdout + b.stderr);
+  assert.strictEqual(count(counter), 1, 'gate was not executed again');
+  assert.ok(DOCS_ONLY_RX.test(b.lines[0]), b.lines[0]);
+  assert.deepStrictEqual(b.lines.slice(1), a.lines.slice(1));
+});
+
+test('cache: RUN_GATES_DOCS_ONLY narrows what counts as docs', () => {
+  const { counter, repo } = counterRepo();
+  run(repo, [], { cache: true, env: { RUN_GATES_DOCS_ONLY: '^docs/' } });
+  fs.writeFileSync(path.join(repo, 'README.md'), '# changed\n');
+  const b = run(repo, [], { cache: true, env: { RUN_GATES_DOCS_ONLY: '^docs/' } });
+  assert.ok(b.lines[0].startsWith('logs: '), 'README.md is not docs under this pattern: ' + b.lines[0]);
+  assert.strictEqual(count(counter), 2);
+});
+
+test('cache: with no docs pattern (or an empty one) a README edit runs a gate that reads it again', () => {
+  const repo = makeRepo(withGates(SOURCE, [`gate readme always 'grep -q GOOD README.md'`]));
+  fs.writeFileSync(path.join(repo, 'README.md'), '# GOOD\n');
+  assert.strictEqual(run(repo, [], { cache: true }).status, 0, 'GOOD README passes');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# BAD\n');
+  for (const env of [undefined, { RUN_GATES_DOCS_ONLY: '' }]) {
+    const b = run(repo, [], { cache: true, env });
+    assert.strictEqual(b.status, 1, 'the gate re-ran and failed on the edited README: ' + b.stdout);
+    assert.ok(!b.stdout.includes('REUSED'), b.stdout);
+  }
+});
+
+test('mutant that falls back to a default docs regex reuses a stale PASS for a README edit', () => {
+  const from = 'DOCS_RX="${RUN_GATES_DOCS_ONLY-$DOCS_ONLY}"';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const mutant = SOURCE.replace(from, `DOCS_RX="\${RUN_GATES_DOCS_ONLY:-\\.md$|^docs/}"`);
+  const repo = makeRepo(withGates(mutant, [`gate readme always 'grep -q GOOD README.md'`]));
+  fs.writeFileSync(path.join(repo, 'README.md'), '# GOOD\n');
+  run(repo, [], { cache: true });
+  fs.writeFileSync(path.join(repo, 'README.md'), '# BAD\n');
+  const b = run(repo, [], { cache: true });
+  assert.ok(DOCS_ONLY_RX.test(b.lines[0]) && b.status === 0, 'the mutant reuses: ' + b.stdout);
+});
+
+test('cache: a code change runs the gates again', () => {
+  const { counter, repo } = counterRepo();
+  run(repo, [], { cache: true });
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'module.exports = 1;\n');
+  const b = run(repo, [], { cache: true });
+  assert.strictEqual(b.status, 0, b.stdout + b.stderr);
+  assert.strictEqual(count(counter), 2, 'gate executed again');
+  assert.ok(b.lines[0].startsWith('logs: '), b.lines[0]);
+  assert.ok(!b.stdout.includes('REUSED'), b.stdout);
+  // A docs edit on top of a code change is not covered by the older record either.
+  fs.writeFileSync(path.join(repo, 'README.md'), '# docs again\n');
+  const c = run(repo, [], { cache: true, env: DOCS });
+  assert.ok(DOCS_ONLY_RX.test(c.lines[0]), c.lines[0]);
+  assert.strictEqual(count(counter), 2);
+});
+
+test('cache: a FAIL is never cached', () => {
+  const dir = tmp('run-gates-cache-fail-');
+  const counter = path.join(dir, 'count');
+  const repo = makeRepo(withGates(SOURCE, [`gate bad always 'echo x >> ${counter}; exit 1'`]));
+  const a = run(repo, [], { cache: true });
+  const b = run(repo, [], { cache: true });
+  assert.strictEqual(a.status, 1);
+  assert.strictEqual(b.status, 1, b.stdout + b.stderr);
+  assert.strictEqual(count(counter), 2, 'the failing gate ran both times');
+  assert.ok(!b.stdout.includes('REUSED'), b.stdout);
+  assert.ok(/^FAIL bad \d+s \S+bad\.log \(exit 1\)$/.test(b.lines[1]), b.lines[1]);
+});
+
+test('cache: --no-cache and RUN_GATES_NO_CACHE=1 force a run, which still refreshes the cache', () => {
+  const { counter, repo } = counterRepo();
+  run(repo, [], { cache: true });
+  const b = run(repo, ['--no-cache'], { cache: true });
+  assert.ok(b.lines[0].startsWith('logs: '), b.lines[0]);
+  assert.strictEqual(count(counter), 2);
+  const c = run(repo, [], { cache: true, env: { RUN_GATES_NO_CACHE: '1' } });
+  assert.ok(c.lines[0].startsWith('logs: '), c.lines[0]);
+  assert.strictEqual(count(counter), 3);
+  const d = run(repo, [], { cache: true });
+  assert.ok(REUSED_RX.test(d.lines[0]), d.lines[0]);
+  assert.strictEqual(count(counter), 3);
+});
+
+test('cache: scoped and full runs are cached apart, and a scoped hit keeps its (scoped) SUMMARY', () => {
+  const { counter, repo } = counterRepo();
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'a.ts'), 'export {};\n');
+  const a = run(repo, ['--since', 'HEAD'], { cache: true });
+  assert.strictEqual(a.lines[a.lines.length - 1], 'SUMMARY 1 passed, 0 failed, 1 skipped (scoped)');
+  const b = run(repo, ['--since', 'HEAD'], { cache: true });
+  assert.ok(REUSED_RX.test(b.lines[0]), b.lines[0]);
+  assert.strictEqual(b.lines[b.lines.length - 1], 'SUMMARY 1 passed, 0 failed, 1 skipped (scoped)');
+  assert.strictEqual(count(counter), 1);
+  const full = run(repo, [], { cache: true });
+  assert.ok(full.lines[0].startsWith('logs: '), 'a full run is not answered by a scoped record: ' + full.lines[0]);
+  assert.strictEqual(count(counter), 2);
+});
+
+test('cache: the real index and the working tree state are untouched', () => {
+  const { repo } = counterRepo();
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'staged.ts'), 'export {};\n');
+  git(repo, 'add', 'src/staged.ts');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# unstaged edit\n');
+  fs.writeFileSync(path.join(repo, 'untracked.txt'), 'u\n');
+  const logs = path.join(tmp('run-gates-idx-logs-'), 'logs');
+  const snapshot = () => ({
+    status: git(repo, 'status', '--porcelain'),
+    cached: git(repo, 'diff', '--cached'),
+    staged: git(repo, 'ls-files', '-s'),
+    index: fs.readFileSync(path.join(repo, '.git', 'index')).toString('hex'),
+  });
+  snapshot(); // a first `git status` may refresh the index itself
+  const before = snapshot();
+  const a = run(repo, [], { cache: true, logDir: logs });
+  const b = run(repo, [], { cache: true, logDir: logs });
+  assert.strictEqual(a.status, 0, a.stdout + a.stderr);
+  assert.ok(REUSED_RX.test(b.lines[0]), 'the cache was exercised: ' + b.lines[0]);
+  assert.deepStrictEqual(snapshot(), before);
+  assert.ok(before.status.includes('?? untracked.txt') && before.cached.includes('staged.ts'), 'fixture is dirty');
+});
+
+test('cache: worktrees of one repository share it', () => {
+  const { counter, repo } = counterRepo();
+  const wt = path.join(tmp('run-gates-wt-'), 'wt');
+  git(repo, 'worktree', 'add', '-q', '--detach', wt);
+  run(repo, [], { cache: true });
+  const b = run(wt, [], { cache: true });
+  assert.strictEqual(b.status, 0, b.stdout + b.stderr);
+  assert.ok(REUSED_RX.test(b.lines[0]), b.lines[0]);
+  assert.strictEqual(count(counter), 1);
+});
+
+test('cache: RUN_GATES_CACHE_DIR moves the cache', () => {
+  const { counter, repo } = counterRepo();
+  const cacheDir = path.join(tmp('run-gates-cdir-'), 'cache');
+  run(repo, [], { cache: true, env: { RUN_GATES_CACHE_DIR: cacheDir } });
+  assert.ok(fs.existsSync(path.join(cacheDir, 'records')), 'records written there');
+  assert.ok(!fs.existsSync(path.join(repo, '.git', 'run-gates-cache')), 'default location unused');
+  const b = run(repo, [], { cache: true, env: { RUN_GATES_CACHE_DIR: cacheDir } });
+  assert.ok(REUSED_RX.test(b.lines[0]), b.lines[0]);
+  assert.strictEqual(count(counter), 1);
+});
+
+test('lock: a concurrent run waits, then reuses the first run\'s result', () => {
+  const dir = tmp('run-gates-lock-');
+  const counter = path.join(dir, 'count');
+  const started = path.join(dir, 'started');
+  const repo = makeRepo(withGates(SOURCE, [`gate slow always 'touch ${started}; sleep 3; echo x >> ${counter}'`]));
+  const { cmd, env } = runnerEnv(repo, [], { cache: true });
+  const first = spawn(cmd[0], cmd[1], { cwd: repo, env, stdio: 'ignore' });
+  try {
+    waitForFile(started);
+    const second = run(repo, [], { cache: true, env: { RUN_GATES_LOCK_POLL: '1' } });
+    assert.strictEqual(second.status, 0, second.stdout + second.stderr);
+    assert.ok(second.stderr.includes(`WAITING for run ${first.pid}`), second.stderr);
+    assert.ok(REUSED_RX.test(second.lines[0]), second.stdout);
+    assert.strictEqual(count(counter), 1, 'the gate ran once for both');
+  } finally {
+    first.kill();
+  }
+});
+
+test('lock: after the wait limit the run goes ahead without the lock', () => {
+  const dir = tmp('run-gates-lockwait-');
+  const counter = path.join(dir, 'count');
+  const started = path.join(dir, 'started');
+  const repo = makeRepo(withGates(SOURCE, [`gate slow always 'touch ${started}; sleep 3; echo x >> ${counter}'`]));
+  const { cmd, env } = runnerEnv(repo, [], { cache: true });
+  const first = spawn(cmd[0], cmd[1], { cwd: repo, env, stdio: 'ignore' });
+  try {
+    waitForFile(started);
+    const second = run(repo, [], { cache: true, env: { RUN_GATES_LOCK_POLL: '1', RUN_GATES_LOCK_WAIT: '1' } });
+    assert.strictEqual(second.status, 0, second.stdout + second.stderr);
+    assert.ok(second.stderr.includes('WAITING for run') && second.stderr.includes('without the lock'), second.stderr);
+    assert.ok(second.lines.some(l => /^PASS slow /.test(l)), second.stdout);
+  } finally {
+    first.kill();
+  }
+});
+
+test('lock: a lock left by a dead run is taken over without waiting', () => {
+  const dir = tmp('run-gates-stale-');
+  const counter = path.join(dir, 'count');
+  const started = path.join(dir, 'started');
+  const body = `touch ${started}; echo x >> ${counter}; [ "$(wc -l < ${counter} | tr -d " ")" -gt 1 ] || sleep 4`;
+  const repo = makeRepo(withGates(SOURCE, [`gate slow always '${body}'`]));
+  const { cmd, env } = runnerEnv(repo, [], { cache: true });
+  // SIGKILL after 1.5s (spawnSync also reaps it, so the dead pid is not a zombie): no trap runs
+  // and the lock directory stays behind.
+  spawnSync(cmd[0], cmd[1], { cwd: repo, env, stdio: 'ignore', timeout: 1500, killSignal: 'SIGKILL' });
+  assert.ok(fs.existsSync(started), 'the first run got as far as its gate');
+  assert.strictEqual(fs.readdirSync(path.join(repo, '.git', 'run-gates-cache', 'locks')).length, 1, 'stale lock left');
+  const second = run(repo, [], { cache: true });
+  assert.strictEqual(second.status, 0, second.stdout + second.stderr);
+  assert.ok(!second.stderr.includes('WAITING'), second.stderr);
+  assert.ok(second.lines.some(l => /^PASS slow /.test(l)), second.stdout);
+  assert.strictEqual(count(counter), 2);
+});
+
+test('lock: the lock is released when a run ends, so the next run does not wait', () => {
+  const repo = makeRepo(withGates(SOURCE, [`gate bad always 'exit 1'`]));
+  for (let n = 0; n < 2; n += 1) {
+    const r = run(repo, [], { cache: true });
+    assert.strictEqual(r.status, 1);
+    assert.ok(!r.stderr.includes('WAITING'), r.stderr);
+  }
+  const locks = path.join(repo, '.git', 'run-gates-cache', 'locks');
+  assert.deepStrictEqual(fs.readdirSync(locks), [], 'no lock directory left behind');
+});
+
+/**
+ * A slow-gate repo for the tree-changes-during-the-run cases: the gate signals `started`, waits for
+ * `go`, then appends to the counter. Returns the paths the test drives it with.
+ */
+function slowRepo(source = SOURCE, extraGates = []) {
+  const dir = tmp('run-gates-slow-');
+  const p = { dir, counter: path.join(dir, 'count'), started: path.join(dir, 'started'), go: path.join(dir, 'go') };
+  const body = `touch ${p.started}; while [ ! -f ${p.go} ]; do sleep 0.1; done; echo x >> ${p.counter}`;
+  p.repo = makeRepo(withGates(source, [`gate slow always '${body}'`, ...extraGates]));
+  return p;
+}
+
+function notCachedScenario(source) {
+  const p = slowRepo(source);
+  const a = spawnRun(p.repo, [], { cache: true });
+  try {
+    waitForFile(p.started);
+    fs.writeFileSync(path.join(p.repo, 'edit.txt'), 'edited while the gates ran\n');
+    fs.writeFileSync(p.go, '');
+    waitLocksGone(p.repo);
+    fs.rmSync(path.join(p.repo, 'edit.txt'));
+    const b = run(p.repo, [], { cache: true }); // the tree is the one the first run started from
+    return { p, a, b };
+  } finally {
+    a.child.kill();
+  }
+}
+
+test('cache: a result is not recorded when the tree changed during the run (reverting does not REUSE)', () => {
+  const { p, a, b } = notCachedScenario(SOURCE);
+  assert.ok(fs.readFileSync(a.out, 'utf8').includes('NOT CACHED tree changed during the run'), fs.readFileSync(a.out, 'utf8'));
+  assert.ok(!b.stdout.includes('REUSED'), b.stdout);
+  assert.strictEqual(count(p.counter), 2, 'the gate ran again');
+});
+
+test('mutant that records without re-checking the tree reuses a result for a tree it never ran against', () => {
+  const from = '[ "$KEY" != "$START_KEY" ] || ';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const { p, b } = notCachedScenario(SOURCE.replace(from, ''));
+  assert.ok(REUSED_RX.test(b.lines[0]), 'the mutant reuses: ' + b.stdout);
+  assert.strictEqual(count(p.counter), 1);
+});
+
+test('lock: after a wait the changed files, the mode and the variant are worked out again', () => {
+  const scenario = source => {
+    const dir = tmp('run-gates-promote-');
+    const fullCounter = path.join(dir, 'full');
+    const p = slowRepo(source, [`gate fullonly full 'echo x >> ${fullCounter}'`]);
+    fs.mkdirSync(path.join(p.repo, 'src'));
+    fs.writeFileSync(path.join(p.repo, 'src', 'a.ts'), 'export {};\n');
+    const args = ['--since', 'HEAD'];
+    const a = spawnRun(p.repo, args, { cache: true, env: { RUN_GATES_LOCK_POLL: '1' } });
+    let b;
+    try {
+      waitForFile(p.started);
+      b = spawnRun(p.repo, args, { cache: true, env: { RUN_GATES_LOCK_POLL: '1' } });
+      waitForText(b.out, 'WAITING for run');
+      fs.writeFileSync(path.join(p.repo, 'package.json'), '{}\n'); // outside SCOPED_PATHS: promotes to full
+      fs.writeFileSync(p.go, '');
+      waitForText(b.out, 'SUMMARY');
+      waitLocksGone(p.repo);
+      return { out: fs.readFileSync(b.out, 'utf8'), fullRuns: count(fullCounter) };
+    } finally {
+      a.child.kill();
+      if (b) b.child.kill();
+    }
+  };
+  const r = scenario(SOURCE);
+  assert.ok(r.out.includes('PROMOTED to FULL: package.json'), r.out);
+  assert.ok(r.out.includes('SUMMARY 2 passed, 0 failed, 0 skipped (full)'), r.out);
+  assert.strictEqual(r.fullRuns, 1, 'the full gate ran');
+  // Mutant: refresh only the tree key after the wait, as before.
+  const from = '      refresh_state || CACHE_ON=0\n';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const m = scenario(SOURCE.replace(from, '      compute_key || CACHE_ON=0\n'));
+  assert.ok(m.out.includes('(scoped)') && m.fullRuns === 0, 'the mutant stays scoped: ' + m.out);
+});
+
+test('cache: RUN_GATES_KEY_EXTRA output joins the key, so changing it forces a run', () => {
+  const { counter, repo } = counterRepo();
+  const extra = path.join(path.dirname(counter), 'extra');
+  fs.writeFileSync(extra, 'lock v1\n');
+  const env = { RUN_GATES_KEY_EXTRA: `cat ${extra}` };
+  run(repo, [], { cache: true, env });
+  const same = run(repo, [], { cache: true, env });
+  assert.ok(REUSED_RX.test(same.lines[0]), 'same extra output reuses: ' + same.lines[0]);
+  fs.writeFileSync(extra, 'lock v2\n');
+  const changed = run(repo, [], { cache: true, env });
+  assert.ok(changed.lines[0].startsWith('logs: '), 'changed extra output runs: ' + changed.lines[0]);
+  assert.strictEqual(count(counter), 2);
+  const none = run(repo, [], { cache: true }); // no extra at all is a variant of its own
+  assert.ok(none.lines[0].startsWith('logs: '), none.lines[0]);
+  assert.strictEqual(count(counter), 3);
+  // A [B] constant in the file works too, and an empty env value switches it off again.
+  const bound = SOURCE.replace("KEY_EXTRA=''", `KEY_EXTRA='cat ${extra}'`);
+  assert.notStrictEqual(bound, SOURCE, 'constant bound');
+  const c2 = path.join(path.dirname(counter), 'count2');
+  const repoB = makeRepo(withGates(bound, [`gate t always 'echo x >> ${c2}'`]));
+  run(repoB, [], { cache: true });
+  fs.writeFileSync(extra, 'lock v3\n');
+  assert.ok(run(repoB, [], { cache: true }).lines[0].startsWith('logs: '), 'bound constant is in the key');
+  assert.strictEqual(count(c2), 2);
+});
+
+test('lock: release_lock removes only a lock whose pid is ours', () => {
+  const scenario = source => {
+    const repo = makeRepo(withGates(source, [`gate steal always 'for f in .git/run-gates-cache/locks/*/pid; do echo 999999 > "$f"; done'`]));
+    const r = run(repo, [], { cache: true });
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    return fs.readdirSync(path.join(repo, '.git', 'run-gates-cache', 'locks')).length;
+  };
+  assert.strictEqual(scenario(SOURCE), 1, "another pid's lock is left alone");
+  const from = '[ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ]';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  assert.strictEqual(scenario(SOURCE.replace(from, 'true')), 0, 'the mutant removes it');
+});
+
+/** Runs acquire_lock from `source` alone, with `shims` (bash function definitions) in front of it. */
+function acquireHarness(source, lockDir, shims) {
+  const fn = source.slice(source.indexOf('acquire_lock() {'), source.indexOf('\nif [ "$CACHE_ON" -eq 1 ]; then'));
+  const script = [
+    `LOCK_DIR='${lockDir}'; LOCK_WAIT=0; LOCK_POLL=1; LOCK_OWNED=0; LOCK_WAITED=0`,
+    fn,
+    shims,
+    'acquire_lock; rc=$?',
+    'echo "rc=$rc owned=$LOCK_OWNED pid=$(cat "$LOCK_DIR/pid" 2>/dev/null)"',
+  ].join('\n');
+  return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: gitEnv() });
+}
+
+test('lock: a stale lock is taken over only while it still names the stale pid', () => {
+  const lockDir = path.join(tmp('run-gates-race-'), 'lock');
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(path.join(lockDir, 'pid'), '111\n');
+  // Checking pid 111 finds it dead, but meanwhile another waiter has replaced the lock with its own (live) 222.
+  const shims = `kill() { if [ "$2" = 111 ]; then echo 222 > "$LOCK_DIR/pid"; return 1; fi; return 0; }`;
+  const r = acquireHarness(SOURCE, lockDir, shims);
+  assert.ok(/rc=1 owned=0 pid=222/.test(r.stdout), r.stdout + r.stderr);
+  assert.ok(fs.existsSync(path.join(lockDir, 'pid')), "the other waiter's lock was not moved away");
+  // Mutant: take over without re-reading the pid.
+  const from = 'if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$holder" ]; then';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  fs.writeFileSync(path.join(lockDir, 'pid'), '111\n');
+  const m = acquireHarness(SOURCE.replace(from, 'if true; then'), lockDir, shims);
+  assert.ok(!/pid=222/.test(m.stdout), 'the mutant moved the live lock: ' + m.stdout);
+});
+
+test('lock: a holder that releases between the failed mkdir and the check makes the run retry, not go unlocked', () => {
+  const lockDir = path.join(tmp('run-gates-retry-'), 'lock');
+  const shims = 'mkdir() { n=$((${n:-0} + 1)); if [ "$n" -eq 1 ]; then return 1; fi; command mkdir "$@"; }';
+  const r = acquireHarness(SOURCE, lockDir, shims);
+  assert.ok(/rc=0 owned=1/.test(r.stdout), r.stdout + r.stderr);
+  const from = '      [ "$retries" -le 5 ] || return 1\n      continue\n';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const m = acquireHarness(SOURCE.replace(from, '      return 1\n'), lockDir + '2', shims);
+  assert.ok(/rc=1 owned=0/.test(m.stdout), 'the mutant goes unlocked: ' + m.stdout);
+});
+
+test('cache: a record name that is not a 40-64 char lowercase hex id is never handed to git', () => {
+  const scenario = source => {
+    const counter = path.join(tmp('run-gates-hex-'), 'count');
+    const repo = makeRepo(withGates(source, [`gate t always 'echo x >> ${counter}'`]));
+    run(repo, [], { cache: true, env: DOCS });
+    const recs = path.join(repo, '.git', 'run-gates-cache', 'records');
+    const variant = path.join(recs, fs.readdirSync(recs)[0]);
+    const evil = `--output=pwned-${'x'.repeat(36)}`; // 51 chars; git would take it as an option
+    fs.writeFileSync(path.join(variant, evil), 'T\nSUMMARY 1 passed, 0 failed, 0 skipped (full)\n');
+    const future = new Date(Date.now() + 60000);
+    fs.utimesSync(path.join(variant, evil), future, future);
+    fs.writeFileSync(path.join(repo, 'README.md'), '# docs edit\n');
+    const b = run(repo, [], { cache: true, env: DOCS });
+    return { b, created: fs.existsSync(path.join(repo, `pwned-${'x'.repeat(36)}`)) };
+  };
+  const r = scenario(SOURCE);
+  assert.ok(!r.created, 'git did not see the record name as an option');
+  assert.ok(DOCS_ONLY_RX.test(r.b.lines[0]), 'the genuine record still answers: ' + r.b.lines[0]);
+  const from = '    case "$t" in *[!0-9a-f]*) continue ;; esac\n';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  assert.ok(scenario(SOURCE.replace(from, '')).created, 'the mutant lets git create the --output file');
+});
+
+test('instant failures: a FAIL under RUN_GATES_INSTANT_SECS is annotated, a slower one is not', () => {
+  const repo = makeRepo(withGates(SOURCE, ["gate quick always 'exit 3'", "gate slow always 'sleep 2; exit 1'"]));
+  const a = run(repo, [], { env: { RUN_GATES_INSTANT_SECS: '1' } });
+  assert.ok(
+    /^FAIL quick \d+s \S+quick\.log \(exit 3\) \(instant: if the log shows no real failure, check the command\/env before re-running\)$/.test(a.lines[1]),
+    a.lines[1],
+  );
+  assert.ok(/^FAIL slow \d+s \S+slow\.log \(exit 1\)$/.test(a.lines[2]), a.lines[2]);
+  assert.strictEqual(a.status, 2);
+  const d = run(repo, [], { env: { RUN_GATES_INSTANT_SECS: '' } }); // default threshold: 10s
+  assert.ok(/\(exit 3\) \(instant: /.test(d.lines[1]) && /\(exit 1\) \(instant: /.test(d.lines[2]), d.stdout);
+  assert.ok(d.lines[1].startsWith('FAIL quick '), 'the FAIL prefix is unchanged');
+  assert.strictEqual(d.lines[d.lines.length - 1], 'SUMMARY 0 passed, 2 failed, 0 skipped (full)');
 });
 
 // ── unbound and interpreter ──────────────────────────────────────────────────

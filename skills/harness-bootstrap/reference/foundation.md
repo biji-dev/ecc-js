@@ -104,8 +104,9 @@ never during one. It:
 
 1. reruns Phase A row 1 and quotes the evidence: the command, its count, the
    sabotage that turned it red, the `cmp` that confirmed the restore;
-2. binds the counted test gates in `run-gates.sh` (`gate_counted`, so zero tests is
-   a FAIL) over the project's tests only, and any gate that reads another gate's
+2. binds the counted test gates in `run-gates.sh` (`gate_counted` through
+   `run-counted.mjs` at today's count, so a skip or zero tests is a FAIL) over the
+   project's tests only, and any gate that reads another gate's
    output runs that gate first; adds the `prepare` line and fits the lint and format
    (SKILL.md, *Fit the project's tooling*);
 3. writes the coverage map's first covered rows and lists what is still uncovered;

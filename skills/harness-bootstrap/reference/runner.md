@@ -348,7 +348,10 @@ DOM snapshot; send screenshots to a model that reads images.
   targeted tests, no re-review (`review-gate.mjs` says `p3-batch`). The P3s a unit
   defers go to the follow-ups doc, and the hygiene unit batches them.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
-  attributed against the merge base, working tree included. `run-gates.sh` reuses an
+  attributed against the merge base, working tree included. Where the project bound
+  `SNAPSHOT_COPY`, it is `bash scripts/run-gates.sh --snapshot` once the unit's work
+  is committed: the gates read what lands, and no scratch file or note reaches them.
+  `run-gates.sh` reuses an
   all-PASS result for the same tree (`REUSED <tree>`) — and for a tree that differs
   only in docs when the project bound `RUN_GATES_DOCS_ONLY`, which it does only if
   no gate reads those paths; a second agent that starts the same run waits for the

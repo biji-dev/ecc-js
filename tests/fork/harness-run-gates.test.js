@@ -569,6 +569,18 @@ test('gate_counted: stderr counts as output, and plain gates around it are unaff
   assert.ok(/^PASS t /.test(r.lines[1]) && /^PASS z /.test(r.lines[2]), r.stdout);
 });
 
+test('gate_counted: colour codes are stripped before the regex is matched', () => {
+  // vitest 5.0.5's Tests line under FORCE_COLOR=1: the escapes sit between the words.
+  const gates = [`gate_counted t always 'Tests +[1-9][0-9]* passed' 'printf "\\033[2m      Tests \\033[22m \\033[1m\\033[32m3 passed\\033[39m\\033[90m (3)\\033[39m\\n"'`];
+  const r = run(makeRepo(withGates(SOURCE, gates)), []);
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.ok(/^PASS t /.test(r.lines[1]), r.stdout);
+  const from = 'strip_csi <"$logfile" |';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const m = run(makeRepo(withGates(SOURCE.replace(from, 'cat "$logfile" |'), gates)), []);
+  assert.strictEqual(m.status, 1, 'the mutant matches against the escapes: ' + m.stdout);
+});
+
 test('gate_counted: --list shows it like any gate, and scoped mode skips a full one', () => {
   const repo = makeRepo(withGates(SOURCE, ["gate_counted a always 'x' 'true'", "gate_counted b full 'x' 'true'"]));
   const list = run(repo, ['--list']);
@@ -1093,6 +1105,249 @@ test('instant failures: a FAIL under RUN_GATES_INSTANT_SECS is annotated, a slow
   assert.strictEqual(d.lines[d.lines.length - 1], 'SUMMARY 0 passed, 2 failed, 0 skipped (full)');
 });
 
+// ── --snapshot ───────────────────────────────────────────────────────────────
+
+console.log('\nrun-gates.sh: --snapshot');
+
+/**
+ * A repo whose commit has packages/ui and a tracked .env.example, and whose working tree adds
+ * an ignored node_modules (holding a pnpm-style relative link to packages/ui) and an ignored .env.
+ */
+function snapshotRepo(gates, source = SOURCE) {
+  const repo = makeRepo(withGates(source, gates));
+  fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules/\n.env\n.review-work/\n');
+  fs.mkdirSync(path.join(repo, 'packages', 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'packages', 'ui', 'index.js'), 'committed ui\n');
+  fs.writeFileSync(path.join(repo, '.env.example'), 'EXAMPLE=committed\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'fixture');
+  fs.mkdirSync(path.join(repo, 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'node_modules', 'dep', 'index.js'), 'dep\n');
+  fs.mkdirSync(path.join(repo, 'node_modules', '@x'));
+  fs.symlinkSync('../../packages/ui', path.join(repo, 'node_modules', '@x', 'ui'));
+  fs.writeFileSync(path.join(repo, '.env'), 'FROM_ENV=1\n');
+  return repo;
+}
+
+/** A gate that writes what it sees, one fact per line, to `probe` (outside the repo); a fact it cannot read fails it. */
+function probeGate(probe) {
+  const facts = [
+    'pwd -P',
+    '[ -L node_modules ] && echo link || echo dir',
+    'cat node_modules/dep/index.js',
+    'readlink node_modules/@x/ui',
+    '(cd node_modules/@x/ui && pwd -P)',
+    '[ -L .env ] && echo link || echo file',
+    'cat .env',
+    'cat .env.example',
+  ];
+  return `gate probe always 'set -e; { ${facts.join('; ')}; } > ${probe}'`;
+}
+
+test('--snapshot: the header and the [B] line document it', () => {
+  const header = SOURCE.slice(0, SOURCE.indexOf('set -u'));
+  for (const w of ['--snapshot', 'SNAPSHOT_COPY', 'input: commit', 'not in this run:', 'RUN_GATES_SNAPSHOT_COPY', 'Not with --since']) {
+    assert.ok(header.includes(w), `header names ${w}`);
+  }
+  assert.ok(SOURCE.includes("SNAPSHOT_COPY='node_modules .env*'"), 'the default binding');
+});
+
+test('--snapshot: the gates run on the commit; an untracked scratch file that turns lint red on the working tree is not in the run', () => {
+  const gates = [`gate lint always 'if [ -e scratch.md ]; then echo "scratch.md: not formatted"; exit 1; fi'`];
+  const repo = snapshotRepo(gates);
+  fs.writeFileSync(path.join(repo, 'scratch.md'), '#  notes\n');
+  const plain = run(repo, []);
+  assert.strictEqual(plain.status, 1, 'the working-tree run reads the scratch file: ' + plain.stdout);
+  const snap = run(repo, ['--snapshot']);
+  assert.strictEqual(snap.status, 0, snap.stdout + snap.stderr);
+  const sha = git(repo, 'rev-parse', '--short', 'HEAD').trim();
+  assert.deepStrictEqual(snap.lines.slice(1, 3), [`input: commit ${sha}`, 'not in this run: 1 untracked file(s)']);
+  assert.strictEqual(snap.lines[snap.lines.length - 1], 'SUMMARY 1 passed, 0 failed, 0 skipped (full)');
+  const from = 'GATE_DIR="$SNAP_DIR/tree"';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const mrepo = snapshotRepo(gates, SOURCE.replace(from, 'GATE_DIR=$TOP'));
+  fs.writeFileSync(path.join(mrepo, 'scratch.md'), '#  notes\n');
+  assert.strictEqual(run(mrepo, ['--snapshot']).status, 1, 'the mutant runs the gates on the working tree');
+});
+
+test('--snapshot: node_modules is copied with its links resolving inside the snapshot; .env is copied, a symlinked one as its target; a tracked file comes from the commit', () => {
+  const dir = tmp('run-gates-snapprobe-');
+  const probe = path.join(dir, 'probe');
+  const repo = snapshotRepo([probeGate(probe)]);
+  const r = run(repo, ['--snapshot']);
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  const facts = fs.readFileSync(probe, 'utf8').trim().split('\n');
+  assert.ok(/\/run-gates-snapshot\.[^/]+\/tree$/.test(facts[0]), 'the gate runs in the snapshot: ' + facts[0]);
+  assert.deepStrictEqual(facts.slice(1, 4), ['dir', 'dep', '../../packages/ui']);
+  assert.strictEqual(facts[4], `${facts[0]}/packages/ui`, "the link reaches the snapshot's own package");
+  assert.deepStrictEqual(facts.slice(5), ['file', 'FROM_ENV=1', 'EXAMPLE=committed']);
+
+  // A .env shared between worktrees by a relative symlink: copied as its target, so it still reads.
+  const shared = tmp('run-gates-shared-');
+  fs.writeFileSync(path.join(shared, 'shared.env'), 'FROM_ENV=shared\n');
+  fs.rmSync(path.join(repo, '.env'));
+  fs.symlinkSync(`../${path.basename(shared)}/shared.env`, path.join(repo, '.env'));
+  assert.strictEqual(run(repo, ['--snapshot']).status, 0);
+  assert.deepStrictEqual(fs.readFileSync(probe, 'utf8').trim().split('\n').slice(5, 7), ['file', 'FROM_ENV=shared']);
+  const noH = SOURCE.split('cp -cRpH').join('cp -cRp').split('cp -RpH').join('cp -Rp');
+  assert.notStrictEqual(noH, SOURCE, 'mutation applied');
+  const mrepo = snapshotRepo([probeGate(probe)], noH);
+  fs.rmSync(path.join(mrepo, '.env'));
+  fs.symlinkSync(`../${path.basename(shared)}/shared.env`, path.join(mrepo, '.env'));
+  const dangling = run(mrepo, ['--snapshot']);
+  assert.strictEqual(dangling.status, 1, 'the mutant copies the link, which dangles in the snapshot: ' + dangling.stdout);
+
+  // A tracked file hidden from git status (skip-worktree) still comes from the commit.
+  git(repo, 'update-index', '--skip-worktree', '.env.example');
+  fs.writeFileSync(path.join(repo, '.env.example'), 'EXAMPLE=working-tree\n');
+  assert.strictEqual(run(repo, ['--snapshot']).status, 0);
+  assert.strictEqual(fs.readFileSync(probe, 'utf8').trim().split('\n')[7], 'EXAMPLE=committed');
+  const from = '    if [ -e "$dst" ] || [ -L "$dst" ]; then continue; fi\n';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const over = snapshotRepo([probeGate(probe)], SOURCE.replace(from, ''));
+  git(over, 'update-index', '--skip-worktree', '.env.example');
+  fs.writeFileSync(path.join(over, '.env.example'), 'EXAMPLE=working-tree\n');
+  run(over, ['--snapshot']);
+  assert.strictEqual(fs.readFileSync(probe, 'utf8').trim().split('\n')[7], 'EXAMPLE=working-tree', 'the mutant copies over the commit');
+});
+
+test('--snapshot: a tracked or staged change is refused with exit 99 and listed; nothing runs', () => {
+  const marker = path.join(tmp('run-gates-snapdirty-'), 'ran');
+  const gates = [`gate t always 'touch ${marker}'`];
+  const repo = snapshotRepo(gates);
+  fs.writeFileSync(path.join(repo, 'README.md'), '# edited\n');
+  const r = run(repo, ['--snapshot']);
+  assert.strictEqual(r.status, 99, r.stdout + r.stderr);
+  assert.ok(r.stderr.includes('commit or stash these first') && r.stderr.includes(' M README.md'), r.stderr);
+  assert.ok(r.stdout === '' && !fs.existsSync(marker), 'nothing ran');
+  git(repo, 'checkout', '--', 'README.md');
+  fs.writeFileSync(path.join(repo, 'new.txt'), 'x\n');
+  git(repo, 'add', 'new.txt');
+  const staged = run(repo, ['--snapshot']);
+  assert.strictEqual(staged.status, 99, staged.stdout + staged.stderr);
+  assert.ok(staged.stderr.includes('A  new.txt'), staged.stderr);
+  const from = '[ -z "$dirty" ] ||';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const mrepo = snapshotRepo(gates, SOURCE.replace(from, 'true ||'));
+  fs.writeFileSync(path.join(mrepo, 'README.md'), '# edited\n');
+  assert.strictEqual(run(mrepo, ['--snapshot']).status, 0, 'the mutant verifies a commit that lacks the edit');
+  assert.ok(fs.existsSync(marker), 'the mutant ran the gate');
+});
+
+test('--snapshot: --since, no commit, a missing SNAPSHOT_COPY name or a path outside the repo exits 99', () => {
+  const repo = snapshotRepo(["gate t always 'true'"]);
+  const since = run(repo, ['--snapshot', '--since', 'HEAD']);
+  assert.strictEqual(since.status, 99);
+  assert.ok(since.stderr.includes('does not take --since'), since.stderr);
+  const outside = run(repo, ['--snapshot'], { env: { RUN_GATES_SNAPSHOT_COPY: 'node_modules ../elsewhere' } });
+  assert.strictEqual(outside.status, 99);
+  assert.ok(outside.stderr.includes('../elsewhere is outside the repository'), outside.stderr);
+  const bare = makeRepo(withGates(SOURCE, ["gate t always 'true'"]));
+  const missing = run(bare, ['--snapshot']);
+  assert.strictEqual(missing.status, 99);
+  assert.ok(missing.stderr.includes('SNAPSHOT_COPY names node_modules'), missing.stderr);
+  const glob = run(bare, ['--snapshot'], { env: { RUN_GATES_SNAPSHOT_COPY: '.env* packages/*/node_modules' } });
+  assert.strictEqual(glob.status, 0, 'a glob that matches nothing is no error: ' + glob.stdout + glob.stderr);
+  const empty = tmp('run-gates-nocommit-');
+  git(empty, 'init', '-q', '-b', 'main');
+  fs.mkdirSync(path.join(empty, 'scripts'));
+  fs.writeFileSync(path.join(empty, 'scripts', 'run-gates.sh'), withGates(SOURCE, ["gate t always 'true'"]));
+  const none = run(empty, ['--snapshot']);
+  assert.strictEqual(none.status, 99);
+  assert.ok(none.stderr.includes('needs a commit'), none.stderr);
+});
+
+test('--snapshot: no git hook runs in the snapshot', () => {
+  const repo = snapshotRepo(["gate t always 'true'"]);
+  const hooks = tmp('run-gates-snaphook-');
+  const marker = path.join(hooks, 'hook-ran');
+  fs.writeFileSync(path.join(hooks, 'post-checkout'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+  git(repo, 'config', 'core.hooksPath', hooks);
+  assert.strictEqual(run(repo, ['--snapshot'], { env: { RUN_GATES_SNAPSHOT_COPY: '' } }).status, 0);
+  assert.ok(!fs.existsSync(marker), 'post-checkout did not run');
+  const mutant = SOURCE.replace('git -c core.hooksPath=/dev/null worktree add', 'git worktree add');
+  assert.notStrictEqual(mutant, SOURCE, 'mutation applied');
+  fs.writeFileSync(path.join(repo, 'scripts', 'run-gates.sh'), withGates(mutant, ["gate t always 'true'"]));
+  git(repo, 'commit', '-q', '-am', 'mutant');
+  const m = run(repo, ['--snapshot'], { env: { RUN_GATES_SNAPSHOT_COPY: '' } });
+  assert.strictEqual(m.status, 0, m.stdout + m.stderr);
+  assert.ok(fs.existsSync(marker), 'the mutant runs the hook');
+});
+
+test('--snapshot: the worktree and its temp dir are gone after a FAIL and after an INT', () => {
+  const dir = tmp('run-gates-snapclean-');
+  const where = path.join(dir, 'where');
+  const repo = snapshotRepo([`gate where always 'pwd -P > ${where}'`, "gate bad always 'exit 1'"]);
+  const worktrees = () => (git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length;
+  const r = run(repo, ['--snapshot']);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  const tree = fs.readFileSync(where, 'utf8').trim();
+  assert.ok(!fs.existsSync(path.dirname(tree)), 'temp dir removed: ' + tree);
+  assert.strictEqual(worktrees(), 1, 'only the main worktree is registered');
+
+  const started = path.join(dir, 'started');
+  const slow = snapshotRepo([`gate slow always 'pwd -P > ${started}; sleep 30'`]);
+  const { cmd, env } = runnerEnv(slow, ['--snapshot']);
+  const child = spawn(cmd[0], cmd[1], { cwd: slow, env, stdio: 'ignore', detached: true });
+  try {
+    waitForFile(started);
+    sleepMs(100);
+    const snap = path.dirname(fs.readFileSync(started, 'utf8').trim());
+    assert.ok(fs.existsSync(snap), 'the snapshot exists while the gate runs');
+    process.kill(-child.pid, 'SIGINT');
+    const end = Date.now() + 15000;
+    while (fs.existsSync(snap)) {
+      assert.ok(Date.now() < end, 'timed out waiting for the snapshot to be removed');
+      sleepMs(50);
+    }
+    assert.strictEqual((git(slow, 'worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length, 1);
+  } finally {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
+  const from = "trap 'remove_snapshot; release_lock' EXIT";
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, 'trap release_lock EXIT'));
+  run(kept, ['--snapshot']);
+  const left = path.dirname(fs.readFileSync(where, 'utf8').trim());
+  assert.ok(fs.existsSync(left), 'the mutant leaves the snapshot behind');
+  git(kept, 'worktree', 'remove', '--force', path.join(left, 'tree'));
+  fs.rmSync(left, { recursive: true, force: true });
+});
+
+test('--snapshot: the cache is keyed by the commit, apart from plain FULL runs; a gate that edits a tracked file is not recorded', () => {
+  const env = { RUN_GATES_SNAPSHOT_COPY: '' };
+  const { counter, repo } = counterRepo();
+  const a = run(repo, ['--snapshot'], { cache: true, env });
+  assert.strictEqual(a.status, 0, a.stdout + a.stderr);
+  assert.ok(a.lines[0].startsWith('logs: '), a.lines[0]);
+  fs.writeFileSync(path.join(repo, 'scratch.md'), 'not in the commit\n');
+  const b = run(repo, ['--snapshot'], { cache: true, env });
+  assert.ok(REUSED_RX.test(b.lines[0]), 'an untracked file does not change the input: ' + b.stdout);
+  assert.strictEqual(b.lines[0].split(' ')[1], git(repo, 'rev-parse', 'HEAD^{tree}').trim(), "keyed by the commit's tree");
+  fs.rmSync(path.join(repo, 'scratch.md')); // the working tree is the commit again: the same tree, another mode
+  const full = run(repo, [], { cache: true, env });
+  assert.ok(full.lines[0].startsWith('logs: '), 'a plain FULL run is not answered by a snapshot record: ' + full.lines[0]);
+  assert.strictEqual(count(counter), 2);
+
+  const edit = counterRepo('echo formatted >> README.md; ');
+  const e1 = run(edit.repo, ['--snapshot'], { cache: true, env });
+  assert.strictEqual(e1.status, 0, e1.stdout + e1.stderr);
+  assert.ok(e1.stderr.includes('NOT CACHED tree changed during the run'), e1.stderr);
+  assert.ok(run(edit.repo, ['--snapshot'], { cache: true, env }).lines[0].startsWith('logs: '), 'not reused');
+  assert.strictEqual(git(edit.repo, 'status', '--porcelain', '--untracked-files=no'), '', 'the working tree is untouched');
+  const from = 'if [ -n "$SNAP_DIR" ] && [ -n "$(git -C "$SNAP_DIR/tree" status --porcelain --untracked-files=no 2>&1)" ]; then return 1; fi';
+  assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+  const dir = tmp('run-gates-snapcache-');
+  const mcounter = path.join(dir, 'count');
+  const mrepo = makeRepo(withGates(SOURCE.replace(from, ':'), [`gate t always 'echo formatted >> README.md; echo x >> ${mcounter}'`]));
+  run(mrepo, ['--snapshot'], { cache: true, env });
+  assert.ok(REUSED_RX.test(run(mrepo, ['--snapshot'], { cache: true, env }).lines[0]), 'the mutant records a run whose input changed');
+});
+
 // ── unbound and interpreter ──────────────────────────────────────────────────
 
 console.log('\nrun-gates.sh: unbound template and interpreter');
@@ -1152,7 +1407,7 @@ test('mutant that stops after the first FAIL no longer runs later gates', () => 
 });
 
 test('mutant that ignores the count regex lets a zero-test runner PASS', () => {
-  const from = '! grep -Eq -- "$rx" "$logfile"';
+  const from = '! strip_csi <"$logfile" | grep -Eq -- "$rx"';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
   const mutant = SOURCE.replace(from, 'false');
   assert.notStrictEqual(mutant, SOURCE, 'mutation applied');

@@ -253,10 +253,29 @@ ships with every example gate commented out, and a run with none bound exits 99 
 never a green summary of nothing.
 
 `[M]` **A test gate counts its cases.** `gate_counted <name> <always|full> '<regex>'
-'<command>'` passes only when the command exits 0 **and** its output matches a
-regex that requires a non-zero count — `'pass [1-9]'` for `node --test`,
-`'Tests: +[1-9][0-9]* passed'` for Jest. `node --test` exits 0 having matched no
-files, and so does a run whose every test was skipped.
+'<command>'` passes only when the command exits 0 **and** its output, colour codes
+stripped, matches the regex. The command is `scripts/run-counted.mjs`
+(`templates/scripts/run-counted.mjs`): it runs the test command, reads the runner's
+own summary (vitest, `node --test` with the TAP reporter, pytest, bun or Playwright)
+and prints `COUNTED <kind> <n> passed (min <m>)` only when nothing failed, was
+skipped, was left out by a filter or went unrun, and the passes reach the floor:
+
+```bash
+gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 412 -- pnpm -s --filter web test'
+```
+
+`--min` is today's count. A run above it prints the raise (`run-counted: 412 → 418:
+raise --min in scripts/run-gates.sh`); the unit that added the tests raises it. No
+summary is a FAIL, so a `--filter` that matched no package, `--if-present` with no
+script anywhere and `--passWithNoTests` fail where they passed. Bind one counted gate
+per package: a second summary in one output fails too.
+> Origin: three projects found gates green on what never ran, and each wrote its own
+> fix. One: a grep for `Tests +[1-9][0-9]* passed` "matched one pass among a
+> hundred skips, and so did a suite that lost half its tests"; `pnpm -r --if-present
+> run build` stayed green after the last `build` script was deleted, and a `--filter`
+> that matched nothing exited 0. Another checked summaries against ratcheted floors
+> (86ede40); a third grepped its bun output for skips. run-counted is the first one's wrapper
+> with the other runners' summaries, each read from real output.
 
 - `bash scripts/run-gates.sh` — the FULL run.
 - `bash scripts/run-gates.sh --since <ref>` — the SCOPED run: it computes the
@@ -264,10 +283,25 @@ files, and so does a run whose every test was skipped.
   since" filters ignore uncommitted edits), skips `full` gates, and promotes itself
   to FULL when a change falls outside `SCOPED_PATHS`. Gates read the list from
   `$RUN_GATES_CHANGED_FILE`.
+- `bash scripts/run-gates.sh --snapshot` — the FULL run on the commit. The gates run
+  in a throwaway worktree of HEAD that holds a copy of each `SNAPSHOT_COPY` entry the
+  commit lacks (`node_modules`, the untracked `.env*`), copy-on-write where the disk
+  can, so no scratch file, note or untracked doc reaches a gate. A copy, never a
+  link: a workspace package's relative link must reach the snapshot's files. Tracked
+  or staged changes are refused (exit 99); the untracked files left out are counted
+  (`not in this run: <n> untracked file(s)`). The cache keys it by the commit's tree,
+  and a hit skips the copy, which is the cost: on one Mac (APFS, 2026-10-26) one project's
+  root `node_modules` (36,129 files and links) cloned in 6 s, another's (134,862) in 26 s.
+  > Origin: one project's R40, "A FULL verify's input is the commit, not the working tree":
+  > `format` went red on untracked `.remember/` files and the owner's untracked
+  > guideline doc, `lint` on a reviewer's scratch under `.review-work/` (2026-10-19).
+  > Its fix copies `node_modules` too: "Turbopack refuses a node_modules symlinked out
+  > of the root".
 - `bash scripts/run-gates.sh --list` — the gates and their modes.
 
 `[M]` Quote this run's lines, not a previous run's. **Attribute each red against the
 merge base, working tree included** (`git diff --quiet $(git merge-base <main> HEAD) -- <files>`)
 before calling it pre-existing — the mainline can be red.
 
-`[B]` The gate list — whatever the project's CI runs — and `SCOPED_PATHS`.
+`[B]` The gate list — whatever the project's CI runs — `SCOPED_PATHS`, and
+`SNAPSHOT_COPY` (a monorepo names each package's `node_modules`).

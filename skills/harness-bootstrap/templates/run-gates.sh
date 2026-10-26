@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
 # harness-bootstrap run-gates (generated YYYY-MM-DD)
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
-#     format, exit status = number of failed gates, the --since scoped mode, the result
-#     cache keyed by tree, the single-flight lock and the instant-failure note.
-# [B] binding, re-derived per project: the gate list between the harness:gates markers
-#     and the SCOPED_PATHS line.
+#     format, exit status = number of failed gates, the --since scoped mode, the --snapshot
+#     commit mode, the result cache keyed by tree, the single-flight lock and the
+#     instant-failure note.
+# [B] binding, re-derived per project: the gate list between the harness:gates markers,
+#     the SCOPED_PATHS line and the SNAPSHOT_COPY line.
 #
-# Usage: bash scripts/run-gates.sh [--since <ref>] [--no-cache] | --list
+# Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
-#   (no args)        FULL run: every gate.
+#   (no args)        FULL run: every gate, on the working tree.
 #   --since <ref>    SCOPED run: skips `full` gates. The changed files are worked out
 #                    here (git diff against <ref> plus untracked files) because a
 #                    package manager's "changed since" filter ignores uncommitted
 #                    edits. A change outside SCOPED_PATHS promotes the run to FULL.
+#   --snapshot       FULL run on the commit: the gates run in a throwaway detached worktree
+#                    of HEAD (a temp dir; no git hook runs) holding a copy of each
+#                    SNAPSHOT_COPY entry the commit lacks (node_modules, untracked .env*),
+#                    copy-on-write where the disk can. No other untracked or ignored file
+#                    reaches a gate. Tracked or staged changes are refused (exit 99, listed);
+#                    untracked files are counted ("not in this run: <n> untracked file(s)").
+#                    The worktree and its temp dir are removed on EXIT, INT and TERM.
+#                    Not with --since.
 #   --no-cache       run the gates even when a cached all-PASS result exists for this tree
 #                    (RUN_GATES_NO_CACHE=1 does the same). A passing run still refreshes the cache.
 #   --list           print "<name> <mode>" per gate and exit 0.
 # Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
 #   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
-#   combined output to match the extended regex, so a runner that ran zero tests
-#   (or skipped them all) and exited 0 is a FAIL, not a PASS.
+#   combined output, colour codes stripped, to match the extended regex, so a runner that
+#   ran zero tests (or skipped them all) and exited 0 is a FAIL, not a PASS. Run a test
+#   runner through scripts/run-counted.mjs: it reads the runner's own summary and prints
+#   `COUNTED <kind> <n> passed (min <m>)` only when nothing failed, was skipped or went
+#   unrun, so the regex is '^COUNTED <kind> [1-9][0-9]* passed'.
 # Output: one line per gate, in registration order, then a SUMMARY line:
 #   PASS <name> <secs>s <logpath> | FAIL <name> <secs>s <logpath> (exit <n>)
 #   | FAIL <name> <secs>s <logpath> (no count line matched) | SKIP <name> (full only)
@@ -28,6 +40,8 @@
 #   " (instant: if the log shows no real failure, check the command/env before re-running)":
 #   a gate that dies at once is often the command or the environment, not the code (a
 #   genuine fast failure gets the note too, so read the log first).
+#   A --snapshot run prints "input: commit <short sha>" (and the untracked count) after the
+#   "logs:" line.
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
 #   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
 #   the real index is never touched. A run with every gate PASS is recorded under that tree,
@@ -39,6 +53,8 @@
 #   prints "NOT CACHED tree changed during the run" on stderr (a gate that writes files into
 #   the tree, or an edit made meanwhile: the result may describe neither tree). A FAIL is
 #   never recorded. Not a reusable state (no commit yet, no git index to hash): runs normally.
+#   A --snapshot run is keyed by the commit's tree, under a mode of its own (snapshot), and
+#   is recorded only if no gate changed a tracked file in the snapshot.
 #   [B] Docs-only reuse is OFF unless the DOCS_ONLY pattern (an extended regex; env
 #   RUN_GATES_DOCS_ONLY overrides, empty = off) is set: a tree that differs from a recorded
 #   one only in matching paths then reuses the newest such record with the first line
@@ -61,9 +77,12 @@
 #   cache before it runs (the other run's result is usually a hit). A lock whose pid is dead
 #   is taken over (only while it still names that pid); a lock is removed only by its owner;
 #   after the wait limit the run goes ahead without the lock.
-# Exit status = number of FAIL lines (capped at 98); 99 = usage error (including no gates bound).
-# Env: RUN_GATES_LOG_DIR overrides the log dir. Each gate sees RUN_GATES_MODE=full|scoped,
+# Exit status = number of FAIL lines (capped at 98); 99 = usage error (including no gates
+#   bound, a refused --snapshot and a snapshot that could not be built).
+# Env: RUN_GATES_LOG_DIR overrides the log dir. Each gate runs in the repo top (in the
+#      snapshot under --snapshot) and sees RUN_GATES_MODE=full|scoped,
 #      RUN_GATES_SINCE=<ref or empty>, RUN_GATES_CHANGED_FILE=<changed-file list, scoped only>.
+#      RUN_GATES_SNAPSHOT_COPY overrides SNAPSHOT_COPY.
 #      RUN_GATES_CACHE_DIR overrides the cache dir (default: run-gates-cache inside the git
 #      common dir, which worktrees of one repository share). RUN_GATES_NO_CACHE,
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
@@ -78,7 +97,7 @@ set -u
 
 usage() {
   echo "run-gates: $1" >&2
-  echo "usage: run-gates.sh [--since <ref>] [--no-cache] | --list" >&2
+  echo "usage: run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list" >&2
   exit 99
 }
 
@@ -99,8 +118,8 @@ gate() {
   GATE_RXS+=("")
 }
 # gate_counted <name> <always|full> '<regex>' '<command>' registers a gate that passes only when
-# the command exits 0 AND its combined output matches the extended regex (write the regex to
-# require a non-zero count, e.g. 'pass [1-9]').
+# the command exits 0 AND its combined output, colour stripped, matches the extended regex
+# (with scripts/run-counted.mjs as the command: '^COUNTED vitest [1-9][0-9]* passed').
 gate_counted() {
   [ "$#" -eq 4 ] && [ -n "$3" ] && [ -n "$4" ] || usage "gate '${1:-}': expected exactly: gate_counted <name> <always|full> '<regex>' '<command>' (quote both, and do not leave either empty)"
   case "${2:-}" in
@@ -123,7 +142,10 @@ gate_counted() {
 # gate lint always 'npm run -s lint'
 # gate test always 'npm test'
 # gate build full 'npm run -s build'
-# gate_counted test always 'pass [1-9]' 'node --test'   # fails when zero tests ran
+# A test gate counts what ran: run-counted fails on a skip, a filter that matched nothing or a
+# pass count under the floor (--min: today's count; it prints the raise when the count grows).
+# gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run'
+# gate_counted harness full '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
 # <<< harness:gates
 
 # [B] extended regex for the paths a scoped run may cover; a change outside it runs FULL.
@@ -132,10 +154,16 @@ SCOPED_PATHS='^(src|apps|packages|lib|docs|tests?)/|\.md$'
 DOCS_ONLY=''
 # [B] extra cache-key input: a shell command whose stdout joins the key; empty = nothing.
 KEY_EXTRA=''
+# [B] --snapshot: what the gates need that the commit lacks, copied from the working tree
+# (globs, relative to the repo top; an entry the commit has comes from the commit). A
+# monorepo adds each package's own: 'node_modules apps/*/node_modules packages/*/node_modules .env*'.
+# A name with no glob character that is missing is a usage error.
+SNAPSHOT_COPY='node_modules .env*'
 
 SINCE=""
 LIST=0
 NO_CACHE=0
+SNAPSHOT=0
 [ "${RUN_GATES_NO_CACHE:-}" = 1 ] && NO_CACHE=1
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -148,6 +176,10 @@ while [ $# -gt 0 ]; do
       NO_CACHE=1
       shift
       ;;
+    --snapshot)
+      SNAPSHOT=1
+      shift
+      ;;
     --list)
       LIST=1
       shift
@@ -157,6 +189,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "${#GATE_NAMES[@]}" -gt 0 ] || usage "no gates bound - edit the [B] block between the harness:gates markers"
+[ "$SNAPSHOT" -eq 0 ] || [ -z "$SINCE" ] || usage "--snapshot is a FULL run on the commit; it does not take --since"
 
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || usage "not inside a git repository"
 cd "$TOP" || usage "cannot enter $TOP"
@@ -241,6 +274,35 @@ compute_scope() {
 }
 compute_scope
 
+# --snapshot: the commit is resolved once, here, and every check is made before the cache is
+# read. A tracked or staged change would not be in the run, so it is refused.
+SNAP_COMMIT=""
+SNAP_DIR=""
+SNAP_ENTRIES=()
+UNTRACKED_N=0
+if [ "$SNAPSHOT" -eq 1 ]; then
+  SNAP_COMMIT=$(git rev-parse --verify --quiet 'HEAD^{commit}') || usage "--snapshot needs a commit to verify"
+  dirty=$(git -c core.quotePath=false status --porcelain --untracked-files=no) ||
+    usage "git status failed; cannot check for uncommitted changes"
+  [ -z "$dirty" ] || usage "--snapshot verifies the commit; commit or stash these first:"$'\n'"$dirty"
+  untracked=$(git -c core.quotePath=false ls-files --others --exclude-standard) ||
+    usage "git ls-files failed; cannot count the untracked files"
+  UNTRACKED_N=$(printf '%s\n' "$untracked" | filter_changed | awk 'END { print NR }')
+  read -r -a snap_words <<<"${RUN_GATES_SNAPSHOT_COPY-$SNAPSHOT_COPY}"
+  shopt -s nullglob
+  for w in ${snap_words[@]+"${snap_words[@]}"}; do
+    case "$w" in
+      /* | .. | ../* | */.. | */../*) usage "SNAPSHOT_COPY: $w is outside the repository" ;;
+      *[*?[]*) for e in $w; do SNAP_ENTRIES+=("$e"); done ;;
+      *)
+        [ -e "$w" ] || [ -L "$w" ] || usage "SNAPSHOT_COPY names $w, which $TOP does not have (install first, or bind SNAPSHOT_COPY)"
+        SNAP_ENTRIES+=("$w")
+        ;;
+    esac
+  done
+  shopt -u nullglob
+fi
+
 # -- result cache and single-flight lock ----------------------------------------
 
 RESULT=""
@@ -263,7 +325,18 @@ release_lock() {
   fi
   return 0
 }
-trap release_lock EXIT
+# Removes this run's snapshot: only the temp dir it made. --force because the copied entries
+# are untracked there; nothing in a snapshot is anyone's work.
+remove_snapshot() {
+  [ -n "$SNAP_DIR" ] || return 0
+  if [ -e "$SNAP_DIR/tree" ] && ! git -C "$TOP" worktree remove --force "$SNAP_DIR/tree" >/dev/null 2>&1; then
+    echo "run-gates: could not unregister the snapshot worktree; git worktree prune clears it once $SNAP_DIR is gone" >&2
+  fi
+  rm -rf "${SNAP_DIR:?}" 2>/dev/null
+  SNAP_DIR=""
+  return 0
+}
+trap 'remove_snapshot; release_lock' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -274,6 +347,8 @@ compute_variant() {
   MODE_ID=full
   if [ "$MODE" = scoped ]; then
     MODE_ID="scoped:$(git rev-parse --verify --quiet "$SINCE^{commit}")"
+  elif [ "$SNAPSHOT" -eq 1 ]; then
+    MODE_ID=snapshot
   fi
   if [ -n "$KEY_EXTRA_CMD" ]; then extra=$(bash -c "$KEY_EXTRA_CMD" 2>/dev/null </dev/null); fi
   VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")")
@@ -321,6 +396,14 @@ fi
 compute_key() {
   local d src
   KEY=""
+  if [ "$SNAPSHOT" -eq 1 ]; then
+    # The input is the commit. Once the snapshot exists, a tracked file a gate changed there
+    # changed what the gates after it read: no key, so the result is not recorded.
+    if [ -n "$SNAP_DIR" ] && [ -n "$(git -C "$SNAP_DIR/tree" status --porcelain --untracked-files=no 2>&1)" ]; then return 1; fi
+    KEY=$(git rev-parse --verify --quiet "$SNAP_COMMIT^{tree}")
+    [ -n "$KEY" ]
+    return
+  fi
   d=$(mktemp -d "${TMPDIR:-/tmp}/run-gates-key.XXXXXX" 2>/dev/null) || return 1
   src=$(git rev-parse --git-path index 2>/dev/null)
   if [ -n "$src" ] && [ -f "$src" ] && cp -p "$src" "$d/index" 2>/dev/null; then
@@ -447,8 +530,45 @@ if [ "$CACHE_ON" -eq 1 ]; then
   fi
 fi
 
+# Builds the --snapshot input: a detached worktree of the commit in a fresh temp dir (no git
+# hook runs), then a copy of each SNAPSHOT_COPY entry the commit lacks. A copy, copy-on-write
+# where the disk can, never a symlink: a relative link inside node_modules (a workspace
+# package) must reach the snapshot's files, not the working tree's. 0 = built.
+make_snapshot() {
+  local e dst
+  SNAP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/run-gates-snapshot.XXXXXX") || {
+    SNAP_DIR=""
+    return 1
+  }
+  git -c core.hooksPath=/dev/null worktree add --quiet --detach "$SNAP_DIR/tree" "$SNAP_COMMIT" >/dev/null || return 1
+  for e in ${SNAP_ENTRIES[@]+"${SNAP_ENTRIES[@]}"}; do
+    dst="$SNAP_DIR/tree/$e"
+    # A path the commit has (a tracked .env.example) comes from the commit.
+    if [ -e "$dst" ] || [ -L "$dst" ]; then continue; fi
+    mkdir -p "$(dirname "$dst")" || return 1
+    # -H: an entry that is a symlink itself (a .env shared between worktrees) is copied as its
+    # target; the links inside a copied directory stay links.
+    case "$(uname -s)" in
+      Darwin) cp -cRpH -- "$e" "$dst" 2>/dev/null || { rm -rf "$dst" && cp -RpH -- "$e" "$dst"; } || return 1 ;;
+      *) cp -RpH --reflink=auto -- "$e" "$dst" || return 1 ;;
+    esac
+  done
+}
+
 mkdir -p "$LOG" || usage "cannot create log dir: $LOG"
 echo "logs: $LOG"
+
+GATE_DIR=$TOP
+if [ "$SNAPSHOT" -eq 1 ]; then
+  SNAP_SHORT=$(git rev-parse --short "$SNAP_COMMIT")
+  make_snapshot || {
+    echo "run-gates: cannot build the snapshot of $SNAP_SHORT" >&2
+    exit 99
+  }
+  GATE_DIR="$SNAP_DIR/tree"
+  echo "input: commit $SNAP_SHORT"
+  [ "$UNTRACKED_N" -eq 0 ] || echo "not in this run: $UNTRACKED_N untracked file(s)"
+fi
 
 CHANGED_FILE=""
 if [ "$SCOPED_REQ" -eq 1 ]; then
@@ -456,6 +576,9 @@ if [ "$SCOPED_REQ" -eq 1 ]; then
   if [ -n "$CHANGED" ]; then printf '%s\n' "$CHANGED" >"$LOG/changed-files.txt"; else : >"$LOG/changed-files.txt"; fi
   [ -z "$NOTE" ] || echo "$NOTE"
 fi
+
+# CSI escape sequences (colour) out of a log, so a count regex reads the plain text.
+strip_csi() { LC_ALL=C sed $'s#\033\\[[0-?]*[ -/]*[@-~]##g'; }
 
 passed=0
 failed=0
@@ -474,14 +597,14 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   fi
   logfile="$LOG/$name.log"
   start=$SECONDS
-  RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
-    bash -c "$cmd" >"$logfile" 2>&1 </dev/null
+  (cd "$GATE_DIR" && RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
+    exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null
   rc=$?
   secs=$((SECONDS - start))
   why=""
   if [ "$rc" -ne 0 ]; then
     why="exit $rc"
-  elif [ -n "$rx" ] && ! grep -Eq -- "$rx" "$logfile"; then
+  elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
     why="no count line matched"
   fi
   if [ -z "$why" ]; then

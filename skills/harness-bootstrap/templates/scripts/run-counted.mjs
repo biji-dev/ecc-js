@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+// harness-bootstrap run-counted (generated YYYY-MM-DD). The command a counted test gate in
+// scripts/run-gates.sh runs through. [M] mechanism (ships as-is): everything; the kinds and their
+// rules live in scripts/lib/run-counted-core.mjs. The floors are the gates' own: --min in each line.
+/**
+ * Runs one test command and passes it only when the runner's own summary shows nothing failed,
+ * skipped or left out, and at least `--min` passes.
+ *
+ *   node scripts/run-counted.mjs --kind <vitest|node|pytest|bun|playwright> --min <n> -- <cmd> [args…]
+ *
+ * bound in run-gates.sh as, for example:
+ *
+ *   gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 412 -- pnpm -s --filter web test'
+ *
+ * 1. `<cmd> args…` runs without a shell; its stdout and stderr stream through unchanged. The run
+ *    stops first (exit 1) when this process's `NODE_OPTIONS` names a `--test…` flag.
+ * 2. The stream its runner writes the summary to (stdout; bun's stderr) holds exactly one summary of
+ *    `--kind`, which is read (the rules are in run-counted-core.mjs). A summary on the other stream
+ *    alone is not read: the run fails closed.
+ * 3. A newline, then the verdict lines, so `COUNTED` always starts a line of the gate's log.
+ *
+ * exit: 0 when the command exited 0 and its one summary has no failed, errors, skipped, todo,
+ * flaky, interrupted, not-run, cancelled, filtered-out, deselected, xfailed or xpassed count, no
+ * marker, no unknown counter, its totals add up, and passed >= --min; the last line is then exactly
+ * `COUNTED <kind> <passed> passed (min <n>)`. 1 otherwise, one `run-counted: FAIL` line per reason.
+ * 2 usage (`--min` missing, 0 or not an integer, an unknown kind, no command, a node command with
+ * `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or `--test-shard`).
+ */
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { EXIT, SUMMARY_STREAM, nodeOptionsProblem, parseArgs, parseSummary, verdict } from './lib/run-counted-core.mjs';
+
+function usage(msg) {
+  process.stderr.write(
+    `run-counted: ${msg}\nusage: node scripts/run-counted.mjs --kind <vitest|node|pytest|bun|playwright> --min <n> -- <cmd> [args...]\n`,
+  );
+  return EXIT.usage;
+}
+
+/** Spawn without a shell, stream both outputs through, keep both for the parser. */
+function run(cmd, args) {
+  return new Promise((resolve) => {
+    const out = [];
+    const err = [];
+    let settled = false;
+    const child = spawn(cmd, args, { stdio: ['inherit', 'pipe', 'pipe'] });
+    child.stdout.on('data', (b) => {
+      out.push(b);
+      process.stdout.write(b);
+    });
+    child.stderr.on('data', (b) => {
+      err.push(b);
+      process.stderr.write(b);
+    });
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      resolve({ exitCode: null, signal: null, spawnError: e.message, stdout: '', stderr: '' });
+    });
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      resolve({ exitCode: code, signal, spawnError: null, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
+    });
+  });
+}
+
+async function main() {
+  let a;
+  try {
+    a = parseArgs(process.argv.slice(2));
+  } catch (e) {
+    return usage(e.message);
+  }
+  const envProblem = nodeOptionsProblem(process.env);
+  if (envProblem) {
+    console.log(`run-counted: FAIL ${envProblem}`);
+    return EXIT.failed;
+  }
+  const res = await run(a.cmd, a.args);
+  const v = verdict({
+    kind: a.kind,
+    min: a.min,
+    exitCode: res.exitCode,
+    signal: res.signal,
+    spawnError: res.spawnError,
+    summary: res.spawnError ? null : parseSummary(a.kind, res[SUMMARY_STREAM[a.kind]]),
+  });
+  // The verdict starts a line of its own: the child's output (both land in the gate's one log)
+  // may have ended without a newline.
+  process.stdout.write('\n');
+  for (const l of v.lines) console.log(l);
+  return v.ok ? EXIT.ok : EXIT.failed;
+}
+
+// Run only as the entry script; compare real paths (macOS /tmp is a symlink). The exit code is
+// set, never forced: process.exit() can cut a pipe's pending output short.
+function isEntry() {
+  try {
+    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry())
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (e) => {
+      process.stderr.write(`run-counted: ${e.stack ?? e}\n`);
+      process.exitCode = EXIT.failed;
+    },
+  );

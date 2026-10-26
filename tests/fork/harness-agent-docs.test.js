@@ -1,6 +1,6 @@
 /**
  * Tests for skills/harness-bootstrap/templates/scripts/check-agent-docs.mjs (biji-dev/ecc-js):
- * runs the template's own node:test suite, then proves the rule-index and base checks are load-bearing with mutants.
+ * runs the template's own node:test suite, then proves the rule-index, base and citations checks are load-bearing with mutants.
  */
 
 const assert = require('assert');
@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 61;
+const EXPECTED_PASS = 66;
 
 let passed = 0;
 let failed = 0;
@@ -111,9 +111,9 @@ test('the template test suite passes against a copy whose [B] CONFIG an install 
   // A new repository binds more than the budgets: its own state-file path and path prefixes.
   const original = fs.readFileSync(SCRIPT, 'utf8');
   const bindings = [
-    [/^  budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192, base: 30720 },"],
-    [/^  statePattern: .*$/m, "  statePattern: 'harness/units/**/*.state.md',"],
-    [/^  pathPrefixes: .*$/m, "  pathPrefixes: ['frontend/', 'tests/', 'harness/', '.claude/', '.agents/'],"],
+    [/^ {2}budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192, base: 30720 },"],
+    [/^ {2}statePattern: .*$/m, "  statePattern: 'harness/units/**/*.state.md',"],
+    [/^ {2}pathPrefixes: .*$/m, "  pathPrefixes: ['frontend/', 'tests/', 'harness/', '.claude/', '.agents/'],"],
   ];
   let bound = original;
   for (const [from, to] of bindings) {
@@ -194,6 +194,35 @@ test('mutant that reads @ inside code spans lists a file the shipped --base does
   assert.doesNotMatch(runScript(SCRIPT, dir, ['--base']).out, /docs\/code\.md/);
   const mutant = mutantOf("line.replace(/`[^`]*`/g, ' ').matchAll", 'line.replace(/`/g, " ").matchAll');
   assert.match(runScript(mutant, dir, ['--base']).out, /docs\/code\.md \(imported by CLAUDE\.md\)/);
+});
+
+/** A repo whose AGENTS.md renamed "Owner stops" while a rule and a code comment still cite it; "Context" still holds. */
+function renamedSectionFixture() {
+  const dir = tmp('agent-docs-cite-');
+  git(dir, 'init', '-q', '-b', 'main');
+  const files = {
+    'AGENTS.md': '# Agents\n\n- `x.md` — the x rule.\n\n## Owner gates\n\n## Context budget and reporting\n',
+    'CLAUDE.md': '@AGENTS.md\n',
+    'src/x.js': '// Stop (`AGENTS.md` › Owner stops).\nmodule.exports = {};\n',
+    '.claude/rules/x.md': '---\npaths:\n  - "src/x.js"\n---\nPer `AGENTS.md` › Owner stops, and `AGENTS.md` › Context.\n',
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  git(dir, 'add', '-A');
+  return dir;
+}
+
+test('mutant without the citations check passes a repo citing a renamed section the shipped file catches', () => {
+  const dir = renamedSectionFixture();
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^FAIL citations: \.claude\/rules\/x\.md:5 cites `AGENTS\.md` › Owner stops,/m);
+  assert.match(shipped.err, /^FAIL citations: src\/x\.js:1 cites `AGENTS\.md` › Owner stops,/m);
+  assert.strictEqual(shipped.err.match(/^FAIL /gm).length, 2, shipped.err);
+  const result = runScript(mutantOf("if (isFile('AGENTS.md')) checkCitations(", 'if (false) checkCitations('), dir);
+  assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
 });
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

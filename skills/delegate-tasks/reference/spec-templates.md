@@ -54,6 +54,10 @@ touches it, with its source (plan row or decision id):
 ## Repo rules
 - Quote the two or three project rules this slice could break.
 
+## Traps
+- `.agents/skills/drizzle-kit-traps/SKILL.md` — each trap skill whose library or tool
+  this task touches, by path; read it before the first edit. Or `none`.
+
 ## Tool discipline
 Send independent reads and searches as parallel tool calls in one message. Read a
 file whole, or in ranges of 150 lines or more — never in small `sed -n` slices. Put
@@ -97,6 +101,9 @@ only — no throw.
 
 ## Patterns to imitate
 - `src/utils/csv.test.ts` — test style
+
+## Traps
+`none` — or, by path, each trap skill whose library or tool the fix touches.
 
 ## Acceptance
 - Write the regression test; run it on the CURRENT code and see it FAIL first.

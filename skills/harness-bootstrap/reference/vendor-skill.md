@@ -23,6 +23,21 @@ creating a second one. The origin's skills grew task by task.
 `[M]` `.agents/skills/<vendor>-traps/SKILL.md`, with the Claude Code symlink
 (`harness-targets.md`). Project-local — it names this project's versions.
 
+`[M]` **Passed by path, never left to be found.** The coordinator names each trap
+skill whose library or tool a slice touches on the brief's `Traps:` line
+(`runner.md` › Step 2). One project does: 14 briefs named one and agents read them 45
+times, while the four user-global vendor skills, which no brief named, were invoked
+0 times and read once (2026-10-05 to 26). `metadata.packages` lists the package
+names the skill covers, so matching a slice's packages to its traps is a lookup.
+
+`[M]` **User-global only where earned:** when the library is in three or more
+harnessed repositories and every one of them passes the skill by path. Libraries in
+three or more of nine installs (2026-10-26): drizzle-kit (7), postgres (6),
+tanstack-query (5), pnpm (5) and bun (3). A skill moves there through Phase F
+(`learning.md`, the *vendor trap* class) with its measured versions, never by
+`/ecc:learn-eval` straight into `~/.claude/skills/`, which checks neither
+condition; the four it wrote are the four no brief named.
+
 ## Shape
 
 ```markdown
@@ -31,6 +46,7 @@ name: <vendor>-traps
 description: "Use when <the command or symptom, in the words someone would search>. Measured cases: <one phrase each>."
 metadata:
   origin: task-run
+  packages: [<package>, <package>] # what a brief's Traps: line is matched against
 ---
 
 # <vendor>: <the headline trap>

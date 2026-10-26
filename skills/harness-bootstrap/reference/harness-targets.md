@@ -72,6 +72,21 @@ from the repository, against a ratcheted target — `--base` lists the files
 `templates/scripts/lib/check-agent-docs.test.mjs`, ships beside it. Its `CONFIG`
 block is `[B]`.
 
+`[M]` **Citations of `AGENTS.md` hold** (the lint's tenth check). An instruction
+file or a code comment (`citeFiles`) that sends a reader to `` `AGENTS.md` › Name ``,
+`` `AGENTS.md` (Name) `` or a quoted name or phrase fails once `AGENTS.md` loses it.
+A name is the words up to the next punctuation, and holds while it is a heading or
+a bold lead, begins one ("› Context" for "Context budget and reporting") or one
+begins it ("› Gates apply"); a quoted name or phrase holds while `AGENTS.md` still
+has those words. One project's audit counted about 35 comments that renamed headings had
+orphaned before it wrote its own lint (2026-09-27), which this check generalises. In
+eight installs (2026-10-26) it read 183 cited names and failed 6. Five sit on three
+lines (each task-runner skill has a `.claude` and an `.agents` copy): `› Policy` in
+one project names no section, a quote in another is not `AGENTS.md`'s words, and
+a third's "› Reviewers maps each name to a dispatch" runs an abbreviation into prose
+(`` (`AGENTS.md` › Reviewers) maps … `` holds). The sixth is the second one's own parser
+test, whose citations are fixtures: such a file goes in `citeExempt`.
+
 `[M]` **Thin per-agent skills, one shared script.** When a procedure is a command
 sequence (verify, a wrapper), write it once as a script and let each agent's skill
 call it; never maintain the same sequence in three skill files.

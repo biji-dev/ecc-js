@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // harness-bootstrap check-agent-docs (generated YYYY-MM-DD). Verify gate for the shared agent instruction files.
-// [M] mechanism (ship as-is): everything below the CONFIG block - the nine checks, the glob matcher,
+// [M] mechanism (ship as-is): everything below the CONFIG block - the ten checks, the glob matcher,
 //     `--rules-for`, `--base` and `--json`.
 // [B] binding (re-derived per project): the CONFIG block only. Generation sets each budget to the
 //     file's current size rounded up, so a budget is a ratchet: a check fails only ABOVE it.
@@ -16,6 +16,8 @@
 //   secrets      no credential-shaped strings in the instruction files
 //   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
 //                AGENTS.md and rule files without `paths:` (skipped when budgets.base is unset)
+//   citations    each AGENTS.md section the instruction files or the code cite still exists: `AGENTS.md` › Name,
+//                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently)
 //
 // `--rules-for <file...>` prints the rule files whose `paths:` globs match the given paths and exits 0.
 // `--base` prints those always-loaded files with their bytes and the target, and exits 0.
@@ -37,6 +39,8 @@ export const CONFIG = {
   pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
   intentionallyAbsent: [], // backticked paths cited as deliberately absent
   requireImport: true, // CLAUDE.md line 1 must be @AGENTS.md
+  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'], // code whose comments may cite AGENTS.md (the instruction files always do)
+  citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'], // their citations are fixtures
 };
 // ---- [M] mechanism: ship as-is ----------------------------------------------------------------
 
@@ -181,6 +185,104 @@ function proseLines(text) {
     return fenced ? '' : line;
   });
 }
+
+// ---- section citations ---------------------------------------------------------------------------
+/** A section name or a quoted phrase as a citation is compared: no backticks or bold, single spaces, lowercase. */
+const nameKey = (text) =>
+  String(text)
+    .replace(/`|\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,:;]+$/, '')
+    .trim()
+    .toLowerCase();
+
+/**
+ * Every name a citation may give a place in AGENTS.md: each heading and each bold lead (at the start of a line,
+ * a list item or a table row) in full, without a trailing parenthetical, the parenthetical alone, and the head
+ * before a dash, colon, comma or parenthesis ("Owner stops, and what is not one" answers to "Owner stops").
+ */
+export function sectionNames(lines) {
+  const names = new Set();
+  const add = (text) => {
+    const key = nameKey(text);
+    if (key) names.add(key);
+  };
+  for (const line of lines) {
+    const text =
+      line.match(/^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/)?.[1] ??
+      line.match(/^\s*(?:[-*+]\s+|\d+\.\s+|\|\s*)?\*\*([^*]+)\*\*/)?.[1];
+    if (!text) continue;
+    add(text);
+    const paren = text.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+    if (paren) {
+      add(paren[1]);
+      add(paren[2]);
+    }
+    const head = text.match(/^(.+?)(?:\s+[—–-]\s+|:\s|,\s|\s\()/);
+    if (head) add(head[1]);
+  }
+  return names;
+}
+
+// A cited name is a run of words that ends at punctuation, a dash, a sentence end or the next `›`.
+const CITE_STOP = /[()",;:|[\]*`]|\s[—–-]\s|\.(?:\s|$)|\s?[›→]/;
+
+/** The names in `A › B, C`: each starts with a capital; `›` or `→` goes a level down, `, C` names a sibling. */
+function citedRuns(text) {
+  const runs = [];
+  let rest = text;
+  for (;;) {
+    const stop = rest.match(CITE_STOP);
+    const run = (stop ? rest.slice(0, stop.index) : rest).trim();
+    if (!/^[A-Z]/.test(run) || run.includes('§')) break; // prose, or a numbered section of another document
+    runs.push(run);
+    rest = rest.slice(rest.indexOf(run) + run.length);
+    const next = rest.match(/^\s*[›→]\s*|^,\s*(?=[A-Z])/);
+    if (!next) break;
+    rest = rest.slice(next[0].length);
+  }
+  return runs;
+}
+
+/**
+ * The AGENTS.md sections one line cites, `following` being the next lines without comment markers (a citation
+ * may wrap): [{names, quoted}]. Three forms follow the name: `› A › B`, `(A)`, and a "quoted" name or phrase
+ * (after an optional `'s <words>`). After a path (`apps/web/AGENTS.md`), `@` (an import) or a quote (a string
+ * literal) it is another file or no citation; followed by anything else it cites nothing this check can hold.
+ */
+export function citationsIn(line, following = []) {
+  const out = [];
+  for (let at = line.indexOf('AGENTS.md'); at !== -1; at = line.indexOf('AGENTS.md', at + 9)) {
+    if (at > 0 && /[\w./@'"-]/.test(line[at - 1])) continue;
+    let rest = line.slice(at + 9);
+    if (rest.startsWith('`')) rest = rest.slice(1); // the end of the code span that holds the name
+    const harness = rest.match(/^\s*›\s*/);
+    if (harness) {
+      const tail = rest.slice(harness[0].length);
+      const names = citedRuns(tail.trim() ? tail : (following[0] ?? ''));
+      if (names.length) out.push({ names, quoted: false });
+      continue;
+    }
+    const quoted = [rest, ...following]
+      .join(' ')
+      .match(/^(?:['’]s(?:\s+[a-z]+)*)?[\s,(]*(?:"([^"]+)"|“([^”]+)”)/);
+    if (quoted) {
+      const names = (quoted[1] ?? quoted[2])
+        .split(/[›→]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (names.length) out.push({ names, quoted: true });
+      continue;
+    }
+    const paren = rest.match(/^\s*\(([^()]*)\)/);
+    const names = paren ? citedRuns(paren[1]) : [];
+    if (names.length) out.push({ names, quoted: false });
+  }
+  return out;
+}
+
+// The comment marker a wrapped citation's next line opens with.
+const COMMENT_MARKER = /^\s*(?:\/\*+|\*+\/?|\/\/+|#+|<!--)?\s?/;
 
 // ---- main ---------------------------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -588,6 +690,47 @@ function main() {
       0,
       `every session loads ${baseTotal} bytes from this repository, budget ${baseTarget} - \`--base\` lists the files`,
     );
+  }
+
+  // 10. citations
+  if (isFile('AGENTS.md')) checkCitations(proseLines(read('AGENTS.md')));
+
+  // A quoted citation holds while AGENTS.md has the name or the words; `› A` while a name is A, begins A
+  // ("› Gates apply") or A begins it ("› Context" for "Context budget and reporting").
+  function checkCitations(agentsMd) {
+    const names = sectionNames(agentsMd);
+    const words = nameKey(agentsMd.join(' '));
+    const holds = (name, quoted) => {
+      const key = nameKey(name);
+      if (names.has(key)) return true;
+      if (quoted) return words.includes(key);
+      return [...names].some((n) => key.startsWith(`${n} `) || n.startsWith(`${key} `));
+    };
+    const exempt = new Set(CONFIG.citeExempt ?? []);
+    const citeRes = (CONFIG.citeFiles ?? []).map(globToRegExp);
+    const citing = [...new Set([...docFiles, ...files.filter((f) => citeRes.some((re) => re.test(f)))])];
+    for (const f of citing.filter((p) => !exempt.has(p))) {
+      const text = read(f);
+      if (!text.includes('AGENTS.md')) continue;
+      const lines = f.endsWith('.md') ? proseLines(text) : text.split('\n');
+      lines.forEach((line, i) => {
+        if (!line.includes('AGENTS.md')) return;
+        const following = lines.slice(i + 1, i + 3).map((l) => l.replace(COMMENT_MARKER, ''));
+        for (const { names: cited, quoted } of citationsIn(line, following)) {
+          for (const name of cited) {
+            verify(
+              holds(name, quoted),
+              'citations',
+              f,
+              i + 1,
+              quoted
+                ? `cites "${name}", which AGENTS.md no longer has as a heading, a bold lead or its words - cite what replaced it`
+                : `cites \`AGENTS.md\` › ${name}, which names no heading or bold lead of AGENTS.md - cite the section by its name, ended by punctuation`,
+            );
+          }
+        }
+      });
+    }
   }
 }
 

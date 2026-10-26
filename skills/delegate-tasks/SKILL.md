@@ -113,8 +113,9 @@ State the decision and the model for each role in one line before going on.
    - **Pin and ratchet tests broken by design** are listed in the spec, with the
      new expected value, or the gate reads them as regressions.
    - **Patterns to imitate**, **repo rules** quoted (in a harness:
-     `node scripts/check-agent-docs.mjs --rules-for <files>`), and **copy decided,
-     not delegated**.
+     `node scripts/check-agent-docs.mjs --rules-for <files>`), **traps** by path —
+     each vendor-trap skill whose library the task touches, or `none`; `--rules-for`
+     never lists one — and **copy decided, not delegated**.
    - **Fix and control specs:** the test is shown **red on the current code first**.
    - **Check specs** never authorise edits, and their findings are typed.
 4. **Order.** Specs that create a contract or shared copy run first; dependents wait.

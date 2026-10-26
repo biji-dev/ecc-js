@@ -201,7 +201,15 @@ as its own commit. Never reclaim a row you do not own.
   for the whole run, its `Step` updated at every boundary. The commit guard reads
   it (`commit-guard.md`); in `SCOPE=checkout` the row names its worktree.
 - `[M]` **The registry is also a resource lock** where units share machines —
-  ports, isolated stacks, migration slots in the same row.
+  ports, isolated stacks, migration slots in the same row. Where units run live
+  stacks side by side, `templates/unit-stack.sh` (installed to `scripts/`) is that
+  lock: one slot per unit, claimed as `slot N` in the row's Resources cell, and
+  every port, database and container project of the slot derives from N. Its `up`
+  refuses the main checkout, a slot another row holds, a slot whose stack serves
+  another checkout (a stale state file would otherwise remove that unit's data), a
+  port another process holds and a disk below its floor; `down` checks the ports
+  are free after. Three projects each built this lock their own way.
+  `[B]` the slot range, the floor and what a slot owns (its block).
 - `[M]` Compare this unit's write set against every other held row. Overlap means
   sequence, not parallelise — say so and stop.
 - `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
@@ -276,6 +284,14 @@ Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`)
   (`codex-run` exit 4) falls back to Sonnet and says so in the ledger.
 - `[M]` **One slice per agent.** A fix round is split by area into several.
   > Origin: one agent handed a whole fix round ran 309 calls, to 368K of context.
+- `[M]` **Every brief has a `Traps:` line**: each vendor-trap skill
+  (`vendor-skill.md`) whose library or tool the slice touches, by path (a gate or
+  script slice counts the package manager), or `Traps: none`. `--rules-for` finds
+  rule files by their `paths:` globs, never a trap skill, and one no brief names
+  goes unused.
+  > Origin: one project names them in every slice brief; 14 briefs named one and agents
+  > read them 45 times, while the four user-global vendor skills, which no brief
+  > named, were invoked 0 times and read once (2026-10-05 to 26).
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
   --writer <who wrote it>` and dispatch what it names — the **second family's review** over
@@ -419,7 +435,8 @@ waits on the owner, offer `/clear` with the resume command (`context.md`).
 loop. Each long-running process was recorded at its start; where the machine sweep
 is installed, also with `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
 --record <pid>`, so one a dead run leaves behind is still stopped (`machine.md`).
-Stop everything started, by recorded PID only, and
+Stop everything started, by recorded PID only (a unit stack with
+`bash scripts/unit-stack.sh down`), and
 confirm nothing still listens on the claimed ports. If a library behaved contrary to
 its documentation, write the vendor skill now (`vendor-skill.md`). Close out the
 follow-ups doc (`scope-guard.md`), then the no-hand-off close above.
@@ -437,7 +454,8 @@ a cold slice. Its file carries the **Tool discipline** section verbatim
 (`context.md`) and says:
 
 - work only in the worktree the brief names, by absolute path;
-- read `AGENTS.md` and every rule file the brief lists (`--rules-for`);
+- read `AGENTS.md`, every rule file the brief lists (`--rules-for`) and every trap
+  skill on its `Traps:` line;
 - **follow the slice literally**; on divergence from what the slice assumes, stop,
   change nothing further, and report it;
 - run only the targeted tests and the type check of what it touched, once per batch

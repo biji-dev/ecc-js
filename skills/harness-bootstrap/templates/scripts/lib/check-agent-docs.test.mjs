@@ -38,6 +38,8 @@ const CONFIG_BLOCK = `export const CONFIG = {
   pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
   intentionallyAbsent: [],
   requireImport: true,
+  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+  citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'],
 };`;
 
 // Hermetic: no developer HOME, global or system git config reaches a fixture.
@@ -618,6 +620,88 @@ test('base: an install with no base budget skips the check, and --base says no t
   assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
   assert.equal(run(dir, [], script).status, 0);
   assert.match(run(dir, ['--base'], script).out, /no target set \(budgets\.base\)/);
+});
+
+// 10. citations
+// An AGENTS.md with the shapes citations name: headings with a tail after a comma, a bold lead with a dash, a table's bold cell.
+const CITED_AGENTS = `${baseFiles()['AGENTS.md']}
+## Owner stops, and what is not one
+
+**Fix rounds - the review gate decides.** Keep handlers thin.
+
+## Context budget and reporting
+
+| **Spec** | a change to docs |
+`;
+const RULE_HEAD = '---\npaths:\n  - "src/db/**"\n---\n\n';
+const checksIn = (r) => Number(r.out.match(/\((\d+) checks\)/)?.[1]);
+
+test('citations: every form that names a section AGENTS.md has passes, and each cited name is one check', () => {
+  const plain = expectOk({ 'AGENTS.md': CITED_AGENTS });
+  const cited = expectOk({
+    'AGENTS.md': CITED_AGENTS,
+    // the section, an abbreviation, the name and more words, a quoted name, a quoted phrase, a parenthesis (7)
+    '.claude/rules/db.md': `${RULE_HEAD}Per \`AGENTS.md\` › Area rules, use the helpers (\`AGENTS.md\` › Owner stops).\nSee \`AGENTS.md\` › Context; \`AGENTS.md\` › Fix rounds apply here.\nAGENTS.md "Owner stops" and AGENTS.md's "keep handlers thin", as \`AGENTS.md\` (Spec) says.\n`,
+    // a path, a sibling, a quoted name after a parenthesis, a wrapped `›` and a wrapped quote (6)
+    'src/index.js': '// `AGENTS.md` › Area rules › Spec, Owner stops.\n/* AGENTS.md ("Context budget and reporting") and `AGENTS.md` ›\n * Context, read together. AGENTS.md\n * "Fix rounds" too.\n */\nexport {};\n',
+  });
+  assert.equal(checksIn(cited) - checksIn(plain), 13, cited.out);
+});
+
+test('citations: a section AGENTS.md no longer has fails at each citing line, in a rule, a skill, an agent and code', () => {
+  const renamed = CITED_AGENTS.replace('## Owner stops, and what is not one', '## Owner gates');
+  const r = expectFail(
+    {
+      'AGENTS.md': renamed,
+      '.claude/rules/db.md': `${RULE_HEAD}Stop per \`AGENTS.md\` › Owner stops.\n`,
+      '.claude/skills/demo/SKILL.md': '---\nname: demo\ndescription: Demo\n---\n\n# Demo\n\nSee `AGENTS.md` › Owner stops, Context.\n',
+      '.claude/agents/reviewer.md': '---\nname: reviewer\ndescription: Reviews code\ntools: Read, Grep\n---\n\nAs `AGENTS.md` (Owner stops) says.\n',
+      'src/index.js': 'export {};\n// AGENTS.md › Owner stops: never ask twice\n',
+    },
+    'citations',
+    '\\.claude/rules/db\\.md:6 cites `AGENTS\\.md` › Owner stops, which names no heading',
+  );
+  assert.match(r.err, /^FAIL citations: \.claude\/skills\/demo\/SKILL\.md:8 cites `AGENTS\.md` › Owner stops,/m);
+  assert.match(r.err, /^FAIL citations: \.claude\/agents\/reviewer\.md:7 cites `AGENTS\.md` › Owner stops,/m);
+  assert.match(r.err, /^FAIL citations: src\/index\.js:2 cites `AGENTS\.md` › Owner stops,/m);
+  assert.equal(r.err.match(/^FAIL citations: /gm).length, 4, 'Context still holds');
+});
+
+test('citations: a quoted name or phrase AGENTS.md no longer has fails, part by part', () => {
+  const r = expectFail(
+    { 'AGENTS.md': CITED_AGENTS, 'src/index.js': '// AGENTS.md "Deploy order" and AGENTS.md "Area rules → Gone".\nexport {};\n' },
+    'citations',
+    'src/index\\.js:1 cites "Deploy order", which AGENTS\\.md no longer has',
+  );
+  assert.match(r.err, /^FAIL citations: src\/index\.js:1 cites "Gone",/m);
+  assert.doesNotMatch(r.err, /cites "Area rules"/);
+});
+
+test('citations: other files, imports, string literals, § references, prose, code blocks and exempt files are not read', () => {
+  expectOk({
+    'AGENTS.md': CITED_AGENTS,
+    '.claude/rules/db.md': `${RULE_HEAD}\`apps/web/AGENTS.md\` › Gone. \`AGENTS.md\` › gone in lowercase. AGENTS.md: Gone. AGENTS.md Gone.\n\n\`\`\`text\n\`AGENTS.md\` › Gone\n\`\`\`\n`,
+    'src/index.js': 'const FILES = ["AGENTS.md", "Gone"];\n// `AGENTS.md` (TRD §13.5) and docs/AGENTS.md "Gone"\nexport { FILES };\n',
+    'apps/web/AGENTS.md': '# Web\n',
+    'scripts/x.py': '# `AGENTS.md` › Gone\n',
+    'scripts/check-agent-docs.mjs': '// `AGENTS.md` › Gone\n',
+  });
+});
+
+test('citations: a sibling or a lower level that is gone fails; an install without citeFiles reads only the instruction files', () => {
+  const files = {
+    'AGENTS.md': CITED_AGENTS,
+    'CLAUDE.md': '@AGENTS.md\n\n`AGENTS.md` › Area rules, Gone, read with `AGENTS.md` › Area rules › Missing.\n',
+    'src/index.js': '// `AGENTS.md` › Gone\nexport {};\n',
+  };
+  const r = expectFail(files, 'citations', 'CLAUDE\\.md:3 cites `AGENTS\\.md` › Gone,');
+  assert.match(r.err, /^FAIL citations: CLAUDE\.md:3 cites `AGENTS\.md` › Missing,/m);
+  assert.match(r.err, /^FAIL citations: src\/index\.js:1 /m);
+  const script = withConfig("  citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],\n", '');
+  const bare = run(fixture(files), [], script);
+  assert.equal(bare.status, 1, bare.all);
+  assert.equal(bare.err.match(/^FAIL citations: CLAUDE\.md:3 /gm).length, 2, bare.all);
+  assert.doesNotMatch(bare.err, /src\/index\.js/);
 });
 
 // --rules-for

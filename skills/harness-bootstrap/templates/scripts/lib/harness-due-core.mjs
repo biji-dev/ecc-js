@@ -52,8 +52,8 @@ export const DISK_MIN_GB = 25;
 export const WORKTREE_IDLE_HOURS = 6;
 // [B] The ignored paths such a worktree may still hold: rebuildable output and litter. Any other
 // ignored file -- a key, a hand-written .env.local -- keeps it, because `git worktree remove`
-// deletes ignored files without a word. (One project adds `^\.env$`: each of its worktrees links
-// the main checkout's.)
+// deletes ignored files without a word. A link never counts: removing one never touches what it
+// points to.
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
 // [B] What each line tells the runner to run; `<phase>`, `<date>`, `<file>`, `<week>` and
 // `<paths>` are filled in.

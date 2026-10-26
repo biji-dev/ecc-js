@@ -133,8 +133,8 @@ and never asks a question. What each line makes the runner do:
 |---|---|
 | `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
 | `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit, a `harness/<slug>` unit |
-| `DUE disk` | starts the approved machine-sweep categories in the background; with none approved, the line goes in the next owner brief |
-| `DUE worktrees` | removes each one no registry row names (`git worktree remove`, never `--force`) |
+| `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
+| `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
 | `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a unit
@@ -413,7 +413,10 @@ waits on the owner, offer `/clear` with the resume command (`context.md`).
 
 **Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
 — ran in the background and were awaited by their completion notice, never a sleep
-loop. Stop everything started, by recorded PID only, and
+loop. Each long-running process was recorded at its start; where the machine sweep
+is installed, also with `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
+--record <pid>`, so one a dead run leaves behind is still stopped (`machine.md`).
+Stop everything started, by recorded PID only, and
 confirm nothing still listens on the claimed ports. If a library behaved contrary to
 its documentation, write the vendor skill now (`vendor-skill.md`). Close out the
 follow-ups doc (`scope-guard.md`), then the no-hand-off close above.

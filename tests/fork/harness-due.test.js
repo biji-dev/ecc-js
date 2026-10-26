@@ -100,6 +100,7 @@ mutantFails('dropping the P3 queue from the hygiene line', "note: kind === 'hygi
 mutantFails('taking a dirty worktree for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.own)');
 mutantFails('taking a branch with no commits of its own for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.clean)');
 mutantFails('losing an ignored file that is not rebuildable', '.every((p) => rebuildable.test(p))', '.every(() => true)');
+mutantFails('counting an ignored link as a file it would lose', ".filter((p) => !isLink(path.join(w.path, p.replace(/\\/$/, ''))))", '', CLI_REL);
 mutantFails('reading a fast-forwarded branch as one cut and never started', 'const own = merged && (!mainline.has(w.head) || moved);', 'const own = merged && !mainline.has(w.head);', CLI_REL);
 mutantFails('matching a project name inside a longer one', '${esc(project)}(?![A-Za-z0-9_-])', '${esc(project)}');
 mutantFails('moving a seen week backward', "if (!(typeof out[project] === 'string' && out[project] >= week)) out[project] = week;", 'out[project] = week;');

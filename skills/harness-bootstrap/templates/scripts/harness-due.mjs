@@ -82,6 +82,13 @@ const mtime = (p) => {
     return null;
   }
 };
+const isLink = (p) => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 /** A tracked file as { text, dates } (line -> commit ms), or null when it does not exist. */
 function withDates(top, rel) {
@@ -147,7 +154,8 @@ function readWorktrees(top) {
     const status = own ? git(['status', '--porcelain', '--ignored'], w.path) : null;
     const lines = status === null ? [] : status.split('\n').filter(Boolean);
     const clean = status !== null && lines.every((l) => l.startsWith('!! '));
-    const ignored = lines.filter((l) => l.startsWith('!! ')).map((l) => l.slice(3));
+    // a link is left out: removing it never touches what it points to
+    const ignored = lines.filter((l) => l.startsWith('!! ')).map((l) => l.slice(3)).filter((p) => !isLink(path.join(w.path, p.replace(/\/$/, ''))));
     return { ...w, merged, own, clean, ignored, active };
   });
 }

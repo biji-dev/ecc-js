@@ -48,7 +48,7 @@ use the folder this `SKILL.md` was read from.
 | A · assess, route | the table below; `harness-targets.md` (agents), `scope-guard.md` (id prefixes), `commit-guard.md` (`SCOPE`); `foundation.md` when nothing is built yet |
 | B · policy, risk map, merge policy | `reference/policy-derivation.md`; the merge default in `gate-design.md`; the marker syntax in `upgrade.md` |
 | C · generate | `templates/agents-rules.md`, `rules.md`, `gate-design.md`, `runner.md`, `scope-guard.md`, `conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`, `commit-guard.md`, `log-format.md`, `context.md`, `harness-targets.md`, `hygiene.md` |
-| C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md` |
+| C · optional | `cross-model.md`, `preflight.md`, `sweep.md`, `segment.md`, `machine.md` |
 | E · growth | `vendor-skill.md`, `learning.md` |
 | F · across projects | `learning.md` › Phase F |
 
@@ -302,6 +302,7 @@ answer when the owner just accepts:
 | Component | From | Needs | Default |
 |---|---|---|---|
 | `.claude/hooks/context-budget.mjs` + settings entry | `context.md`, `templates/context-budget.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
+| `.claude/hooks/leftover-processes.mjs` + settings entry, on Stop and UserPromptSubmit | `machine.md`, `templates/leftover-processes.mjs` | checks that start dev servers, emulators or browsers; bind `WORKTREES` and `MACHINE_WIDE` | yes, on Claude Code, where they do |
 | `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh` | `context.md`, `templates/run-gates.sh` | no existing runner that reports every gate and never bails; test gates bound with `gate_counted` so zero tests is a FAIL | yes, unless such a runner exists |
 | `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
 | `.claude/workflows/review.workflow.js` | `harness-targets.md`, `templates/workflows/review.workflow.js` | Full-tier review fan-outs often enough to want them deterministic | no, until the log shows them |
@@ -347,7 +348,10 @@ owner's. On its first run this review found five P1
 defects the generator could not see in its own output. Once it lands, register the
 repository for the weekly job: `node <skill dir>/scripts/retro-weekly.mjs --register
 <repo>` writes only `~/.agents/harness/repos.json`, and `--dry-run` shows what the
-next run will read (`learning.md` › The weekly job).
+next run will read (`learning.md` › The weekly job). Once per machine, offer the
+owner the machine sweep: `node <skill dir>/scripts/machine-sweep.mjs` reports and
+changes nothing, the owner approves the categories they want with `--approve <ids>`,
+and from then on `DUE disk` starts them (`machine.md`).
 
 **Local skills, not global.** They live in the project so they can name its facts
 and grow from its runs. `.claude/skills/`, `.claude/agents/` and `.agents/skills/`

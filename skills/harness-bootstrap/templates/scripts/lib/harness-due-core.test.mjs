@@ -402,7 +402,7 @@ test('the wrapper: a sweep report 8 days back with 5 landings since is due; the 
   assert.equal(f.git(['status', '--porcelain']), '');
 });
 
-test('the wrapper: a merged worktree is residue only with commits of its own, no change, and rebuildable ignored files alone', { skip: WORKTREE_IDLE_HOURS > 48 && 'WORKTREE_IDLE_HOURS is over the fixture\'s 60 h' }, () => {
+test('the wrapper: a merged worktree is residue only with commits of its own, no change, and rebuildable ignored files or links alone', { skip: WORKTREE_IDLE_HOURS > 48 && 'WORKTREE_IDLE_HOURS is over the fixture\'s 60 h' }, () => {
   const f = fixture();
   f.write('.gitignore', '.worktrees/\nnode_modules/\n.env.local\n');
   f.git(['add', '.gitignore']);
@@ -423,10 +423,11 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
   fs.mkdirSync(path.join(add('built'), 'node_modules'));
   fs.writeFileSync(path.join(f.repo, '.worktrees', 'built', 'node_modules', 'x.js'), '');
   fs.writeFileSync(path.join(add('keys'), '.env.local'), 'TOKEN=x\n');
+  fs.symlinkSync(path.join(f.repo, '.gitignore'), path.join(add('linked'), '.env.local')); // a link to the main checkout's file
   add('cut', { commit: false, merge: null });
   fs.appendFileSync(path.join(add('dirty'), 'dirty.txt'), ' changed');
   const past = new Date('2026-10-24T00:00:00Z');
-  for (const name of ['done', 'ff', 'built', 'keys', 'cut', 'dirty']) {
+  for (const name of ['done', 'ff', 'built', 'keys', 'linked', 'cut', 'dirty']) {
     fs.utimesSync(path.join(f.repo, '.worktrees', name, '.git'), past, past);
     fs.utimesSync(path.join(f.repo, '.git', 'worktrees', name, 'logs', 'HEAD'), past, past);
   }
@@ -434,7 +435,7 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
   assert.equal(res.status, 0, res.stderr);
   const line = JSON.parse(res.stdout).due.find((d) => d.kind === 'worktrees');
   const named = (line?.why.split(': ')[1] ?? '').split(', ').map((p) => path.basename(p)).sort();
-  const residue = ['done', 'ff', ...(REBUILDABLE.test('node_modules/') ? ['built'] : []), ...(REBUILDABLE.test('.env.local') ? ['keys'] : [])].sort();
+  const residue = ['done', 'ff', 'linked', ...(REBUILDABLE.test('node_modules/') ? ['built'] : []), ...(REBUILDABLE.test('.env.local') ? ['keys'] : [])].sort();
   assert.deepEqual(named, residue, res.stdout);
 });
 

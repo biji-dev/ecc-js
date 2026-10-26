@@ -47,12 +47,13 @@ follow-up row cites one, update the citation. An open unit's state file over bud
 moves its closed findings to the follow-ups doc instead (`scope-guard.md`).
 
 `[M]` **5 · Residue.** Remove the worktrees `harness-due` named that no registry row
-names, with `git worktree remove` and never `--force`. It names one only when it is
-merged with commits of its own, has no change, holds no ignored file but rebuildable
-output, and has been idle over 6 h. Delete `.review-work/` directories older than
-14 days `[B]`; keep `.codex-runs/ledger.jsonl`, the second family's meter. Stop
-processes by recorded PID only (`runner.md` › Step 10). Disk outside the
-repository is the machine sweep's (`scripts/machine-sweep.mjs`).
+names and no process runs in (`lsof -d cwd`), with `git worktree remove` and never
+`--force`. It names one only when it is merged with commits of its own, has no
+change, holds no ignored file but rebuildable output (a link counts as none), and
+has been idle over 6 h. Delete `.review-work/` directories older than 14 days `[B]`;
+keep `.codex-runs/ledger.jsonl`, the second family's meter. Stop processes by
+recorded PID only (`runner.md` › Step 10). Disk outside the repository is the
+machine sweep's (`machine.md`).
 > Origin: the check's first draft named a worktree in one project whose ignored
 > `.reconcile/` held 673 files of a reconciliation's briefs and second-model
 > outputs; `git worktree remove` deletes ignored files without a word. The project's own
@@ -68,6 +69,5 @@ at once.
 
 `[B]` In `scripts/lib/harness-due-core.mjs`: `CADENCE.hygiene`, `P3_AGE_DAYS`,
 `REPORTS.hygiene` (`null` for a project that runs no hygiene unit: `DUE p3` then
-queues the P3 batch alone), `WORKTREE_IDLE_HOURS`, `REBUILDABLE` (one project adds
-`^\.env$`: each of its worktrees links the main checkout's `.env`). Elsewhere: the
+queues the P3 batch alone), `WORKTREE_IDLE_HOURS`, `REBUILDABLE`. Elsewhere: the
 batch size, the dead-code tool and its config, the archive path, the residue ages.

@@ -86,7 +86,7 @@ function fixture() {
 console.log('\n=== skill-advisor sessions ===\n');
 
 test('project folder encoding matches Claude Code', () => {
-  assert.strictEqual(sessions.encodeClaudeDir('/x/grobiz/.worktrees/cr-1'), '-x-grobiz--worktrees-cr-1');
+  assert.strictEqual(sessions.encodeClaudeDir('/x/shop/.worktrees/cr-1'), '-x-shop--worktrees-cr-1');
   assert.strictEqual(sessions.encodeClaudeDir('/x/My App'), '-x-My-App');
 });
 

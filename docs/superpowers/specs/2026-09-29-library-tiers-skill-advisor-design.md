@@ -15,7 +15,7 @@ Branch: `slim/library-tiers`.
   request.
 - Usage over the last 30 days: 17 distinct ECC items were used in Claude Code
   (275 invocations). Codex read 3 ECC skills (`agent-self-evaluation` 66,
-  `latency-critical-systems` 14, `terminal-ops` 2). grobiz and rentalae
+  `latency-critical-systems` 14, `terminal-ops` 2). Two projects
   reference about 30 `ecc:` names in `CLAUDE.md`, `change-workflow` and
   `task-runner`.
 - Claude Code cannot hide single plugin skills per project: `skillOverrides`
@@ -245,7 +245,7 @@ and a temp `library/`:
   - a core item references a `drop` item (for example `react-review`
     references `accessibility`); a reference to a `library` item is only a
     warning, as in Section 1;
-  - an `ecc:` name referenced by grobiz or rentalae is not `core`.
+  - an `ecc:` name referenced by either of those two projects is not `core`.
 - Pre-fill:
   - core, 54 items:
     - agents: security-reviewer, silent-failure-hunter, database-reviewer,
@@ -292,13 +292,13 @@ and a temp `library/`:
    `node fork/bin/verify.js --drift --since origin/main`, markdownlint; commit;
    `git merge --no-ff` into `main`; push.
 6. Update the plugin in Claude Code, Codex and ZCode; restart sessions.
-7. Pilot on grobiz and on one docs-heavy project with few sessions.
+7. Pilot on one of those projects and on one docs-heavy project with few sessions.
 
 ## Success criteria
 
 - ECC listing about 2.5k tokens; `ecc:*` and other plugins' skills show full
   descriptions in a Claude Code session.
-- Every `ecc:` reference in grobiz and rentalae resolves.
+- Every `ecc:` reference in those two projects resolves.
 - `npm test` and the drift check pass.
 - The pilot plan cites real evidence for every suggestion; add, refresh and
   remove work in `.claude/` and `.agents/`.

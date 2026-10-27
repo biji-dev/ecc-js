@@ -342,7 +342,8 @@ export function unionMs(spans) {
 /**
  * Main-thread events -> wall, owner-wait and work time. Owner wait is the union of each question from
  * its call to its answer, and each typed prompt back to the last assistant turn or tool result before
- * it: the session had stopped and was waiting on the owner. Lines nobody typed (a background task's
+ * it: the session had stopped and was waiting on the owner. An async question (Codex's) stops
+ * nothing: it counts as a question, and the owner's reply is a prompt. Lines nobody typed (a background task's
  * notice, command output) start no wait, so time the run spent on its own work stays work. Events of
  * several sessions can be merged: the gap before the next session's first prompt is owner wait too.
  * The wall is the first to the last event inside the window, but a wait is paired over every event
@@ -364,7 +365,7 @@ export function summarizeTimes(events, { since = null, until = null } = {}) {
     const mine = inWindow(e.ts, since, until);
     if (e.type === 'ask') {
       if (mine) out.questions += 1;
-      asks.set(e.id, e.ts);
+      if (!e.async) asks.set(e.id, e.ts);
     } else if (e.type === 'result' && asks.has(e.id)) {
       spans.push([asks.get(e.id), e.ts]);
       out.questionMs += inside(asks.get(e.id), e.ts);
@@ -537,8 +538,39 @@ export function parseLedger(text) {
 // The weekly window's `resetsAt` drifts by a second between readings of one window (observed
 // 1793382102 vs 1793382103), so two readings within this many seconds are the same window.
 const SAME_WINDOW_S = 60;
-// Ledger outcomes that never started Codex: no work, no quota used.
+// Ledger outcomes that never started Codex (or, in claude-run's ledger, Claude): no work, no quota used.
 const NOT_RUN = new Set(['reserved', 'unavailable']);
+
+/** A ledger's rows in the window whose cwd matches: the ones that ran, and how many never did. */
+function ledgerRows(entries, { since = null, until = null, cwdMatch = null } = {}) {
+  const ran = [];
+  let notRun = 0;
+  for (const e of entries) {
+    if (!inWindow(Date.parse(e.at), since, until)) continue;
+    if (cwdMatch && !String(e.cwd ?? '').includes(cwdMatch)) continue;
+    if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {
+      notRun += 1;
+      continue;
+    }
+    ran.push(e);
+  }
+  return { ran, notRun };
+}
+
+/** A Codex run's [before, after] quota interval; null without a reading on each side of one window. */
+function runInterval(e) {
+  const b = e.limitsBefore;
+  const a = e.limitsAfter;
+  const ok =
+    b &&
+    a &&
+    Number.isFinite(b.usedPercent) &&
+    Number.isFinite(a.usedPercent) &&
+    Number.isFinite(b.resetsAt) &&
+    Number.isFinite(a.resetsAt) &&
+    Math.abs(b.resetsAt - a.resetsAt) <= SAME_WINDOW_S;
+  return ok ? { reset: b.resetsAt, lo: b.usedPercent, hi: a.usedPercent } : null;
+}
 
 /**
  * Codex runs in the window: count by kind, wall minutes, and the quota they used. The quota is
@@ -548,33 +580,42 @@ const NOT_RUN = new Set(['reserved', 'unavailable']);
  * reading on one side, or one that straddled a reset, has no honest interval and is `uncounted`.
  * Ledger rows whose outcome is reserved or unavailable never ran: they are `notRun`, not in `runs`.
  */
-export function summarizeLedger(entries, { since = null, until = null, cwdMatch = null } = {}) {
-  const out = { runs: 0, notRun: 0, byKind: {}, percent: 0, ms: 0, uncounted: 0 };
+export function summarizeLedger(entries, window = {}) {
+  const { ran, notRun } = ledgerRows(entries, window);
+  const out = { runs: ran.length, notRun, byKind: {}, percent: 0, ms: 0, uncounted: 0 };
   const intervals = [];
-  for (const e of entries) {
-    if (!inWindow(Date.parse(e.at), since, until)) continue;
-    if (cwdMatch && !String(e.cwd ?? '').includes(cwdMatch)) continue;
-    if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {
-      out.notRun += 1;
-      continue;
-    }
-    out.runs += 1;
+  for (const e of ran) {
     const kind = e.kind || 'unknown';
     out.byKind[kind] = (out.byKind[kind] ?? 0) + 1;
     out.ms += num(e.ms);
-    const b = e.limitsBefore;
-    const a = e.limitsAfter;
-    const ok =
-      b &&
-      a &&
-      Number.isFinite(b.usedPercent) &&
-      Number.isFinite(a.usedPercent) &&
-      Number.isFinite(b.resetsAt) &&
-      Number.isFinite(a.resetsAt) &&
-      Math.abs(b.resetsAt - a.resetsAt) <= SAME_WINDOW_S;
-    if (ok) intervals.push({ reset: b.resetsAt, lo: b.usedPercent, hi: a.usedPercent });
+    const i = runInterval(e);
+    if (i) intervals.push(i);
     else out.uncounted += 1;
   }
+  out.percent = quotaPercent(intervals);
+  return out;
+}
+
+/**
+ * claude-run's ledger in the window: runs by kind, wall time and their dollars (`costUsd`, what
+ * `claude -p` reported). A run without a cost (a timeout) is `unpriced`; reserved and unavailable rows
+ * never ran (`notRun`). Its runs keep no transcript, so this ledger is the only record of them.
+ */
+export function summarizeClaudeRuns(entries, window = {}) {
+  const { ran, notRun } = ledgerRows(entries, window);
+  const out = { runs: ran.length, notRun, byKind: {}, usd: 0, ms: 0, unpriced: 0 };
+  for (const e of ran) {
+    const kind = e.kind || 'unknown';
+    out.byKind[kind] = (out.byKind[kind] ?? 0) + 1;
+    out.ms += num(e.ms);
+    if (Number.isFinite(e.costUsd)) out.usd += e.costUsd;
+    else out.unpriced += 1;
+  }
+  return out;
+}
+
+/** The length of the union of quota intervals [{ reset, lo, hi }], summed over their quota windows. */
+function quotaPercent(intervals) {
   // Windows: sorted resets, a gap over SAME_WINDOW_S starts a new one.
   const resets = [...new Set(intervals.map((i) => i.reset))].sort((x, y) => x - y);
   const windowOf = new Map();
@@ -603,19 +644,234 @@ export function summarizeLedger(entries, { since = null, until = null, cwdMatch 
     }
     sum += hi - lo;
   }
-  out.percent = round1(sum);
+  return round1(sum);
+}
+
+// ---- a Codex host: the owner's session runs on Codex, its rollouts under $CODEX_HOME/sessions
+
+// The tool a Codex thread asks the owner with and stops until the answer, and the one that asks and goes on.
+const CODEX_ASK = 'request_user_input';
+const CODEX_ASK_ASYNC = 'request_user_input_async';
+// A user line Codex wrote itself (its environment, an open page) starts with a tag; a reply to an
+// async question is the owner's.
+const CODEX_INJECTED = /^\s*<(?!send_user_message_question_reply>)/;
+// A rollout line is parsed only when it may be one of these; the test after parsing decides.
+const CODEX_WANTED = /"type":"(?:session_meta|turn_context|compacted|task_started|task_complete|turn_aborted|token_count|function_call|function_call_output|message)"/;
+// The quota window the Codex % reads: the weekly one (codex-run.mjs picks the same).
+const WEEK_MINUTES = 10080;
+
+const text = (v) => (typeof v === 'string' ? v : null);
+
+/**
+ * A rollout's session_meta payload -> { id, session, parent, cwd, started, kind, host }. `session` is
+ * the thread a subagent belongs to (its own id for a main thread). `host` is false for a `codex exec`
+ * run, which codex-run's ledger counts, and true for a session the owner opened (the app, the TUI).
+ */
+export function codexMeta(p) {
+  const m = p !== null && typeof p === 'object' ? p : {};
+  const src = m.source;
+  const parent = text(m.parent_thread_id) ?? text(src?.subagent?.thread_spawn?.parent_thread_id);
+  const id = text(m.id);
+  const started = Date.parse(m.timestamp);
+  return {
+    id,
+    session: text(m.session_id) ?? parent ?? id,
+    parent,
+    cwd: text(m.cwd),
+    started: Number.isFinite(started) ? started : null,
+    kind: src !== null && typeof src === 'object' && Object.hasOwn(src, 'subagent') ? 'sub' : 'main',
+    host: id !== null && m.originator !== 'codex_exec' && src !== 'exec',
+  };
+}
+
+/** A token_count -> its running totals (null without them) and its weekly quota reading. */
+function codexReading(p, ts, seg) {
+  const t = p.info?.total_token_usage;
+  const limits = [p.rate_limits?.primary, p.rate_limits?.secondary]
+    .filter((w) => w && typeof w === 'object')
+    .sort((x, y) => num(y.window_minutes) - num(x.window_minutes));
+  const w = limits.find((x) => num(x.window_minutes) >= WEEK_MINUTES) ?? limits[0] ?? null;
+  return {
+    ts,
+    seg,
+    tokens: t ? { input: num(t.input_tokens), cached: num(t.cached_input_tokens), output: num(t.output_tokens), total: num(t.total_tokens) } : null,
+    used: Number.isFinite(w?.used_percent) ? w.used_percent : null,
+    resets: Number.isFinite(w?.resets_at) ? w.resets_at : null,
+  };
+}
+
+/**
+ * One Codex rollout's lines (any iterable; run-sources streams the file) -> its meta (codexMeta) plus
+ * `models`, `starts` (each turn's start), `readings` (each token_count: the thread's running totals,
+ * the weekly quota reading and `seg`, the turn it fell in) and `events` in parseEvents' shape:
+ * `turn` (a model response, a turn's end), `note` (a turn's start, a line Codex wrote itself),
+ * `prompt` (what the owner typed, or their reply to an async question), `ask` (request_user_input,
+ * which stops the thread until its `result`, or request_user_input_async, `async`, which does not)
+ * and `compact`. Only the first session_meta counts: a subagent's rollout repeats its parent's.
+ */
+export function parseCodexSession(lines) {
+  const s = { ...codexMeta(null), models: [], starts: [], readings: [], events: [] };
+  const state = { meta: false, seg: 0, models: new Set() };
+  for (const line of lines) {
+    const d = CODEX_WANTED.test(line) ? rolloutLine(line) : null;
+    if (d) readRolloutLine(s, state, d);
+  }
+  s.models = [...state.models].sort();
+  s.events.sort((x, y) => x.ts - y.ts);
+  return s;
+}
+
+/** A rollout line as JSON with an object payload, else null. */
+function rolloutLine(line) {
+  try {
+    const d = JSON.parse(line);
+    return d?.payload !== null && typeof d?.payload === 'object' ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+function readRolloutLine(s, state, d) {
+  const p = d.payload;
+  if (d.type === 'session_meta') {
+    if (!state.meta) Object.assign(s, codexMeta(p));
+    state.meta = true;
+    return;
+  }
+  const ts = Date.parse(d.timestamp);
+  if (!Number.isFinite(ts)) return;
+  if (d.type === 'turn_context' && typeof p.model === 'string') state.models.add(p.model);
+  else if (d.type === 'compacted') {
+    s.events.push({ ts, type: 'compact', trigger: 'unknown', preTokens: num(p.latest_token_usage_record?.usage?.input_tokens), durationMs: 0 });
+  } else if (d.type === 'event_msg') readTurnEvent(s, state, p, ts);
+  else if (d.type === 'response_item') readItem(s, p, ts);
+}
+
+/** A turn's start or end, or a token_count (a model response, with its reading). */
+function readTurnEvent(s, state, p, ts) {
+  if (p.type === 'task_started') {
+    state.seg += 1;
+    s.starts.push(ts);
+    s.events.push({ ts, type: 'note' });
+  } else if (p.type === 'task_complete' || p.type === 'turn_aborted') {
+    s.events.push({ ts, type: 'turn' });
+    state.seg += 1;
+  } else if (p.type === 'token_count') {
+    s.readings.push(codexReading(p, ts, state.seg));
+    s.events.push({ ts, type: 'turn' });
+  }
+}
+
+/** A question to the owner, a tool's output, or a user line: typed by the owner, or written by Codex. */
+function readItem(s, p, ts) {
+  if (p.type === 'function_call' && (p.name === CODEX_ASK || p.name === CODEX_ASK_ASYNC) && p.call_id) {
+    s.events.push({ ts, type: 'ask', id: p.call_id, ...(p.name === CODEX_ASK_ASYNC ? { async: true } : {}) });
+  } else if (p.type === 'function_call_output' && p.call_id) s.events.push({ ts, type: 'result', id: p.call_id });
+  else if (p.type === 'message' && p.role === 'user') {
+    const typed = (Array.isArray(p.content) ? p.content : [])
+      .filter((c) => c?.type === 'input_text')
+      .map((c) => String(c.text ?? ''))
+      .join('');
+    s.events.push({ ts, type: typed.trim() !== '' && !CODEX_INJECTED.test(typed) ? 'prompt' : 'note' });
+  }
+}
+
+/** A thread's token growth inside the window: each reading's step from the one before it; a drop starts over. */
+function tokenGrowth(readings, since, until) {
+  const out = { input: 0, cached: 0, output: 0, total: 0 };
+  let prev = null;
+  for (const r of readings) {
+    if (!r.tokens) continue;
+    if (inWindow(r.ts, since, until)) {
+      for (const k of Object.keys(out)) {
+        const before = prev?.[k] ?? 0;
+        out[k] += r.tokens[k] >= before ? r.tokens[k] - before : r.tokens[k];
+      }
+    }
+    prev = r.tokens;
+  }
   return out;
+}
+
+/**
+ * Each turn's quota interval: its first reading inside the window to its last, split where the weekly
+ * window resets. The growth between two turns is not a turn's: the quota is account-wide, and an idle
+ * thread's next reading includes whatever else ran on the account meanwhile.
+ */
+function hostIntervals(sessions, { since = null, until = null } = {}) {
+  const out = [];
+  for (const s of sessions) {
+    let cur = null;
+    for (const r of s.readings) {
+      if (r.used === null || r.resets === null || !inWindow(r.ts, since, until)) continue;
+      if (cur && cur.seg === r.seg && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;
+      else {
+        if (cur) out.push(cur);
+        cur = { seg: r.seg, reset: r.resets, lo: r.used, hi: r.used };
+      }
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * A Codex host's threads in the window: the main sessions and subagents with a turn or a reading in
+ * it, the main threads' turns, questions and compactions, every thread's token growth and the share
+ * of its input read from cache, and the weekly quota the turns used (one union per window, as for the
+ * ledger, and as account-wide). Codex reports tokens, not dollars.
+ */
+export function summarizeCodexHost(sessions, { since = null, until = null } = {}) {
+  const out = { sessions: 0, subagents: 0, turns: 0, questions: 0, compactions: 0, compactPreTokens: 0, tokens: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, cacheHit: 0, percent: 0, models: [] };
+  const inside = (ts) => inWindow(ts, since, until);
+  const models = new Set();
+  const events = [];
+  for (const s of sessions) {
+    if (!s.readings.some((r) => inside(r.ts)) && !s.starts.some(inside)) continue;
+    const main = s.kind !== 'sub';
+    out[main ? 'sessions' : 'subagents'] += 1;
+    for (const m of s.models) models.add(m);
+    const g = tokenGrowth(s.readings, since, until);
+    out.tokens += g.total;
+    out.inputTokens += g.input;
+    out.cachedTokens += g.cached;
+    out.outputTokens += g.output;
+    if (!main) continue;
+    out.turns += s.starts.filter(inside).length;
+    out.questions += s.events.filter((e) => e.type === 'ask' && inside(e.ts)).length;
+    for (const e of s.events) events.push(e);
+  }
+  const comp = summarizeCompactions(events, { since, until });
+  out.compactions = comp.count;
+  out.compactPreTokens = comp.medianPreTokens;
+  out.cacheHit = out.inputTokens > 0 ? round1((out.cachedTokens / out.inputTokens) * 100) : 0;
+  out.percent = quotaPercent(hostIntervals(sessions, { since, until }));
+  out.models = [...models].sort();
+  return out;
+}
+
+/** A unit's Codex %: the ledger's runs and the host's turns, one union per quota window. */
+export function codexPercent(entries, sessions, { since = null, until = null, cwdMatch = null } = {}) {
+  const runs = ledgerRows(entries, { since, until, cwdMatch }).ran.map(runInterval).filter(Boolean);
+  return quotaPercent([...runs, ...hostIntervals(sessions, { since, until })]);
 }
 
 const usd = (v) => `$${v.toFixed(2)}`;
 
-/** The one line for a log cell. `codex` is null when there is no ledger. */
-export function summaryLine(claude, codex) {
+/**
+ * The one line for a log cell. `codex` is null when there is no ledger. `claudeRuns` (claude-run's
+ * ledger) adds its dollars to the cost and the Claude %; `host` (a Codex host's threads) is named in
+ * the Codex part, whose % is then `percent`, the union with the ledger's runs (codexPercent).
+ */
+export function summaryLine(claude, codex, { claudeRuns = null, host = null, percent = null } = {}) {
+  const total = claude.total + (claudeRuns?.usd ?? 0);
+  const runs = claudeRuns && (claudeRuns.runs || claudeRuns.notRun) ? ` (${claudeRuns.runs} claude-run${claudeRuns.notRun ? `, ${claudeRuns.notRun} not run` : ''})` : '';
+  const ledger = codex === null ? null : `${codex.runs} runs${codex.notRun ? `, ${codex.notRun} not run` : ''}`;
   const tail =
-    codex === null
+    codex === null && host === null
       ? 'Codex no ledger'
-      : `Codex ${codex.percent}% (${codex.runs} runs${codex.notRun ? `, ${codex.notRun} not run` : ''})`;
-  return `Cost ${usd(claude.total)} · Claude ${claude.claudePercent}% · ${tail}`;
+      : `Codex ${host ? (percent ?? host.percent) : codex.percent}% (${[host ? 'host' : null, ledger].filter(Boolean).join(', ')})`;
+  return `Cost ${usd(total)} · Claude ${claudeRuns ? round1(total / DOLLARS_PER_PERCENT) : claude.claudePercent}%${runs} · ${tail}`;
 }
 
 const pairs = (o, fmt = (v) => v) =>
@@ -625,6 +881,11 @@ const pairs = (o, fmt = (v) => v) =>
     .join(' · ') || 'none';
 
 const kTokens = (n) => `${Math.round(n / 1000)}K`;
+
+/** 14000 -> 14K, 2_500_000 -> 2.5M. */
+export const fmtTokens = (n) => (n >= 1e6 ? `${round1(n / 1e6)}M` : n >= 1e3 ? kTokens(n) : String(n));
+
+const ACCOUNT_WIDE = '  the % is account-wide: it includes any other work on the same Codex account during the window';
 
 /** The `--times` lines: wall, owner wait and work, then compactions and the cache. */
 function timesLines({ times, compactions, cache }) {
@@ -660,11 +921,12 @@ function stepLines({ unit, steps, problems }) {
 
 /**
  * The multi-line human report; `codex` null prints "Codex: no ledger". `extra` adds the `--times`
- * section ({ times, compactions, cache }) and the `--by-step` section ({ steps }) when present.
+ * section ({ times, compactions, cache }), the `--by-step` section ({ steps }), claude-run's ledger
+ * ({ claudeRuns }) and a Codex host ({ host, percent }) when present.
  */
 export function formatReport(claude, codex, extra = {}) {
   const lines = [
-    summaryLine(claude, codex),
+    summaryLine(claude, codex, extra),
     '',
     `Claude: ${usd(claude.total)} (main ${usd(claude.main)} · subagents ${usd(claude.sub)}) = ${claude.claudePercent}% of the weekly limit at $${DOLLARS_PER_PERCENT}/%`,
     `  by model: ${pairs(claude.byFamily, usd)}`,
@@ -672,12 +934,25 @@ export function formatReport(claude, codex, extra = {}) {
     ...(claude.familyRated?.length ? [`  priced at family rates: ${claude.familyRated.join(', ')}`] : []),
     `  subagents ${claude.subagentCount}: ${pairs(claude.subagents)}`,
   ];
+  const r = extra.claudeRuns;
+  if (r) {
+    lines.push(
+      `Claude runs (claude-run): ${r.runs} runs (${pairs(r.byKind)}) · ${usd(r.usd)}${r.notRun ? ` · ${r.notRun} not run (reserved or unavailable)` : ''}${r.unpriced ? ` · ${r.unpriced} without a cost` : ''}`,
+    );
+  }
   if (codex === null) lines.push('Codex: no ledger');
   else {
     lines.push(
       `Codex: ${codex.runs} runs (${pairs(codex.byKind)})${codex.notRun ? ` · ${codex.notRun} not run (reserved or unavailable)` : ''} · ${codex.percent}% of quota · ${codex.ms} ms`,
-      '  the % is account-wide: it includes any other work on the same Codex account during the window',
+      ACCOUNT_WIDE,
       ...(codex.uncounted ? [`  ${codex.uncounted} runs without a same-window quota reading are not in the %`] : []),
+    );
+  }
+  const h = extra.host;
+  if (h) {
+    lines.push(
+      `Codex host: ${h.sessions} sessions (${h.subagents} subagents) · ${h.turns} turns · ${h.questions} questions · ${h.compactions} compactions · tokens ${fmtTokens(h.tokens)} (${h.cacheHit}% of input cached) · ${h.percent}% of quota${h.models.length ? ` · ${h.models.join(', ')}` : ''}`,
+      ...(codex === null ? [ACCOUNT_WIDE] : []),
     );
   }
   if (extra.times) lines.push('', ...timesLines(extra));

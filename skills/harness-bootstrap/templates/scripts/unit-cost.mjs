@@ -2,10 +2,11 @@
 // harness-bootstrap unit-cost (generated YYYY-MM-DD). Prints what one unit cost, measured, not guessed.
 // [M] mechanism (ships as-is): everything. The [B] bindings (price table, cache-write multipliers,
 // dollars per percent of the weekly limit) live at the top of scripts/lib/unit-cost-core.mjs, the
-// ledger directory at the top of scripts/lib/run-sources.mjs.
+// two ledger directories at the top of scripts/lib/run-sources.mjs.
 /**
- * Reads the unit's Claude Code transcripts (main thread plus every subagent) and the Codex run
- * ledger, and prints the cost, the Claude % and the Codex % for the harness log row.
+ * Reads the unit's Claude Code transcripts (main thread plus every subagent), a Codex host's threads,
+ * the Codex run ledger and claude-run's, and prints the cost, the Claude % and the Codex % for the
+ * harness log row.
  *
  *   node scripts/unit-cost.mjs --session <id>[,<id>...] [--projects-dir <dir>] [--since <ISO>]
  *     [--until <ISO>] [--ledger <path>] [--cwd-match <substring>] [--times] [--by-step <steps file>
@@ -13,25 +14,32 @@
  *
  * options:
  *   --session <ids>      one or more session ids (comma-separated); the files are found by scanning
- *                        <projects-dir>/*\/<id>.jsonl, subagents in <id>/subagents/*.jsonl
+ *                        <projects-dir>/*\/<id>.jsonl, subagents in <id>/subagents/*.jsonl. An id that
+ *                        is no Claude Code session is a Codex thread's (`$CODEX_THREAD_ID` on a Codex
+ *                        host): its rollout and its subagents' under $CODEX_HOME/sessions (else
+ *                        ~/.codex/sessions). Codex reports tokens and quota, not dollars
  *   --projects-dir <d>   default $CLAUDE_CONFIG_DIR/projects when set, else ~/.claude/projects
  *   --since / --until    only turns (and Codex runs) inside this ISO window
  *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
  *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
- *   --cwd-match <s>      only Codex runs whose cwd contains this substring
+ *   --cwd-match <s>      only ledger runs (Codex and claude-run) whose cwd contains this substring
  *   --times              add the main thread's wall, owner-wait and work time (owner wait: each question
  *                        until its answer, each typed prompt back to the last turn before it), its
  *                        compactions, its cache-hit share and its cache-expiry rewrites
  *   --by-step <file>     add dollars and time per runner step, from the unit's steps file
  *                        (unit-step.mjs); subagents go by their `[<unit> s<step> r<n>]` dispatch tag
  *   --unit <id>          the unit whose tags count (default: the steps file's name, `<unit>.steps.jsonl`)
- *   --json               print { claude, codex, summary } instead (plus times, compactions, cache and
- *                        steps when asked for)
+ *   --json               print { claude, codex, claudeRuns, codexHost, summary } instead (plus times,
+ *                        compactions, cache and steps when asked for)
  *   --line               print only the one-line summary (`Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`),
  *                        for `unit-record.mjs --cost "$(node scripts/unit-cost.mjs ... --line)"`
  *
- * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs,
- * so it includes any other work on the same account in that window. Overlapping runs count once.
+ * claude-run's ledger (the main checkout's .claude-runs/ledger.jsonl, when there is one) adds its runs'
+ * dollars to the cost: claude-run keeps no transcript.
+ *
+ * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs
+ * and a Codex host's turns, so it includes any other work on the same account in that window.
+ * Overlapping runs and turns count once.
  *
  * exit: 0 ok | 2 usage (bad flag, session not found, unreadable transcript).
  *
@@ -41,20 +49,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  codexPercent,
   formatReport,
   parseArgs,
+  parseCodexSession,
   parseEvents,
   parseLedger,
   parseTranscript,
   summarizeCache,
   summarizeClaude,
+  summarizeClaudeRuns,
+  summarizeCodexHost,
   summarizeCompactions,
   summarizeLedger,
   summarizeSteps,
   summarizeTimes,
   summaryLine,
 } from './lib/unit-cost-core.mjs';
-import { defaultLedger, sessionFiles } from './lib/run-sources.mjs';
+import { CLAUDE_LEDGER_DIR, codexSessionFiles, codexSessionsDir, defaultLedger, fileLines, sessionFiles } from './lib/run-sources.mjs';
 import { parseSteps } from './lib/unit-step-core.mjs';
 
 const USAGE =
@@ -73,6 +85,17 @@ function readText(file) {
   }
 }
 
+/** A session id's files: a Claude Code session's transcripts, else a Codex thread's rollouts. */
+function findSession(projectsDir, codexDir, id) {
+  try {
+    return { claude: sessionFiles(projectsDir, id), codex: [] };
+  } catch (e) {
+    const codex = codexSessionFiles(codexDir, id);
+    if (codex.length) return { claude: [], codex };
+    throw new Error(/ not found under /.test(e.message) ? `${e.message} or ${codexDir}` : e.message, { cause: e });
+  }
+}
+
 function main() {
   let args;
   let claude;
@@ -82,32 +105,47 @@ function main() {
     args = parseArgs(process.argv.slice(2));
     const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
     const projectsDir = args.projectsDir ?? path.join(configDir, 'projects');
-    const texts = args.session.flatMap((id) =>
-      sessionFiles(projectsDir, id).map(({ file, ctx }) => ({ ctx, text: readText(file) })),
-    );
+    const codexDir = codexSessionsDir();
+    const found = args.session.map((id) => findSession(projectsDir, codexDir, id));
+    const texts = found.flatMap((f) => f.claude).map(({ file, ctx }) => ({ ctx, text: readText(file) }));
+    const files = [...new Set(found.flatMap((f) => f.codex).map(({ file }) => file))];
+    const threads = files.map((file) => parseCodexSession(fileLines(file)));
     const rows = texts.flatMap(({ text, ctx }) => parseTranscript(text, ctx));
     const window = { since: args.since, until: args.until };
     claude = summarizeClaude(rows, window);
     if (args.times) {
-      const events = texts.filter(({ ctx }) => ctx.kind === 'main').flatMap(({ text }) => parseEvents(text));
+      const events = [
+        ...texts.filter(({ ctx }) => ctx.kind === 'main').flatMap(({ text }) => parseEvents(text)),
+        ...threads.filter((t) => t.kind === 'main').flatMap((t) => t.events),
+      ];
       extra.times = summarizeTimes(events, window);
       extra.compactions = summarizeCompactions(events, window);
-      extra.cache = summarizeCache(rows, window);
+      // Claude's prompt cache; a Codex thread's cache share is on the host line.
+      if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);
     }
     if (args.byStep) {
       const unit = args.unit ?? path.basename(args.byStep).replace(/\.steps\.jsonl$/, '');
       extra.steps = summarizeSteps(rows, parseSteps(readText(args.byStep)), { ...window, unit });
     }
     const ledger = args.ledger ?? defaultLedger();
-    if (ledger && fs.existsSync(ledger)) {
-      codex = summarizeLedger(parseLedger(readText(ledger)), { ...window, cwdMatch: args.cwdMatch });
+    const entries = ledger && fs.existsSync(ledger) ? parseLedger(readText(ledger)) : null;
+    if (entries) codex = summarizeLedger(entries, { ...window, cwdMatch: args.cwdMatch });
+    const claudeLedger = defaultLedger(process.cwd(), CLAUDE_LEDGER_DIR);
+    if (fs.existsSync(claudeLedger)) {
+      extra.claudeRuns = summarizeClaudeRuns(parseLedger(readText(claudeLedger)), { ...window, cwdMatch: args.cwdMatch });
+    }
+    if (threads.length) {
+      extra.host = summarizeCodexHost(threads, window);
+      extra.percent = codexPercent(entries ?? [], threads, { ...window, cwdMatch: args.cwdMatch });
     }
   } catch (e) {
     return usage(e.message);
   }
-  if (args.line) process.stdout.write(`${summaryLine(claude, codex)}\n`);
+  if (args.line) process.stdout.write(`${summaryLine(claude, codex, extra)}\n`);
   else if (args.json) {
-    process.stdout.write(`${JSON.stringify({ claude, codex, summary: summaryLine(claude, codex), ...extra }, null, 2)}\n`);
+    const { claudeRuns = null, host = null, percent: _percent, ...rest } = extra;
+    const summary = summaryLine(claude, codex, extra);
+    process.stdout.write(`${JSON.stringify({ claude, codex, claudeRuns, codexHost: host, summary, ...rest }, null, 2)}\n`);
   } else process.stdout.write(formatReport(claude, codex, extra));
 }
 

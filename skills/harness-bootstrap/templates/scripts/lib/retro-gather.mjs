@@ -4,14 +4,24 @@
 /**
  * Reads what retro-core turns into a digest: the log and the follow-ups doc with each line's commit
  * time (git blame), the state and steps files, earlier digests and exports, the Claude Code
- * transcripts of the sessions that ran in the repository or one of its worktrees, and the Codex
- * ledger. Read-only: it never writes, and its git is `blame`, `log`, `rev-parse` and `worktree list`.
+ * transcripts and a Codex host's threads that ran in the repository or one of its worktrees, and the
+ * two run ledgers, codex-run's and claude-run's. Read-only: it never writes, and its git is `blame`,
+ * `log`, `rev-parse` and `worktree list`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { markerUnits, previousData } from './retro-core.mjs';
-import { defaultLedger, gitRead, projectSessions, worktreePaths } from './run-sources.mjs';
-import { parseEvents, parseLedger, parseTranscript } from './unit-cost-core.mjs';
+import {
+  CLAUDE_LEDGER_DIR,
+  codexProjectSessions,
+  codexSessionsDir,
+  defaultLedger,
+  fileLines,
+  gitRead,
+  projectSessions,
+  worktreePaths,
+} from './run-sources.mjs';
+import { parseCodexSession, parseEvents, parseLedger, parseTranscript } from './unit-cost-core.mjs';
 import { parseSteps } from './unit-step-core.mjs';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worktrees', 'dist', 'build', 'coverage']);
@@ -113,9 +123,10 @@ export function readPrevious(dirs) {
  * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` and `plansDirs` are
  * relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
- * `top` and its worktrees whose main file changed since `sinceMs`.
+ * `top` and its worktrees whose main file changed since `sinceMs`, and so are a Codex host's threads
+ * (rollouts under `codexDir`, streamed: one can pass 512 MB).
  */
-export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, ledger = null, sinceMs = 0 }) {
+export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, codexDir = codexSessionsDir(), ledger = null, claudeLedger = null, sinceMs = 0 }) {
   const logFile = log === null ? null : path.join(top, log);
   if (logFile !== null && !fs.existsSync(logFile)) throw new Error(`no harness log at ${log}`);
   const g = {
@@ -128,6 +139,8 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     sessionUnits: new Map(),
     sessions: 0,
     ledger: null,
+    codex: [],
+    claudeRuns: null,
   };
   if (followUps && fs.existsSync(path.join(top, followUps))) {
     g.followUps = { text: readText(path.join(top, followUps)), dates: blameDates(top, followUps) };
@@ -145,7 +158,8 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
       g.steps.set(unit, [...(g.steps.get(unit) ?? []), ...parseSteps(readText(file))]);
     }
   }
-  for (const { id, files } of projectSessions(projectsDir, worktreePaths(top), sinceMs)) {
+  const roots = worktreePaths(top);
+  for (const { id, files } of projectSessions(projectsDir, roots, sinceMs)) {
     g.sessions += 1;
     for (const { file, ctx } of files) {
       const text = readText(file);
@@ -156,7 +170,10 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
       if (units.size) g.sessionUnits.set(id, units);
     }
   }
+  for (const { file } of codexProjectSessions(codexDir, roots, sinceMs)) g.codex.push(parseCodexSession(fileLines(file)));
   const ledgerFile = ledger ?? defaultLedger(top);
   if (fs.existsSync(ledgerFile)) g.ledger = parseLedger(readText(ledgerFile));
+  const claudeFile = claudeLedger ?? defaultLedger(top, CLAUDE_LEDGER_DIR);
+  if (fs.existsSync(claudeFile)) g.claudeRuns = parseLedger(readText(claudeFile));
   return g;
 }

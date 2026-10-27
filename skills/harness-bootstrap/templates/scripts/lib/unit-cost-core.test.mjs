@@ -16,6 +16,7 @@ import {
   DOLLARS_PER_PERCENT,
   PRICE,
   PRICED_IDS,
+  codexPercent,
   dedupeRows,
   family,
   formatReport,
@@ -23,6 +24,7 @@ import {
   isOwnerPrompt,
   isPricedId,
   parseArgs,
+  parseCodexSession,
   parseEvents,
   parseLedger,
   parseTag,
@@ -30,6 +32,8 @@ import {
   rowCost,
   summarizeCache,
   summarizeClaude,
+  summarizeClaudeRuns,
+  summarizeCodexHost,
   summarizeCompactions,
   summarizeLedger,
   summarizeSteps,
@@ -37,6 +41,7 @@ import {
   summaryLine,
   unionMs,
 } from './unit-cost-core.mjs';
+import { fileLines } from './run-sources.mjs';
 
 const RUNNER = fileURLToPath(new URL('../unit-cost.mjs', import.meta.url));
 const M = 1_000_000;
@@ -351,9 +356,10 @@ function fixture() {
   return root;
 }
 
-function cli(root, args, cwd = root) {
+function cli(root, args, cwd = root, extra = {}) {
   const env = { ...process.env, HOME: tmpDir('unit-cost-home-') };
-  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_') || k === 'CODEX_HOME') delete env[k];
+  Object.assign(env, extra);
   return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env, encoding: 'utf8' });
 }
 
@@ -809,7 +815,7 @@ test('without --projects-dir the wrapper reads $CLAUDE_CONFIG_DIR/projects when 
   withProjects(path.join(homed, '.claude'));
   const exec = (env) => {
     const e = { ...process.env, ...env };
-    for (const k of Object.keys(e)) if (k.startsWith('GIT_')) delete e[k];
+    for (const k of Object.keys(e)) if (k.startsWith('GIT_') || k === 'CODEX_HOME') delete e[k];
     return spawnSync(process.execPath, [RUNNER, '--session', 'sess1', '--line'], { cwd: bare, env: e, encoding: 'utf8' });
   };
   const viaConfig = exec({ HOME: home, CLAUDE_CONFIG_DIR: config });
@@ -853,4 +859,255 @@ test('the wrapper adds --times and --by-step from the session, its subagents\' t
   assert.match(text.stdout, /^Times \(main thread\): wall 45m · owner wait 30m \(1 questions · 1 prompts\) · work 15m$/m);
   assert.match(text.stdout, /^By step \(U-7\):$/m);
   assert.equal(cli(root, [...args, '--line']).status, 2);
+});
+
+// ---- a Codex host (its rollouts under $CODEX_HOME/sessions) and the claude-run ledger
+
+const cx = (min, type, payload) => jline({ timestamp: atMin(min), type, payload });
+const cxMeta = (min, over = {}) =>
+  cx(min, 'session_meta', { id: 'th-1', session_id: 'th-1', cwd: '/r/app', originator: 'Codex Desktop', source: 'vscode', thread_source: 'user', ...over });
+const cxEvent = (min, type, extra = {}) => cx(min, 'event_msg', { type, ...extra });
+/** A token_count: the thread's running totals and the account's weekly quota reading. */
+const cxTokens = (min, total, used, { cached = 0, output = 0, resets = 1_800_000_000 } = {}) =>
+  cxEvent(min, 'token_count', {
+    info: { total_token_usage: { input_tokens: total - output, cached_input_tokens: cached, output_tokens: output, reasoning_output_tokens: 0, total_tokens: total } },
+    rate_limits: { primary: { used_percent: used, window_minutes: 10080, resets_at: resets } },
+  });
+const cxUser = (min, text) => cx(min, 'response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
+const cxCall = (min, name, callId) => cx(min, 'response_item', { type: 'function_call', name, call_id: callId, arguments: '{}' });
+const cxOutput = (min, callId) => cx(min, 'response_item', { type: 'function_call_output', call_id: callId, output: 'ok' });
+const cxReply = (min, callId) =>
+  cxUser(min, `<send_user_message_question_reply> ${JSON.stringify([{ questionItemId: JSON.stringify(['request_user_input_async', callId, 0]), answer: 'yes' }])}`);
+
+/** A Codex main thread: three turns, a question that stops it and one that does not, a compaction. */
+function hostMain() {
+  return [
+    cxMeta(0),
+    cx(0, 'turn_context', { model: 'gpt-6.1-sol', effort: 'high' }),
+    cxEvent(0, 'task_started'),
+    cxUser(1, '<environment_context>\n  <cwd>/r/app</cwd>\n</environment_context>'),
+    cxUser(1, 'build the thing'),
+    cxTokens(2, 1000, 10, { cached: 600, output: 100 }),
+    cxCall(3, 'request_user_input', 'c1'),
+    cxOutput(13, 'c1'),
+    cxTokens(14, 3000, 12, { cached: 2000, output: 300 }),
+    cxEvent(15, 'task_complete'),
+    cxEvent(45, 'task_started'),
+    cxUser(45, 'next'),
+    cxTokens(46, 5000, 20, { cached: 3500, output: 500 }),
+    cxCall(47, 'request_user_input_async', 'c2'),
+    cxTokens(48, 6000, 21, { cached: 4200, output: 600 }),
+    cxEvent(50, 'task_complete'),
+    cxEvent(60, 'task_started'),
+    cxReply(60, 'c2'),
+    cx(61, 'compacted', { message: '', latest_token_usage_record: { usage: { input_tokens: 80_000 } } }),
+    cxTokens(62, 9000, 25, { cached: 6000, output: 900 }),
+    cxTokens(62, 9000, 25, { cached: 6000, output: 900 }),
+    cxTokens(64, 10_000, 27, { cached: 6800, output: 1000 }),
+    cxEvent(65, 'task_complete'),
+  ];
+}
+
+/** A subagent of th-1: its own meta, then the parent's and its history (forked), then its own turn. */
+function hostSub() {
+  return [
+    cxMeta(45, { id: 'th-2', session_id: 'th-1', parent_thread_id: 'th-1', source: { subagent: { thread_spawn: { parent_thread_id: 'th-1' } } }, thread_source: 'subagent' }),
+    cxMeta(45),
+    cxUser(45, 'build the thing'),
+    cxCall(45, 'request_user_input', 'c0'),
+    cxEvent(46, 'task_started'),
+    cxTokens(47, 2000, 20, { cached: 1000, output: 200 }),
+    cxTokens(49, 4000, 22, { cached: 3000, output: 400 }),
+    cxEvent(49, 'task_complete'),
+  ];
+}
+
+const hostRun = (before, after) => run({ limitsBefore: { usedPercent: before, resetsAt: 1_800_000_000 }, limitsAfter: { usedPercent: after, resetsAt: 1_800_000_000 } });
+
+test('parseCodexSession reads a rollout: its own meta, turns, readings, questions, typed prompts and compactions', () => {
+  const s = parseCodexSession(hostMain());
+  assert.deepEqual([s.id, s.session, s.parent, s.kind, s.cwd, s.host], ['th-1', 'th-1', null, 'main', '/r/app', true]);
+  assert.deepEqual(s.models, ['gpt-6.1-sol']);
+  assert.equal(s.starts.length, 3);
+  assert.equal(s.readings.length, 7);
+  assert.equal(s.events.filter((e) => e.type === 'prompt').length, 3);
+  assert.deepEqual(s.events.filter((e) => e.type === 'ask').map((e) => [e.id, e.async === true]), [['c1', false], ['c2', true]]);
+  assert.deepEqual(s.events.filter((e) => e.type === 'result').map((e) => e.id), ['c1']);
+  assert.deepEqual(s.events.filter((e) => e.type === 'compact').map((e) => e.preTokens), [80_000]);
+  const sub = parseCodexSession(hostSub());
+  assert.deepEqual([sub.id, sub.session, sub.parent, sub.kind, sub.host], ['th-2', 'th-1', 'th-1', 'sub', true]);
+  // An exec run is no host session; torn and foreign lines are skipped.
+  const exec = parseCodexSession([cxMeta(0, { id: 'ex-1', session_id: 'ex-1', originator: 'codex_exec', source: 'exec' }), '{"torn', 'not json', '']);
+  assert.deepEqual([exec.id, exec.host, exec.readings.length], ['ex-1', false, 0]);
+});
+
+test('summarizeCodexHost: tokens are the growth of the running totals inside the window; turns, questions and compactions are the main thread\'s', () => {
+  const sessions = [parseCodexSession(hostMain()), parseCodexSession(hostSub())];
+  const all = summarizeCodexHost(sessions);
+  assert.deepEqual([all.sessions, all.subagents, all.turns, all.questions, all.compactions, all.compactPreTokens], [1, 1, 3, 2, 1, 80_000]);
+  assert.deepEqual([all.tokens, all.inputTokens, all.cachedTokens, all.outputTokens], [14_000, 9000 + 3600, 6800 + 3000, 1400]);
+  assert.equal(all.cacheHit, Math.round(((6800 + 3000) / (9000 + 3600)) * 1000) / 10);
+  assert.deepEqual(all.models, ['gpt-6.1-sol']);
+  // From minute 40 the main thread adds what it read since its last reading before (3000 at minute 14).
+  const late = summarizeCodexHost(sessions, { since: atMin(40) });
+  assert.deepEqual([late.tokens, late.turns, late.questions], [10_000 - 3000 + 4000, 2, 1]);
+  const after = summarizeCodexHost(sessions, { since: atMin(70) });
+  assert.deepEqual([after.sessions, after.subagents, after.tokens, after.percent], [0, 0, 0, 0]);
+});
+
+test('summarizeCodexHost: the quota is each turn\'s first reading to its last, one union per quota window, never the gap between turns', () => {
+  const main = parseCodexSession(hostMain());
+  // 10->12, 20->21 and 25->27; the 12->20 between turns is other work on the account.
+  assert.equal(summarizeCodexHost([main]).percent, 5);
+  // The subagent's 20->22 overlaps the main thread's 20->21: counted once.
+  assert.equal(summarizeCodexHost([main, parseCodexSession(hostSub())]).percent, 6);
+  // A turn that crosses a weekly reset is two intervals, one per window.
+  const reset = parseCodexSession([
+    cxMeta(0),
+    cxEvent(0, 'task_started'),
+    cxTokens(1, 100, 98, { resets: 1000 }),
+    cxTokens(2, 200, 99, { resets: 1030 }),
+    cxTokens(3, 300, 0, { resets: 605_800 }),
+    cxTokens(4, 400, 2, { resets: 605_800 }),
+    cxEvent(5, 'task_complete'),
+  ]);
+  assert.equal(summarizeCodexHost([reset]).percent, 3);
+});
+
+test('codexPercent counts the ledger\'s runs and the host\'s turns as one union per quota window', () => {
+  const sessions = [parseCodexSession(hostMain())];
+  assert.equal(codexPercent([hostRun(11, 13)], sessions), 6);
+  assert.equal(codexPercent([hostRun(30, 32)], sessions), 7);
+  assert.equal(codexPercent([hostRun(30, 32), run({ outcome: 'reserved', ...hostRun(40, 50) })], sessions), 7);
+  assert.equal(codexPercent([], sessions), 5);
+  assert.equal(codexPercent([hostRun(30, 32)], []), 2);
+  assert.equal(codexPercent([hostRun(30, 32)], [], { cwdMatch: 'elsewhere' }), 0);
+});
+
+test('summarizeTimes over a Codex main thread: a stopping question waits to its answer, a prompt or an async reply back to the last turn', () => {
+  const ev = parseCodexSession(hostMain()).events;
+  const t = summarizeTimes(ev);
+  assert.equal(t.wallMs, 65 * MIN);
+  assert.equal(t.questionMs, 10 * MIN);
+  assert.equal(t.promptMs, 40 * MIN);
+  assert.equal(t.waitMs, 50 * MIN);
+  assert.equal(t.workMs, 15 * MIN);
+  assert.deepEqual([t.questions, t.prompts, t.unanswered], [2, 3, 0]);
+  assert.equal(summarizeCompactions(ev).count, 1);
+});
+
+test('summarizeClaudeRuns adds the runs\' dollars, counts them by kind, and keeps not-run and unpriced rows apart', () => {
+  const cr = (over = {}) => ({ at: '2026-10-24T01:00:00Z', kind: 'review', cwd: '/r/app', outcome: 'ok', costUsd: 0.5, turns: 4, ms: 1000, ...over });
+  const s = summarizeClaudeRuns([
+    cr(),
+    cr({ kind: 'adversarial', costUsd: 1.25 }),
+    cr({ outcome: 'failed', costUsd: 0.25 }),
+    cr({ outcome: 'timeout', costUsd: null }),
+    cr({ outcome: 'reserved', costUsd: undefined, ms: undefined }),
+    cr({ outcome: 'unavailable', costUsd: undefined, ms: undefined }),
+  ]);
+  assert.deepEqual([s.runs, s.notRun, s.unpriced, s.ms], [4, 2, 1, 4000]);
+  assert.deepEqual(s.byKind, { review: 3, adversarial: 1 });
+  near(s.usd, 2);
+  assert.equal(summarizeClaudeRuns([cr()], { since: '2026-10-25T00:00:00Z' }).runs, 0);
+  assert.equal(summarizeClaudeRuns([cr()], { cwdMatch: 'elsewhere' }).runs, 0);
+});
+
+test('summaryLine adds claude-run dollars to the cost and its Claude %, and names a Codex host beside the ledger\'s runs', () => {
+  const claude = { total: 12.345, claudePercent: 0.6 };
+  const pct = Math.round((20 / DOLLARS_PER_PERCENT) * 10) / 10;
+  const runs = { runs: 2, notRun: 0, usd: 7.655 };
+  assert.equal(summaryLine(claude, null, { claudeRuns: runs }), `Cost $20.00 · Claude ${pct}% (2 claude-run) · Codex no ledger`);
+  assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, notRun: 1 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 1 not run) · Codex no ledger`);
+  assert.equal(summaryLine(claude, null, { host: { percent: 5 }, percent: 5 }), 'Cost $12.35 · Claude 0.6% · Codex 5% (host)');
+  assert.equal(summaryLine(claude, { percent: 1.5, runs: 3, notRun: 1 }, { host: { percent: 5 }, percent: 6 }), 'Cost $12.35 · Claude 0.6% · Codex 6% (host, 3 runs, 1 not run)');
+  // Without either, the line is the one it always was.
+  assert.equal(summaryLine(claude, { percent: 1.5, runs: 3 }, {}), 'Cost $12.35 · Claude 0.6% · Codex 1.5% (3 runs)');
+  assert.equal(summaryLine(claude, null, { claudeRuns: { runs: 0, notRun: 0, usd: 0 } }), 'Cost $12.35 · Claude 0.6% · Codex no ledger');
+});
+
+test('formatReport adds the claude-run and the Codex host lines only when there are any', () => {
+  const claude = summarizeClaude(parseTranscript(turn({ usage: { output_tokens: M } })));
+  assert.doesNotMatch(formatReport(claude, null), /claude-run|Codex host/);
+  const sessions = [parseCodexSession(hostMain()), parseCodexSession(hostSub())];
+  const host = summarizeCodexHost(sessions);
+  const claudeRuns = summarizeClaudeRuns([
+    { at: '2026-10-24T01:00:00Z', kind: 'review', outcome: 'ok', costUsd: 1.5, ms: 60_000 },
+    { at: '2026-10-24T01:00:00Z', kind: 'review', outcome: 'reserved' },
+  ]);
+  const text = formatReport(claude, null, { claudeRuns, host, percent: codexPercent([], sessions) });
+  assert.match(text, /^Claude runs \(claude-run\): 1 runs \(review 1\) · \$1\.50 · 1 not run \(reserved or unavailable\)$/m);
+  assert.match(text, /^Codex host: 1 sessions \(1 subagents\) · 3 turns · 2 questions · 1 compactions · tokens 14K \(77\.8% of input cached\) · 6% of quota · gpt-6\.1-sol$/m);
+  assert.match(text, /^ {2}the % is account-wide: it includes any other work on the same Codex account during the window$/m);
+  assert.match(text, /^Cost \$\d+\.\d\d · Claude [\d.]+% \(1 claude-run, 1 not run\) · Codex 6% \(host\)\n/);
+});
+
+test('fileLines streams a file in chunks: a line across chunks, a character across chunks, no newline at the end, an empty file', () => {
+  const f = path.join(tmpDir('unit-cost-lines-'), 'a.jsonl');
+  fs.writeFileSync(f, 'alpha\nbeta-long-line\n\ngamma ünï');
+  assert.deepEqual([...fileLines(f, 4)], ['alpha', 'beta-long-line', '', 'gamma ünï']);
+  fs.writeFileSync(f, 'one\n');
+  assert.deepEqual([...fileLines(f, 3)], ['one']);
+  fs.writeFileSync(f, '');
+  assert.deepEqual([...fileLines(f, 4)], []);
+});
+
+/** A $CODEX_HOME whose sessions hold th-1, its subagent th-2, another thread with its subagent, and an exec run. */
+function codexHome() {
+  const home = tmpDir('unit-cost-codex-');
+  const day = path.join(home, 'sessions', '2026', '10', '24');
+  fs.mkdirSync(day, { recursive: true });
+  const put = (name, lines) => fs.writeFileSync(path.join(day, name), `${lines.join('\n')}\n`);
+  put('rollout-2026-10-24T08-00-00-th-1.jsonl', hostMain());
+  put('rollout-2026-10-24T08-45-00-th-2.jsonl', hostSub());
+  put('rollout-2026-10-24T08-46-00-th-9.jsonl', [cxMeta(46, { id: 'th-9', session_id: 'th-9' }), cxEvent(46, 'task_started'), cxTokens(47, 500, 40), cxTokens(48, 900, 44)]);
+  put('rollout-2026-10-24T08-46-30-th-10.jsonl', [
+    cxMeta(46, { id: 'th-10', session_id: 'th-9', parent_thread_id: 'th-9', source: { subagent: { thread_spawn: { parent_thread_id: 'th-9' } } } }),
+    cxEvent(46, 'task_started'),
+    cxTokens(47, 700, 41),
+    cxTokens(48, 800, 43),
+  ]);
+  put('rollout-2026-10-24T08-47-00-ex-1.jsonl', [
+    cxMeta(47, { id: 'ex-1', session_id: 'th-1', originator: 'codex_exec', source: 'exec' }),
+    cxEvent(47, 'task_started'),
+    cxTokens(48, 50_000, 30),
+    cxTokens(49, 60_000, 39),
+  ]);
+  return home;
+}
+
+test('the wrapper takes a Codex thread id: its rollout under $CODEX_HOME/sessions and its subagents, never an exec run or another thread', () => {
+  const root = fixture();
+  const env = { CODEX_HOME: codexHome() };
+  const base = ['--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'none.jsonl')];
+  const r = cli(root, ['--session', 'th-1', ...base, '--json', '--times'], root, env);
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.claude.turns, 0);
+  assert.deepEqual([j.codexHost.sessions, j.codexHost.subagents, j.codexHost.tokens, j.codexHost.percent], [1, 1, 14_000, 6]);
+  assert.deepEqual([j.times.waitMs, j.compactions.count], [50 * MIN, 1]);
+  assert.equal(j.summary, 'Cost $0.00 · Claude 0% · Codex 6% (host)');
+  // Claude's cache line says nothing about a Codex thread: its cache share is on the host line.
+  assert.equal(j.cache, undefined);
+  const text = cli(root, ['--session', 'th-1', ...base, '--times'], root, env).stdout;
+  assert.match(text, /^Codex host: 1 sessions \(1 subagents\) · 3 turns .* 6% of quota · gpt-6\.1-sol$/m);
+  assert.doesNotMatch(text, /cache hit/);
+  const both = JSON.parse(cli(root, ['--session', 'sess1,th-1', ...base, '--json'], root, env).stdout);
+  assert.deepEqual([both.claude.turns, both.codexHost.sessions], [2, 1]);
+  const missing = cli(root, ['--session', 'th-404', ...base], root, env);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /session th-404 not found/);
+});
+
+test('the wrapper reads the main checkout\'s claude-run ledger from a worktree and adds its dollars to the cost', () => {
+  const { root, git } = gitRepo();
+  fs.mkdirSync(path.join(root, '.claude-runs'));
+  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${JSON.stringify({ at: '2026-10-24T01:00:00Z', kind: 'review', cwd: root, outcome: 'ok', costUsd: 2, ms: 1000 })}\n`);
+  const wt = path.join(root, '.worktrees', 'wt2');
+  git('worktree', 'add', '-q', '-b', 'wt2', wt);
+  const sessions = fixture();
+  const r = cli(sessions, ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'], wt);
+  assert.equal(r.status, 0, r.stderr);
+  const total = PRICE.opus[1] + PRICE.sonnet[1] + 2;
+  assert.equal(r.stdout, `Cost $${total.toFixed(2)} · Claude ${Math.round((total / DOLLARS_PER_PERCENT) * 10) / 10}% (1 claude-run) · Codex no ledger\n`);
 });

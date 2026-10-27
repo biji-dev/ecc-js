@@ -4,8 +4,8 @@
 // retro adds, the outlier rule, the alert levels and the step words, each re-derived from the project.
 /**
  * The retro: what the last week of units cost and where it went, against the four weeks before it,
- * from the harness log, the steps and state files, the follow-ups doc, the transcripts and the Codex
- * ledger. No I/O here (scripts/lib/retro-gather.mjs reads the files), so `retro-core.test.mjs` can
+ * from the harness log, the steps and state files, the follow-ups doc, the transcripts, a Codex
+ * host's threads and the two run ledgers, codex-run's and claude-run's. No I/O here (scripts/lib/retro-gather.mjs reads the files), so `retro-core.test.mjs` can
  * pin each rule.
  *
  * WHY A DIGEST. Every harness round so far started because the owner asked: the learning loop was
@@ -17,10 +17,13 @@
 import { fmtMinutes, groupUnits, parseLog, percentile, tables } from './estimate-core.mjs';
 import {
   dedupeRows,
+  fmtTokens,
   inWindow,
   parseTag,
   summarizeCache,
   summarizeClaude,
+  summarizeClaudeRuns,
+  summarizeCodexHost,
   summarizeCompactions,
   summarizeLedger,
   summarizeSteps,
@@ -438,16 +441,38 @@ export function transcriptKpis(rows, events, { since, until }) {
   };
 }
 
-/** Each transcript KPI's median over the newest BASELINE_WEEKS earlier digests of weeks before `week`; null with none. */
-export function previousKpis(previous, week) {
+/** A Codex host's threads in the window (summarizeCodexHost), its numbers only, so earlier weeks give a median. */
+export function codexHostKpis(sessions, { since, until }) {
+  const h = summarizeCodexHost(sessions, { since, until });
+  return {
+    sessions: h.sessions,
+    subagents: h.subagents,
+    turns: h.turns,
+    questions: h.questions,
+    compactions: h.compactions,
+    compactPreTokens: h.compactPreTokens,
+    tokens: h.tokens,
+    cacheHit: h.cacheHit,
+    percent: h.percent,
+  };
+}
+
+/** claude-run's runs in the window: how many ran and did not, their dollars, and those without a cost. */
+export function claudeRunKpis(entries, { since, until }) {
+  const r = summarizeClaudeRuns(entries, { since, until });
+  return { runs: r.runs, notRun: r.notRun, usd: round2(r.usd), unpriced: r.unpriced };
+}
+
+/** Each `key` KPI's median over the newest BASELINE_WEEKS earlier digests of weeks before `week`; null with none. */
+export function previousKpis(previous, week, key = 'transcripts') {
   const list = previous
-    .filter((p) => p.week < week && p.kpis?.transcripts)
+    .filter((p) => p.week < week && p.kpis?.[key])
     .sort((x, y) => (x.week < y.week ? 1 : -1))
     .slice(0, BASELINE_WEEKS);
   if (list.length === 0) return null;
   const out = { weeks: list.length };
-  for (const k of Object.keys(list[0].kpis.transcripts)) {
-    const m = median(list.map((p) => p.kpis.transcripts[k]));
+  for (const k of Object.keys(list[0].kpis[key])) {
+    const m = median(list.map((p) => p.kpis[key][k]));
     out[k] = m === null ? null : round1(m);
   }
   return out;
@@ -583,11 +608,25 @@ export function candidates(d) {
   return out;
 }
 
+/** How much of each source there was to read: the digest's Read line. */
+function readCounts(g, records) {
+  return {
+    logRows: records.length,
+    undated: records.filter((r) => r.landed === null).length,
+    stepsFiles: g.steps.size,
+    stateFiles: g.states.length,
+    sessions: g.sessions ?? 0,
+    codexSessions: g.codex?.length ?? 0,
+    ledgerRows: g.ledger ? g.ledger.length : null,
+    claudeRunRows: g.claudeRuns ? g.claudeRuns.length : null,
+  };
+}
+
 /**
  * Everything the digest and the export say, from what retro-gather read: `g` is { log: { text,
  * dates }, followUps: { text, dates } | null, states: [{ text, changed }], steps: Map unit -> markers,
- * rows, events, sessionUnits: Map session -> Set of units, sessions, ledger: entries | null,
- * previous: [data] }; `columns` as for logRecords.
+ * rows, events, sessionUnits: Map session -> Set of units, sessions, ledger: entries | null, codex:
+ * [parsed Codex threads], claudeRuns: entries | null, previous: [data] }; `columns` as for logRecords.
  */
 export function buildRetro(g, { project, now, since = null, until = null, columns = undefined }) {
   const win = windowFor({ since, until, now, previous: g.previous });
@@ -624,20 +663,19 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     until: win.until,
     baselineSince: win.baselineSince,
     generated: iso(now),
-    sources: {
-      logRows: records.length,
-      undated: records.filter((r) => r.landed === null).length,
-      stepsFiles: g.steps.size,
-      stateFiles: g.states.length,
-      sessions: g.sessions ?? 0,
-      ledgerRows: g.ledger ? g.ledger.length : null,
-    },
+    sources: readCounts(g, records),
     kpis: {
       log: logKpis(records, win.since, win.until),
       transcripts: g.rows.length ? transcriptKpis(g.rows, g.events, win) : null,
       codex: g.ledger ? summarizeLedger(g.ledger, { since: win.since, until: win.until }) : null,
+      codexHost: g.codex?.length ? codexHostKpis(g.codex, win) : null,
+      claudeRuns: g.claudeRuns ? claudeRunKpis(g.claudeRuns, win) : null,
     },
-    baseline: { log: logKpis(records, win.baselineSince, win.since), transcripts: previousKpis(g.previous, win.week) },
+    baseline: {
+      log: logKpis(records, win.baselineSince, win.since),
+      transcripts: previousKpis(g.previous, win.week),
+      codexHost: previousKpis(g.previous, win.week, 'codexHost'),
+    },
     unitOutliers: unitOutliers(records, win),
     stepOutliers: stepOutliers(all, currentIds),
     steps: all.filter((u) => currentIds.has(u.unit)),
@@ -670,7 +708,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
     `# Retro ${d.week} — ${d.project}`,
     '',
     `Window ${d.since.slice(0, 16)}Z → ${d.until.slice(0, 16)}Z, baseline from ${d.baselineSince.slice(0, 10)} · generated by retro.mjs — regenerate, never edit by hand`,
-    `Read: ${s.logRows ?? 0} log rows${s.undated ? ` (${s.undated} undated, left out)` : ''} · ${s.stepsFiles ?? 0} steps files · ${s.stateFiles ?? 0} state files · ${s.sessions ?? 0} sessions · ${s.ledgerRows === null || s.ledgerRows === undefined ? 'no Codex ledger' : `${s.ledgerRows} Codex ledger rows`}`,
+    `Read: ${s.logRows ?? 0} log rows${s.undated ? ` (${s.undated} undated, left out)` : ''} · ${s.stepsFiles ?? 0} steps files · ${s.stateFiles ?? 0} state files · ${s.sessions ?? 0} sessions${s.codexSessions ? ` · ${s.codexSessions} Codex threads` : ''} · ${s.ledgerRows === null || s.ledgerRows === undefined ? 'no Codex ledger' : `${s.ledgerRows} Codex ledger rows`}${s.claudeRunRows === null || s.claudeRunRows === undefined ? '' : ` · ${s.claudeRunRows} claude-run ledger rows`}`,
     '',
     '## KPIs',
     '',
@@ -691,8 +729,21 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
       `| Cache hit · expiry rewrites | ${t.cacheHit}% · ${t.rewrites} (${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main) | ${base('cacheHit', (v) => `${v}%`)} · ${base('rewriteShare', (v) => `${v}% of main`)} |`,
     );
   } else L.push('| Transcripts | none found for this repository | — |');
+  const r = d.kpis.claudeRuns;
+  if (r) L.push(`| Claude runs (claude-run) · spend | ${r.runs} · ${usd(r.usd)} | — |`);
   const c = d.kpis.codex;
-  L.push(c ? `| Codex runs · weekly quota used | ${c.runs} · ${c.percent}% | — |` : '| Codex | no ledger | — |', '');
+  L.push(c ? `| Codex runs · weekly quota used | ${c.runs} · ${c.percent}% | — |` : '| Codex | no ledger | — |');
+  const h = d.kpis.codexHost;
+  if (h) {
+    const bh = d.baseline.codexHost;
+    const hb = (key, fmt = String) => (bh && bh[key] !== null && bh[key] !== undefined ? fmt(bh[key]) : '—');
+    L.push(
+      `| Codex host: sessions · turns · questions asked | ${h.sessions} · ${h.turns} · ${h.questions} | ${hb('sessions')} · ${hb('turns')} · ${hb('questions')} |`,
+      `| Codex host: tokens (input cached) · weekly quota used | ${fmtTokens(h.tokens)} (${h.cacheHit}%) · ${h.percent}% | ${hb('tokens', fmtTokens)} (${hb('cacheHit', (v) => `${v}%`)}) · ${hb('percent', (v) => `${v}%`)} |`,
+      `| Codex host: compactions · median tokens before | ${h.compactions} · ${h.compactPreTokens} | ${hb('compactions')} · ${hb('compactPreTokens')} |`,
+    );
+  }
+  L.push('');
 
   L.push('## Outliers', '');
   const outliers = [

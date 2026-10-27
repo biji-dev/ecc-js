@@ -14,10 +14,11 @@ const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scr
 const TEST_REL = path.join('lib', 'retro-core.test.mjs');
 const CORE_REL = path.join('lib', 'retro-core.mjs');
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
+const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 26;
+const EXPECTED_TESTS = 29;
 
 let passed = 0;
 let failed = 0;
@@ -38,10 +39,10 @@ function tmp(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
-/** Env with a fresh HOME and no GIT_* variable. */
+/** Env with a fresh HOME and no GIT_* or CODEX_HOME variable. */
 function hermeticEnv(cleanup) {
   const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
+  for (const key of Object.keys(env)) if (key.startsWith('GIT_') || key === 'CODEX_HOME') delete env[key];
   env.HOME = tmp('retro-suite-home-');
   cleanup.push(env.HOME);
   return env;
@@ -99,10 +100,15 @@ mutantFails('starting the week on Sunday', 'd.getUTCDate() - ((d.getUTCDay() + 6
 mutantFails("starting the window at this week's own digest", '.filter((p) => p.week !== week && Date.parse(p.until) < end)', '.filter((p) => Date.parse(p.until) < end)');
 mutantFails("taking a sibling repository's sessions", 'if (cwd === null || !inside(cwd)) continue;', 'if (cwd === null) continue;', SOURCES_REL);
 mutantFails('giving an overlapping turn to the unit that started first', 'if (iv && !(best.get(id(r))?.start >= iv.start))', 'if (iv && !best.has(id(r)))');
-mutantFails("charging a unit for another unit's dispatch", 'const claimed = claimRows(spans, dispatchOwners(agents, ids));', 'const claimed = claimRows(spans);');
+mutantFails("charging a unit for another unit's dispatch", 'const claimed = claimRows(spans, owners);', 'const claimed = claimRows(spans);');
+mutantFails("dropping a tagged dispatch's turns after its unit's last marker", 'return rows.filter((r) => own(r) || ', 'return rows.filter((r) => ');
+mutantFails("a unit's span built without its dispatches", 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until, owners)', 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until)');
 mutantFails('matching a unit id inside a longer one', '(?![A-Za-z0-9]|\\\\.[A-Za-z0-9])', '');
 mutantFails('cutting a marker command\'s unit id short', '(?=[\\s"\\\\]|$)/g', '/g');
 mutantFails('keeping stop-word pairs as friction themes', ' && !STOP.has(a) && !STOP.has(b)', '');
+mutantFails("taking a sibling repository's Codex thread", 'return hostRollouts(dir, sinceMs).filter(({ meta }) => inside(meta.cwd));', 'return hostRollouts(dir, sinceMs);', SOURCES_REL);
+mutantFails("leaving claude-run's ledger unread", 'if (fs.existsSync(claudeFile)) g.claudeRuns = parseLedger(readText(claudeFile));', '', GATHER_REL);
+mutantFails("taking the Codex host's baseline from the transcripts'", "codexHost: previousKpis(g.previous, win.week, 'codexHost'),", 'codexHost: previousKpis(g.previous, win.week),');
 
 test('CLI smoke: a bad flag and two output modes each exit 2 with the usage line, reading nothing', () => {
   const cwd = tmp('retro-cli-');

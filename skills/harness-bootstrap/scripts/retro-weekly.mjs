@@ -14,7 +14,8 @@
  *   node <skill dir>/scripts/retro-weekly.mjs --install [--dry-run] | --uninstall [--dry-run] | --print-schedule
  *
  * options: --home <dir> (default ~/.agents/harness) · --projects-dir <dir> (default $CLAUDE_CONFIG_DIR/projects
- *          when that is set, else ~/.claude/projects)
+ *          when that is set, else ~/.claude/projects) · --config-dir <dir> (the CLAUDE_CONFIG_DIR for this
+ *          run and its review; the Windows task passes it, schtasks setting no environment)
  *          · --claude <path> (default: claude on PATH)
  *
  * Files under the home: repos.json (the registry) · retro/<project>/retro-<YYYY-Www>.{json,md} (each
@@ -346,6 +347,8 @@ function main() {
     process.stderr.write(`retro-weekly: ${e.message}\n${USAGE}\n`);
     return 2;
   }
+  // set first: the transcripts' directory, the review's claude and the schedule read it
+  if (opts.configDir) process.env.CLAUDE_CONFIG_DIR = path.resolve(opts.configDir);
   const home = path.resolve(opts.home ?? path.join(os.homedir(), '.agents', 'harness'));
   try {
     switch (opts.command) {

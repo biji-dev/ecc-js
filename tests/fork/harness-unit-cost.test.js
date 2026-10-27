@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 50;
+const EXPECTED_TESTS = 63;
 
 let passed = 0;
 let failed = 0;
@@ -38,10 +38,10 @@ function tmp(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
-/** Env with a fresh HOME and no GIT_* variable; `extra` is applied last. */
+/** Env with a fresh HOME and no GIT_* or CODEX_HOME variable; `extra` is applied last. */
 function hermeticEnv(cleanup, extra = {}) {
   const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
+  for (const key of Object.keys(env)) if (key.startsWith('GIT_') || key === 'CODEX_HOME') delete env[key];
   env.HOME = tmp('unit-cost-suite-home-');
   cleanup.push(env.HOME);
   return { ...env, ...extra };
@@ -111,8 +111,9 @@ mutantFails('attributing subagent dollars to the main thread', 'out[r.kind] += r
 mutantFails('counting a quota delta across a reset', 'Math.abs(b.resetsAt - a.resetsAt) <= SAME_WINDOW_S', 'true');
 mutantFails('counting a negative quota delta', 'if (i.hi <= i.lo) continue;', '');
 mutantFails('counting overlapping quota intervals twice', 'if (l <= hi) hi = Math.max(hi, h);', 'if (false) hi = Math.max(hi, h);');
-mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {", 'if (false) {');
-mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), LEDGER_DIR, 'ledger.jsonl');", "return path.join(cwd, LEDGER_DIR, 'ledger.jsonl');", SOURCES_REL);
+mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase()) && !Number.isFinite(e.costUsd)) {", 'if (false) {');
+mutantFails('dropping a claude-run row the API stopped after it spent', ' && !Number.isFinite(e.costUsd)) {', ') {');
+mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), dir, 'ledger.jsonl');", "return path.join(cwd, dir, 'ledger.jsonl');", SOURCES_REL);
 mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
 mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
 mutantFails('accepting an unknown flag', '} else throw new Error(`unknown option ${t}`);', '}');
@@ -133,6 +134,19 @@ mutantFails('counting an ask from before the window as unanswered', 'out.unanswe
 mutantFails('ignoring CLAUDE_CONFIG_DIR', 'process.env.CLAUDE_CONFIG_DIR || ', '', CLI_REL);
 mutantFails('ending an open step at the window\'s last turn', 'const lastTs = deduped.reduce', 'const lastTs = used.reduce');
 mutantFails('letting an unreadable time set a subagent\'s first turn', "if (r.kind !== 'sub' || !Number.isFinite(r.ts)) continue;", "if (r.kind !== 'sub') continue;");
+mutantFails('taking a subagent rollout\'s copy of its parent\'s meta for its own', 'if (!state.meta) Object.assign(s, codexMeta(p));', 'Object.assign(s, codexMeta(p));');
+mutantFails('counting a codex exec run as the host\'s', "host: id !== null && m.originator !== 'codex_exec' && src !== 'exec',", 'host: id !== null,');
+mutantFails('holding an async question open until a result', 'if (!e.async) asks.set(e.id, e.ts);', 'asks.set(e.id, e.ts);');
+mutantFails('taking the owner\'s reply to an async question for a line Codex wrote', 'const CODEX_INJECTED = /^\\s*<(?!send_user_message_question_reply>)/;', 'const CODEX_INJECTED = /^\\s*</;');
+mutantFails('adding a running total instead of its growth', 'const before = prev?.[k] ?? 0;', 'const before = 0;');
+mutantFails('counting the quota between two turns', 'if (cur && cur.seg === r.seg && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;', 'if (cur && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;');
+mutantFails('leaving claude-run\'s dollars out of the cost', 'const total = claude.total + (claudeRuns?.usd ?? 0);', 'const total = claude.total;');
+mutantFails('printing Claude\'s cache line for a Codex thread alone', 'if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);', 'extra.cache = summarizeCache(rows, window);', CLI_REL);
+mutantFails('taking another thread\'s subagent', '(m.session === id || m.parent === id)', 'true', SOURCES_REL);
+mutantFails('splitting a line at a read boundary', 'const data = Buffer.concat([rest, buf.subarray(0, n)]);', 'const data = Buffer.from(buf.subarray(0, n));', SOURCES_REL);
+mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('placing a run made through a link by its unresolved path', 'const d = realPath(dir);', 'const d = path.resolve(dir);', SOURCES_REL);
+mutantFails('missing a thread archived to archived_sessions', "walk(path.join(path.dirname(dir), 'archived_sessions'));", '', SOURCES_REL);
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

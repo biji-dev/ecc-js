@@ -47,6 +47,7 @@ import {
   unitSteps,
   windowFor,
 } from './retro-core.mjs';
+import { parseCodexSession } from './unit-cost-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
 
 const RUNNER = fileURLToPath(new URL('../retro.mjs', import.meta.url));
@@ -460,7 +461,7 @@ function fixtureData() {
 test('buildRetro and formatDigest: every section in order, the numbers from the inputs, a data block that reads back', () => {
   const d = fixtureData();
   assert.equal(d.since, '2026-10-19T12:00:00.000Z'); // from the W43 digest
-  assert.deepEqual(d.sources, { logRows: 3, undated: 0, stepsFiles: 1, stateFiles: 1, sessions: 1, ledgerRows: 0 });
+  assert.deepEqual(d.sources, { logRows: 3, undated: 0, stepsFiles: 1, stateFiles: 1, sessions: 1, codexSessions: 0, ledgerRows: 0, claudeRunRows: null });
   assert.deepEqual(d.steps.map((u) => [u.unit, u.source, u.total]), [['EP-1', 'descriptions', 7], ['EP-2', 'markers', 4]]);
   const text = formatDigest(d);
   const headings = text.split('\n').filter((l) => l.startsWith('#'));
@@ -475,6 +476,85 @@ test('buildRetro and formatDigest: every section in order, the numbers from the 
   assert.match(text, /^1\. \[rule\] EP-1: the owner caught what the harness missed — a gate passed having run nothing — log › Missed by harness$/m);
   const back = previousData(text);
   assert.deepEqual([back.week, back.until, back.kpis.log.units], ['2026-W44', '2026-10-26T12:00:00.000Z', 2]);
+});
+
+test("buildRetro: a dispatch tagged for a unit counts whole, its turns after the unit's last marker and in another session too", () => {
+  const t = at('22T10:00:00');
+  const sub = (mins, session) => row({ ts: t + mins * 60_000, kind: 'sub', agentId: 'x', desc: '[EP-2 s8b r1] record writer', session, cost: 5 });
+  const g = {
+    log: { text: table(LOG_HEAD, [logRow('EP-2', 'Full', 120, 20)]), dates: datesFor('22T10:00:00') },
+    followUps: null,
+    states: [],
+    steps: new Map([['EP-2', [marker(t, '2', 'start'), marker(t + 30 * 60_000, '8b', 'start'), marker(t + 40 * 60_000, '8b', 'done')]]]),
+    rows: [row({ ts: t + 60_000, cost: 3 }), sub(35, 's1'), sub(50, 's1'), sub(55, 's2')],
+    events: [],
+    sessionUnits: new Map([['s1', new Set(['EP-2'])]]),
+    sessions: 2,
+    ledger: [],
+    previous: [],
+  };
+  const ep2 = buildRetro(g, { project: 'demo', now: NOW }).steps.find((u) => u.unit === 'EP-2');
+  assert.deepEqual([ep2.total, ep2.steps.find((s) => s.step === '8b').usd], [18, 15]);
+});
+
+/** A Codex rollout line, and a token_count with the thread's running total and a weekly quota reading. */
+const cxLine = (ts, type, payload) => JSON.stringify({ timestamp: new Date(ts).toISOString(), type, payload });
+const cxTokens = (ts, total, used, cached = 0) =>
+  cxLine(ts, 'event_msg', {
+    type: 'token_count',
+    info: { total_token_usage: { input_tokens: total, cached_input_tokens: cached, output_tokens: 0, total_tokens: total } },
+    rate_limits: { primary: { used_percent: used, window_minutes: 10080, resets_at: 1_800_000_000 } },
+  });
+
+test('buildRetro on a Codex host: its threads and claude-run\'s ledger become KPIs, digest rows and a baseline', () => {
+  const t = at('22T10:00:00');
+  const min = (m) => t + m * 60_000;
+  const thread = parseCodexSession([
+    cxLine(min(0), 'session_meta', { id: 'th-1', session_id: 'th-1', cwd: '/r', originator: 'Codex Desktop', source: 'vscode' }),
+    cxLine(min(0), 'event_msg', { type: 'task_started' }),
+    cxTokens(min(1), 4000, 10, 2000),
+    cxLine(min(2), 'response_item', { type: 'function_call', name: 'request_user_input', call_id: 'c1', arguments: '{}' }),
+    cxTokens(min(3), 10_000, 14, 5000),
+    cxLine(min(4), 'event_msg', { type: 'task_complete' }),
+  ]);
+  const g = {
+    log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') },
+    followUps: null,
+    states: [],
+    steps: new Map(),
+    rows: [],
+    events: [],
+    sessionUnits: new Map(),
+    sessions: 0,
+    ledger: null,
+    codex: [thread],
+    claudeRuns: [
+      { at: new Date(min(2)).toISOString(), kind: 'review', outcome: 'ok', costUsd: 1.5, ms: 1000 },
+      { at: new Date(min(3)).toISOString(), kind: 'adversarial', outcome: 'reserved' },
+    ],
+    previous: [
+      {
+        week: '2026-W43',
+        since: 'x',
+        until: '2026-10-19T12:00:00.000Z',
+        kpis: { codexHost: { sessions: 3, subagents: 0, turns: 9, questions: 2, compactions: 1, compactPreTokens: 0, tokens: 2_000_000, cacheHit: 50, percent: 20 } },
+      },
+    ],
+  };
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  assert.deepEqual(d.kpis.codexHost, { sessions: 1, subagents: 0, turns: 1, questions: 1, compactions: 0, compactPreTokens: 0, tokens: 10_000, cacheHit: 50, percent: 4 });
+  assert.deepEqual(d.kpis.claudeRuns, { runs: 1, notRun: 1, usd: 1.5, unpriced: 0 });
+  assert.deepEqual([d.sources.codexSessions, d.sources.claudeRunRows], [1, 2]);
+  const text = formatDigest(d);
+  assert.match(text, /^Read: 1 log rows · 0 steps files · 0 state files · 0 sessions · 1 Codex threads · no Codex ledger · 2 claude-run ledger rows$/m);
+  assert.match(text, /^\| Transcripts \| none found for this repository \| — \|$/m);
+  assert.match(text, /^\| Claude runs \(claude-run\) · spend \| 1 · \$1\.50 \| — \|$/m);
+  assert.match(text, /^\| Codex host: sessions · turns · questions asked \| 1 · 1 · 1 \| 3 · 9 · 2 \|$/m);
+  assert.match(text, /^\| Codex host: tokens \(input cached\) · weekly quota used \| 10K \(50%\) · 4% \| 2M \(50%\) · 20% \|$/m);
+  assert.match(text, /^\| Codex host: compactions · median tokens before \| 0 · 0 \| 1 · 0 \|$/m);
+  assert.deepEqual(previousData(text).kpis.codexHost, d.kpis.codexHost);
+  // Without either, the digest has none of their rows.
+  assert.doesNotMatch(formatDigest(fixtureData()), /Codex host|claude-run/);
 });
 
 test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and the data block kept', () => {
@@ -503,7 +583,7 @@ test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and th
 
 function cleanEnv(extra = {}) {
   const env = { ...process.env };
-  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_') || k === 'CODEX_HOME') delete env[k];
   return { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', HOME: tmpDir('retro-home-'), ...extra };
 }
 
@@ -552,8 +632,8 @@ function fixture() {
 }
 
 const WINDOW = ['--since', '2026-10-19T00:00:00Z', '--until', '2026-10-26T00:00:00Z'];
-function run(f, args, cwd = f.repo) {
-  return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
+function run(f, args, cwd = f.repo, extra = {}) {
+  return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env: cleanEnv(extra), encoding: 'utf8' });
 }
 
 test('the wrapper: --dry-run prints the digest from the dated log, steps, follow-ups and this repo\'s sessions, writing nothing', () => {
@@ -600,4 +680,32 @@ test('the wrapper exits 2 with a usage line on a bad flag, outside a repository 
   const noLog = run(f, ['--dry-run']);
   assert.equal(noLog.status, 2);
   assert.match(noLog.stderr, /no harness log at /);
+});
+
+test('the wrapper reads this repository\'s Codex host threads and claude-run ledger, never a sibling\'s thread or an exec run', () => {
+  const f = fixture();
+  const codexHome = tmpDir('retro-codex-');
+  const day = path.join(codexHome, 'sessions', '2026', '10', '23');
+  fs.mkdirSync(day, { recursive: true });
+  const t = Date.parse('2026-10-23T10:00:00Z');
+  const rollout = (name, meta, [lo, hi]) =>
+    fs.writeFileSync(
+      path.join(day, name),
+      `${[
+        cxLine(t, 'session_meta', { originator: 'Codex Desktop', source: 'vscode', ...meta }),
+        cxLine(t, 'event_msg', { type: 'task_started' }),
+        cxTokens(t + 60_000, 1000, lo),
+        cxTokens(t + 120_000, 3000, hi),
+      ].join('\n')}\n`,
+    );
+  rollout('rollout-2026-10-23T17-00-00-th-1.jsonl', { id: 'th-1', session_id: 'th-1', cwd: f.repo }, [10, 12]);
+  rollout('rollout-2026-10-23T17-00-01-th-2.jsonl', { id: 'th-2', session_id: 'th-2', cwd: `${f.repo}-sibling` }, [20, 30]);
+  rollout('rollout-2026-10-23T17-00-02-ex-1.jsonl', { id: 'ex-1', session_id: 'ex-1', cwd: f.repo, originator: 'codex_exec', source: 'exec' }, [40, 50]);
+  fs.mkdirSync(path.join(f.repo, '.claude-runs'));
+  fs.writeFileSync(path.join(f.repo, '.claude-runs', 'ledger.jsonl'), `${JSON.stringify({ at: '2026-10-23T10:03:00Z', kind: 'review', cwd: f.repo, outcome: 'ok', costUsd: 2, ms: 1000 })}\n`);
+  const res = run(f, [...WINDOW, '--projects-dir', f.projects, '--json'], f.repo, { CODEX_HOME: codexHome });
+  assert.equal(res.status, 0, res.stderr);
+  const d = JSON.parse(res.stdout);
+  assert.deepEqual([d.sources.codexSessions, d.kpis.codexHost.sessions, d.kpis.codexHost.tokens, d.kpis.codexHost.percent], [1, 1, 3000, 2]);
+  assert.deepEqual([d.sources.claudeRunRows, d.kpis.claudeRuns.runs, d.kpis.claudeRuns.usd], [1, 1, 2]);
 });

@@ -25,13 +25,16 @@ read-only; what they propose is routed into work that already has a gate (below)
 `[M]` `scripts/retro.mjs` reads what is already on disk — the log (each row dated by
 the commit that last changed it, `git blame`), the follow-ups doc, the state and
 steps files, earlier digests, the Claude Code transcripts of the sessions that ran
-in the repository or one of its worktrees, and the Codex ledger — and writes one
-digest of at most 8 KB:
+in the repository or one of its worktrees, the threads a Codex host ran there
+(`$CODEX_HOME/sessions` and `archived_sessions`, `CODEX_HOME` defaulting to `~/.codex`),
+and the two run ledgers,
+codex-run's and claude-run's — and writes one digest of at most 8 KB:
 
 - **KPIs** for the window against the four weeks before: units landed, median work,
   owner wait and cost per unit, P0/P1 found, rows with Missed by harness, Claude
   spend (main thread and subagents), questions asked, compactions, cache hit and
-  expiry rewrites, Codex runs.
+  expiry rewrites, Codex runs, claude-run's runs and dollars, and a Codex host's
+  sessions, turns, questions, compactions, tokens and share of the weekly quota.
 - **Outliers**: a unit whose cost or work is at least `OUTLIER_X` times its tier's
   median, and a step whose share of its unit's dollars is at least `OUTLIER_X`
   times that step's median share — each only in a cohort of `MIN_COHORT`, and a
@@ -54,10 +57,19 @@ seven days back) to now. A second run in the same week rewrites that week's dige
   out.
 - A turn held by the step intervals of two units goes to the unit whose step started
   last (planning the next unit while this one waits on Gate 2 is the next unit's
-  work); a dispatch goes to the unit its tag or description names.
-- ZCode transcripts and the sessions of a Codex host are not read. A ZCode project's
-  digest comes from its log, steps and state files and its ledger (one project on its
-  first run: 48 log rows, no transcripts).
+  work); a dispatch goes to the unit its tag or description names, all of it, though
+  it outlives the unit's last marker or runs in another session.
+- A Codex host is counted in tokens and quota, not dollars: its rollouts carry no
+  price. Its quota is the weekly meter's growth inside each turn, first reading to
+  last; growth between turns is other work and is left out. The digest shows it on
+  its own row beside codex-run's runs, so a run made inside a host turn is in both;
+  a unit's `unit-cost.mjs` line joins the two, once per weekly window. The meter is
+  account-wide, so other work on the account in the same turn counts too, and a
+  thread that spans weeks can pass 100%. A `codex exec` run is codex-run's, never
+  the host's.
+- ZCode transcripts are not read. A ZCode project's digest comes from its log, steps
+  and state files and its ledgers (one project on its first run: 48 log rows, no
+  transcripts).
 
 `[B]` `REPORTS_DIR`, `LOG`, `FOLLOW_UPS`, `PLANS_DIR`, the log columns
 (`EXTRA_COLUMNS`, and estimate-core's), `OUTLIER_X` 2, `MIN_COHORT` 3, `MIN_SHARE`
@@ -129,8 +141,11 @@ word of runners from before the unit, is read by that column. `--list` and
 `~/.agents/harness/retro-weekly/` — a plugin update cannot move the copy — and
 loads a LaunchAgent: Mondays at 09:00, and a Mac asleep then runs it at the next
 wake. `--print-schedule` gives the cron line for Linux (a missed run does not catch
-up) and the Task Scheduler line for Windows. Re-run `--install` after an upgrade of
-this skill. `--uninstall` removes the schedule and the copy and keeps the exports.
+up) and the Task Scheduler line for Windows. Each carries a set `CLAUDE_CONFIG_DIR`:
+the LaunchAgent and the cron line in the job's environment, the Windows task as
+`--config-dir`, since schtasks sets no environment. Re-run `--install` after an
+upgrade of this skill. `--uninstall` removes the schedule and the copy and keeps the
+exports.
 
 `[M]` **A failure costs one week, never the rest.** An export that fails is logged
 and the others still run; a review that fails writes no proposals, logs its reason

@@ -25,6 +25,8 @@ import {
   formatReport,
   heldRows,
   inUse,
+  lockDecision,
+  lockEntry,
   lockPid,
   logEntry,
   mainCheckout,
@@ -259,6 +261,25 @@ test('deletable: checked again where the links lead; a linked root or ancestor t
   assert.equal(deletable(path.join(plain, 'leaf'), plain, home, fs.realpathSync), true);
 });
 
+test("deletable: a `..` after a link climbs from where the link leads, as the filesystem does, not from the link's own directory", () => {
+  const home = tmpDir('machine-sweep-dotdot-');
+  const caches = path.join(home, 'Library', 'Caches');
+  const sessions = path.join(home, '.codex', 'sessions');
+  put(path.join(sessions, '2026', 's.jsonl'));
+  put(path.join(caches, 'x-updater', 'u.zip'));
+  const outside = tmpDir('machine-sweep-dotdot-out-');
+  put(path.join(outside, 'sub', 'x'));
+  put(path.join(outside, 'victim', 'y'));
+  // jump/.. is the sessions directory and out/.. a directory outside the home; written out, each path stays in caches
+  fs.symlinkSync(path.join(sessions, '2026'), path.join(caches, 'jump'));
+  fs.symlinkSync(path.join(outside, 'sub'), path.join(caches, 'out'));
+  const real = fs.realpathSync.native;
+  assert.equal(deletable(path.join(caches, 'x-updater'), caches, home, real), true);
+  assert.equal(deletable(`${caches}/jump/../2026`, caches, home, real), false);
+  assert.equal(deletable(`${caches}/out/../victim`, caches, home, real), false);
+  assert.ok(fs.existsSync(path.join(sessions, '2026', 's.jsonl')) && fs.existsSync(path.join(outside, 'victim', 'y')));
+});
+
 test('a failed inspection is unknown, never none: no worktree, release or clone is taken for unused when ps or lsof failed', () => {
   const done = { path: '/r/.worktrees/a', rel: '.worktrees/a', branch: 'task/a', merged: true, own: true, clean: true, ignored: [], active: NOW - 7 * HOUR };
   assert.equal(worktreeVerdict(done, { now: NOW, cwds: null }), 'keep: could not tell which processes run in it (lsof failed)');
@@ -283,6 +304,28 @@ test('the lock: a live run\'s lock holds however old it is; a dead run\'s is sta
   assert.equal(staleLock({ pid: null, alive: false, written: recent, now: NOW }), false);
   assert.equal(staleLock({ pid: null, alive: false, written: old, now: NOW }), true);
   assert.equal(staleLock({ pid: null, alive: false, written: null, now: NOW }), false);
+});
+
+test("the lock's entries: a run goes on alone or not at all, and removes only a dead run's entry, never a live one's", () => {
+  assert.equal(lockEntry(4242, NOW), `4242-${NOW.toString(36)}`);
+  assert.deepEqual([lockPid(lockEntry(4242, NOW)), lockPid('4242-'), lockPid('stray')], [4242, null, null]);
+  // 777 is the run itself, alive as it decides
+  const live = new Set([777, 4242, 5151]);
+  const alive = (pid) => live.has(pid);
+  const fresh = NOW - 60_000;
+  const old = NOW - (LOCK_STALE_MINUTES + 1) * 60_000;
+  const mine = lockEntry(777, NOW);
+  const decide = (others) => lockDecision({ mine, entries: [{ name: mine, written: NOW }, ...others.map(([name, written = fresh]) => ({ name, written }))], alive, now: NOW });
+  assert.deepEqual(decide([]), { remove: [], holder: null });
+  assert.deepEqual(decide([['4242-a1', old]]), { remove: [], holder: 4242 }, "a live run's entry holds however old it is");
+  assert.deepEqual(decide([['999-a2']]), { remove: ['999-a2'], holder: null }, "a dead run's entry is removed at once");
+  assert.deepEqual(decide([['777-a3']]), { remove: ['777-a3'], holder: null }, "this run's pid on another start's entry is an earlier boot's");
+  assert.deepEqual(decide([['stray']]), { remove: [], holder: 'unknown' }, 'an entry with no pid holds until the stale age');
+  assert.deepEqual(decide([['stray', old]]), { remove: ['stray'], holder: null });
+  assert.deepEqual(decide([['999-a2'], ['5151-b1']]), { remove: ['999-a2'], holder: 5151 });
+  // two runs that start together each find the other's entry: both stop, so neither frees beside the other
+  const both = [{ name: '4242-a', written: fresh }, { name: '5151-b', written: fresh }];
+  assert.deepEqual([lockDecision({ mine: '4242-a', entries: both, alive, now: NOW }).holder, lockDecision({ mine: '5151-b', entries: both, alive, now: NOW }).holder], [5151, 4242]);
 });
 
 test('sizes, the report and the log line', () => {
@@ -612,63 +655,64 @@ test('the CLI: when ps or lsof fails, no Codex release is taken for unused, and 
   }
 });
 
-test('the CLI: a lock it cannot read is judged by its age: an old one is taken, a fresh one stops the run as pid unknown', posixOnly, () => {
+test('the CLI: a lock entry with no pid is judged by its age: an old one is removed, a fresh one stops the run as pid unknown', posixOnly, () => {
   const h = fakeHome();
   assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
-  const lockFile = path.join(h.home, '.agents', 'harness', 'machine-sweep.lock');
-  // no pid in it either, so the case holds where the file is readable after all (as root)
-  const unreadable = (hoursAgo) => {
-    fs.writeFileSync(lockFile, 'not-a-pid\n');
-    if (hoursAgo) fs.utimesSync(lockFile, past(hoursAgo), past(hoursAgo));
-    fs.chmodSync(lockFile, 0o000);
+  const locks = path.join(h.home, '.agents', 'harness', 'machine-sweep.locks');
+  const stray = path.join(locks, 'not-a-pid');
+  const write = (hoursAgo) => {
+    fs.mkdirSync(locks, { recursive: true });
+    fs.writeFileSync(stray, '');
+    if (hoursAgo) fs.utimesSync(stray, past(hoursAgo), past(hoursAgo));
   };
-  try {
-    unreadable(2);
-    const old = cli(h.home, ['--apply-approved']);
-    assert.equal(old.status, 0, old.stderr);
-    assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')) && !fs.existsSync(lockFile));
-    unreadable(0);
-    const fresh = cli(h.home, ['--apply-approved']);
-    assert.equal(fresh.status, 1, fresh.stdout);
-    assert.match(fresh.stderr, /^machine-sweep: another sweep \(pid unknown\) holds the lock; run again once it ends$/m);
-    assert.ok(fs.existsSync(lockFile), 'a fresh lock was taken');
-  } finally {
-    if (fs.existsSync(lockFile)) fs.chmodSync(lockFile, 0o644);
-  }
+  write(2);
+  const old = cli(h.home, ['--apply-approved']);
+  assert.equal(old.status, 0, old.stderr);
+  assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')));
+  assert.deepEqual(fs.readdirSync(locks), [], 'the old entry stays, or the run left its own');
+  write(0);
+  const fresh = cli(h.home, ['--apply-approved']);
+  assert.equal(fresh.status, 1, fresh.stdout);
+  assert.match(fresh.stderr, /^machine-sweep: another sweep \(pid unknown\) holds the lock; run again once it ends$/m);
+  assert.deepEqual(fs.readdirSync(locks), ['not-a-pid'], 'a fresh entry was removed, or the stopped run left its own');
 });
 
-test("the CLI: a run's end leaves in place a lock another sweep took while it ran", posixOnly, () => {
+test("the CLI: a run's end leaves in place the entry another sweep wrote while it ran", posixOnly, () => {
   const h = fakeHome();
   assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
-  const lockFile = path.join(h.home, '.agents', 'harness', 'machine-sweep.lock');
+  const locks = path.join(h.home, '.agents', 'harness', 'machine-sweep.locks');
   const realDu = spawnSync('sh', ['-c', 'command -v du'], { encoding: 'utf8' }).stdout.trim();
   assert.ok(realDu, 'no du on PATH');
   const bin = tmpDir('machine-sweep-bin-');
-  // du runs while the run holds the lock (it measures the updaters); this one hands the lock to process 424242 first
-  fs.writeFileSync(path.join(bin, 'du'), `#!/bin/sh\nprintf '424242\\n' > '${lockFile}'\nexec '${realDu}' "$@"\n`, { mode: 0o755 });
+  // du runs while the run holds its entry (it measures the updaters); this one writes process 424242's entry first
+  fs.writeFileSync(path.join(bin, 'du'), `#!/bin/sh\n: > '${locks}/424242-zz'\nexec '${realDu}' "$@"\n`, { mode: 0o755 });
   const res = spawnSync(process.execPath, [CLI, '--home', h.home, '--apply-approved', '--only', 'updaters'], { cwd: h.home, env: { ...cleanEnv(), PATH: `${bin}${path.delimiter}${process.env.PATH}` }, encoding: 'utf8', timeout: 120_000 });
   assert.equal(res.status, 0, res.stderr + res.stdout);
   assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')));
-  assert.equal(fs.readFileSync(lockFile, 'utf8'), '424242\n', "the run's end removed another sweep's lock");
+  assert.deepEqual(fs.readdirSync(locks), ['424242-zz'], "the run's end removed another sweep's entry, or left its own");
 });
 
-test('the CLI: a live sweep\'s lock stops a second run however old it is, a dead one\'s is replaced; usage errors exit 2', posixOnly, () => {
+test('the CLI: a live sweep\'s entry stops a second run however old it is, a dead one\'s is removed; usage errors exit 2', posixOnly, () => {
   const h = fakeHome();
   const state = path.join(h.home, '.agents', 'harness');
   assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
-  const lockFile = path.join(state, 'machine-sweep.lock');
-  // process 1 never exits: its lock is a live sweep's, past the stale age or not
-  fs.writeFileSync(lockFile, '1\n');
-  fs.utimesSync(lockFile, past(2), past(2));
+  const locks = path.join(state, 'machine-sweep.locks');
+  fs.mkdirSync(locks, { recursive: true });
+  // process 1 never exits: its entry is a live sweep's, past the stale age or not
+  const live = path.join(locks, '1-a');
+  fs.writeFileSync(live, '');
+  fs.utimesSync(live, past(2), past(2));
   const held = cli(h.home, ['--apply-approved']);
   assert.equal(held.status, 1);
   assert.match(held.stderr, /^machine-sweep: another sweep \(pid 1\) holds the lock; run again once it ends$/m);
   assert.ok(fs.existsSync(path.join(h.caches, 'old-updater')));
-  assert.equal(fs.readFileSync(lockFile, 'utf8'), '1\n', "a live sweep's lock was taken");
-  fs.writeFileSync(lockFile, `${spawnSync(process.execPath, ['-e', '']).pid}\n`);
+  assert.deepEqual(fs.readdirSync(locks), ['1-a'], "a live sweep's entry was removed, or the stopped run left its own");
+  fs.rmSync(live);
+  fs.writeFileSync(path.join(locks, `${spawnSync(process.execPath, ['-e', '']).pid}-b`), '');
   const stale = cli(h.home, ['--apply-approved']);
   assert.equal(stale.status, 0, stale.stderr);
-  assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')) && !fs.existsSync(lockFile));
+  assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')));
+  assert.deepEqual(fs.readdirSync(locks), [], "a dead sweep's entry stays, or the run left its own");
   for (const args of [['--approve', 'nope'], ['--dry-run'], ['--report', '--apply-approved'], ['--nope']]) {
     const bad = cli(h.home, args);
     assert.equal(bad.status, 2, args.join(' '));

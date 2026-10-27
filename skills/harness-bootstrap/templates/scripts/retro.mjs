@@ -4,7 +4,9 @@
 // levels, step words) live at the top of scripts/lib/retro-core.mjs.
 /**
  * Reads the harness log, the follow-ups doc, the state and steps files, earlier digests, this
- * repository's Claude Code transcripts and the Codex ledger, and writes
+ * repository's Claude Code transcripts, the threads a Codex host ran in it ($CODEX_HOME/sessions and
+ * archived_sessions, CODEX_HOME defaulting to ~/.codex) and the two run ledgers, codex-run's and
+ * claude-run's, and writes
  * `<REPORTS_DIR>/retro-<YYYY-Www>.md`, at most 8 KB: KPIs against the four weeks before, outliers,
  * where the money went by step, friction, what the owner caught, the queue, and at most five
  * candidates for the retro review (`learning.md`).

@@ -402,7 +402,8 @@ not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
 <state file> --steps <steps file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
 --line --session <every session id since the claim, comma-separated> --since <claimed>)"` prints commits, diffstat, the gate
 SUMMARY line, finding counts by severity and by source, elapsed, each step's time, the ledger and the
-draft log row from git, the state file and the steps file, never retyped. The git-derived fields
+draft log row from git, the state file and the steps file, never retyped. On a Codex host the
+session ids are its thread ids (`$CODEX_THREAD_ID`). The git-derived fields
 are true by construction; the ledger and findings rows are copied as the session
 wrote them.
 The session writes only what no command knows: the deviations, the controls

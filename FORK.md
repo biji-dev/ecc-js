@@ -279,6 +279,14 @@ gh workflow run fork-sync.yml -R biji-dev/ecc-js                           # man
 - Report problems in fork-only code (`fork/**`, the hook allowlist and GateGuard
   patches, the fork workflows) at biji-dev/ecc-js. Problems in shared content go
   upstream per SECURITY.md.
+- Known upstream issues, left unedited (checked 2026-10-27):
+  - `.codex/agents/{docs-researcher,explorer,reviewer}.toml` set
+    `sandbox_mode = "read-only"`, which Codex does not apply from an agent file
+    (its subagents documentation, quoted in harness-bootstrap's
+    `harness-targets.md` › Codex). Those agents are read-only by instruction only.
+  - `council-multi-model`'s Codex adapter accepts exactly Codex CLI 0.146.0 and
+    fails closed on any other: with 0.163.0, `verifyToollessSupport()` throws
+    "unsupported Codex version 0.163.0; tool-less review requires exactly 0.146.0".
 - Fork-only changes follow this file, not CONTRIBUTING.md.
 
 ## Rules for this repository

@@ -25,8 +25,8 @@ merge in through a scripted, reviewable sync.
 
 ## Target stack
 
-Derived from a census of the projects in `~/Projects` (KvernaProject and
-GLM-Free-API excluded; sabbi and maxchat used only as secondary evidence):
+Derived from a census of the projects in `~/Projects` (two
+excluded; a client repo and a team repo used only as secondary evidence):
 
 | Area | Technologies |
 | --- | --- |

@@ -40,7 +40,7 @@ pattern (`tests/fork/*.test.js` run by `tests/run-all.js`).
 
 ## Review Focus
 
-- A sibling project whose Claude folder name starts with the same encoding (`grobiz` vs `grobiz-api`) must not be read as the same project: sessions are kept only when their recorded `cwd` is inside the project (Task 4 test "sibling project with a shared prefix is excluded").
+- A sibling project whose Claude folder name starts with the same encoding (`shop` vs `shop-api`) must not be read as the same project: sessions are kept only when their recorded `cwd` is inside the project (Task 4 test "sibling project with a shared prefix is excluded").
 - A library skill with binary files (images) must be copied byte for byte into `library/` (Task 2 test "binary files are materialised byte for byte").
 - A project path containing dots or spaces (`.worktrees`, `My App`) must encode the same way Claude Code does (Task 4 test "project folder encoding").
 - An install where only one of the two skill destinations already exists must not copy anything for that item (Task 6 test "a partially present destination skips the whole item").
@@ -950,7 +950,7 @@ function fixture() {
 console.log('\n=== skill-advisor sessions ===\n');
 
 test('project folder encoding matches Claude Code', () => {
-  assert.strictEqual(sessions.encodeClaudeDir('/x/grobiz/.worktrees/cr-1'), '-x-grobiz--worktrees-cr-1');
+  assert.strictEqual(sessions.encodeClaudeDir('/x/shop/.worktrees/cr-1'), '-x-shop--worktrees-cr-1');
   assert.strictEqual(sessions.encodeClaudeDir('/x/My App'), '-x-My-App');
 });
 
@@ -2143,12 +2143,12 @@ test('validation errors: pinned not core, external ref not core, core references
   const { errors } = validatePick({
     picked,
     slim,
-    externalRefs: { 'security-reviewer': ['grobiz'] },
+    externalRefs: { 'security-reviewer': ['shop'] },
     references: { 'commands:react-review': ['accessibility'] }
   });
   assert.deepStrictEqual(errors, [
     'skills:react-patterns is pinned; tag it core',
-    'agents:security-reviewer is used as ecc:security-reviewer by grobiz; tag it core',
+    'agents:security-reviewer is used as ecc:security-reviewer by shop; tag it core',
     'commands:react-review (core) references accessibility, which is tagged drop'
   ]);
 });
@@ -2701,7 +2701,7 @@ Expected: `0 error(s)` apart from the bump check (`shipped content changed ... w
 Run:
 
 ```bash
-grep -rhoE "ecc:[a-z0-9-]+" ~/Projects/grobiz/CLAUDE.md ~/Projects/grobiz/.claude/skills ~/Projects/rentalae/CLAUDE.md ~/Projects/rentalae/.agents/skills ~/Projects/rentalae/.claude/skills 2>/dev/null | sed 's/ecc://' | sort -u | while read n; do
+grep -rhoE "ecc:[a-z0-9-]+" ~/Projects/<project-a>/CLAUDE.md ~/Projects/<project-a>/.claude/skills ~/Projects/<project-b>/CLAUDE.md ~/Projects/<project-b>/.agents/skills ~/Projects/<project-b>/.claude/skills 2>/dev/null | sed 's/ecc://' | sort -u | while read n; do
   [ -e "skills/$n/SKILL.md" ] || [ -e "agents/$n.md" ] || [ -e "commands/$n.md" ] || echo "MISSING $n"; done
 ```
 
@@ -2884,16 +2884,16 @@ Follow `docs/ECC-JS.md` "Install" if a command differs. Restart open sessions.
 
 Expected: `ecc:*` skills and `expo:*` skills show descriptions in the skill list; `/context` shows a smaller Skills row than before.
 
-- [ ] **Step 3: Pilot on grobiz**
+- [ ] **Step 3: Pilot on one project**
 
-In a Claude Code session in `~/Projects/grobiz`, run `/skill-advisor`. Expected: a plan table in which every row cites evidence (a doc line or session counts). Approve one addition, then check:
+In a Claude Code session in `~/Projects/<project>`, run `/skill-advisor`. Expected: a plan table in which every row cites evidence (a doc line or session counts). Approve one addition, then check:
 
 ```bash
-ls ~/Projects/grobiz/.claude/skills ~/Projects/grobiz/.agents/skills
-cat ~/Projects/grobiz/.claude/skill-advisor.json
+ls ~/Projects/<project>/.claude/skills ~/Projects/<project>/.agents/skills
+cat ~/Projects/<project>/.claude/skill-advisor.json
 ```
 
-Expected: the item in both folders and one entry in the state file. The user decides whether to keep or remove it and whether to commit in grobiz.
+Expected: the item in both folders and one entry in the state file. The user decides whether to keep or remove it and whether to commit in that project.
 
 - [ ] **Step 4: Pilot on a docs-heavy project with few sessions**
 

@@ -59,12 +59,12 @@ test('validation errors: pinned not core, external ref not core, core references
   const { errors } = validatePick({
     picked,
     slim,
-    externalRefs: { 'security-reviewer': ['grobiz'] },
+    externalRefs: { 'security-reviewer': ['shop'] },
     references: { 'commands:react-review': ['accessibility'] }
   });
   assert.deepStrictEqual(errors, [
     'skills:react-patterns is pinned; tag it core',
-    'agents:security-reviewer is used as ecc:security-reviewer by grobiz; tag it core',
+    'agents:security-reviewer is used as ecc:security-reviewer by shop; tag it core',
     'commands:react-review (core) references accessibility, which is tagged drop'
   ]);
 });

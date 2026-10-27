@@ -42,6 +42,7 @@ const VALUE_FLAGS = {
   '--follow-ups': 'followUps',
   '--home': 'home',
   '--projects-dir': 'projectsDir',
+  '--config-dir': 'configDir',
   '--claude': 'claude',
   '--budget': 'budget',
 };
@@ -64,6 +65,7 @@ export function parseArgs(argv) {
     plans: [],
     home: null,
     projectsDir: null,
+    configDir: null,
     claude: null,
     budget: REVIEW_BUDGET_USD,
     review: true,
@@ -329,13 +331,14 @@ export const shellLine = (args) => args.map(shq).join(' ');
  * The cron line (Linux) and the schtasks line (Windows) for the same weekly slot. The cron line makes
  * the log's directory first: the shell opens the redirect before the command runs, and a missing
  * directory fails it, so the job would never start. A set `configDir` goes in as the command's
- * CLAUDE_CONFIG_DIR, which cron never inherits.
+ * CLAUDE_CONFIG_DIR, which cron never inherits; schtasks sets no environment, so its task passes
+ * the directory as `--config-dir`.
  */
 export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null }) {
   const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const hhmm = `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
   const [program, ...rest] = programArguments;
-  const tr = [program, ...rest].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
+  const tr = [program, ...rest, ...(configDir ? ['--config-dir', configDir] : [])].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
   return {
     cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
     schtasks: `schtasks /Create /F /SC WEEKLY /D ${days[schedule.weekday]} /ST ${hhmm} /TN harness-retro-weekly /TR "${tr}"`,

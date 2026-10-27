@@ -21,7 +21,7 @@ their report, not a row; an intake gets a row (› Intake rows).
 | Verdicts | conformance per audit and re-audit; claim audit per round; any step `degraded` |
 | Retries | conformance loops · review rounds · fix passes |
 | Model | which model ran each role (implement · audit · review · claims), **as actually dispatched**, and any `executor:` override |
-| **Cost** | `unit-cost.mjs`'s line — `Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`: API-equivalent dollars, the share of a weekly limit at the project's calibration, and the second family's weekly meter. What `estimate.mjs` reads |
+| **Cost** | `unit-cost.mjs`'s line — `Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`: API-equivalent dollars, the share of a weekly limit at the project's calibration, and the second family's weekly meter. On a Codex host the Codex part reads `(host)`, `(host, <n> runs)` beside codex-run's runs, and claude-run's dollars are in the cost, `Claude <p>% (<n> claude-run)`: the runs made in the unit's worktree. What `estimate.mjs` reads |
 | **★ Missed by harness** | **the load-bearing column.** What *you* caught that the harness did not — filled from what the owner volunteered at Gate 2, never asked as a question; `—` when nothing was |
 | **Yield by source** | unique valid P0/P1/P2 per reviewer source (`codex-review 0/1/2 · opus-code-reviewer 0/0/1 · …`), from `unit-record.mjs` — "unique" means no other source reported it, "valid" means fixed or filed, not retracted |
 | Friction | anything that wasted time — a wrong port, a stale env file, a reviewer firing on nothing |

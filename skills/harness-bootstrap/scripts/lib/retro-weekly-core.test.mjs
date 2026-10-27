@@ -353,6 +353,22 @@ test('--install --dry-run lists the self-contained copy and the schedule; --prin
   assert.equal(cli(f, ['--frobnicate']).status, 2);
 });
 
+test('the schedule runs node by the PATH name that is this binary, which an upgrade keeps, not the versioned path it resolves to', posixOnly, () => {
+  const f = fixture();
+  const cronLine = (stdout) => stdout.split('\n').find((l) => l.startsWith('cron '));
+  const bin = tmpDir('retro-weekly-node-');
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  const linked = cli(f, ['--print-schedule', '--claude', f.claude], { PATH: [bin, process.env.PATH].join(path.delimiter) });
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.ok(cronLine(linked.stdout).includes(`&& ${path.join(bin, 'node')} `), linked.stdout);
+  // the first node on PATH is another binary: the schedule keeps the one running now
+  const other = tmpDir('retro-weekly-other-node-');
+  fs.writeFileSync(path.join(other, 'node'), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(other, 'node'), 0o755);
+  const kept = cli(f, ['--print-schedule', '--claude', f.claude], { PATH: [other, process.env.PATH].join(path.delimiter) });
+  assert.ok(cronLine(kept.stdout).includes(`&& ${process.execPath} `), kept.stdout);
+});
+
 test('CLAUDE_CONFIG_DIR is where the transcripts are read and what the schedule carries; empty or unset, it is ~/.claude', posixOnly, () => {
   const f = fixture();
   assert.equal(cli(f, ['--register', f.repo]).status, 0);

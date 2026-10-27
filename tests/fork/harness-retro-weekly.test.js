@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'retro-weekly-core.mjs');
 const CLI_REL = path.join('scripts', 'retro-weekly.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 20;
+const EXPECTED_TESTS = 21;
 
 let passed = 0;
 let failed = 0;
@@ -104,6 +104,8 @@ mutantFails('a Windows task without the Claude Code config directory', "...(conf
 mutantFails('--config-dir read and dropped', '  if (opts.configDir) process.env.CLAUDE_CONFIG_DIR = path.resolve(opts.configDir);\n', '', CLI_REL);
 mutantFails('reading the transcripts from ~/.claude whatever CLAUDE_CONFIG_DIR says', "path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')", "path.join(os.homedir(), '.claude', 'projects')", CLI_REL);
 mutantFails('exiting 0 when the review failed', 'return failed.length || (opts.review && !review.ok && !review.skipped) ? 1 : 0;', 'return failed.length ? 1 : 0;', CLI_REL);
+mutantFails('scheduling the versioned node binary an upgrade removes', 'const node = scheduledNode();', 'const node = process.execPath;', CLI_REL);
+mutantFails('scheduling whatever node is first on PATH', 'fs.realpathSync(onPath) === fs.realpathSync(process.execPath)', 'true', CLI_REL);
 
 test('CLI smoke: --print-schedule names the installed copy and --list says when nothing is registered', () => {
   const home = tmp('retro-weekly-cli-');

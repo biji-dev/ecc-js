@@ -143,7 +143,9 @@ loads a LaunchAgent: Mondays at 09:00, and a Mac asleep then runs it at the next
 wake. `--print-schedule` gives the cron line for Linux (a missed run does not catch
 up) and the Task Scheduler line for Windows. Each carries a set `CLAUDE_CONFIG_DIR`:
 the LaunchAgent and the cron line in the job's environment, the Windows task as
-`--config-dir`, since schtasks sets no environment. Re-run `--install` after an
+`--config-dir`, since schtasks sets no environment. The schedule runs node by the
+name PATH gives it when that is the same binary (`/opt/homebrew/bin/node`, not the
+versioned Cellar path an upgrade removes). Re-run `--install` after an
 upgrade of this skill. `--uninstall` removes the schedule and the copy and keeps the
 exports.
 

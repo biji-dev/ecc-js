@@ -276,13 +276,29 @@ function closure() {
   return [...seen].map((f) => path.relative(SKILL_DIR, f)).sort();
 }
 
+/**
+ * The node the schedule runs: the first `node` on PATH when it is this very binary, else this binary.
+ * process.execPath is the resolved, versioned path (Homebrew's Cellar/node/<version>/bin/node), which an
+ * upgrade removes; the PATH name (/opt/homebrew/bin/node) moves to the new version.
+ */
+function scheduledNode() {
+  const onPath = findOnPath('node');
+  try {
+    if (onPath && fs.realpathSync(onPath) === fs.realpathSync(process.execPath)) return onPath;
+  } catch {
+    // unreadable: keep the binary that runs now
+  }
+  return process.execPath;
+}
+
 function installPlan(opts, home) {
   const copyDir = path.join(home, 'retro-weekly');
   const claude = opts.claude ?? findOnPath('claude');
-  const programArguments = [process.execPath, path.join(copyDir, 'scripts', 'retro-weekly.mjs'), '--run', '--home', home];
+  const node = scheduledNode();
+  const programArguments = [node, path.join(copyDir, 'scripts', 'retro-weekly.mjs'), '--run', '--home', home];
   if (claude) programArguments.push('--claude', claude);
   if (opts.projectsDir) programArguments.push('--projects-dir', path.resolve(opts.projectsDir));
-  const pathEnv = [...new Set([path.dirname(process.execPath), ...(claude ? [path.dirname(claude)] : []), '/usr/bin', '/bin', '/usr/sbin', '/sbin'])].join(':');
+  const pathEnv = [...new Set([path.dirname(node), ...(claude ? [path.dirname(claude)] : []), '/usr/bin', '/bin', '/usr/sbin', '/sbin'])].join(':');
   const logFile = path.join(home, 'retro', 'weekly.out.log');
   const plist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
   // the schedule runs without the shell's environment: Claude Code's config directory goes in with it

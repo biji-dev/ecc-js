@@ -41,7 +41,7 @@ import {
   summaryLine,
   unionMs,
 } from './unit-cost-core.mjs';
-import { fileLines } from './run-sources.mjs';
+import { codexProjectSessions, codexSessionFiles, codexSessionsDir, fileLines } from './run-sources.mjs';
 
 const RUNNER = fileURLToPath(new URL('../unit-cost.mjs', import.meta.url));
 const M = 1_000_000;
@@ -325,7 +325,7 @@ test('a model id outside PRICED_IDS is priced at its family rate and named; a li
   assert.deepEqual(s.familyRated, ['claude-opus-4-1', 'claude-sonnet-4-5']); // 'other' is unpriced, not family-rated
   assert.equal(s.unpricedTurns, 1);
   const text = formatReport(s, null);
-  assert.match(text, /^  priced at family rates: claude-opus-4-1, claude-sonnet-4-5$/m);
+  assert.match(text, /^ {2}priced at family rates: claude-opus-4-1, claude-sonnet-4-5$/m);
   assert.doesNotMatch(summaryLine(s, null), /family/);
   assert.doesNotMatch(formatReport(summarizeClaude(parseTranscript(turn({ usage: u }))), null), /family rates/);
 });
@@ -341,7 +341,7 @@ test('formatReport carries the split, the model mix, the subagent mix and the no
   assert.match(text, /not a bill/);
   const withCodex = formatReport(summarizeClaude(rows), summarizeLedger([run(), run({ outcome: 'reserved' })]));
   assert.match(withCodex, /^Codex: 1 runs \(review 1\) · 1 not run \(reserved or unavailable\) · 2% of quota/m);
-  assert.match(withCodex, /^  the % is account-wide: it includes any other work on the same Codex account during the window$/m);
+  assert.match(withCodex, /^ {2}the % is account-wide: it includes any other work on the same Codex account during the window$/m);
 });
 
 /** A synthetic projects dir: one session with a subagent, a ledger, nothing from the real HOME. */
@@ -1013,6 +1013,15 @@ test('summarizeClaudeRuns adds the runs\' dollars, counts them by kind, and keep
   assert.equal(summarizeClaudeRuns([cr()], { cwdMatch: 'elsewhere' }).runs, 0);
 });
 
+test('summarizeClaudeRuns counts a run the API stopped after it spent: unavailable with a cost', () => {
+  const s = summarizeClaudeRuns([
+    { at: '2026-10-24T01:00:00Z', kind: 'review', cwd: '/r/app', outcome: 'unavailable', claudeExit: 1, costUsd: 2.4, turns: 20, ms: 60_000, reason: 'error_during_execution: overloaded' },
+    { at: '2026-10-24T01:05:00Z', kind: 'review', cwd: '/r/app', outcome: 'unavailable', reason: 'claude is not on PATH' },
+  ]);
+  assert.deepEqual([s.runs, s.notRun, s.unpriced], [1, 1, 0]);
+  near(s.usd, 2.4);
+});
+
 test('summaryLine adds claude-run dollars to the cost and its Claude %, and names a Codex host beside the ledger\'s runs', () => {
   const claude = { total: 12.345, claudePercent: 0.6 };
   const pct = Math.round((20 / DOLLARS_PER_PERCENT) * 10) / 10;
@@ -1099,15 +1108,46 @@ test('the wrapper takes a Codex thread id: its rollout under $CODEX_HOME/session
   assert.match(missing.stderr, /session th-404 not found/);
 });
 
-test('the wrapper reads the main checkout\'s claude-run ledger from a worktree and adds its dollars to the cost', () => {
+test('the wrapper reads the main checkout\'s claude-run ledger from a worktree and adds the dollars of the runs made in that worktree', () => {
   const { root, git } = gitRepo();
-  fs.mkdirSync(path.join(root, '.claude-runs'));
-  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${JSON.stringify({ at: '2026-10-24T01:00:00Z', kind: 'review', cwd: root, outcome: 'ok', costUsd: 2, ms: 1000 })}\n`);
   const wt = path.join(root, '.worktrees', 'wt2');
+  const other = path.join(root, '.worktrees', 'wt-other');
   git('worktree', 'add', '-q', '-b', 'wt2', wt);
+  git('worktree', 'add', '-q', '-b', 'wt-other', other);
+  // claude-run records the --cwd it was given, here once through a link to the worktree
+  const link = path.join(tmpDir('unit-cost-link-'), 'wt2-link');
+  fs.symlinkSync(wt, link);
+  const row = (cwd, costUsd) => JSON.stringify({ at: '2026-10-24T01:00:00Z', kind: 'review', cwd, outcome: 'ok', costUsd, ms: 1000 });
+  fs.mkdirSync(path.join(root, '.claude-runs'));
+  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${[row(wt, 2), row(path.join(wt, 'src'), 0.5), row(link, 0.25), row(root, 3), row(other, 5)].join('\n')}\n`);
   const sessions = fixture();
-  const r = cli(sessions, ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'], wt);
+  const args = ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'];
+  const line = (usd, n) => {
+    const total = PRICE.opus[1] + PRICE.sonnet[1] + usd;
+    return `Cost $${total.toFixed(2)} · Claude ${Math.round((total / DOLLARS_PER_PERCENT) * 10) / 10}% (${n} claude-run) · Codex no ledger\n`;
+  };
+  const r = cli(sessions, args, wt);
   assert.equal(r.status, 0, r.stderr);
-  const total = PRICE.opus[1] + PRICE.sonnet[1] + 2;
-  assert.equal(r.stdout, `Cost $${total.toFixed(2)} · Claude ${Math.round((total / DOLLARS_PER_PERCENT) * 10) / 10}% (1 claude-run) · Codex no ledger\n`);
+  // the main checkout's run and the other worktree's are other units'
+  assert.equal(r.stdout, line(2.75, 3));
+  // --cwd-match picks the runs instead
+  assert.equal(cli(sessions, [...args, '--cwd-match', path.join('.worktrees', 'wt-other')], wt).stdout, line(5, 1));
+});
+
+test('a Codex thread archived to $CODEX_HOME/archived_sessions is still found, with its subagent', () => {
+  const home = tmpDir('unit-cost-codex-');
+  const archive = path.join(home, 'archived_sessions');
+  fs.mkdirSync(path.join(home, 'sessions'));
+  fs.mkdirSync(archive);
+  const put = (name, lines) => fs.writeFileSync(path.join(archive, name), `${lines.join('\n')}\n`);
+  put('rollout-2026-10-24T08-00-00-th-30.jsonl', [cxMeta(0, { id: 'th-30', session_id: 'th-30' }), cxEvent(0, 'task_started'), cxTokens(1, 100, 10), cxTokens(2, 400, 12)]);
+  put('rollout-2026-10-24T08-01-00-th-31.jsonl', [
+    cxMeta(1, { id: 'th-31', session_id: 'th-30', parent_thread_id: 'th-30', source: { subagent: { thread_spawn: { parent_thread_id: 'th-30' } } } }),
+    cxEvent(1, 'task_started'),
+    cxTokens(2, 50, 12),
+    cxTokens(3, 90, 13),
+  ]);
+  const dir = codexSessionsDir({ CODEX_HOME: home });
+  assert.deepEqual(codexSessionFiles(dir, 'th-30').map((f) => f.meta.id), ['th-30', 'th-31']);
+  assert.deepEqual(codexProjectSessions(dir, ['/r/app']).map((f) => f.meta.id).sort(), ['th-30', 'th-31']);
 });

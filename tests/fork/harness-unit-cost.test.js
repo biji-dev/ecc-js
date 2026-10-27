@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 61;
+const EXPECTED_TESTS = 63;
 
 let passed = 0;
 let failed = 0;
@@ -111,7 +111,8 @@ mutantFails('attributing subagent dollars to the main thread', 'out[r.kind] += r
 mutantFails('counting a quota delta across a reset', 'Math.abs(b.resetsAt - a.resetsAt) <= SAME_WINDOW_S', 'true');
 mutantFails('counting a negative quota delta', 'if (i.hi <= i.lo) continue;', '');
 mutantFails('counting overlapping quota intervals twice', 'if (l <= hi) hi = Math.max(hi, h);', 'if (false) hi = Math.max(hi, h);');
-mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {", 'if (false) {');
+mutantFails('counting a reserved ledger row as a run', "if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase()) && !Number.isFinite(e.costUsd)) {", 'if (false) {');
+mutantFails('dropping a claude-run row the API stopped after it spent', ' && !Number.isFinite(e.costUsd)) {', ') {');
 mutantFails('looking for the ledger under the worktree instead of the main checkout', "return path.join(path.dirname(common), dir, 'ledger.jsonl');", "return path.join(cwd, dir, 'ledger.jsonl');", SOURCES_REL);
 mutantFails('printing the full report for --line', 'if (args.line)', 'if (false)', CLI_REL);
 mutantFails('dropping the family-rate note for an unlisted model id', 'else if (r.exact === false) familyRated.add(r.model);', '');
@@ -143,6 +144,9 @@ mutantFails('leaving claude-run\'s dollars out of the cost', 'const total = clau
 mutantFails('printing Claude\'s cache line for a Codex thread alone', 'if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);', 'extra.cache = summarizeCache(rows, window);', CLI_REL);
 mutantFails('taking another thread\'s subagent', '(m.session === id || m.parent === id)', 'true', SOURCES_REL);
 mutantFails('splitting a line at a read boundary', 'const data = Buffer.concat([rest, buf.subarray(0, n)]);', 'const data = Buffer.from(buf.subarray(0, n));', SOURCES_REL);
+mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('placing a run made through a link by its unresolved path', 'const d = realPath(dir);', 'const d = path.resolve(dir);', SOURCES_REL);
+mutantFails('missing a thread archived to archived_sessions', "walk(path.join(path.dirname(dir), 'archived_sessions'));", '', SOURCES_REL);
 
 /** A synthetic projects dir (one session, one subagent) and a Codex ledger under a fresh temp root. */
 function fixture() {

@@ -121,6 +121,28 @@ const projectDirName = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
 /** A test for a working directory inside one of `roots`: `shop` must not take `shopbiz`'s sessions. */
 const insideRoots = (roots) => (cwd) => typeof cwd === 'string' && roots.some((r) => cwd === r || cwd.startsWith(`${r}${path.sep}`));
 
+const realPath = (p) => {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return path.resolve(p); // gone since, or never there
+  }
+};
+
+/**
+ * Which of `roots` (the repository's worktrees) holds a directory: the deepest one that is it or
+ * contains it, else null. Both sides are compared as real paths, so a run given its worktree through
+ * a link still belongs to it.
+ */
+export function worktreeOwner(roots) {
+  const real = roots.map(realPath).sort((a, b) => b.length - a.length);
+  return (dir) => {
+    if (typeof dir !== 'string') return null;
+    const d = realPath(dir);
+    return real.find((r) => d === r || d.startsWith(`${r}${path.sep}`)) ?? null;
+  };
+}
+
 /**
  * The sessions that ran inside one of `roots` (the repository and its worktrees), as
  * [{ id, files: [{ file, ctx }] }], skipping main files last modified before `sinceMs`. A directory is
@@ -152,7 +174,7 @@ export function projectSessions(projectsDir, roots, sinceMs = 0) {
   return out;
 }
 
-/** Where Codex keeps its rollouts: $CODEX_HOME/sessions, else ~/.codex/sessions. */
+/** Where Codex keeps its rollouts: $CODEX_HOME/sessions, else ~/.codex/sessions (archived ones beside it). */
 export function codexSessionsDir(env = process.env) {
   return path.join(env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
 }
@@ -193,20 +215,34 @@ function rolloutMeta(file) {
   return null;
 }
 
-/** The rollout files under `dir` (relative names), or [] without the directory. */
-function rolloutNames(dir) {
-  try {
-    return fs.readdirSync(dir, { recursive: true }).filter((n) => typeof n === 'string' && n.endsWith('.jsonl')).sort();
-  } catch {
-    return [];
-  }
+/**
+ * The rollout files under `dir` (`<CODEX_HOME>/sessions`, by day) and in the archive beside it
+ * (`archived_sessions`, where Codex moves an archived thread), sorted; a missing directory adds none.
+ */
+function rolloutFiles(dir) {
+  const out = [];
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.jsonl')) out.push(p);
+    }
+  };
+  walk(dir);
+  walk(path.join(path.dirname(dir), 'archived_sessions'));
+  return out.sort();
 }
 
 /** The host's rollouts under `dir` changed since `sinceMs`, as [{ file, meta }]; `codex exec` runs are left out. */
 function hostRollouts(dir, sinceMs = 0) {
   const out = [];
-  for (const name of rolloutNames(dir)) {
-    const file = path.join(dir, name);
+  for (const file of rolloutFiles(dir)) {
     let st;
     try {
       st = fs.statSync(file);
@@ -226,11 +262,11 @@ function hostRollouts(dir, sinceMs = 0) {
  * a rollout `rollout-<time>-<thread id>.jsonl`.
  */
 export function codexSessionFiles(dir, id) {
-  const own = rolloutNames(dir).find((n) => path.basename(n).endsWith(`-${id}.jsonl`));
-  const meta = own ? rolloutMeta(path.join(dir, own)) : null;
+  const own = rolloutFiles(dir).find((f) => path.basename(f).endsWith(`-${id}.jsonl`));
+  const meta = own ? rolloutMeta(own) : null;
   if (!meta?.host || meta.id !== id) return [];
   const subs = hostRollouts(dir, meta.started ?? 0).filter(({ meta: m }) => m.kind === 'sub' && m.id !== id && (m.session === id || m.parent === id));
-  return [{ file: path.join(dir, own), meta }, ...subs];
+  return [{ file: own, meta }, ...subs];
 }
 
 /**

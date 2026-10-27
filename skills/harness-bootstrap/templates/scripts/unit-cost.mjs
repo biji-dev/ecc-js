@@ -16,13 +16,15 @@
  *   --session <ids>      one or more session ids (comma-separated); the files are found by scanning
  *                        <projects-dir>/*\/<id>.jsonl, subagents in <id>/subagents/*.jsonl. An id that
  *                        is no Claude Code session is a Codex thread's (`$CODEX_THREAD_ID` on a Codex
- *                        host): its rollout and its subagents' under $CODEX_HOME/sessions (else
- *                        ~/.codex/sessions). Codex reports tokens and quota, not dollars
+ *                        host): its rollout and its subagents' under $CODEX_HOME/sessions or, once
+ *                        archived, $CODEX_HOME/archived_sessions (CODEX_HOME defaults to ~/.codex).
+ *                        Codex reports tokens and quota, not dollars
  *   --projects-dir <d>   default $CLAUDE_CONFIG_DIR/projects when set, else ~/.claude/projects
  *   --since / --until    only turns (and Codex runs) inside this ISO window
  *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
  *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
- *   --cwd-match <s>      only ledger runs (Codex and claude-run) whose cwd contains this substring
+ *   --cwd-match <s>      only ledger runs (Codex and claude-run) whose cwd contains this substring;
+ *                        for claude-run it replaces the default, the runs made in this worktree
  *   --times              add the main thread's wall, owner-wait and work time (owner wait: each question
  *                        until its answer, each typed prompt back to the last turn before it), its
  *                        compactions, its cache-hit share and its cache-expiry rewrites
@@ -34,8 +36,9 @@
  *   --line               print only the one-line summary (`Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`),
  *                        for `unit-record.mjs --cost "$(node scripts/unit-cost.mjs ... --line)"`
  *
- * claude-run's ledger (the main checkout's .claude-runs/ledger.jsonl, when there is one) adds its runs'
- * dollars to the cost: claude-run keeps no transcript.
+ * claude-run's ledger (the main checkout's .claude-runs/ledger.jsonl, when there is one) adds to the
+ * cost the dollars of the runs made in this worktree, judged by each run's real cwd: claude-run keeps
+ * no transcript, and every worktree of the repository writes that one ledger.
  *
  * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs
  * and a Codex host's turns, so it includes any other work on the same account in that window.
@@ -66,7 +69,16 @@ import {
   summarizeTimes,
   summaryLine,
 } from './lib/unit-cost-core.mjs';
-import { CLAUDE_LEDGER_DIR, codexSessionFiles, codexSessionsDir, defaultLedger, fileLines, sessionFiles } from './lib/run-sources.mjs';
+import {
+  CLAUDE_LEDGER_DIR,
+  codexSessionFiles,
+  codexSessionsDir,
+  defaultLedger,
+  fileLines,
+  sessionFiles,
+  worktreeOwner,
+  worktreePaths,
+} from './lib/run-sources.mjs';
 import { parseSteps } from './lib/unit-step-core.mjs';
 
 const USAGE =
@@ -94,6 +106,17 @@ function findSession(projectsDir, codexDir, id) {
     if (codex.length) return { claude: [], codex };
     throw new Error(/ not found under /.test(e.message) ? `${e.message} or ${codexDir}` : e.message, { cause: e });
   }
+}
+
+/**
+ * claude-run's runs that are this unit's: every worktree writes the main checkout's ledger, so the ones
+ * made in this worktree, or with --cwd-match every run (summarizeClaudeRuns then keeps the matching ones).
+ */
+function worktreeRuns(runs, cwdMatch) {
+  if (cwdMatch) return runs;
+  const owner = worktreeOwner(worktreePaths(process.cwd()));
+  const here = owner(process.cwd());
+  return runs.filter((e) => owner(e.cwd) === here);
 }
 
 function main() {
@@ -132,7 +155,8 @@ function main() {
     if (entries) codex = summarizeLedger(entries, { ...window, cwdMatch: args.cwdMatch });
     const claudeLedger = defaultLedger(process.cwd(), CLAUDE_LEDGER_DIR);
     if (fs.existsSync(claudeLedger)) {
-      extra.claudeRuns = summarizeClaudeRuns(parseLedger(readText(claudeLedger)), { ...window, cwdMatch: args.cwdMatch });
+      const runs = worktreeRuns(parseLedger(readText(claudeLedger)), args.cwdMatch);
+      extra.claudeRuns = summarizeClaudeRuns(runs, { ...window, cwdMatch: args.cwdMatch });
     }
     if (threads.length) {
       extra.host = summarizeCodexHost(threads, window);

@@ -26,7 +26,8 @@ read-only; what they propose is routed into work that already has a gate (below)
 the commit that last changed it, `git blame`), the follow-ups doc, the state and
 steps files, earlier digests, the Claude Code transcripts of the sessions that ran
 in the repository or one of its worktrees, the threads a Codex host ran there
-(`$CODEX_HOME/sessions`, else `~/.codex/sessions`), and the two run ledgers,
+(`$CODEX_HOME/sessions` and `archived_sessions`, `CODEX_HOME` defaulting to `~/.codex`),
+and the two run ledgers,
 codex-run's and claude-run's — and writes one digest of at most 8 KB:
 
 - **KPIs** for the window against the four weeks before: units landed, median work,
@@ -60,10 +61,12 @@ seven days back) to now. A second run in the same week rewrites that week's dige
   it outlives the unit's last marker or runs in another session.
 - A Codex host is counted in tokens and quota, not dollars: its rollouts carry no
   price. Its quota is the weekly meter's growth inside each turn, first reading to
-  last, joined per weekly window with codex-run's runs; growth between turns is other
-  work and is left out. The meter is account-wide, so other work on the account in
-  the same turn counts too, and a thread that spans weeks can pass 100%. A
-  `codex exec` run is codex-run's, never the host's.
+  last; growth between turns is other work and is left out. The digest shows it on
+  its own row beside codex-run's runs, so a run made inside a host turn is in both;
+  a unit's `unit-cost.mjs` line joins the two, once per weekly window. The meter is
+  account-wide, so other work on the account in the same turn counts too, and a
+  thread that spans weeks can pass 100%. A `codex exec` run is codex-run's, never
+  the host's.
 - ZCode transcripts are not read. A ZCode project's digest comes from its log, steps
   and state files and its ledgers (one project on its first run: 48 log rows, no
   transcripts).

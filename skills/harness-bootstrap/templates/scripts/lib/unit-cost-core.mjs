@@ -539,6 +539,7 @@ export function parseLedger(text) {
 // 1793382102 vs 1793382103), so two readings within this many seconds are the same window.
 const SAME_WINDOW_S = 60;
 // Ledger outcomes that never started Codex (or, in claude-run's ledger, Claude): no work, no quota used.
+// A claude-run row with a cost did run: the API stopped it after it spent (an overload, a limit).
 const NOT_RUN = new Set(['reserved', 'unavailable']);
 
 /** A ledger's rows in the window whose cwd matches: the ones that ran, and how many never did. */
@@ -548,7 +549,7 @@ function ledgerRows(entries, { since = null, until = null, cwdMatch = null } = {
   for (const e of entries) {
     if (!inWindow(Date.parse(e.at), since, until)) continue;
     if (cwdMatch && !String(e.cwd ?? '').includes(cwdMatch)) continue;
-    if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase())) {
+    if (NOT_RUN.has(String(e.outcome ?? e.status ?? '').toLowerCase()) && !Number.isFinite(e.costUsd)) {
       notRun += 1;
       continue;
     }
@@ -598,8 +599,9 @@ export function summarizeLedger(entries, window = {}) {
 
 /**
  * claude-run's ledger in the window: runs by kind, wall time and their dollars (`costUsd`, what
- * `claude -p` reported). A run without a cost (a timeout) is `unpriced`; reserved and unavailable rows
- * never ran (`notRun`). Its runs keep no transcript, so this ledger is the only record of them.
+ * `claude -p` reported). A run without a cost (a timeout) is `unpriced`; a reserved or unavailable row
+ * never ran (`notRun`) unless it has a cost, which the API stopped after it spent. Its runs keep no
+ * transcript, so this ledger is the only record of them.
  */
 export function summarizeClaudeRuns(entries, window = {}) {
   const { ran, notRun } = ledgerRows(entries, window);
@@ -647,7 +649,7 @@ function quotaPercent(intervals) {
   return round1(sum);
 }
 
-// ---- a Codex host: the owner's session runs on Codex, its rollouts under $CODEX_HOME/sessions
+// ---- a Codex host: the owner's session runs on Codex, its rollouts under $CODEX_HOME/sessions (or archived_sessions)
 
 // The tool a Codex thread asks the owner with and stops until the answer, and the one that asks and goes on.
 const CODEX_ASK = 'request_user_input';

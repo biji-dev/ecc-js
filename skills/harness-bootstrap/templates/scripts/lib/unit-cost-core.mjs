@@ -866,9 +866,13 @@ export function isCodexOwn(message) {
     if (t[open - 1] === '/') continue;
     // Depth by the same name: the next open and the next close are each looked up once, then moved on.
     const [opening, closing] = [`<${tag[1]}`, `</${tag[1]}>`];
+    // A same-name opening that closes itself (`<a/>`) raises no depth. The `>` that ends an opening is looked up once.
+    let gt = 0;
     const nextOpen = (from) => {
       for (let k = t.indexOf(opening, from); k !== -1; k = t.indexOf(opening, k + 1)) {
-        if (/[\s/>]/.test(t[k + opening.length] ?? '')) return k;
+        if (!/[\s/>]/.test(t[k + opening.length] ?? '')) continue;
+        if (gt !== -1 && gt < k) gt = t.indexOf('>', k);
+        if (gt === -1 || t[gt - 1] !== '/') return k;
       }
       return -1;
     };

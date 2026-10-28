@@ -1091,6 +1091,9 @@ test('a Codex user message is its own when it is whole elements, optionally afte
     '<marker/>',
     '<a x="1">one</a>\n<a>two</a>',
     '<a>outer <a>inner</a> tail</a>',
+    '<user_action><user_action/></user_action>',
+    '<a><a/><a>x</a></a>',
+    '<a><a x="1"/></a>',
   ]) {
     assert.equal(kind(own), 'note', own);
   }
@@ -1101,6 +1104,8 @@ test('a Codex user message is its own when it is whole elements, optionally afte
     '<image>x</image> and what does this do',
     `${env} then fix it`,
     '<a>open',
+    '<a><a/></a></a>',
+    '<a><a></a>',
     '# AGENTS.md instructions for /r/app\nplease read it',
     'plain words',
     '<send_user_message_question_reply> [{"answer":"yes"}]',

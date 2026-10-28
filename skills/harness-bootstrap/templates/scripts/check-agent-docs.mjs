@@ -291,6 +291,19 @@ const COMMENT_MARKER = /^\s*(?:\/\*+|\*+\/?|\/\/+|#+|<!--)?\s?/;
 
 // ---- main ---------------------------------------------------------------------------------------
 const args = process.argv.slice(2);
+
+const USAGE = 'usage: node scripts/check-agent-docs.mjs [--json] [--base] | --rules-for <file...>';
+if (args.some((arg) => arg === '--help' || arg === '-h')) {
+  process.stdout.write(`${USAGE}\n`);
+  process.exit(0);
+}
+// Before `--rules-for` only `--json` and `--base` are ours; anything else is a usage error, never a lint run.
+for (const arg of args.slice(0, args.includes('--rules-for') ? args.indexOf('--rules-for') : args.length)) {
+  if (arg === '--json' || arg === '--base') continue;
+  process.stderr.write(`check-agent-docs: ${arg.startsWith('-') ? 'unknown option' : 'unexpected argument'} ${arg}\n${USAGE}\n`);
+  process.exit(2);
+}
+
 const wantJson = args.includes('--json');
 const rulesForAt = args.indexOf('--rules-for');
 const wantBase = args.includes('--base') && rulesForAt === -1;

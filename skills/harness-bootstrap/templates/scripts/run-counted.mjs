@@ -42,10 +42,11 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { EXIT, SUMMARY_STREAM, nodeOptionsProblem, parseArgs, parseSummary, verdict } from './lib/run-counted-core.mjs';
 
+const USAGE =
+  'usage: node scripts/run-counted.mjs --kind <vitest|node|pytest|bun|playwright> --min <n> -- <cmd> [args...]';
+
 function usage(msg) {
-  process.stderr.write(
-    `run-counted: ${msg}\nusage: node scripts/run-counted.mjs --kind <vitest|node|pytest|bun|playwright> --min <n> -- <cmd> [args...]\n`,
-  );
+  process.stderr.write(`run-counted: ${msg}\n${USAGE}\n`);
   return EXIT.usage;
 }
 
@@ -124,6 +125,12 @@ function run(cmd, args) {
 }
 
 async function main() {
+  // Only what precedes a bare `--` is ours; the wrapped command keeps its own --help.
+  const own = process.argv.slice(2);
+  if (own.slice(0, own.includes('--') ? own.indexOf('--') : own.length).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let a;
   try {
     a = parseArgs(process.argv.slice(2));

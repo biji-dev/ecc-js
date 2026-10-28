@@ -59,6 +59,11 @@ const git = (cwd, ...a) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+  process.stdout.write(`${USAGE}\n`);
+  process.exit(0);
+}
+
 let args;
 try {
   args = parseArgs(process.argv.slice(2));

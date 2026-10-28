@@ -112,6 +112,10 @@ function collectDocs(top) {
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let a;
   try {
     a = parseArgs(process.argv.slice(2));

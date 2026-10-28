@@ -1052,3 +1052,36 @@ test('outside a git repository: fails the check, but --rules-for just prints not
   assert.equal(rf.status, 0);
   assert.equal(rf.stdout, '');
 });
+
+// arguments: --help prints the usage; an unknown flag is a usage error, never a lint run
+test('--help and -h print the usage on stdout and exit 0, even outside a git repository', () => {
+  const dir = track(realpathSync(mkdtempSync(join(tmpdir(), 'check-agent-docs-help-'))));
+  const copy = join(dir, 'check-agent-docs.mjs');
+  copyFileSync(SCRIPT, copy);
+  const env = { ...ENV, GIT_CEILING_DIRECTORIES: dirname(dir) };
+  for (const flag of ['--help', '-h']) {
+    const r = spawnSync(process.execPath, [copy, flag], { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `${flag}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.stderr, '');
+    assert.match(r.stdout, /^usage: node scripts\/check-agent-docs\.mjs \[--json\] \[--base\] \| --rules-for <file\.\.\.>\n$/);
+  }
+});
+
+test('an unknown flag is a usage error with exit 2, and no check runs', () => {
+  const r = run(fixture(), ['--bogus']);
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /^check-agent-docs: unknown option --bogus$/m);
+  assert.match(r.err, /^usage: node scripts\/check-agent-docs\.mjs /m);
+  assert.doesNotMatch(r.all, /FAIL|OK \(/);
+  assert.equal(r.out, '');
+});
+
+test('a bare word before --rules-for is a usage error; the paths after --rules-for are still paths', () => {
+  const dir = fixture();
+  const r = run(dir, ['stray']);
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /^check-agent-docs: unexpected argument stray$/m);
+  const ok = run(dir, ['--json', '--rules-for', 'src/db/schema.js', '--not-a-path', 'other.txt']);
+  assert.equal(ok.status, 0, ok.all);
+  assert.equal(ok.out, '.claude/rules/db.md\n');
+});

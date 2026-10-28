@@ -39,6 +39,10 @@ function usage(msg) {
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let args;
   let est;
   let leftOut = '';

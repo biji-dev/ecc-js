@@ -96,10 +96,11 @@ const SESSIONS = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.c
 const SCRIPT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RULES_RESOLVER = path.join(SCRIPT_REPO, RULES_FOR[0]);
 
+const USAGE =
+  'usage: node scripts/codex-run.mjs <kind> --prompt <file> --out <file> [options] (see the file header)';
+
 function usage(msg) {
-  process.stderr.write(
-    `codex-run: ${msg}\nusage: node scripts/codex-run.mjs <kind> --prompt <file> --out <file> [options] (see the file header)\n`,
-  );
+  process.stderr.write(`codex-run: ${msg}\n${USAGE}\n`);
   process.exit(EXIT.usage);
 }
 
@@ -301,6 +302,10 @@ async function askRouter(kind, brief, a, scratch) {
 }
 
 async function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let a;
   try {
     a = parseArgs(process.argv.slice(2), process.env);

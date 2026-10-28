@@ -78,18 +78,22 @@ wait`.
 `unchanged` does not mean "as the template wrote it", and a replace drops those
 fixes. The merge is three-way: the file, its base (`--base`) and the current
 template. Format the base and the current template as the project formats the file
-first (prettier: `npx prettier --stdin-filepath <path>`); a formatter that reflowed
-the file would otherwise make every line an edit:
+first (prettier: `npx prettier --stdin-filepath <path>`), and give both the file's
+own date in place of `generated YYYY-MM-DD`: a formatter that reflowed the file
+would otherwise make every line an edit, and a stamped date conflicts with any
+header line the template changed beside it:
 
 ```
 node <skill dir>/scripts/harness-status.js <repo> --base <path> > base
-cp <skill dir>/<template> theirs   # then format base and theirs as <path> is formatted
+cp <skill dir>/<template> theirs   # then format both as <path> is, and give both its date
 git merge-file -p <path> base theirs > merged
 ```
 
 Exit 0 is a clean merge. A conflict marks both sides: where the template now carries
 the project's own fix, take the template's side, and keep behaviour only this
-project has as a binding or a rule.
+project has as a binding or a rule. Where it marks a binding the project set, keep
+the project's value and take the template's lines around it: git marks a change on
+the line beside another change as a conflict.
 
 `[M]` **Without a manifest, build the `missing` rows yourself:** compare the repo
 against the Phase C core table and the mode's set in `SKILL.md`. A component the
@@ -99,6 +103,16 @@ project already wrote its own way (its own lint, its own verify runner) is a
 Every hazard gets a row too, with its fix as the proposal and `ask` as the
 default. Anything that blocks applying — a held registry row, an open unit —
 gets a `wait` row.
+
+`[M]` **The base gets a row of its own.** Regenerated blocks and new rules add bytes
+every session loads, and the agent-docs lint's `base` budget is a ratchet. Read the
+base now (`node scripts/check-agent-docs.mjs --base`) and add what each regenerated
+block adds. Where the total passes the budget, the row proposes moving text out of
+the base (rationale to `docs/harness/rule-origins.md`, area rules to path-scoped
+files: `harness-targets.md` › Keeping the instruction files small), or raising the
+budget on the owner's word. A rule the project already states keeps its own words
+and cites them in place of its why clause (`rules.md` §1). Never trim a shipped rule
+to fit.
 
 `[M]` **A legacy policy needs one owner confirmation** before it counts as
 reviewed; then its status line reads `REVIEWED <date> (adopted)`. Nobody can know
@@ -138,12 +152,35 @@ or writes its log row on the mainline before releasing its row is refused by the
 guard the upgrade installs (`commit-guard.md` › Land order). Fix the runner in the
 same upgrade, or do not install the hook yet.
 
+`[M]` **Cores that import each other land together.** A core that imports another
+(`import … from './<core>.mjs'`) is applied in the same change as that core: read
+the imports of every core the sheet changes. Two sets do today: `unit-step-core`,
+`unit-record-core`, `estimate-core`, `retro-core`, `retro-gather`,
+`harness-due-core`, `unit-cost-core` and `run-sources`; and `harness-host-core`,
+`review-gate-core` and `claude-run-core`. Applied one by one, a script run in
+between fails on a name the newer core imports.
+
+`[M]` **A scaffold gains a column in place.** A column the newer format adds goes
+into the project's own table, where `log-format.md` places it: the header, the
+separator and an empty cell in every row already there, never a second table. Then
+bind the readers to the header as it now reads: `LOG_COLUMNS` in
+`unit-record-core.mjs` (its names, in order), `COLUMNS` in `estimate-core.mjs` and
+`EXTRA_COLUMNS` in `retro-core.mjs` (each a prefix of its column's name). A header
+the project renamed keeps its names, and the bindings follow it.
+
+`[M]` **The ignored paths are checked too.** Each path Phase C ignores (`SKILL.md`,
+the `.gitignore` row) must read as ignored: `git check-ignore -q <path>` exits 0 for
+the registry, `.review-work/x` and the ledger directory of each wrapper the project
+runs (`.codex-runs/x`, `.claude-runs/x`: a directory by a path inside it, since git
+reads an absent directory's bare name as not ignored). One that does not is a
+`missing` row: the next `git add -A` commits it.
+
 `[M]` After applying, write `.agents/harness-manifest.json` and commit it with the
 change (then register the repository for the weekly job, `learning.md` › The weekly
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 5, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 6, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -222,7 +259,7 @@ a `SKILL.md`: frontmatter must be the first line.
 | `guard-missing`, `guard-snippet-only`, `lock-missing` | install the registry and the git hook; delete the snippet once the hook is tested |
 | `merge-unguarded` | install the same guard as `pre-merge-commit` (`commit-guard.md`) |
 | `id-pattern-truncates`, `id-pattern-invalid` | bind `ID_PATTERN` to the full id shape and run the self-test (`commit-guard.md`); until then the guard refuses the branches that own those rows |
-| `skill-link-drift`, `skill-unlinked` | one real file under `.agents/skills/`, a committed relative symlink under `.claude/skills/` — unless the two copies are deliberate per-agent wrappers over one shared script (`harness-targets.md`); then keep both and say so |
+| `skill-link-drift`, `skill-unlinked` | one real file under `.agents/skills/`, a committed relative symlink under `.claude/skills/` — unless the two copies are deliberate per-agent wrappers over one shared script (`harness-targets.md`); then keep both and say so. A directory becomes the symlink in two commits, the removal and then the link, where a pre-commit tool such as lint-staged stashes the tree; a copy serves where the project refuses committed symlinks |
 | `agents-md-codex-truncation`, `claude-md-large` | move rationale to `docs/harness/rule-origins.md` and area rules to path-scoped files (`harness-targets.md`). The script reads a raised `project_doc_max_bytes` from the Codex config |
 | `state-file-over-budget` | an open unit: move closed findings to the follow-ups doc (`scope-guard.md`); a closed unit: archive its state file (`docs/plans/archive/`) — the budget binds open units |
 | `readonly-agent-has-write-tools` | drop `Bash`, `Edit`, `Write` from `tools:`, or drop the claim. An auditor that needs a diff gets it written into its brief, so it needs no `Bash` |
@@ -247,6 +284,12 @@ a `SKILL.md`: frontmatter must be the first line.
 What each skill version changed, so an upgrade knows what is new since the
 manifest's `skillVersion`. An install with no manifest is v1 or earlier.
 
+`[M]` **A reference change takes a version.** Once an install holds a version, a
+release that changes a reference an entry is generated from, or what an installed
+script decides, takes the next version and a row here. The template state (Step 1)
+reads templates only, so the row is the only record that a reference-generated
+entry is stale, and the sheet's list of what the owner reviews again.
+
 | Version | Shipped in | Changed |
 |---|---|---|
 | 0 | before this skill | change installs written by hand (a tiered change workflow, cross-check lanes, a verify runner): everything in v2 is new to them except what the fingerprints show |
@@ -255,19 +298,90 @@ manifest's `skillVersion`. An install with no manifest is v1 or earlier.
 | 3 | 2.2.3-js.3 | the cost study's lineup (`gate-design.md` › Review lineup): per-slice review by the second family, one Opus code-reviewer per unit, lane B inside the adversarial pass (the Opus auditor is the fallback), `database-reviewer` on migrations only, the language lens folded into the code-reviewer, `pr-test-analyzer` on Sonnet; fix rounds by `review-gate.mjs` — P3s to one sweep, re-reviews over the fix diff, at most two Opus rounds; `docs-drift.mjs` (8a) and `unit-record.mjs` (8b), claim audit on product claims; the state file's shape; `effort: high` and the Tool discipline section in every agent; `/clear` + resume at owner waits; the milestone split; six Cost rules; the log's *Yield by source*; hazards `agent-effort-unpinned` and `effort-above-high`. Generated blocks and agents from v2 are replaced or get section proposals |
 | 4 | 2.2.3-js.4 | owner questions by class (`gate-design.md` › Who decides): P and C asked as decision cards, T decided and listed at Gate 2 as *Decided for you*, H turned into rules; the decision row's `Class` and `Reversal cost`; deliverables with `Demo:` lines, one per coordinator context; the second family as the first builder of cold work and fixes, `--writer` required on every `review-gate.mjs` kind (claude, codex, sonnet or mixed), the `executor:` override; the sandbox section (`cross-model.md`); `run-gates.sh` result reuse by tree, single-flight lock and instant-fail note; `unit-cost.mjs` and `estimate.mjs`; the log's Deliverable, Owner wait and Cost columns and a `unit-record.mjs` row that fits them; three rules (owner decides only the owner's, never re-run a passed tree, deliverables); hazard `agent-model-unpinned`. Generated blocks, agents and scripts from v3 are replaced or get section proposals; the policy and gate-table blocks are `reviewed`, so their rows are proposals the owner re-reviews |
 | 5 | 2.2.3-js.5 | step markers (`unit-step.mjs`), `unit-cost.mjs --times` and `--by-step`, `unit-record.mjs --steps`; the learning loop: `retro.mjs` and `run-sources.mjs`, Phase E's weekly retro and Phase F, the skill's own `retro-weekly.mjs` (`learning.md`); the context defaults (`context.md`): the budget hook warns at 220K, sits 40K under the auto-compact window, says nothing after a compaction until the next reply, and past 150K sends an owner gate as text; `check-agent-docs.mjs`'s base and citations checks (its ninth and tenth); due-checks at steps 0 and 9 (`harness-due.mjs`), the P3 batch and the hygiene unit (`hygiene.md`); the machine sweep (`machine.md`, the skill's own script) and the optional leftover-processes hook; `run-counted.mjs` behind every counted gate, `run-gates.sh --snapshot` and its colour strip; the edit guard; the tests of the guards, the budget hook and `run-gates.sh`, shipped to `scripts/lib/` and run by the counted `harness` gate; `unit-stack.sh`, bound to the commit guard's registry path; a `Traps:` line in every brief; the Intake type (`intake.md`, `intake.mjs`: unit 1's Gate 1 automatic while the approved request and its Scope block are unchanged); per-host models (`.agents/harness-models.json`, `harness-host.mjs`), `claude-run.mjs` as the second family under another host, `.codex/agents/<name>.toml` where Codex is a target; `review-gate.mjs --writer` by role on any host (`main`, `bounded`, `second` or `mixed`; on Claude Code `claude`, `sonnet` and `codex` still name them) and `--host`, and its P3 decision `p3-batch` (was `sweep`); hazards `preflight-missing`, `sweep-overdue`, `retro-overdue`, `hygiene-overdue`, `p3-queue-aging`, `host-models-missing` and `second-family-absent`. Generated blocks, agents and scripts from v4 are replaced or get section proposals |
+| 6 | 2.2.3-js.8 | the fixes from the v5 installs. The guards refuse what v5 let through: `push --no-verify`, a hook path set through the environment, `git` behind `command`, `exec` or `time`, a second-family run sent to the background with `&` (built-in rule `codex-background`), an indented patch header, every env-file form, and in either scope the merge of a branch that still holds a row; each hook file runs the guard first and passes its refusal on. The review gate reviews tests and the harness's instruction files (a unit of only those under a critical path at the full tier), and a P3 batch over critical code gets the Opus reviewer. `run-counted.mjs` fails a test file that registered no tests and forwards a stop signal; `run-gates.sh` keys reuse on `NODE_OPTIONS`; `unit-cost.mjs` counts a streamed message by its fullest copy and both run ledgers by the unit's worktree; the retro warns where a figure reads zero for a fixable reason, dates rows past re-indents and moves, and reads the follow-ups' columns as bound; step ids take one `/`; the FULL verify ends step 8a; `codex-run.mjs` keeps `max` behind `--allow-max`; each CLI in `scripts/` takes `--help`, and `check-agent-docs.mjs` refuses an argument it does not know; `harness-status.js` reports each entry's template state and prints its base (`--base`). Template-backed entries from v5 merge three-way (Step 2); the rest of an upgrade to v6 is in *Upgrading to v6* below |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v3 install the v4 and v5 rows, a v2 install the v3
-row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v5 install the v6 row, a v3 install the v4 to v6
+rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
 it) reaches the owner as proposals; v4's log columns (Deliverable, Owner wait,
 Cost) and decision-row columns (`Class`, `Reversal cost`) are structure the
-scaffolds gain. An install
+scaffolds gain, in place (Step 3). An install
 with no manifest starts from the fingerprints (Step 1): its entries are `legacy`,
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 5.
+`skillVersion` 6.
+
+### Upgrading to v6
+
+`[M]` **What regenerates.** An entry generated from a reference v6 changed is
+regenerated and diffed (Step 2): the `rules` block (`templates/agents-rules.md`, 8
+bytes longer), `docs/harness/rule-origins.md` (`rules.md` §1; it opens with a line
+saying a bare `<name>.md` it cites is this skill's reference), the `context` block
+(`context.md`; its Tool discipline section is unchanged, so the agents' copies
+stand), the `scope` block (`scope-guard.md`), the blocks Phase C writes from
+`gate-design.md`, the runner skill and the implementer agent (`runner.md`), the
+claim auditor (`claim-auditor.md`), `CLAUDE.md` (`harness-targets.md`), and a
+preflight, sweep or hygiene skill the project generated (`preflight.md`,
+`sweep.md`, `hygiene.md`). The lane A and lane B auditors and the Codex agent files
+stand. The risk map is `reviewed`, so the one list of the harness's own critical
+paths (`policy-derivation.md`) reaches the owner as a proposal. On a ZCode host the
+command and edit guards wire into `.zcode/config.json`, with `hooks.enabled: true`
+(`harness-targets.md` › ZCode): a `missing` row where the project has not wired
+them. The registry keeps its columns: the guard
+finds `Branch` and `Worktree` by name, so a `Task` column stays.
+
+`[M]` **New bindings, each defaulting to v5's behaviour.** `MAINLINE` in the commit
+guard (`main`); `CODEX_CANDIDATES` in `codex-run-core.mjs` (`.local/bin/codex` under
+the home directory, tried before `codex` on `PATH`; `CODEX_BIN` still comes first);
+`TIER_WORDS` in `estimate-core.mjs` (`trivial`, `hot-small`, `small`, `full`,
+`docs`); `STATUS_COLUMNS`, `STATUS_WORDS`, `SEVERITY_COLUMNS` and `FILED_AT` (`null`,
+off) in `retro-core.mjs`; `INSTRUCTIONS` in `review-gate-core.mjs` (`AGENTS.md`,
+`CLAUDE.md`, `.claude/`, `.agents/`, `.codex/` and `.zcode/`, reviewed as code
+whatever `NON_PRODUCTION` says); `LOG_COLUMNS` in `unit-record-core.mjs` (the
+header in `log-format.md`). `FOLLOW_UPS` may now be a list, `PHASE_OF` a function
+from a row id to its phase or `null`, and a project rule in the command guard reads
+`env` and `background` too. Bind each where the project differs: `MAINLINE` to its
+mainline, `LOG_COLUMNS` to its log's header.
+
+`[M]` **The shipped tests bind their own values.** The tests of the command guard,
+the budget hook, the commit guard, the due-checks, the review gate and the records
+hold a `[B]` block of the values the file they test is bound to (`EXPECTED`,
+`HOOK_FILES`, `EXPECTED_CRITICAL` and the like), and the estimate and retro tests
+build their fixtures from the core's bindings. A test the project edited only to
+re-pin its bound values takes the template's test, its `[B]` block bound to the
+same values; those re-pins are where its merge conflicts.
+
+`[M]` **Where else the merge conflicts.** Where the project set the binding: the
+commit guard's `SCOPE` (`MAINLINE` follows it) and its test's `MERGE_GUARD`
+(`HOOK_FILES` follows it); the edit guard's `PROTECTED` (its env pattern changed:
+keep the project's entries, take the pattern); `check-agent-docs.mjs`'s `budgets`,
+`statePattern` and `pathPrefixes`; `docs-drift-core.mjs`'s
+`IGNORE_TOKENS` (`bun.lock`) and `GENERIC` (`decide`); `estimate-core.mjs`'s
+`TIERS`; `harness-due-core.mjs`'s `MAIN`, `PHASE_OF` and `COMMANDS` (whose defaults
+now name the reference that holds each procedure); `harness-host-core.mjs`'s
+`MODELS_FILE`; `retro-core.mjs`'s `REPORTS_DIR` and `PLANS_DIR`;
+`review-gate-core.mjs`'s `TESTS`; `unit-record-core.mjs`'s `MAX_COMMITS`. Every
+budget key is present after the merge, a number or `null` (off): a `CONFIG` from
+before v5 has no `base`, so set it or make it `null`.
+
+`[M]` **What the owner reviews again.** A unit of only tests or instruction files is
+reviewed, no longer skipped, and at the full tier under a critical path;
+`--writer bounded` covers Opus and Sonnet together, and `mixed` means the second
+family wrote part of it. The commit guard refuses, in either scope, the merge of a
+branch that still holds a row: the runner releases first (`commit-guard.md` › Land
+order). The edit guard refuses `.envrc`, `prod.env` and the other env-file forms. A
+second-family run goes to the background by the host's own option, never `&`.
+`run-counted.mjs` fails a test file that registered no tests, which it used to count
+as a pass. A run under another `NODE_OPTIONS` is not reused. Cost with subagent work
+reads higher, since a streamed message counts by its fullest copy, and both run
+ledgers count the unit's worktree only. `codex-run.mjs` runs `max` as `xhigh` unless
+`--allow-max` is given. `check-agent-docs.mjs` exits 2 on an argument it does not
+know, so a gate that passes one fails until it goes. The FULL verify ends step 8a,
+so its time moves from step 8 to 8a in the by-step figures: compare the two steps
+together across the upgrade. Once per machine, run `retro-weekly.mjs --install`
+again (`learning.md` › The weekly job), so the job carries `CODEX_HOME`.

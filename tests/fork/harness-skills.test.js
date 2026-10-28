@@ -886,6 +886,163 @@ test("run-counted's raise message names the gate's line, and context.md quotes i
   assert.ok(squashed('reference/context.md').includes("raise --min on the gate's line`), wherever the project defines its gates"), 'context.md does not quote the raise message');
 });
 
+const upgradeMd = () => fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'upgrade.md'), 'utf8');
+const metadataVersion = dir => {
+  const head = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8').match(/^---\n([\s\S]*?)\n---\n/);
+  const version = head && head[1].match(/^ {2}version: (\d+)$/m);
+  assert.ok(version, `${path.basename(dir)}'s SKILL.md names no metadata version`);
+  return Number(version[1]);
+};
+/** A template module's exports, run in node: RegExps (alone or in a list) as their source text. */
+function exported(rel, names) {
+  const url = require('url').pathToFileURL(path.join(TEMPLATES, rel)).href;
+  const code = `const m = await import(${JSON.stringify(url)}); const show = (v) => (v instanceof RegExp ? String(v) : Array.isArray(v) ? v.map((x) => (x instanceof RegExp ? String(x) : x)) : v); console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map((n) => [n, show(m[n])]))));`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  assert.strictEqual(run.status, 0, run.stderr);
+  return JSON.parse(run.stdout);
+}
+const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
+
+test("upgrade.md has a version row 6 for 2.2.3-js.8, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+  const text = upgradeMd();
+  assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
+  const table = text.slice(text.indexOf('## Version table'));
+  const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
+  for (const dir of [BOOTSTRAP, DELEGATE]) {
+    assert.strictEqual(metadataVersion(dir), newest, `${path.basename(dir)}'s version is not the version table's newest row (the two skills move together)`);
+  }
+  assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
+  const flat = squashed('reference/upgrade.md');
+  assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
+  assert.ok(flat.includes('a v5 install the v6 row, a v3 install the v4 to v6 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v5 or a v3 install to v6');
+});
+
+test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes("and give both the file's own date in place of `generated YYYY-MM-DD`"), "the merge does not give the base and the template the file's date");
+  assert.ok(text.includes("Where it marks a binding the project set, keep the project's value and take the template's lines around it"), 'the merge says nothing of a conflict on a binding');
+  if (!hasGit) return;
+  // why, in git: a stamped header next to a header line the template changed conflicts, unless both carry the stamp
+  const dir = tmp('hb-stamp-');
+  const write = (name, lines) => fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
+  write('base', ['// tool (generated YYYY-MM-DD).', '// says one thing.', 'body']);
+  write('theirs', ['// tool (generated YYYY-MM-DD).', '// says another.', 'body']);
+  write('file', ['// tool (generated 2026-10-27).', '// says one thing.', 'body']);
+  assert.notStrictEqual(git(dir, ['merge-file', '-p', 'file', 'base', 'theirs'], cleanGit).status, 0, 'an unstamped base merged clean: the stamp step would not be needed');
+  for (const name of ['base', 'theirs']) {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('generated YYYY-MM-DD', 'generated 2026-10-27'));
+  }
+  const merged = git(dir, ['merge-file', '-p', 'file', 'base', 'theirs'], cleanGit);
+  assert.strictEqual(merged.status, 0, 'a stamped base and template still conflict');
+  assert.strictEqual(merged.stdout, '// tool (generated 2026-10-27).\n// says another.\nbody\n');
+});
+
+test('upgrade.md: a reference change takes a version, the base gets a sheet row, and a directory becomes the skill link in two commits', () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('**A reference change takes a version.**') && text.includes('the row is the only record that a reference-generated entry is stale'), 'upgrade.md does not say a reference change takes a version');
+  assert.ok(text.includes('**The base gets a row of its own.**') && text.includes('(`node scripts/check-agent-docs.mjs --base`)') && text.includes('Never trim a shipped rule to fit.'), 'upgrade.md gives the base no row on the sheet');
+  assert.ok(text.includes('cites them in place of its why clause (`rules.md` §1)') && squashed('reference/rules.md').includes('in place of its why clause'), 'the citation form upgrade.md sends the base row to is not in rules.md §1');
+  assert.ok(text.includes('A directory becomes the symlink in two commits, the removal and then the link'), 'the skill-link hazard does not say a directory takes two commits');
+});
+
+test('upgrade.md names, as the cores that land together, exactly the import sets of the template cores', () => {
+  const lib = path.join(TEMPLATES, 'scripts', 'lib');
+  const cores = fs.readdirSync(lib).filter(f => f.endsWith('.mjs') && !f.endsWith('.test.mjs')).map(f => f.slice(0, -4));
+  const up = Object.fromEntries(cores.map(core => [core, core]));
+  const find = core => (up[core] === core ? core : (up[core] = find(up[core])));
+  for (const core of cores) {
+    for (const m of fs.readFileSync(path.join(lib, `${core}.mjs`), 'utf8').matchAll(/from '\.\/([a-z-]+)\.mjs'/g)) {
+      if (m[1] in up) up[find(core)] = find(m[1]);
+    }
+  }
+  const groups = {};
+  for (const core of cores) (groups[find(core)] ??= []).push(core);
+  const expected = Object.values(groups).filter(group => group.length > 1).map(group => group.sort().join(' ')).sort();
+  const text = squashed('reference/upgrade.md');
+  const at = text.indexOf('**Cores that import each other land together.**');
+  assert.ok(at >= 0, 'upgrade.md does not say that cores which import each other land together');
+  const named = text.slice(text.indexOf('today:', at), text.indexOf('Applied one by one', at)).split('; and ')
+    .map(set => [...set.matchAll(/`([a-z-]+)`/g)].map(m => m[1]).sort().join(' ')).sort();
+  assert.deepStrictEqual(named, expected, 'the sets upgrade.md names are not the import sets of the template cores');
+});
+
+test('upgrade.md: a scaffold gains a column in place, and the readers it rebinds are bindings of the cores it names', () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('**A scaffold gains a column in place.**') && text.includes('never a second table'), 'upgrade.md does not say how a log gains a column');
+  for (const [name, core] of [['LOG_COLUMNS', 'unit-record-core'], ['COLUMNS', 'estimate-core'], ['EXTRA_COLUMNS', 'retro-core']]) {
+    assert.ok(text.includes(`\`${name}\` in \`${core}.mjs\``), `upgrade.md does not name ${name} in ${core}.mjs`);
+    assert.match(fs.readFileSync(path.join(TEMPLATES, 'scripts', 'lib', `${core}.mjs`), 'utf8'), new RegExp(`^export const ${name} = `, 'm'), `${core}.mjs binds no ${name}`);
+  }
+  assert.ok(text.includes('scaffolds gain, in place (Step 3)'), 'Skipping versions does not send the log columns to Step 3');
+});
+
+test("upgrade.md checks each path SKILL.md's .gitignore row names, a directory by a path inside it", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('**The ignored paths are checked too.**') && text.includes('`git check-ignore -q <path>` exits 0'), 'upgrade.md does not check the ignored paths');
+  const row = squashed('SKILL.md').match(/\| `\.gitignore` entries \|[^|]+\|([^|]+)\|/);
+  assert.ok(row, 'SKILL.md has no .gitignore row');
+  for (const [entry, checked] of [['.claude/registry.md', 'the registry'], ['.review-work/', '`.review-work/x`'], ['.codex-runs/', '`.codex-runs/x`'], ['.claude-runs/', '`.claude-runs/x`']]) {
+    assert.ok(row[1].includes(`\`${entry}\``), `SKILL.md's .gitignore row lacks ${entry}`);
+    assert.ok(text.includes(checked), `upgrade.md's check lacks ${checked}`);
+  }
+  if (!hasGit) return;
+  const dir = tmp('hb-ignore-');
+  git(dir, ['init', '-q'], cleanGit);
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.review-work/\n');
+  assert.strictEqual(git(dir, ['check-ignore', '-q', '.review-work'], cleanGit).status, 1, "git reads an absent directory's bare name as ignored: the path inside would not be needed");
+  assert.strictEqual(git(dir, ['check-ignore', '-q', '.review-work/x'], cleanGit).status, 0, 'a path inside an ignored directory reads as not ignored');
+});
+
+test("upgrade.md's v6 section states each new binding's template default, and each binding its conflict list names exists", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('the rest of an upgrade to v6 is in *Upgrading to v6* below') && /^### Upgrading to v6$/m.test(upgradeMd()), 'row 6 points to no Upgrading to v6 section');
+  const v6 = text.slice(text.indexOf('### Upgrading to v6'));
+  const source = rel => fs.readFileSync(path.join(TEMPLATES, rel), 'utf8');
+  const lib = name => `scripts/lib/${name}.mjs`;
+  const list = words => words.map(word => `\`${word}\``).join(', ');
+  assert.match(source('harness-guard.sh'), /^MAINLINE="main" /m, "the commit guard's MAINLINE default is not main");
+  assert.ok(v6.includes('`MAINLINE` in the commit guard (`main`)'), 'the v6 section does not state MAINLINE');
+  const { CODEX_CANDIDATES } = exported(lib('codex-run-core'), ['CODEX_CANDIDATES']);
+  assert.ok(v6.includes(`\`CODEX_CANDIDATES\` in \`codex-run-core.mjs\` (${list(CODEX_CANDIDATES)} under the home directory`), 'the v6 section does not state CODEX_CANDIDATES as the core binds it');
+  const { TIER_WORDS } = exported(lib('estimate-core'), ['TIER_WORDS']);
+  assert.ok(v6.includes(`\`TIER_WORDS\` in \`estimate-core.mjs\` (${list(TIER_WORDS)})`), 'the v6 section does not state TIER_WORDS as the core binds it');
+  const retro = exported(lib('retro-core'), ['STATUS_COLUMNS', 'STATUS_WORDS', 'SEVERITY_COLUMNS', 'FILED_AT']);
+  assert.strictEqual(retro.FILED_AT, null);
+  assert.ok(Array.isArray(retro.STATUS_COLUMNS) && Array.isArray(retro.SEVERITY_COLUMNS) && typeof retro.STATUS_WORDS === 'object');
+  assert.ok(v6.includes('`STATUS_COLUMNS`, `STATUS_WORDS`, `SEVERITY_COLUMNS` and `FILED_AT` (`null`, off) in `retro-core.mjs`'), 'the v6 section does not state the follow-up bindings');
+  const { INSTRUCTIONS } = exported(lib('review-gate-core'), ['INSTRUCTIONS']);
+  const instruction = file => INSTRUCTIONS.some(source => new RegExp(source.slice(1, source.lastIndexOf('/'))).test(file));
+  for (const file of ['AGENTS.md', 'CLAUDE.md', '.claude/x', '.agents/x', '.codex/x', '.zcode/x']) assert.ok(instruction(file), `INSTRUCTIONS does not take ${file}`);
+  assert.ok(v6.includes('`INSTRUCTIONS` in `review-gate-core.mjs` (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`, `.codex/` and `.zcode/`'), 'the v6 section does not state INSTRUCTIONS');
+  assert.ok(v6.includes('`LOG_COLUMNS` in `unit-record-core.mjs`'), 'the v6 section does not state LOG_COLUMNS');
+  const conflicts = v6.slice(v6.indexOf('**Where else the merge conflicts.**'), v6.indexOf('**What the owner reviews again.**'));
+  const bound = [
+    ['harness-guard.sh', ['SCOPE']], [lib('harness-guard.test'), ['MERGE_GUARD', 'HOOK_FILES']], ['edit-guard.mjs', ['PROTECTED']],
+    ['scripts/check-agent-docs.mjs', ['budgets', 'statePattern', 'pathPrefixes']], [lib('docs-drift-core'), ['IGNORE_TOKENS', 'GENERIC']],
+    [lib('estimate-core'), ['TIERS']], [lib('harness-due-core'), ['MAIN', 'PHASE_OF', 'COMMANDS']], [lib('harness-host-core'), ['MODELS_FILE']],
+    [lib('retro-core'), ['REPORTS_DIR', 'PLANS_DIR']], [lib('review-gate-core'), ['TESTS']], [lib('unit-record-core'), ['MAX_COMMITS']],
+  ];
+  for (const [file, names] of bound) {
+    for (const name of names) {
+      assert.ok(conflicts.includes(`\`${name}\``), `the conflict list does not name ${name}`);
+      assert.match(source(file), new RegExp(`^\\s*(?:export const |const )?${name}(?:=| = |: )`, 'm'), `${file} binds no ${name}`);
+    }
+  }
+});
+
+test("upgrade.md's v6 section names what the owner reviews again and the machine's weekly job", () => {
+  const v6 = squashed('reference/upgrade.md').split('### Upgrading to v6')[1] || '';
+  for (const part of [
+    'A unit of only tests or instruction files is reviewed, no longer skipped, and at the full tier under a critical path',
+    'The commit guard refuses, in either scope, the merge of a branch that still holds a row',
+    '`run-counted.mjs` fails a test file that registered no tests, which it used to count as a pass',
+    '`check-agent-docs.mjs` exits 2 on an argument it does not know',
+    'so its time moves from step 8 to 8a in the by-step figures',
+    'Once per machine, run `retro-weekly.mjs --install` again (`learning.md` › The weekly job), so the job carries `CODEX_HOME`',
+  ]) assert.ok(v6.includes(part), `the v6 section lacks: ${part}`);
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

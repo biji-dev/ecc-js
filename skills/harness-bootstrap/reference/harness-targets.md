@@ -116,11 +116,15 @@ call it; never maintain the same sequence in three skill files.
 - **The command guard** — `templates/command-guard.mjs`, a `PreToolUse` hook on
   `Bash`, installed to `.claude/hooks/command-guard.mjs`. It parses the command
   (heredocs and quoted text removed, split on shell operators, wrappers such as
-  `env`, `sudo`, `timeout`, `nice` and `xargs` stripped) and refuses
-  `git commit --no-verify` or `-n`, `git merge` or `git pull --no-verify`, `HUSKY=0`
-  on a commit or merge, a `core.hooksPath`
-  override or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
-  stays allowed), and a force-push or delete of the mainline; `EXTRA_RULES` is `[B]`. A commit message that *mentions* `--no-verify` passes. It
+  `env`, `sudo`, `timeout`, `nice`, `xargs`, `command`, `exec`, `time` and `nohup`
+  stripped with their options) and refuses
+  `git commit --no-verify` or `-n`, `git push`, `git merge` or `git pull --no-verify`,
+  `HUSKY=0` on a commit, merge or push, a `core.hooksPath`
+  override (`-c`, or an inline `GIT_CONFIG_*` such as `GIT_CONFIG_KEY_0=core.hooksPath`)
+  or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
+  stays allowed), a force-push or delete of the mainline, and (`codex-background`) a
+  Codex or run-wrapper launch sent to the background with a shell `&`; `EXTRA_RULES`
+  is `[B]`, and each rule gets the command's `env` and `background`. A commit message that *mentions* `--no-verify` passes. It
   exits 2 to block and 0 on any error. It stops an agent's own mistakes and the
   obvious retry, not a determined adversary — its header lists what it cannot see.
   It replaces a plugin's keyword hook: the harness depends on no plugin hook, since a

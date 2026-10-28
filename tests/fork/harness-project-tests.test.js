@@ -17,7 +17,7 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
-  'command-guard': 6,
+  'command-guard': 15,
   'edit-guard': 8,
   'harness-guard': 7,
   'context-budget': 6,
@@ -154,6 +154,18 @@ mutantFails(
   '.claude/hooks/command-guard.mjs',
   "if (t === '--no-verify') return true;\n  }\n  return false;",
   "if (t === '--no-verify') return false;\n  }\n  return false;",
+);
+mutantFails(
+  'a command guard whose MAINLINE was rebound, which its own suite would loop over',
+  '.claude/hooks/command-guard.mjs',
+  "export const MAINLINE = ['main', 'master'];",
+  "export const MAINLINE = ['mainline'];",
+);
+mutantFails(
+  'a command guard whose HOOKS_DIR was rebound, which its own suite would allow',
+  '.claude/hooks/command-guard.mjs',
+  "export const HOOKS_DIR = '.githooks';",
+  "export const HOOKS_DIR = '/dev/null';",
 );
 mutantFails(
   'an edit guard that ignores a Codex move',

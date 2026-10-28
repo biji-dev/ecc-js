@@ -131,8 +131,9 @@ yourself, then integrate (Phase D).
 
 ## Codex
 
-No workflow engine is needed. Run one non-interactive builder per spec, each in
-the background, then gate in the main session:
+No workflow engine is needed. Run one non-interactive builder per spec, each with
+the host's own background option (never a shell `&` or a `( … ) &` subshell), then
+gate in the main session:
 
 ```sh
 codex exec -s workspace-write -o .review-work/builders/01.md - < .claude/tasks/<run-id>/01-slug.brief.md
@@ -141,7 +142,8 @@ codex exec -s workspace-write -o .review-work/builders/01.md - < .claude/tasks/<
 - The brief file is the builder brief from `SKILL.md` with the spec path filled
   in. The prompt goes on **stdin**; a quoted-argument prompt hung.
 - The CLI exits 0 on failure. Count a builder as finished only if its output
-  file is non-empty and names a `STATUS`.
+  file is non-empty and names a `STATUS`; a launch whose output file never
+  appears never ran.
 - Codex reads `AGENTS.md` but not Claude-specific rule folders; inline any rule
   the spec needs.
 

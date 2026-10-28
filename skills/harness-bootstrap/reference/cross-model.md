@@ -98,6 +98,12 @@ What it does that a bare call does not:
 - **A JSONL ledger** of every real run (`--dry-run` writes none), and a **leftovers** report after write kinds
   (`commits=`, `uncommitted=`) — look at them before a fallback starts.
 - **The prompt goes on stdin.** A quoted-argument prompt hung.
+- **A background run uses the host's own background option** (Claude Code: the
+  Bash tool's `run_in_background`), never a shell `&` or a `( … ) &` subshell: one
+  launched that way died with its shell before Codex started, and the command
+  guard refuses it (`codex-background`). The wrapper writes its ledger row when
+  the run ends, so when the host reports the command finished, the run counts only
+  if its row exists; no row means it never ran: relaunch it.
 
 `[B]` Bindings, re-derived per machine and project:
 

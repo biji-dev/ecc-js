@@ -1,27 +1,44 @@
 #!/usr/bin/env node
 // harness-bootstrap command-guard hook (generated YYYY-MM-DD). Claude Code, PreToolUse(Bash).
-// [M] mechanism (ship as-is): the command parser and the built-in rules - no-verify (commit,
-//   and merge/pull --no-verify; also HUSKY=0), hooks-path-override (-c core.hooksPath, git config core.hooksPath),
-//   force-push-mainline, delete-mainline. [B] binding (re-derived per project): the MAINLINE,
-//   HOOKS_DIR and EXTRA_RULES lines below.
+// [M] mechanism (ship as-is): the command parser and the built-in rules - no-verify (commit
+//   --no-verify / -n, push --no-verify, merge/pull --no-verify; also HUSKY=0), hooks-path-override
+//   (-c core.hooksPath, git config core.hooksPath, and on a hook-running subcommand an inline
+//   GIT_CONFIG_PARAMETERS or GIT_CONFIG_KEY_<n>=core.hooksPath), force-push-mainline,
+//   delete-mainline, codex-background (a codex, codex-run.mjs or claude-run.mjs launch sent to the
+//   background with a shell `&`). [B] binding (re-derived per project): the MAINLINE, HOOKS_DIR
+//   and EXTRA_RULES lines below.
 // The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings
 // are held aside first (a commit message that mentions --no-verify is text, not a bypass), then
 // each simple command is read with the directory `cd` / `git -C` moved it to. The program is
-// compared by basename (/usr/bin/git), and the wrappers command, exec, env, nice, timeout,
-// sudo and xargs are stripped, as are `bash -c "<script>"` and `eval "<script>"` (re-parsed).
+// compared by basename (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, env,
+// nice, timeout, sudo and xargs are stripped with their options (`command -p`, `exec -a name`,
+// `time -p`, `time -o file`, `time -f fmt`), as are `bash -c "<script>"` and `eval "<script>"`
+// (re-parsed). A command's environment is its inline VAR=value words (also those after env or
+// sudo), any `export VAR=value` earlier in the same command line, and, inside a `bash -c` or
+// `eval` script, the shell's own. A command runs in the background when its and-or list (back
+// over &&, || and | to the previous ;, newline, & or `(`) ends in a single `&` (`a && b &`
+// backgrounds both), when it sits in a `( ... ) &` or `{ ...; } &` group, or in a `bash -c` /
+// `eval` script that is backgrounded; `&>file`, `&>>file` and `|&` do not background.
 // A quoted word without whitespace is unquoted before options are read ("--no-verify" is seen);
 // a quoted string with whitespace stays one opaque word. A block exits 2 with
 // `BLOCKED (<rule>): <reason>` on stderr; any parse failure or exception exits 0.
 // This stops an agent's own mistakes; it is not a sandbox. Known limits: command substitution
 // inside double quotes is not parsed (a nested `$(...)` with its own quotes is skipped as one
 // string; quotes nested inside backticks are not); a program named by a variable or substitution
-// ($(which git)), shell aliases and git aliases (`git ci`) are not resolved; settings made
-// earlier in the session (export HUSKY=0, GIT_CONFIG_* variables) are not tracked; git's
-// abbreviations of long options are expanded only for --no-verify, --force-with-lease, --delete
-// and --tags; a push counts as forced when any of its refspecs is `+`-prefixed (so `+a main` is
-// refused); glob refspecs (`+refs/heads/*:refs/heads/*`) are not read; a force push whose only
-// selection is --tags (no refspec) is allowed; a delete is refused only when its target is
-// literally the mainline (an unresolved `$VAR` target is allowed, a force push's is not).
+// ($(which git)), shell aliases and git aliases (`git ci`) are not resolved; settings made in an
+// earlier Bash call (export HUSKY=0, GIT_CONFIG_* variables), or on this line by `declare -x`,
+// `typeset -x` or `set -a`, are not tracked; an assignment whose value is an unquoted `$(...)` or
+// backtick substitution is cut from its command (GIT_CONFIG_KEY_0=$(...) git commit is allowed;
+// the quoted "$(...)" is refused); GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR or a config
+// include that points at a file setting core.hooksPath is not read; rebase and am --no-verify are
+// allowed (they skip pre-rebase and applypatch, not the commit guard); a background form other
+// than those above is not detected (`if ...; fi &`, a loop's `done &`, coproc, setsid, a launch
+// through a script of its own); git's abbreviations of long options are expanded only for
+// --no-verify, --force-with-lease, --delete and --tags; a push counts as forced when any of its
+// refspecs is `+`-prefixed (so `+a main` is refused); glob refspecs (`+refs/heads/*:refs/heads/*`)
+// are not read; a force push whose only selection is --tags (no refspec) is allowed; a delete is
+// refused only when its target is literally the mainline (an unresolved `$VAR` target is allowed,
+// a force push's is not).
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -36,29 +53,49 @@ export const MAINLINE = ['main', 'master'];
 // --global / --system scope and `-c core.hooksPath=...` stay refused.
 export const HOOKS_DIR = '.githooks';
 
-// [B] Project-specific rules: { name, test: ({ argv, cwd }) => boolean, reason }.
+// [B] Project-specific rules: { name, test: ({ argv, cwd, env, background }) => boolean, reason }.
 // `argv` holds the words of one simple command with wrappers stripped (argv[0] may be a path:
 // compare basename). A quoted string with whitespace appears as an opaque placeholder word and
-// one without is unquoted, so match on argv[0] and flags, not on message text.
+// one without is unquoted, so match on argv[0] and flags, not on message text. `env` is the
+// command's environment as the header describes it, { NAME: value } with values unquoted (a later
+// assignment wins); `background` is true when the command runs asynchronously (`&`).
 // Example (import { existsSync } from 'node:fs'; and { resolve } is already imported): refuse a
-// full dev stack started at the workspace root.
+// full dev stack started at the workspace root, unless the owner runs it as `ALLOW_STACK=1 pnpm dev`.
 //   {
 //     name: 'full-stack-dev',
-//     test: ({ argv, cwd }) =>
-//       argv[0] === 'pnpm' && argv.slice(1).includes('dev') && existsSync(resolve(cwd, 'pnpm-workspace.yaml')),
+//     test: ({ argv, cwd, env }) =>
+//       argv[0] === 'pnpm' && argv.slice(1).includes('dev') && env.ALLOW_STACK !== '1' &&
+//       existsSync(resolve(cwd, 'pnpm-workspace.yaml')),
 //     reason: 'start only the services the check needs, not the whole stack from the workspace root',
 //   },
 export const EXTRA_RULES = [];
 
 const SEP = String.fromCharCode(1); // brackets a placeholder; cannot occur in a typed command
 const PH = new RegExp(`${SEP}Q(\\d+)${SEP}`, 'g');
-const WRAPPERS = new Set(['command', 'exec', 'builtin', 'time', 'nohup', '!', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', '{']);
+const WRAPPERS = new Set(['!', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', '{']);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-// Programs that run the rest of their line as a command. Short options that take a value (a
-// letter that ends a cluster takes the next word; otherwise the rest of the cluster) ...
-const WRAPPER_SHORT_VALUE = new Map([['env', 'uCS'], ['nice', 'n'], ['timeout', 'sk'], ['sudo', 'ughpCDRrtTU'], ['xargs', 'InLPsdEa']]);
+// Programs that run the rest of their line as a command, options dropped (`command -p git`,
+// `exec -a name git`, `time -p git`). Short options that take a value (a letter that ends a
+// cluster takes the next word; otherwise the rest of the cluster) ...
+const WRAPPER_SHORT_VALUE = new Map([
+  ['command', ''],
+  ['builtin', ''],
+  ['exec', 'a'],
+  ['time', 'of'],
+  ['nohup', ''],
+  ['env', 'uCS'],
+  ['nice', 'n'],
+  ['timeout', 'sk'],
+  ['sudo', 'ughpCDRrtTU'],
+  ['xargs', 'InLPsdEa'],
+]);
 // ... and long options that take a value as a separate word.
 const WRAPPER_LONG_VALUE = new Map([
+  ['command', []],
+  ['builtin', []],
+  ['exec', []],
+  ['time', ['--output', '--format']],
+  ['nohup', []],
   ['env', ['--unset', '--chdir', '--split-string']],
   ['nice', ['--adjustment']],
   ['timeout', ['--signal', '--kill-after']],
@@ -66,11 +103,14 @@ const WRAPPER_LONG_VALUE = new Map([
   ['xargs', ['--max-args', '--max-lines', '--max-procs', '--max-chars', '--delimiter', '--arg-file']],
 ]);
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
-const HOOK_SUBCOMMANDS = new Set(['commit', 'merge', 'push', 'rebase', 'am']);
+const HOOK_SUBCOMMANDS = new Set(['commit', 'merge', 'pull', 'push', 'rebase', 'am']);
 const GIT_VALUE_OPTIONS = new Set(['--git-dir', '--work-tree', '--namespace', '--super-prefix']);
 const COMMIT_VALUE_LONG = new Set(['--message', '--file', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--template', '--author', '--date', '--cleanup', '--trailer', '--pathspec-from-file']);
 const COMMIT_VALUE_SHORT = 'mFCct';
 const PUSH_VALUE_LONG = new Set(['--repo', '--receive-pack', '--exec', '--push-option']);
+// Launches a shell `&` must not detach: the Codex CLI and the harness's run wrappers.
+const RUNNERS = new Set(['codex', 'codex-run.mjs', 'claude-run.mjs']);
+const SCRIPT_RUNNERS = new Set(['codex-run.mjs', 'claude-run.mjs']);
 
 const expand = (p) => (p.startsWith('~') ? homedir() + p.slice(1) : p);
 
@@ -177,8 +217,9 @@ function maskQuotes(src, quoted) {
 }
 
 /**
- * If words[0] is env, nice, timeout, sudo or xargs, drop it with its options (and, for env and
- * sudo, VAR=value words, which are appended to `assignments`). True when something was dropped.
+ * If words[0] is a wrapper in WRAPPER_SHORT_VALUE (command, exec, time, env, sudo, ...), drop it
+ * with its options (and, for env and sudo, VAR=value words, which are appended to `assignments`).
+ * True when something was dropped.
  */
 function unwrap(words, assignments) {
   const name = basename(words[0]);
@@ -212,21 +253,70 @@ function unwrap(words, assignments) {
   return true;
 }
 
-function parse(command, cwd, quoted, depth) {
+/**
+ * Split masked text on the shell operators into segments, each { text, background }: background
+ * when its and-or list ends in `&`, or it sits in a ( ), { } or backtick group whose list does.
+ */
+function splitLists(text) {
+  const tokens = text.split(/(&&|\|\||[;&|()`\n])/);
+  const segments = [];
+  // Each open group: the token that closes it, the segments of its current and-or list, and all of its segments.
+  const stack = [{ close: null, list: [], all: [] }];
+  const top = () => stack[stack.length - 1];
+  const endList = (background) => {
+    if (background) for (const seg of top().list) seg.background = true;
+    top().list = [];
+  };
+  const open = (close) => stack.push({ close, list: [], all: [] });
+  // A closed group is one item of the enclosing and-or list: `( a; b ) &` backgrounds both.
+  const shut = () => {
+    endList(false);
+    const group = stack.pop();
+    top().list.push(...group.all);
+    top().all.push(...group.all);
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (i % 2 === 1) {
+      if (t === '&') endList(true);
+      else if (t === ';' || t === '\n') endList(false);
+      else if (t === '(') open(')');
+      else if (t === ')') top().close === ')' ? shut() : endList(false);
+      else if (t === '`') top().close === '`' ? shut() : open('`');
+      continue; // && || and | continue the and-or list
+    }
+    const first = t.trim().split(/\s+/)[0];
+    if (first === '}' && top().close === '}') shut();
+    else if (first === '{') open('}');
+    const seg = { text: t, background: false };
+    segments.push(seg);
+    top().list.push(seg);
+    top().all.push(seg);
+  }
+  while (stack.length > 1) shut();
+  return segments;
+}
+
+function parse(command, cwd, quoted, depth, background) {
   const commands = [];
   let dir = cwd;
-  // `2>&1`, `>&2` and `>&file` are dropped before the split on `&` would cut them in two.
-  const text = maskQuotes(stripHeredocs(command), quoted).replace(/(?<!\d)\d*[<>]&\s*[^\s;&|()<>]*/g, ' ');
+  const exported = []; // `export VAR=value` earlier in this command line reaches every later command
+  // `2>&1`, `>&2` and `>&file` are dropped before the split on `&` would cut them in two; so are
+  // `&>file` and `&>>file` (redirections), and `|&` (a pipe of both streams) becomes `|`.
+  const text = maskQuotes(stripHeredocs(command), quoted)
+    .replace(/(?<!\d)\d*[<>]&\s*[^\s;&|()<>]*/g, ' ')
+    .replace(/(?<!&)&>>?\s*[^\s;&|()<>]*/g, ' ')
+    .replace(/\|&/g, '|');
   const unq = (w) => w.replace(PH, (_, n) => quoted[Number(n)]);
   // A quoted string without whitespace becomes plain text, so a quoted flag is still a flag.
   const open = (w) => w.replace(PH, (m, n) => {
     const c = quoted[Number(n)];
     return c && !/\s/.test(c) && !c.includes(SEP) ? c : m;
   });
-  for (const segment of text.split(/&&|\|\||[;&|()`\n]/)) {
+  for (const segment of splitLists(text)) {
     // Redirections (with an optional space before the target) are not words. (?<!\d) keeps the
     // scan linear on a long run of digits.
-    const words = segment.replace(/(?<!\d)\d*(?:>>?|<{1,3})\s*\S*/g, ' ').trim().split(/\s+/).filter(Boolean).map(open);
+    const words = segment.text.replace(/(?<!\d)\d*(?:>>?|<{1,3})\s*\S*/g, ' ').trim().split(/\s+/).filter(Boolean).map(open);
     const env = [];
     for (;;) {
       if (!words.length) break;
@@ -241,8 +331,16 @@ function parse(command, cwd, quoted, depth) {
       else if (target !== '-') dir = resolve(dir, expand(unq(target)));
       continue;
     }
+    if (words[0] === 'export') {
+      exported.push(...words.slice(1).filter((w) => ASSIGNMENT.test(w)));
+      continue;
+    }
+    // The inline assignments come after those exported earlier on the line, so a later one wins.
+    env.unshift(...exported);
+    const bg = background || segment.background;
     const cmd = { argv: words, cwd: dir };
     Object.defineProperty(cmd, 'env', { value: env, enumerable: false });
+    Object.defineProperty(cmd, 'background', { value: bg, enumerable: false });
     commands.push(cmd);
     if (depth >= 3) continue;
     // `bash -c "<script>"` and `eval "<script>"` run their quoted text as commands.
@@ -253,15 +351,20 @@ function parse(command, cwd, quoted, depth) {
     } else if (words[0] === 'eval') {
       script = words.slice(1).map(unq).join(' ');
     }
-    if (script) commands.push(...parse(script, dir, quoted, depth + 1));
+    if (!script) continue;
+    // The script's commands inherit the environment the shell or eval was given, and its background.
+    for (const inner of parse(script, dir, quoted, depth + 1, bg)) {
+      inner.env.unshift(...env);
+      commands.push(inner);
+    }
   }
   return commands;
 }
 
-/** Simple commands of a shell command line: [{ argv, cwd }]. Quoted text is an opaque word. */
+/** Simple commands of a shell command line: [{ argv, cwd }] (env, background and quoted not enumerable). Quoted text is an opaque word. */
 export function parseCommands(command, cwd = process.cwd()) {
   const quoted = [];
-  const commands = parse(String(command ?? ''), cwd, quoted, 0);
+  const commands = parse(String(command ?? ''), cwd, quoted, 0, false);
   // check() needs the quoted values for git options like `-c "core.hooksPath=..."`.
   for (const c of commands) Object.defineProperty(c, 'quoted', { value: quoted, enumerable: false });
   return commands;
@@ -292,10 +395,11 @@ function gitParts(cmd) {
 /**
  * True when a `git merge` or `git pull` argument list asks to skip pre-merge-commit. Only the exact
  * --no-verify: an abbreviation is ambiguous with --no-verify-signatures, and -n is --no-stat.
+ * A `--` does not end the scan: a value-taking option can take it as its value (`-m --`), and git
+ * still honours a --no-verify after it, so `git merge -- --no-verify` is refused too.
  */
 function mergeSkipsHooks(rest) {
   for (const t of rest) {
-    if (t === '--') break;
     if (t === '--no-verify') return true;
   }
   return false;
@@ -324,6 +428,53 @@ function commitSkipsHooks(rest) {
     }
   }
   return false;
+}
+
+/**
+ * True when a `git push` argument list asks to skip pre-push: --no-verify, or --no-veri / --no-verif,
+ * which git accepts as its abbreviation (--no-ver and shorter are ambiguous with --no-verbose, and
+ * git refuses them). -n is --dry-run, which still runs the hook.
+ */
+function pushSkipsHooks(rest) {
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j];
+    if (t === '--') break;
+    if (t.startsWith('--')) {
+      const name = t.split('=')[0];
+      if (name.length >= 9 && '--no-verify'.startsWith(name)) return true;
+      if (PUSH_VALUE_LONG.has(name) && !t.includes('=')) j++;
+    } else if (/^-[^-]/.test(t) && t.indexOf('o') === t.length - 1) {
+      j++; // -o <push-option>: the value is the next word
+    }
+  }
+  return false;
+}
+
+/**
+ * The name of an inline assignment that can point git's hooks elsewhere, else null.
+ * GIT_CONFIG_PARAMETERS is what `git -c` hands its children; nothing an agent runs sets it inline,
+ * so any value is refused rather than its quoting read. GIT_CONFIG_KEY_<n> (paired with
+ * GIT_CONFIG_COUNT and GIT_CONFIG_VALUE_<n>) is refused when it names core.hooksPath in any case,
+ * or when its key is not literal ($VAR, a substitution).
+ */
+function envOverridesHooks(env, unq) {
+  for (const e of env) {
+    const at = e.indexOf('=');
+    const name = e.slice(0, at);
+    const value = unq(e.slice(at + 1)).trim();
+    if (name === 'GIT_CONFIG_PARAMETERS') return name;
+    if (/^GIT_CONFIG_KEY_\d+$/.test(name) && (/^core\.hookspath$/i.test(value) || /[$`]/.test(value))) return name;
+  }
+  return null;
+}
+
+/** True when argv launches Codex or a harness run wrapper (`codex`, `node scripts/codex-run.mjs`). */
+function runnerLaunch(argv) {
+  const name = basename(argv[0]);
+  if (RUNNERS.has(name)) return true;
+  if (name !== 'node' && name !== 'bun') return false;
+  const script = argv.slice(1).find((w) => !w.startsWith('-'));
+  return Boolean(script) && SCRIPT_RUNNERS.has(basename(script));
 }
 
 const branchCache = new Map();
@@ -445,6 +596,16 @@ function pushHit(parts, currentBranch) {
   };
 }
 
+/** The codex-background hit when a Codex or run-wrapper launch runs in the background, else null. */
+function backgroundHit(cmd) {
+  if (!cmd.background || !runnerLaunch(cmd.argv)) return null;
+  return {
+    rule: 'codex-background',
+    reason:
+      "a `&` launch detaches the run from the session, so the host never reports its exit and a run that died with its shell leaves no verdict. Use the host's own background option (Claude Code: the Bash tool's run_in_background), then count the run only once its ledger row or output file exists.",
+  };
+}
+
 function builtinRule(cmd, opts) {
   if (basename(cmd.argv[0]) !== 'git') return null;
   const parts = gitParts(cmd);
@@ -454,41 +615,63 @@ function builtinRule(cmd, opts) {
       reason: `\`git ${parts.sub}\` with -c core.hooksPath replaces the repository hooks, which bypasses the commit guard. Run it without the override.`,
     };
   }
+  const { env } = cmd;
+  const overridden = HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks(env, parts.unq) : null;
+  if (overridden) {
+    return {
+      rule: 'hooks-path-override',
+      reason: `\`git ${parts.sub}\` with ${overridden} set inline can replace core.hooksPath, which bypasses the commit guard. Run it without the override.`,
+    };
+  }
   if (parts.sub === 'config' && configChangesHooksPath(parts.rest, parts.unq)) {
     return {
       rule: 'hooks-path-override',
       reason: '`git config core.hooksPath` (set or unset) replaces the repository hooks, which bypasses the commit guard. Leave the setting alone.',
     };
   }
-  if (parts.sub === 'commit' && (commitSkipsHooks(parts.rest) || (cmd.env ?? []).some((e) => /^HUSKY=0$/.test(parts.unq(e))))) {
+  const huskyOff = env.some((e) => /^HUSKY=0$/.test(parts.unq(e)));
+  if (parts.sub === 'commit' && (commitSkipsHooks(parts.rest) || huskyOff)) {
     return {
       rule: 'no-verify',
       reason: '`git commit --no-verify` (or -n, or HUSKY=0) skips the commit guard. Fix what the hook reports, or ask the owner to override.',
     };
   }
-  if (
-    (parts.sub === 'merge' || parts.sub === 'pull') &&
-    (mergeSkipsHooks(parts.rest) || (cmd.env ?? []).some((e) => /^HUSKY=0$/.test(parts.unq(e))))
-  ) {
+  if ((parts.sub === 'merge' || parts.sub === 'pull') && (mergeSkipsHooks(parts.rest) || huskyOff)) {
     return {
       rule: 'no-verify',
       reason: `\`git ${parts.sub} --no-verify\` (or HUSKY=0) skips the pre-merge-commit guard. Fix what the hook reports, or ask the owner to override.`,
+    };
+  }
+  if (parts.sub === 'push' && (pushSkipsHooks(parts.rest) || huskyOff)) {
+    return {
+      rule: 'no-verify',
+      reason: '`git push --no-verify` (or HUSKY=0) skips the pre-push guard. Fix what the hook reports, or ask the owner to override.',
     };
   }
   if (parts.sub === 'push') return pushHit(parts, opts.currentBranch);
   return null;
 }
 
+/** A command's environment as { NAME: value }, values unquoted; a later assignment wins. */
+function envObject(cmd) {
+  const env = {};
+  for (const e of cmd.env ?? []) {
+    const at = e.indexOf('=');
+    env[e.slice(0, at)] = e.slice(at + 1).replace(PH, (_, n) => cmd.quoted[Number(n)]);
+  }
+  return env;
+}
+
 /** null when the command is allowed, else { rule, reason }. */
 export function check(command, { cwd = process.cwd(), currentBranch } = {}) {
   branchCache.clear();
   for (const cmd of parseCommands(command, cwd)) {
-    const hit = builtinRule(cmd, { currentBranch });
+    const hit = backgroundHit(cmd) ?? builtinRule(cmd, { currentBranch });
     if (hit) return hit;
     for (const extra of EXTRA_RULES) {
       let matched = false;
       try {
-        matched = Boolean(extra.test({ argv: cmd.argv, cwd: cmd.cwd }));
+        matched = Boolean(extra.test({ argv: cmd.argv, cwd: cmd.cwd, env: envObject(cmd), background: cmd.background }));
       } catch {
         // A broken project rule must not block the session.
       }

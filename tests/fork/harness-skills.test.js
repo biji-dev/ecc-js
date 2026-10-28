@@ -362,6 +362,27 @@ test('malformed input or a missing transcript never fails the turn', () => {
   assert.deepStrictEqual(runHook('Stop', '/nonexistent/t.jsonl'), { status: 0, out: null });
 });
 
+// ── reference text (js.8) ───────────────────────────────────────────────────
+
+console.log('\nharness skills: reference text (js.8)');
+
+test('a background run uses the host\'s own background option, never a shell `&`; the guard bullet names codex-background', () => {
+  for (const rel of [
+    path.join(BOOTSTRAP, 'reference', 'cross-model.md'),
+    path.join(DELEGATE, 'reference', 'other-harnesses.md'),
+    path.join(DELEGATE, 'SKILL.md'),
+  ]) {
+    const text = fs.readFileSync(rel, 'utf8').replace(/\s+/g, ' ');
+    assert.ok(text.includes("host's own background option"), `${path.relative(ROOT, rel)} does not name the host's own background option`);
+    assert.ok(text.includes('never a shell `&`'), `${path.relative(ROOT, rel)} does not say never a shell \`&\``);
+  }
+  const targets = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'harness-targets.md'), 'utf8');
+  const start = targets.indexOf('- **The command guard**');
+  assert.ok(start >= 0, 'harness-targets.md has no command-guard bullet');
+  const bullet = targets.slice(start, targets.indexOf('\n- **', start + 1));
+  assert.ok(bullet.includes('codex-background'), 'the command-guard bullet does not name codex-background');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

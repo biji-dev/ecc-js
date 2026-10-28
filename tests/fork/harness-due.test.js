@@ -17,7 +17,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 23;
+const EXPECTED_TESTS = 24;
 
 let passed = 0;
 let failed = 0;
@@ -141,6 +141,7 @@ mutantFails('counting a report no commit holds by its file time', 'found.filter(
 mutantFails("counting a landed branch's merge of the mainline as a landing", "'--merges', '--first-parent', ", "'--merges', ", CLI_REL);
 mutantFails('dating a line not committed yet by the time of the blame', 'committed ? time : null', 'time', GATHER_REL);
 mutantFails('counting every merge subject as naming a function-bound phase', '.some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())', '.some(() => true)');
+mutantFails('reading only separator-joined words of a merge subject as ids', 'const ID_TOKEN = /[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/g;', 'const ID_TOKEN = /[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)+/g;');
 mutantFails('exiting 0 when the claim is blocked', 'if (blocking) process.exitCode = 1;', '', CLI_REL);
 
 test('the shipped suite never skips: bound to no preflight and a 72 h idle time it still passes with skipped 0 and todo 0', () => {

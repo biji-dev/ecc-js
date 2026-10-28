@@ -80,8 +80,9 @@ const GB = 1e9;
 // A row id names a branch's unit: plan ids, change slugs, harness/<slug>.
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const WEEK_ID = /^\d{4}-W\d{2}$/;
-// An id-like token of a merge subject, for a function PHASE_OF: words joined by `-` or `.`, never a `/`.
-const ID_TOKEN = /[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)+/g;
+// An id-like token of a merge subject, for a function PHASE_OF: a run of ROW_ID's characters except `/`
+// (so `task/T001` is two tokens), with no `.`, `_` or `-` at its end (a sentence's full stop is not the id's).
+const ID_TOKEN = /[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/g;
 // a phase is whatever either form of PHASE_OF can give, so a name with no digit (DATA) is one
 const PLACEHOLDERS = { phase: '([A-Za-z0-9][A-Za-z0-9_-]*)', date: '(\\d{4}-\\d{2}-\\d{2})', week: '(\\d{4}-W\\d{2})' };
 const VALUE_FLAGS = { '--claim': 'claim', '--seen': 'seen', '--now': 'now', '--home': 'home' };

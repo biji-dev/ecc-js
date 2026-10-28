@@ -136,6 +136,28 @@ test('preflightDue with a function PHASE_OF: the opening row blocks; a log row o
   assert.equal(preflightDue({ ...base, claim: 'CR-021' }), null);
 });
 
+test('preflightDue with a function PHASE_OF sees every id ROW_ID allows in a merge subject: `_`, and no separator at all', () => {
+  const fn = (id) => (/^TASK_\d+$/.test(id) ? 'TASKS' : /^T\d+$/.test(id) ? 'TPHASE' : /^T-[A-Z]+-\d+$/.test(id) ? 'DASHED' : null);
+  const base = { reports: [], template: PREFLIGHT, pattern: fn, logIds: [] };
+  for (const [claim, subject, phase] of [
+    ['TASK_002', "Merge branch 'task/TASK_001'", 'TASKS'],
+    ['T002', "Merge branch 'task/T001'", 'TPHASE'],
+    ['T-AB-2', "Merge branch 'task/T-AB-1'", 'DASHED'],
+  ]) {
+    const named = preflightDue({ ...base, claim, merges: [subject] });
+    assert.equal(named.subject, phase);
+    assert.equal(named.blocking, false, `${subject} names a row of ${phase}, so ${claim} does not open it`);
+    assert.match(named.why, /the phase is under way \(0 log rows, 1 merge\)$/, subject);
+  }
+  // a trailing `.` ends the sentence, not the id
+  const dotted = preflightDue({ ...base, claim: 'T002', merges: ['Merge branch task/T001.'] });
+  assert.equal(dotted.blocking, false, 'a subject ending "T001." still names T001');
+  assert.match(dotted.why, /\(0 log rows, 1 merge\)$/);
+  // a subject that names no id of the phase leaves the claim opening it
+  assert.equal(preflightDue({ ...base, claim: 'TASK_002', merges: ["Merge branch 'task/T001'", 'Merge TASK_x: none'] }).blocking, true);
+  assert.equal(preflightDue({ ...base, claim: 'T002', merges: ['Merge branch task/T-AB-1'] }).blocking, true);
+});
+
 test('a phase report is named by any phase either form of PHASE_OF can give, a digit or none', () => {
   assert.deepEqual(matchReports('docs/r/preflight-<phase>.md', ['preflight-DATA.md', 'preflight-P2.md', 'preflight-EP-27.md', 'preflight-.md', 'preflight-a b.md', 'notes.md']).map((r) => r.value), ['DATA', 'P2', 'EP-27']);
   assert.deepEqual(matchReports('docs/r/<date>.md', ['DATA.md', '2026-10-18.md']).map((r) => r.value), ['2026-10-18'], 'a date and a week keep their shapes');

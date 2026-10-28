@@ -252,6 +252,34 @@ test('mutant: a template P3_AGE_DAYS of 15 fails the defaults check', () => {
   assert.throws(() => checkDefaults(copy), /P3_AGE_DAYS/);
 });
 
+/** The template with only these bindings changed: the shipped suite must pass, with its pinned count. */
+function passesRebound(rebindings) {
+  const { res, out } = reboundRun(rebindings);
+  const failing = out.match(/^not ok .*$/gm) ?? [];
+  assert.strictEqual(res.status, 0, `rebound: ${failing.length} failing, first: ${failing.slice(0, 3).join(' | ')}\n${out.slice(-1200)}`);
+  assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1200));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+  assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+}
+
+test('the shipped suite passes with a sweep cadence of 14 days, whose fixture dates run into the next month', () => {
+  passesRebound([[DUE_CORE, '  sweep: { days: 7, landings: 5 },', '  sweep: { days: 14, landings: 5 },']]);
+});
+
+// An install with no phases: PHASE_OF gives none, so no preflight is ever due. The report path may stay bound or be null.
+const NO_PHASES = [
+  [DUE_CORE, 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;', 'export const PHASE_OF = () => null;'],
+  [DUE_TEST, "const PHASE_EXAMPLE = [ROW(2, 16), 'P2'];", 'const PHASE_EXAMPLE = [ROW(2, 16), null];'],
+];
+
+test('the shipped suite passes for an install with no phases and no preflight report bound', () => {
+  passesRebound([...NO_PHASES, [DUE_CORE, "  preflight: 'docs/harness/reports/preflight-<phase>.md',", '  preflight: null,']]);
+});
+
+test('the shipped suite passes for an install with no phases and a preflight report path still bound', () => {
+  passesRebound(NO_PHASES);
+});
+
 test('the core\'s PHASE_OF rebound alone fails the [B] PHASE_OF test', () => {
   const only = INSTALL.filter(([rel, needle]) => rel === DUE_CORE && needle.startsWith('export const PHASE_OF'));
   assert.strictEqual(only.length, 1);

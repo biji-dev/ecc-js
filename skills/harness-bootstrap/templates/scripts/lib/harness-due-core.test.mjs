@@ -109,8 +109,15 @@ test('parseArgs takes a claim, --seen, --json, --now and --home, and rejects the
   assert.throws(() => parseArgs(['P2-01']), /unexpected argument "P2-01"/);
 });
 
-test('[B] PHASE_OF gives PHASE_EXAMPLE its phase, and the rows ROW builds fall in the two phases the fixtures count on', () => {
+test('[B] PHASE_OF gives PHASE_EXAMPLE its phase; the rows ROW builds fall in two phases, or in none when the project has no phases', () => {
   assert.equal(phaseOf(PHASE_EXAMPLE[0]), PHASE_EXAMPLE[1]);
+  if (PHASE_EXAMPLE[1] === null) {
+    // a project with no phases: no row has one, so no claim opens a phase and no preflight is due
+    for (const [p, n] of [[1, 1], [1, 9], [2, 1], [2, 16]]) assert.equal(phaseOf(ROW(p, n)), null, `row ${n} of phase ${p}`);
+    const base = { reports: [], template: REPORTS.preflight ?? PREFLIGHT, pattern: PHASE_OF, command: 'preflight <phase>', logIds: [], merges: [] };
+    assert.equal(preflightDue({ ...base, claim: ROW(1, 1) }), null);
+    return;
+  }
   assert.equal(PH2, PHASE_EXAMPLE[1]);
   for (const n of [1, 2, 9]) assert.equal(phaseOf(ROW(2, n)), PH2, `row ${n} of phase 2`);
   for (const n of [1, 8, 9]) assert.equal(phaseOf(ROW(1, n)), PH1, `row ${n} of phase 1`);
@@ -434,7 +441,9 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   assert.ok(!kinds.includes('disk'));
   assert.deepEqual(kinds, [...kinds].sort((x, y) => ['preflight', 'sweep', 'retro', 'hygiene', 'p3', 'disk', 'worktrees', 'proposals'].indexOf(x) - ['preflight', 'sweep', 'retro', 'hygiene', 'p3', 'disk', 'worktrees', 'proposals'].indexOf(y)));
   const preflight = items.find((i) => i.kind === 'preflight');
-  if (REPORTS.preflight !== null) assert.equal(preflight.blocking, true);
+  // no preflight bound, or no phase for the claim to open: nothing waits
+  if (REPORTS.preflight === null || PH2 === null) assert.ok(!kinds.includes('preflight'), 'no preflight is due');
+  else assert.equal(preflight.blocking, true);
   const text = formatDue([
     { kind: 'sweep', subject: null, why: '8 d, 5 landings since sweep-2026-10-18.md', command: 'run the sweep', blocking: false },
     { kind: 'proposals', subject: '2026-W44', why: '2 of 3 proposals name p, unread', command: 'read f', blocking: false, tag: 'NEW' },
@@ -488,6 +497,8 @@ function fixture() {
 // days on (8, with the template's 7): the sweep is due by days, whatever the binding, with the 5 landings the fixture holds.
 const SWEEP_DAYS = Math.max(8, CADENCE.sweep.days + 1);
 const RUN_NOW = new Date(Date.UTC(2026, 9, 18 + SWEEP_DAYS, 12)).toISOString();
+// a day of the fixture as YYYY-MM-DD; a day past the month's end rolls into the next month
+const dayOf = (n) => new Date(Date.UTC(2026, 9, n)).toISOString().slice(0, 10);
 const DUE_SWEEP = new RegExp(`^DUE sweep — ${SWEEP_DAYS} d, 5 landings since .*2026-10-18.* — `, 'm');
 
 function run(f, args, cwd = f.repo) {
@@ -497,8 +508,8 @@ function run(f, args, cwd = f.repo) {
 test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is named, never stopped', () => {
   const f = fixture();
   const opens = run(f, ['--claim', ROW(2, 1)]);
-  if (REPORTS.preflight === null) {
-    // the binding's own behaviour: no preflight bound, nothing to stop for
+  if (REPORTS.preflight === null || PH2 === null) {
+    // the binding's own behaviour: no preflight bound, or no phase for the claim to open: nothing to stop for
     assert.equal(opens.status, 0, opens.stderr);
     assert.doesNotMatch(opens.stdout, /^DUE preflight/m);
     return;
@@ -523,7 +534,7 @@ test('the wrapper: claiming the row that opens a phase with no preflight stops w
 
 test('the wrapper: a sweep report that no commit holds does not clear the sweep; committed, it does', () => {
   const f = fixture();
-  const yesterday = `2026-10-${17 + SWEEP_DAYS}`;
+  const yesterday = dayOf(17 + SWEEP_DAYS);
   if (REPORTS.sweep !== null) f.write(fill(REPORTS.sweep, yesterday), '# Sweep\n');
   const unsaved = run(f, []);
   assert.equal(unsaved.status, 0, unsaved.stderr);
@@ -551,9 +562,9 @@ test('the wrapper: a landed branch that merged the mainline into itself is one l
   f.git(['merge', '-q', '--no-ff', '-m', `Merge ${branch}`, branch], '2026-10-24T12:00:00Z');
   const res = run(f, ['--claim', ROW(1, 9)]);
   assert.equal(res.status, 0, res.stderr);
-  if (REPORTS.preflight !== null) {
+  if (REPORTS.preflight !== null && PH1 !== null) {
     assert.match(res.stdout, new RegExp(`^DUE preflight ${PH1} — no report at .*, and the phase is under way \\(7 log rows, 1 merge\\) — `, 'm'));
-  }
+  } else assert.doesNotMatch(res.stdout, /^DUE preflight/m);
 });
 
 test('blameDates dates a committed line by its commit and a line not committed yet by nothing', () => {

@@ -143,7 +143,8 @@ codex exec -s workspace-write -o .review-work/builders/01.md - < .claude/tasks/<
   in. The prompt goes on **stdin**; a quoted-argument prompt hung.
 - The CLI exits 0 on failure. Count a builder as finished only if its output
   file is non-empty and names a `STATUS`; a launch whose output file never
-  appears never ran.
+  appears did not finish: before a relaunch, check that it stopped and what it
+  left in the worktree.
 - Codex reads `AGENTS.md` but not Claude-specific rule folders; inline any rule
   the spec needs.
 

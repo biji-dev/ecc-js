@@ -4,41 +4,45 @@
 //   --no-verify / -n, push --no-verify, merge/pull --no-verify; also HUSKY=0), hooks-path-override
 //   (-c core.hooksPath, git config core.hooksPath, and on a hook-running subcommand an inline
 //   GIT_CONFIG_PARAMETERS or GIT_CONFIG_KEY_<n>=core.hooksPath), force-push-mainline,
-//   delete-mainline, codex-background (a codex, codex-run.mjs or claude-run.mjs launch sent to the
-//   background with a shell `&`). [B] binding (re-derived per project): the MAINLINE, HOOKS_DIR
-//   and EXTRA_RULES lines below.
-// The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings
-// are held aside first (a commit message that mentions --no-verify is text, not a bypass), then
-// each simple command is read with the directory `cd` / `git -C` moved it to. The program is
-// compared by basename (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, env,
-// nice, timeout, sudo and xargs are stripped with their options (`command -p`, `exec -a name`,
-// `time -p`, `time -o file`, `time -f fmt`), as are `bash -c "<script>"` and `eval "<script>"`
-// (re-parsed). A command's environment is its inline VAR=value words (also those after env or
-// sudo), any `export VAR=value` earlier in the same command line, and, inside a `bash -c` or
-// `eval` script, the shell's own. A command runs in the background when its and-or list (back
-// over &&, || and | to the previous ;, newline, & or `(`) ends in a single `&` (`a && b &`
-// backgrounds both), when it sits in a `( ... ) &` or `{ ...; } &` group, or in a `bash -c` /
-// `eval` script that is backgrounded; `&>file`, `&>>file` and `|&` do not background.
+//   delete-mainline, codex-background (a codex, codex-run.mjs or claude-run.mjs launch, or node or
+//   bun with either script in any later word, sent to the background with a shell `&`). [B]
+//   binding (re-derived per project): the MAINLINE, HOOKS_DIR and EXTRA_RULES lines below.
+// The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings are
+// held aside first (a commit message that mentions --no-verify is text, not a bypass), then each
+// simple command is read with the directory `cd` / `git -C` moved it to (a `cd` reaches the later
+// commands of its own shell, as an export does). The program is compared by basename
+// (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, env, nice, timeout, sudo
+// and xargs are stripped with their options (`command -p`, `exec -a name`, `time -p`,
+// `time -o file`, `time -f fmt`), as are `bash -c "<script>"` and `eval "<script>"` (re-parsed). A
+// command's environment is its inline VAR=value words (also those after env or sudo), any
+// `export VAR=value` earlier in the same shell (not past a `( ... )`, a backtick, a pipeline or a
+// backgrounded list: each runs in a subshell), and, inside a `bash -c` or `eval` script, the
+// shell's own; a later assignment wins. A command runs in the background when its and-or list
+// (back over &&, || and | to the previous ;, newline, & or `(`; a newline after &&, || or |
+// continues the list) ends in a single `&` (`a && b &` backgrounds both), when it sits in a
+// `( ... ) &` or `{ ...; } &` group, or in a `bash -c` / `eval` script that is backgrounded;
+// `&>file`, `&>>file` and `|&` do not background.
 // A quoted word without whitespace is unquoted before options are read ("--no-verify" is seen);
 // a quoted string with whitespace stays one opaque word. A block exits 2 with
 // `BLOCKED (<rule>): <reason>` on stderr; any parse failure or exception exits 0.
 // This stops an agent's own mistakes; it is not a sandbox. Known limits: command substitution
 // inside double quotes is not parsed (a nested `$(...)` with its own quotes is skipped as one
 // string; quotes nested inside backticks are not); a program named by a variable or substitution
-// ($(which git)), shell aliases and git aliases (`git ci`) are not resolved; settings made in an
-// earlier Bash call (export HUSKY=0, GIT_CONFIG_* variables), or on this line by `declare -x`,
-// `typeset -x` or `set -a`, are not tracked; an assignment whose value is an unquoted `$(...)` or
-// backtick substitution is cut from its command (GIT_CONFIG_KEY_0=$(...) git commit is allowed;
-// the quoted "$(...)" is refused); GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR or a config
-// include that points at a file setting core.hooksPath is not read; rebase and am --no-verify are
-// allowed (they skip pre-rebase and applypatch, not the commit guard); a background form other
-// than those above is not detected (`if ...; fi &`, a loop's `done &`, coproc, setsid, a launch
-// through a script of its own); git's abbreviations of long options are expanded only for
-// --no-verify, --force-with-lease, --delete and --tags; a push counts as forced when any of its
-// refspecs is `+`-prefixed (so `+a main` is refused); glob refspecs (`+refs/heads/*:refs/heads/*`)
-// are not read; a force push whose only selection is --tags (no refspec) is allowed; a delete is
-// refused only when its target is literally the mainline (an unresolved `$VAR` target is allowed,
-// a force push's is not).
+// ($(which git)), shell aliases and git aliases (`git ci`) are not resolved; an export or cd in an
+// `eval` script does not reach the commands after the eval (bash runs it in the current shell);
+// settings made in an earlier Bash call (export HUSKY=0, GIT_CONFIG_* variables), or on this line
+// by `declare -x`, `typeset -x` or `set -a`, are not tracked; an assignment whose value is an
+// unquoted `$(...)` or backtick substitution is cut from its command (GIT_CONFIG_KEY_0=$(...) git
+// commit is allowed; the quoted "$(...)" is refused); GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+// GIT_DIR or a config include that points at a file setting core.hooksPath is not read; rebase and
+// am --no-verify are allowed (they skip pre-rebase and applypatch, not the commit guard); a
+// background form other than those above is not detected (`if ...; fi &`, a loop's `done &`,
+// coproc, setsid, a launch through a script of its own); git's abbreviations of long options are
+// expanded only for --no-verify, --force-with-lease, --delete and --tags; a push counts as forced
+// when any of its refspecs is `+`-prefixed (so `+a main` is refused); glob refspecs
+// (`+refs/heads/*:refs/heads/*`) are not read; a force push whose only selection is --tags (no
+// refspec) is allowed; a delete is refused only when its target is literally the mainline (an
+// unresolved `$VAR` target is allowed, a force push's is not).
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -254,20 +258,41 @@ function unwrap(words, assignments) {
 }
 
 /**
- * Split masked text on the shell operators into segments, each { text, background }: background
- * when its and-or list ends in `&`, or it sits in a ( ), { } or backtick group whose list does.
+ * Split masked text on the shell operators into segments, each { text, background, node }:
+ * background when its and-or list ends in `&`, or it sits in a ( ), { } or backtick group whose
+ * list does. `node` is the pipeline element the segment sits in, in a tree of { parent, subshell }
+ * (groups, and-or lists, pipeline elements); `subshell` marks the ones bash runs in a child shell:
+ * a ( ) or backtick group, a list that ends in `&`, each element of a pipeline of two or more.
  */
 function splitLists(text) {
   const tokens = text.split(/(&&|\|\||[;&|()`\n])/);
   const segments = [];
-  // Each open group: the token that closes it, the segments of its current and-or list, and all of its segments.
-  const stack = [{ close: null, list: [], all: [] }];
+  const node = (parent, subshell = false) => ({ parent, subshell });
+  // Each open group: the token that closes it, the segments of its current and-or list, all of its
+  // segments, its node, and the nodes of its current and-or list, pipeline and pipeline element.
+  const frame = (close, groupNode) => ({ close, list: [], all: [], node: groupNode, andOr: null, pipe: [], elem: null });
+  const stack = [frame(null, node(null, true))];
   const top = () => stack[stack.length - 1];
+  const element = () => {
+    const f = top();
+    f.andOr ??= node(f.node);
+    if (!f.elem) f.pipe.push((f.elem = node(f.andOr)));
+    return f.elem;
+  };
+  const endPipe = () => {
+    const f = top();
+    if (f.pipe.length > 1) for (const e of f.pipe) e.subshell = true;
+    f.pipe = [];
+    f.elem = null;
+  };
   const endList = (background) => {
     if (background) for (const seg of top().list) seg.background = true;
     top().list = [];
+    endPipe();
+    if (background && top().andOr) top().andOr.subshell = true;
+    top().andOr = null;
   };
-  const open = (close) => stack.push({ close, list: [], all: [] });
+  const open = (close) => stack.push(frame(close, node(element(), close !== '}')));
   // A closed group is one item of the enclosing and-or list: `( a; b ) &` backgrounds both.
   const shut = () => {
     endList(false);
@@ -275,32 +300,51 @@ function splitLists(text) {
     top().list.push(...group.all);
     top().all.push(...group.all);
   };
+  const operator = (t) => {
+    if (t === '&') endList(true);
+    else if (t === ';' || t === '\n') endList(false);
+    else if (t === '(') open(')');
+    else if (t === ')') top().close === ')' ? shut() : endList(false);
+    else if (t === '`') top().close === '`' ? shut() : open('`');
+    else if (t === '|') top().elem = null;
+    else endPipe(); // && and || end a pipeline, not the and-or list
+  };
+  let continued = false; // the last operator was && || or |, with only whitespace since
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (i % 2 === 1) {
-      if (t === '&') endList(true);
-      else if (t === ';' || t === '\n') endList(false);
-      else if (t === '(') open(')');
-      else if (t === ')') top().close === ')' ? shut() : endList(false);
-      else if (t === '`') top().close === '`' ? shut() : open('`');
+      if (t === '\n' && continued) continue; // a newline after && || or | continues the list
+      continued = t === '&&' || t === '||' || t === '|';
+      operator(t);
       continue; // && || and | continue the and-or list
     }
+    if (t.trim()) continued = false;
     const first = t.trim().split(/\s+/)[0];
     if (first === '}' && top().close === '}') shut();
     else if (first === '{') open('}');
-    const seg = { text: t, background: false };
+    const seg = { text: t, background: false, node: element() };
     segments.push(seg);
     top().list.push(seg);
     top().all.push(seg);
   }
   while (stack.length > 1) shut();
+  endPipe(); // a pipeline at the end of the line
   return segments;
 }
 
 function parse(command, cwd, quoted, depth, background) {
   const commands = [];
-  let dir = cwd;
-  const exported = []; // `export VAR=value` earlier in this command line reaches every later command
+  // A `cd` or `export VAR=value` changes the shell it runs in: { dir, exported } per subshell node
+  // of splitLists' tree, made on first use as a copy of the nearest enclosing subshell's state.
+  const states = new Map();
+  const stateOf = (n) => {
+    while (!n.subshell) n = n.parent;
+    if (!states.has(n)) {
+      const outer = n.parent ? stateOf(n.parent) : { dir: cwd, exported: [] };
+      states.set(n, { dir: outer.dir, exported: [...outer.exported] });
+    }
+    return states.get(n);
+  };
   // `2>&1`, `>&2` and `>&file` are dropped before the split on `&` would cut them in two; so are
   // `&>file` and `&>>file` (redirections), and `|&` (a pipe of both streams) becomes `|`.
   const text = maskQuotes(stripHeredocs(command), quoted)
@@ -325,19 +369,21 @@ function parse(command, cwd, quoted, depth, background) {
       else if (!unwrap(words, env)) break;
     }
     if (!words.length) continue;
+    const state = stateOf(segment.node);
     if (words[0] === 'cd') {
       const target = words.slice(1).find((w) => w !== '--' && w !== '-L' && w !== '-P');
-      if (!target) dir = homedir();
-      else if (target !== '-') dir = resolve(dir, expand(unq(target)));
+      if (!target) state.dir = homedir();
+      else if (target !== '-') state.dir = resolve(state.dir, expand(unq(target)));
       continue;
     }
     if (words[0] === 'export') {
-      exported.push(...words.slice(1).filter((w) => ASSIGNMENT.test(w)));
+      state.exported.push(...words.slice(1).filter((w) => ASSIGNMENT.test(w)));
       continue;
     }
-    // The inline assignments come after those exported earlier on the line, so a later one wins.
-    env.unshift(...exported);
+    // The inline assignments come after those exported earlier in this shell, so a later one wins.
+    env.unshift(...state.exported);
     const bg = background || segment.background;
+    const dir = state.dir;
     const cmd = { argv: words, cwd: dir };
     Object.defineProperty(cmd, 'env', { value: env, enumerable: false });
     Object.defineProperty(cmd, 'background', { value: bg, enumerable: false });
@@ -451,30 +497,31 @@ function pushSkipsHooks(rest) {
 }
 
 /**
- * The name of an inline assignment that can point git's hooks elsewhere, else null.
+ * The name of a variable in the command's resolved environment ({ NAME: value }, a later assignment
+ * winning) that can point git's hooks elsewhere, else null.
  * GIT_CONFIG_PARAMETERS is what `git -c` hands its children; nothing an agent runs sets it inline,
  * so any value is refused rather than its quoting read. GIT_CONFIG_KEY_<n> (paired with
  * GIT_CONFIG_COUNT and GIT_CONFIG_VALUE_<n>) is refused when it names core.hooksPath in any case,
  * or when its key is not literal ($VAR, a substitution).
  */
-function envOverridesHooks(env, unq) {
-  for (const e of env) {
-    const at = e.indexOf('=');
-    const name = e.slice(0, at);
-    const value = unq(e.slice(at + 1)).trim();
+function envOverridesHooks(env) {
+  for (const [name, raw] of Object.entries(env)) {
+    const value = raw.trim();
     if (name === 'GIT_CONFIG_PARAMETERS') return name;
     if (/^GIT_CONFIG_KEY_\d+$/.test(name) && (/^core\.hookspath$/i.test(value) || /[$`]/.test(value))) return name;
   }
   return null;
 }
 
-/** True when argv launches Codex or a harness run wrapper (`codex`, `node scripts/codex-run.mjs`). */
+/**
+ * True when argv launches Codex or a harness run wrapper (`codex`, `node scripts/codex-run.mjs`).
+ * For node and bun any later word counts, so an option's value (`--title x`, `-r x`) cannot hide it.
+ */
 function runnerLaunch(argv) {
   const name = basename(argv[0]);
   if (RUNNERS.has(name)) return true;
   if (name !== 'node' && name !== 'bun') return false;
-  const script = argv.slice(1).find((w) => !w.startsWith('-'));
-  return Boolean(script) && SCRIPT_RUNNERS.has(basename(script));
+  return argv.slice(1).some((w) => SCRIPT_RUNNERS.has(basename(w)));
 }
 
 const branchCache = new Map();
@@ -615,12 +662,13 @@ function builtinRule(cmd, opts) {
       reason: `\`git ${parts.sub}\` with -c core.hooksPath replaces the repository hooks, which bypasses the commit guard. Run it without the override.`,
     };
   }
-  const { env } = cmd;
-  const overridden = HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks(env, parts.unq) : null;
+  // The value git gets for each name: exported first, then inline, a later assignment winning.
+  const env = envObject(cmd);
+  const overridden = HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks(env) : null;
   if (overridden) {
     return {
       rule: 'hooks-path-override',
-      reason: `\`git ${parts.sub}\` with ${overridden} set inline can replace core.hooksPath, which bypasses the commit guard. Run it without the override.`,
+      reason: `\`git ${parts.sub}\` with ${overridden} set on this line can replace core.hooksPath, which bypasses the commit guard. Run it without the override.`,
     };
   }
   if (parts.sub === 'config' && configChangesHooksPath(parts.rest, parts.unq)) {
@@ -629,7 +677,7 @@ function builtinRule(cmd, opts) {
       reason: '`git config core.hooksPath` (set or unset) replaces the repository hooks, which bypasses the commit guard. Leave the setting alone.',
     };
   }
-  const huskyOff = env.some((e) => /^HUSKY=0$/.test(parts.unq(e)));
+  const huskyOff = env.HUSKY === '0';
   if (parts.sub === 'commit' && (commitSkipsHooks(parts.rest) || huskyOff)) {
     return {
       rule: 'no-verify',

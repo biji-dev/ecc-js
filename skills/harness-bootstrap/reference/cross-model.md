@@ -103,7 +103,9 @@ What it does that a bare call does not:
   launched that way died with its shell before Codex started, and the command
   guard refuses it (`codex-background`). The wrapper writes its ledger row when
   the run ends, so when the host reports the command finished, the run counts only
-  if its row exists; no row means it never ran: relaunch it.
+  if its row exists. No row means the run did not finish, not that it did nothing:
+  a write kind may have edited or committed first. Before a relaunch, check that it
+  stopped, read its log and look at the worktree (`git status`, its new commits).
 
 `[B]` Bindings, re-derived per machine and project:
 

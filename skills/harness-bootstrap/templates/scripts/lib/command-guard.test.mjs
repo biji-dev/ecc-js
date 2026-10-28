@@ -80,11 +80,16 @@ test('an inline GIT_CONFIG_* that can replace core.hooksPath is refused on a hoo
   }
 });
 
-test('an export earlier on the line and the environment of a bash -c script reach the git command', () => {
+test('an export earlier in the same shell and the environment of a bash -c script reach the git command; a subshell\'s export and an overridden value do not', () => {
   assert.equal(rule('export HUSKY=0; git commit -m x'), 'no-verify', 'export HUSKY=0; git commit');
+  assert.equal(rule('{ export HUSKY=0; }; git commit -m x'), 'no-verify', 'a { } group is the same shell');
   assert.equal(rule('export GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=/dev/null && git commit -m x'), 'hooks-path-override', 'export GIT_CONFIG_*');
   assert.equal(rule('HUSKY=0 bash -c "git commit -m x"'), 'no-verify', 'HUSKY=0 bash -c');
   assert.equal(rule('export FOO=1; git commit -m x'), null, 'a harmless export');
+  for (const c of ['(export HUSKY=0); git commit -m x', 'export HUSKY=0 | true; git commit -m x']) {
+    assert.equal(rule(c), null, `the export stays in its subshell: ${c}`);
+  }
+  assert.equal(rule('export HUSKY=0; HUSKY=1 git commit -m x'), null, 'the later HUSKY=1 is the value git gets');
 });
 
 test('git behind a wrapper with options is still read: command -p, exec -a, time -p, time -o', () => {
@@ -111,6 +116,8 @@ test('a Codex run sent to the background with a shell `&` is refused; a foregrou
     'bash -c "codex exec x &"',
     'bun scripts/claude-run.mjs build &',
     '{ codex exec x; } &',
+    'codex exec x &&\n echo ok &',
+    'node --title harness scripts/codex-run.mjs review &',
   ]) {
     assert.equal(rule(c), 'codex-background', c);
   }

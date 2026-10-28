@@ -383,6 +383,16 @@ test('a background run uses the host\'s own background option, never a shell `&`
   assert.ok(bullet.includes('codex-background'), 'the command-guard bullet does not name codex-background');
 });
 
+test('a run with no ledger row or output file did not finish: check what it left before a relaunch', () => {
+  const crossModel = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'cross-model.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(/no row means the run did not finish/i.test(crossModel), 'cross-model.md does not say a missing row means the run did not finish');
+  assert.ok(crossModel.includes('`git status`'), 'cross-model.md does not name `git status` before a relaunch');
+  assert.ok(!crossModel.includes('never ran: relaunch it'), 'cross-model.md still says "never ran: relaunch it"');
+  const other = fs.readFileSync(path.join(DELEGATE, 'reference', 'other-harnesses.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(!other.includes('never appears never ran'), 'other-harnesses.md still says a missing output file "never ran"');
+  assert.ok(other.includes('never appears did not finish'), 'other-harnesses.md does not say a launch without an output file did not finish');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

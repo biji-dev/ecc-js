@@ -771,9 +771,24 @@ function buildReport() {
   // due-checks: what harness-due would say, from files alone -- no git, so a report is dated by its
   // name and a landing is not counted; with no manifest the install is taken to be an older one
   const now = Date.now();
-  const roleFile = (role, list) => {
-    const own = manifest && manifest.roles && typeof manifest.roles[role] === 'string' ? safeRel(manifest.roles[role]) : null;
-    return [...(own ? [own] : []), ...list].find(isFile) || null;
+  // a role is a path, or a list of them; `<dir>/*.md` is that directory's markdown files by name;
+  // one unsafe entry drops the whole role
+  const roleNamed = role => {
+    const v = manifest && manifest.roles ? manifest.roles[role] : null;
+    const rels = (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).map(safeRel);
+    if (!rels.length || !rels.every(Boolean)) return [];
+    return rels.flatMap(rel => {
+      if (!rel.endsWith('/*.md')) return [rel];
+      const dir = rel.slice(0, -'/*.md'.length);
+      let names = [];
+      try { names = fs.readdirSync(abs(dir)).filter(n => n.endsWith('.md')).sort(); } catch { /* no such directory */ }
+      return names.map(n => `${dir}/${n}`);
+    });
+  };
+  const roleFile = (role, list) => [...roleNamed(role), ...list].find(isFile) || null;
+  const roleFiles = (role, list) => {
+    const named = roleNamed(role).filter(isFile);
+    return named.length ? named : [list.find(isFile)].filter(Boolean);
   };
   const hasSkill = name => SKILL_ROOTS.some(root => isDir(`${root}/${name}`));
   const installed = manifest ? Date.parse(manifest.generated) : NaN;
@@ -811,19 +826,29 @@ function buildReport() {
   overdue('retro', isFile('scripts/retro.mjs'));
   overdue('hygiene', isFile('scripts/harness-due.mjs'));
   // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
-  const fuRel = roleFile('follow-ups', FOLLOW_UP_FILES);
-  const fuText = fuRel ? read(fuRel) : null;
-  if (fuText !== null) {
-    let openP3 = 0;
-    for (const t of mdTables(fuText)) {
+  // The template's own rules, not a project's retro-core bindings (this script never imports a core): the
+  // status column starts with `status`, open is the word `open`, and a table with a column starting with
+  // `sev` or `priority` makes a P3 of that cell alone, else of any cell.
+  let openP3 = 0;
+  let fuRel = null;
+  for (const rel of roleFiles('follow-ups', FOLLOW_UP_FILES)) {
+    const text = read(rel);
+    if (text === null) continue;
+    let here = 0;
+    for (const t of mdTables(text)) {
       const st = t.names.findIndex(n => n.startsWith('status'));
       if (st === -1) continue;
-      for (const cells of t.rows) if (/^open\b/i.test(cells[st] || '') && cells.some(c => /\bP3\b/.test(c))) openP3 += 1;
+      const sev = t.names.findIndex(n => n.startsWith('sev') || n.startsWith('priority'));
+      for (const cells of t.rows) {
+        if (/^open\b/i.test(cells[st] || '') && (sev === -1 ? cells.some(c => /\bP3\b/.test(c)) : /\bP3\b/.test(cells[sev] || ''))) here += 1;
+      }
     }
-    const h = dueReports('hygiene')[0];
-    if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
-      haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
-    }
+    openP3 += here;
+    if (here && fuRel === null) fuRel = rel;
+  }
+  const h = dueReports('hygiene')[0];
+  if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
+    haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
   }
 
   // foundation stage: the pass-signal unit landed and the flip did not run

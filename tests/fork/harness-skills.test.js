@@ -407,6 +407,17 @@ test('policy-derivation.md holds the one list of the harness\'s own critical pat
   assert.ok(!skill.includes('the guard, the command and edit guards and `run-gates.sh`'), 'SKILL.md still repeats its own shorter list');
 });
 
+test('scope-guard.md says the follow-ups path may be a list with <dir>/*.md entries, and names the three retro-core bindings of another doc shape', () => {
+  const guard = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'scope-guard.md'), 'utf8').replace(/\s+/g, ' ');
+  const start = guard.indexOf('## The follow-ups doc');
+  assert.ok(start >= 0, 'scope-guard.md has no "The follow-ups doc" section');
+  const end = guard.indexOf(' ## ', start + 1);
+  const section = guard.slice(start, end < 0 ? undefined : end);
+  for (const need of ['STATUS_COLUMNS', 'STATUS_WORDS', 'SEVERITY_COLUMNS', '/*.md']) {
+    assert.ok(section.includes(need), `the follow-ups section of scope-guard.md does not name ${need}`);
+  }
+});
+
 test('no test source under tests/fork or the templates holds an AWS-key-shaped literal', () => {
   const hits = [];
   const walk = dir => {

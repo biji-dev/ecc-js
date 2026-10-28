@@ -39,14 +39,13 @@ const TARGETED = new Set(['register', 'unregister']);
 const VALUE_FLAGS = {
   '--project': 'project',
   '--log': 'log',
-  '--follow-ups': 'followUps',
   '--home': 'home',
   '--projects-dir': 'projectsDir',
   '--config-dir': 'configDir',
   '--claude': 'claude',
   '--budget': 'budget',
 };
-const REGISTER_ONLY = ['project', 'log', 'followUps'];
+const REGISTER_ONLY = ['project', 'log'];
 // A project names its export directory.
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -61,7 +60,7 @@ export function parseArgs(argv) {
     dryRun: false,
     project: null,
     log: null,
-    followUps: null,
+    followUps: [],
     plans: [],
     home: null,
     projectsDir: null,
@@ -85,18 +84,19 @@ export function parseArgs(argv) {
     else if (t === '--no-review') a.review = false;
     else if (t === '--no-notify') a.notify = false;
     else if (t === '--plans') a.plans.push(value(t, argv[++i]));
+    else if (t === '--follow-ups') a.followUps.push(value(t, argv[++i]));
     else if (Object.hasOwn(VALUE_FLAGS, t)) a[VALUE_FLAGS[t]] = value(t, argv[++i]);
     else throw new Error(`unknown option ${t}`);
   }
   if (!a.command && a.dryRun) a.command = 'run';
   if (!a.command) throw new Error('no command');
   if (a.dryRun && !['run', 'install', 'uninstall'].includes(a.command)) throw new Error(`--dry-run goes with --run, --install or --uninstall, not ${a.command}`);
-  if (a.command !== 'register' && (REGISTER_ONLY.some((k) => a[k] !== null) || a.plans.length)) {
+  if (a.command !== 'register' && (REGISTER_ONLY.some((k) => a[k] !== null) || a.followUps.length || a.plans.length)) {
     throw new Error('--project, --log, --follow-ups and --plans go with --register');
   }
   if (a.command !== 'run' && (!a.review || !a.notify)) throw new Error('--no-review and --no-notify go with --run');
   if (a.project !== null && !PROJECT_NAME.test(a.project)) throw new Error(`bad project name "${a.project}"`);
-  for (const rel of [a.log, a.followUps, ...a.plans]) if (rel !== null) inside(rel, 'a path');
+  for (const rel of [a.log, ...a.followUps, ...a.plans]) if (rel !== null) inside(rel, 'a path');
   a.budget = Number(a.budget);
   if (!(Number.isFinite(a.budget) && a.budget > 0)) throw new Error('--budget must be a positive number of dollars');
   return a;
@@ -111,7 +111,7 @@ function inside(rel, what) {
 
 export const emptyRegistry = () => ({ schema: 1, repos: [] });
 
-/** The registry file's text -> { schema: 1, repos: [{ path, project, log?, followUps?, plans? }] }; throws when it is not one. */
+/** The registry file's text -> { schema: 1, repos: [{ path, project, log?, followUps?, plans? }] } (followUps a list, or an older registry's string); throws when it is not one. */
 export function readRegistry(text) {
   let r;
   try {
@@ -154,15 +154,18 @@ export function planDirs(tracked) {
  * A registered repository's files: the registry entry's own value, else the manifest's role, else
  * the first candidate the repository tracks; plans from the entry or from where its state and steps
  * files are. `from` says which, for the dry run. A manifest role outside the repository is ignored.
+ * The follow-ups value is a path or a list of them (an older registry's string, or a list role), as given.
  */
 export function resolveRepo(entry, { manifest = null, tracked = [] } = {}) {
   const has = new Set(tracked);
   const from = {};
-  const pick = (key, role, candidates) => {
+  const pick = (key, role, candidates, { list = false } = {}) => {
     const roleValue = manifest?.roles?.[role];
+    const given = entry[key];
+    const roleOk = (typeof roleValue === 'string' && safe(roleValue)) || (list && Array.isArray(roleValue) && roleValue.length > 0 && roleValue.every((r) => typeof r === 'string' && safe(r)));
     let rel = null;
-    if (entry[key]) [rel, from[key]] = [entry[key], 'registry'];
-    else if (typeof roleValue === 'string' && safe(roleValue)) [rel, from[key]] = [roleValue, 'manifest'];
+    if (Array.isArray(given) ? given.length : given) [rel, from[key]] = [given, 'registry'];
+    else if (roleOk) [rel, from[key]] = [roleValue, 'manifest'];
     else {
       rel = candidates.find((c) => has.has(c)) ?? null;
       from[key] = rel ? 'found' : 'none';
@@ -170,7 +173,7 @@ export function resolveRepo(entry, { manifest = null, tracked = [] } = {}) {
     return rel;
   };
   const log = pick('log', 'log', LOG_CANDIDATES);
-  const followUps = pick('followUps', 'follow-ups', FOLLOW_UPS_CANDIDATES);
+  const followUps = pick('followUps', 'follow-ups', FOLLOW_UPS_CANDIDATES, { list: true });
   const plans = entry.plans?.length ? entry.plans : planDirs(tracked);
   from.plans = entry.plans?.length ? 'registry' : plans.length ? 'found' : 'none';
   return { path: entry.path, project: entry.project, log, followUps, plans, from };

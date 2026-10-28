@@ -207,4 +207,6 @@ unit that filed it, and a **Status**: `open` · `scheduled <unit>` · `fixed <sh
 
 `[M]` Grounding reads it: rows scheduled for this unit are part of its requirement.
 
-`[B]` Path (default `docs/harness/follow-ups.md`), created as a scaffold.
+`[B]` Path (default `docs/harness/follow-ups.md`), created as a scaffold. The path may
+be a list, with `<dir>/*.md` entries (a directory's markdown files, by name); a doc of
+another shape binds STATUS_COLUMNS, STATUS_WORDS and SEVERITY_COLUMNS in retro-core.

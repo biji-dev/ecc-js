@@ -17,7 +17,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 17;
+const EXPECTED_TESTS = 19;
 
 let passed = 0;
 let failed = 0;

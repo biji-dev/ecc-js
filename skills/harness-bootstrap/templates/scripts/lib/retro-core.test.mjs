@@ -47,6 +47,7 @@ import {
   unitSteps,
   windowFor,
 } from './retro-core.mjs';
+import { readFollowUps } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
 
@@ -175,9 +176,71 @@ test('followUpsSummary counts rows by status, the open ones naming a P3, and the
     ['6', 'f.ts', '?', 'EP-3', 'parked'],
   ]);
   const dates = new Map([[3, NOW - 20 * DAY], [7, NOW - 30 * DAY]]);
-  assert.deepEqual(followUpsSummary(text, dates, NOW), { open: 2, scheduled: 1, fixed: 1, dropped: 1, other: 1, openP3: 1, oldestOpenDays: 30, oldestOpenP3Days: 20 });
+  assert.deepEqual(followUpsSummary(text, dates, NOW), {
+    open: 2,
+    scheduled: 1,
+    fixed: 1,
+    dropped: 1,
+    other: 1,
+    noStatus: 0,
+    openP3: 1,
+    oldestOpenDays: 30,
+    oldestOpenP3Days: 20,
+    oldestOpenP3Row: '1',
+  });
   assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenDays, null);
   assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenP3Days, null);
+  assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenP3Row, null);
+});
+
+// The bindings these tests depend on are passed in, so a project that rebinds its own still passes them.
+const FU_OPTS = {
+  statusColumns: ['status'],
+  statusWords: { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] },
+  severityColumns: ['sev', 'priority'],
+};
+
+test('followUpsSummary: rows in a table with no status column are counted apart and left out of every count', () => {
+  const text = [table(['#', 'Area', 'Sev'], [['1', 'a.ts', 'P3'], ['2', 'b.ts', 'P2']]), '', table(['#', 'Status'], [['3', 'open'], ['4', 'fixed']])].join('\n');
+  const s = followUpsSummary(text, new Map(), NOW, FU_OPTS);
+  assert.equal(s.noStatus, 2, 'noStatus is the row count of the tables with no status column');
+  assert.deepEqual([s.open, s.fixed, s.openP3], [1, 1, 0], 'the left-out rows are in no count');
+  const bare = followUpsSummary(table(['#', 'Area'], [['1', 'a'], ['2', 'b'], ['3', 'c']]), new Map(), NOW, FU_OPTS);
+  assert.deepEqual([bare.noStatus, bare.open, bare.scheduled, bare.fixed, bare.dropped, bare.other], [3, 0, 0, 0, 0, 0]);
+});
+
+test('followUpsSummary: the status column and the words of each kind come from the options, matched at the start of the cell before a non-letter', () => {
+  const text = table(['#', 'Decision'], [['1', 'owner decides'], ['2', 'Fixed abc1234'], ['3', 'dropped — no'], ['4', '**Open**'], ['5', 'opened later'], ['6', '`scheduled` EP-4']]);
+  const opts = { ...FU_OPTS, statusColumns: ['status', 'decision'], statusWords: { ...FU_OPTS.statusWords, open: ['open', 'owner decides'] } };
+  const s = followUpsSummary(text, new Map(), NOW, opts);
+  assert.deepEqual(
+    [s.open, s.scheduled, s.fixed, s.dropped, s.other, s.noStatus],
+    [2, 1, 1, 1, 1, 0],
+    'a Decision column and "owner decides" as an open word read as open; "opened later" is not open',
+  );
+  const plain = followUpsSummary(text, new Map(), NOW, FU_OPTS);
+  assert.deepEqual([plain.open, plain.noStatus], [0, 6], 'without the option the Decision column is no status column');
+});
+
+test('followUpsSummary: with a severity column only that cell makes a P3; with none any cell does', () => {
+  const text = table(['#', 'Title', 'Sev', 'Status'], [['FU-1', 'the P3 cleanup of a.ts', 'P1', 'open'], ['FU-2', 'b.ts', 'P3', 'open'], ['FU-3', 'c.ts', 'P2', 'open']]);
+  const s = followUpsSummary(text, new Map(), NOW, FU_OPTS);
+  assert.equal(s.openP3, 1, 'a P1 row whose Title says P3 is not a P3');
+  const priority = table(['#', 'Priority', 'Area', 'Status'], [['1', 'P3', 'x', 'open'], ['2', 'P1', 'P3 area', 'open']]);
+  assert.equal(followUpsSummary(priority, new Map(), NOW, FU_OPTS).openP3, 1, 'a Priority column is a severity column');
+  const loose = table(['#', 'Area', 'Why it waits', 'Status'], [['1', 'a.ts', 'P3 later', 'open'], ['2', 'b.ts', 'soon', 'open']]);
+  assert.equal(followUpsSummary(loose, new Map(), NOW, FU_OPTS).openP3, 1, 'with no severity column a row naming P3 in any cell still is one');
+  assert.equal(followUpsSummary(text, new Map(), NOW, { ...FU_OPTS, severityColumns: [] }).openP3, 2, 'with no severity column named, the any-cell rule holds');
+});
+
+test('followUpsSummary: oldestOpenP3Row is the first cell of the oldest dated open P3 row, its marks stripped; lineDates needs only get()', () => {
+  const text = table(['#', 'Sev', 'Status'], [['`FU-9`', 'P3', 'open'], ['**FU-3**', 'P3', 'open'], ['FU-1', 'P3', 'fixed'], ['FU-2', 'P2', 'open'], ['FU-7', 'P3', 'open']]);
+  const ages = { 3: 10, 4: 20, 5: 40, 6: 50 }; // line 7 (FU-7) is not dated
+  const lazy = { get: (line) => (ages[line] === undefined ? undefined : NOW - ages[line] * DAY) };
+  const s = followUpsSummary(text, lazy, NOW, FU_OPTS);
+  assert.equal(s.oldestOpenP3Row, 'FU-3', 'the oldest dated open P3 row, not a fixed one, a P2 or an undated one');
+  assert.deepEqual([s.oldestOpenP3Days, s.oldestOpenDays, s.openP3], [20, 50, 3]);
+  assert.equal(followUpsSummary(text, new Map(), NOW, FU_OPTS).oldestOpenP3Row, null, 'with no dates there is no oldest row');
 });
 
 test('stateSummary counts the decision log by Class and By, open questions apart, and the P3s still to do', () => {
@@ -557,6 +620,133 @@ test('buildRetro on a Codex host: its threads and claude-run\'s ledger become KP
   assert.doesNotMatch(formatDigest(fixtureData()), /Codex host|claude-run/);
 });
 
+/** A gather with nothing in it; a test passes what it reads. */
+const gatherOf = (over = {}) => ({
+  log: { text: table(LOG_HEAD, []), dates: new Map() },
+  followUps: null,
+  states: [],
+  steps: new Map(),
+  rows: [],
+  events: [],
+  sessionUnits: new Map(),
+  sessions: 0,
+  ledger: null,
+  previous: [],
+  ...over,
+});
+const warnLines = (d) => formatDigest(d).split('\n').filter((l) => l.startsWith('Warn: '));
+
+test('buildRetro warns when the window has Claude spend and the log has no rows: the digest says so right after Read, and it is the first candidate', () => {
+  const t = at('22T10:00:00');
+  const d = buildRetro(gatherOf({ rows: [row({ ts: t, cost: 3 }), row({ ts: t + 60_000, cost: 0.5 })], sessions: 1, followUps: { text: table(['#', 'Status'], [['1', 'open']]), dates: new Map() } }), { project: 'demo', now: NOW });
+  assert.ok(Array.isArray(d.warnings), 'buildRetro returns a warnings list');
+  assert.equal(d.warnings.length, 1, `warnings: ${JSON.stringify(d.warnings)}`);
+  assert.match(d.warnings[0], /\$3\.50/, 'the warning names the spend');
+  assert.match(d.warnings[0], /no log rows/, 'the warning says the log has no rows');
+  assert.match(d.warnings[0], /not being written|names a file that is not the log|columns do not match/, 'the warning gives the causes');
+  const lines = formatDigest(d).split('\n');
+  const at0 = lines.findIndex((l) => l.startsWith('Read: '));
+  assert.ok(at0 >= 0 && lines[at0 + 1] === `Warn: ${d.warnings[0]}`, `the Warn line follows the Read line: ${lines[at0 + 1]}`);
+  assert.deepEqual(
+    [candidates(d)[0].kind, candidates(d)[0].evidence, candidates(d)[0].text],
+    ['machinery', 'Read line', d.warnings[0]],
+    'the warning is the first candidate',
+  );
+  assert.equal(d.candidates[0].text, d.warnings[0], 'buildRetro puts it first in d.candidates too');
+  assert.equal(warnLines(fixtureData()).length, 0, 'a digest with no warning has no Warn line');
+});
+
+test('buildRetro warns when units landed in the window and no Claude session or Codex thread was read', () => {
+  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10), logRow('EP-2', 'Full', 30, 5)]), dates: datesFor('22T10:00:00', '23T10:00:00') } });
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  assert.ok(Array.isArray(d.warnings), 'buildRetro returns a warnings list');
+  assert.equal(d.warnings.length, 1, `warnings: ${JSON.stringify(d.warnings)}`);
+  assert.match(d.warnings[0], /2 units/, 'the warning counts the units');
+  assert.match(d.warnings[0], /cost and session figures are missing/, 'the warning says what is missing');
+  assert.match(d.warnings[0], /Claude Code and Codex sessions only \(another host's are not read\)/, 'the warning says which hosts are read');
+  assert.match(d.warnings[0], /projects directory or CLAUDE_CONFIG_DIR/, 'the warning names the wrong-directory cause');
+  assert.deepEqual(warnLines(d), [`Warn: ${d.warnings[0]}`]);
+  assert.equal(d.candidates[0].text, d.warnings[0]);
+  assert.match(formatDigest(d), /^\| Transcripts \| none found for this repository \| — \|$/m, 'the KPI row is unchanged');
+});
+
+test('buildRetro warns of neither when the log has rows and sessions, nor of sessions when a Codex host ran the units', () => {
+  assert.deepEqual(fixtureData().warnings, [], 'a log with rows and sessions warns of nothing');
+  const t = at('22T10:00:00');
+  const thread = parseCodexSession([
+    cxLine(t, 'session_meta', { id: 'th-1', session_id: 'th-1', cwd: '/r', originator: 'Codex Desktop', source: 'vscode' }),
+    cxLine(t, 'event_msg', { type: 'task_started' }),
+    cxTokens(t + 60_000, 4000, 10, 2000),
+    cxLine(t + 120_000, 'event_msg', { type: 'task_complete' }),
+  ]);
+  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') }, codex: [thread] });
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  assert.deepEqual([d.kpis.log.units, d.kpis.codexHost.sessions], [1, 1]);
+  assert.deepEqual(d.warnings, [], 'units landed and a Codex host thread read: no sessions warning');
+  // The first warning's other trigger: a Codex host's thread in the window with a log that has no rows.
+  const none = buildRetro(gatherOf({ codex: [thread] }), { project: 'demo', now: NOW });
+  assert.match(none.warnings[0] ?? '', /1 Codex thread/, 'Codex host threads and an empty log warn too');
+});
+
+test('buildRetro: a follow-ups doc whose every table lacks a status column warns, and the Queue line says how many rows were left out', () => {
+  const t = at('22T10:00:00');
+  const fu = (text, dates = new Map()) => buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') }, followUps: { text, dates } }), { project: 'demo', now: NOW });
+  const bare = fu(table(['#', 'Area', 'Why it waits'], [['1', 'a.ts', 'later'], ['2', 'b.ts', 'later'], ['3', 'c.ts', 'later']]));
+  assert.ok(Array.isArray(bare.warnings), 'buildRetro returns a warnings list');
+  assert.equal(bare.warnings.length, 1, `warnings: ${JSON.stringify(bare.warnings)}`);
+  assert.match(bare.warnings[0], /3 rows/, 'the warning names the row count');
+  assert.match(bare.warnings[0], /status/, 'the warning names the columns it looked for');
+  assert.match(formatDigest(bare), /^- Follow-ups: 0 open .* · 3 rows in tables with no status column, left out$/m);
+  // A doc with a status table too is read, not warned about; its Queue line names the oldest P3 row.
+  const mixed = fu([table(['#', 'Sev', 'Status'], [['FU-3', 'P3', 'open'], ['FU-4', 'P3', 'open']]), '', table(['#', 'Area'], [['5', 'x'], ['6', 'y']])].join('\n'), new Map([[3, NOW - 20 * DAY], [4, NOW - 5 * DAY]]));
+  assert.deepEqual(mixed.warnings, [], 'a doc with one status table is read, not warned about');
+  assert.equal(mixed.queue.followUps.oldestOpenP3Row, 'FU-3');
+  assert.match(formatDigest(mixed), /^- Follow-ups: 2 open \(2 naming a P3, the oldest FU-3 at 20 d; oldest 20 d\) · 0 scheduled · 0 fixed · 0 dropped · 2 rows in tables with no status column, left out$/m);
+});
+
+test('readFollowUps joins a path list and a dir/*.md entry in order, each line dated from its own file, a file blamed only when one of its lines is looked up', () => {
+  const top = tmpDir('retro-fu-');
+  const put = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(top, rel)), { recursive: true });
+    fs.writeFileSync(path.join(top, rel), text);
+  };
+  put('docs/fu/drops.md', 'D1\nD2\n');
+  put('docs/fu/batches/b-2.md', 'B2-1\n');
+  put('docs/fu/batches/b-1.md', 'B1-1\nB1-2\nB1-3');
+  put('docs/fu/batches/notes.txt', 'not markdown\n');
+  const calls = [];
+  const blame = (_top, rel) => {
+    calls.push(rel);
+    const base = { 'docs/fu/drops.md': 1000, 'docs/fu/batches/b-1.md': 2000, 'docs/fu/batches/b-2.md': 3000 }[rel];
+    return new Map([[1, base + 1], [2, base + 2], [3, base + 3]]);
+  };
+  const got = readFollowUps(top, ['docs/fu/drops.md', 'docs/fu/batches/*.md', 'docs/fu/missing.md', 'docs/nowhere/*.md'], blame);
+  assert.ok(got, 'the files that exist are read');
+  assert.equal(got.text, 'D1\nD2\n\nB1-1\nB1-2\nB1-3\n\nB2-1', 'each text without its trailing newline, one blank line between, the directory sorted by name');
+  assert.deepEqual(calls, [], 'nothing is blamed before a line is looked up');
+  // Lines: drops 1-2, blank 3, b-1 4-6, blank 7, b-2 8.
+  assert.equal(got.dates.get(5), 2002, "a line's date comes from its own file, at its own offset");
+  assert.deepEqual(calls, ['docs/fu/batches/b-1.md'], 'only the file holding the looked-up line is blamed');
+  assert.equal(got.dates.get(8), 3001);
+  assert.equal(got.dates.get(1), 1001);
+  assert.equal(got.dates.get(6), 2003);
+  assert.equal(got.dates.get(3) ?? null, null, 'the blank line between two files has no date');
+  assert.deepEqual(calls, ['docs/fu/batches/b-1.md', 'docs/fu/batches/b-2.md', 'docs/fu/drops.md'], 'each file is blamed once, however many lines are looked up');
+});
+
+test('readFollowUps skips a missing entry, gives null when none exists, and reads a single string as before', () => {
+  const top = tmpDir('retro-fu-');
+  fs.writeFileSync(path.join(top, 'fu.md'), 'X1\nX2\n');
+  const blame = (_top, rel) => new Map([[1, 10], [2, 20]]);
+  assert.equal(readFollowUps(top, ['nope.md', 'dir/*.md'], blame), null, 'none exists');
+  assert.equal(readFollowUps(top, [], blame), null, 'an empty list');
+  const one = readFollowUps(top, 'fu.md', blame);
+  assert.ok(one, 'a single path string is read');
+  assert.equal(one.text, 'X1\nX2');
+  assert.deepEqual([one.dates.get(1), one.dates.get(2), one.dates.get(3) ?? null], [10, 20, null]);
+  assert.equal(readFollowUps(top, ['nope.md', 'fu.md'], blame).text, 'X1\nX2', 'a missing entry is skipped');
+});
+
 test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and the data block kept', () => {
   const d = fixtureData();
   const long = (i) => `${'a long cell that quotes the log at length '.repeat(10)}${i}`;
@@ -567,6 +757,11 @@ test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and th
   d.stepOutliers = ids.slice(0, 12).map((unit) => ({ step: '8b', unit, source: 'descriptions', usd: 12.65, share: 32.9, median: 13.9, x: 2.4, n: 14 }));
   d.unitOutliers = ids.slice(0, 12).map((unit) => ({ unit, tier: 'full', metric: 'work', value: 461, median: 128, x: 3.6, n: 14 }));
   d.steps = ids.slice(0, 12).map((unit) => ({ unit, source: 'descriptions', total: 57.83, steps: ['8', '2', '8c', '8b'].map((step) => ({ step, usd: 10, share: 25 })) }));
+  d.warnings = [
+    '$1097.56 of Claude spend in the window and the log has no rows: the harness log is not being written, LOG names a file that is not the log, or its columns do not match',
+    '40 units landed in the window and no Claude Code or Codex session was read: the cost and session figures are missing; the retro reads Claude Code and Codex sessions only (another host\'s are not read), and a wrong projects directory or CLAUDE_CONFIG_DIR gives the same',
+    'the follow-ups doc has 85 rows, all in tables with no status column (looked for: status): none is counted',
+  ];
   d.candidates = candidates(d);
   const size = (text) => new TextEncoder().encode(text).length;
   assert.ok(size(formatDigest(d)) > MAX_BYTES, `the unfitted digest is ${size(formatDigest(d))} bytes`);
@@ -576,6 +771,7 @@ test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and th
     assert.ok(fitted.includes(`\n${h}\n`), h);
   }
   assert.match(fitted, /^- EP-00\.01: a long cell/m, 'it shrinks the lists, never empties them first');
+  for (const w of d.warnings) assert.ok(fitted.includes(`\nWarn: ${w}\n`), `a Warn line is kept whole: ${w.slice(0, 40)}`);
   assert.equal(previousData(fitted).week, d.week);
 });
 
@@ -708,4 +904,26 @@ test('the wrapper reads this repository\'s Codex host threads and claude-run led
   const d = JSON.parse(res.stdout);
   assert.deepEqual([d.sources.codexSessions, d.kpis.codexHost.sessions, d.kpis.codexHost.tokens, d.kpis.codexHost.percent], [1, 1, 3000, 2]);
   assert.deepEqual([d.sources.claudeRunRows, d.kpis.claudeRuns.runs, d.kpis.claudeRuns.usd], [1, 1, 2]);
+});
+
+test('the wrapper puts each warning on stderr as `retro: warn:` and in the digest as a Warn line, in every mode, and exits 0', () => {
+  const f = fixture();
+  // A log with a header and no rows, beside a session with spend in the window.
+  fs.writeFileSync(path.join(f.repo, LOG), `# Log\n\n${table(LOG_HEAD, [])}\n`);
+  const args = [...WINDOW, '--projects-dir', f.projects];
+  const dry = run(f, [...args, '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stderr, /^retro: warn: .*no log rows/m, 'dry run: stderr carries the warning');
+  assert.match(dry.stdout, /^Warn: .*no log rows/m, 'dry run: the digest carries it');
+  assert.match(dry.stdout, /^Read: 0 log rows[^\n]*\nWarn: /m, 'the Warn line follows the Read line');
+  const json = run(f, [...args, '--json']);
+  assert.equal(json.status, 0, json.stderr);
+  assert.match(json.stderr, /^retro: warn: /m, '--json: stderr carries the warning');
+  assert.equal(JSON.parse(json.stdout).warnings.length, 1);
+  const written = run(f, args);
+  assert.equal(written.status, 0, written.stderr);
+  assert.match(written.stderr, /^retro: warn: /m, 'the default write: stderr carries the warning');
+  assert.match(fs.readFileSync(path.join(f.repo, REPORTS_DIR, 'retro-2026-W44.md'), 'utf8'), /^Warn: /m, 'the written digest carries it');
+  const ok = fixture();
+  assert.doesNotMatch(run(ok, [...WINDOW, '--projects-dir', ok.projects, '--dry-run']).stderr, /retro: warn:/, 'a repository with log rows and sessions warns of nothing');
 });

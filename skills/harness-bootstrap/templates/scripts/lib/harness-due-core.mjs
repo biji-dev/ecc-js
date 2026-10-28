@@ -20,7 +20,8 @@ import path from 'node:path';
 import { followUpsSummary, logRecords } from './retro-core.mjs';
 
 // ---- [B] project bindings
-// [B] The mainline; the harness log and the follow-ups doc.
+// [B] The mainline; the harness log and the follow-ups doc. FOLLOW_UPS may also be a list of paths;
+// an entry ending in `/*.md` is every markdown file in that directory, sorted by name.
 export const MAIN = 'main';
 export const LOG = 'docs/harness/log.md';
 export const FOLLOW_UPS = 'docs/harness/follow-ups.md';
@@ -175,17 +176,20 @@ export function cadenceDue(kind, { reports = [], landed = [], merged = [], logBo
   return { kind, subject: null, why: `${days} d, ${plural(landings, 'landing')} ${since}${note}`, command: fill(command, values), blocking: false };
 }
 
-/** The follow-ups summary -> `; 12 open P3, the oldest 20 d` for the hygiene line, or ''. */
+/** The oldest open P3 as `the oldest FU-3 at 20 d` (the row, when the summary knows it), or `the oldest 20 d`. */
+const oldestP3 = (summary) => `the oldest ${summary.oldestOpenP3Row ? `${summary.oldestOpenP3Row} at ` : ''}${summary.oldestOpenP3Days} d`;
+
+/** The follow-ups summary -> `; 12 open P3, the oldest FU-3 at 20 d` for the hygiene line, or ''. */
 export function p3Note(summary) {
   if (!summary || summary.openP3 === 0) return '';
-  const age = summary.oldestOpenP3Days === null ? '' : `, the oldest ${summary.oldestOpenP3Days} d`;
+  const age = summary.oldestOpenP3Days === null ? '' : `, ${oldestP3(summary)}`;
   return `; ${summary.openP3} open P3${age}`;
 }
 
 /** With no hygiene unit bound, an open P3 older than P3_AGE_DAYS is due on its own. */
 export function p3Due({ summary, hygieneBound = REPORTS.hygiene !== null, now, ageDays = P3_AGE_DAYS, command = COMMANDS.p3 }) {
   if (hygieneBound || !summary || summary.oldestOpenP3Days === null || summary.oldestOpenP3Days < ageDays) return null;
-  return { kind: 'p3', subject: null, why: `${summary.openP3} open P3, the oldest ${summary.oldestOpenP3Days} d (over ${ageDays})`, command: fill(command, { date: day(now) }), blocking: false };
+  return { kind: 'p3', subject: null, why: `${summary.openP3} open P3, ${oldestP3(summary)} (over ${ageDays})`, command: fill(command, { date: day(now) }), blocking: false };
 }
 
 /**

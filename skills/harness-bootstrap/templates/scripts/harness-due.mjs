@@ -43,7 +43,7 @@ import {
   projectName,
   reportShape,
 } from './lib/harness-due-core.mjs';
-import { blameDates, lastCommitTimes, repoTop } from './lib/retro-gather.mjs';
+import { blameDates, lastCommitTimes, readFollowUps, repoTop } from './lib/retro-gather.mjs';
 import { gitRead } from './lib/run-sources.mjs';
 
 const USAGE =
@@ -243,7 +243,7 @@ function main() {
       top,
       project,
       log: withDates(top, LOG),
-      followUps: withDates(top, FOLLOW_UPS),
+      followUps: readFollowUps(top, FOLLOW_UPS),
       reports: readReports(top),
       merges: readMerges(top),
       disk: readDisk(top, harness),

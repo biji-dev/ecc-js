@@ -33,11 +33,20 @@ import { stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] Where the digests go (committed), and where the log, the follow-ups doc and the unit plans
-// (state and steps files) live.
+// (state and steps files) live. FOLLOW_UPS may also be a list of paths; an entry ending in `/*.md`
+// is every markdown file in that directory, sorted by name.
 export const REPORTS_DIR = 'docs/harness/reports';
 export const LOG = 'docs/harness/log.md';
 export const FOLLOW_UPS = 'docs/harness/follow-ups.md';
 export const PLANS_DIR = 'docs/plans';
+// [B] The follow-ups doc's shape. The status column is the leftmost one whose name starts with any of
+// STATUS_COLUMNS (lowercase); a cell is of a kind when it starts with one of that kind's words, case
+// ignored and leading `*`, `_` and backticks skipped, followed by a non-letter or the cell's end
+// (kinds in this order; anything else is `other`). A table with a column starting with one of
+// SEVERITY_COLUMNS makes a row a P3 only by that cell; one without any cell may.
+export const STATUS_COLUMNS = ['status'];
+export const STATUS_WORDS = { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] };
+export const SEVERITY_COLUMNS = ['sev', 'priority'];
 // [B] The log columns the retro reads beyond estimate-core's COLUMNS, matched the same way (prefix).
 export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };
 // [B] An outlier is at least OUTLIER_X times its cohort's median, in a cohort of at least MIN_COHORT.
@@ -204,28 +213,50 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
   });
 }
 
-/** The follow-ups doc -> rows by Status, the open ones that name a P3, and the age in days of the oldest open row and the oldest open P3. */
-export function followUpsSummary(text, lineDates = new Map(), now = Date.now()) {
-  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null };
+const STATUS_KINDS = ['open', 'scheduled', 'fixed', 'dropped'];
+
+/**
+ * The follow-ups doc -> rows by status kind, the open ones that name a P3, the age in days of the
+ * oldest open row and of the oldest open P3, and that P3's row (its first cell, marks stripped).
+ * Rows in a table with no status column are counted in `noStatus` and in nothing else. `lineDates` is
+ * anything with `get(line)` -> commit ms (a Map, or readFollowUps' lazy lookup); the options default
+ * to the [B] bindings, and a test passes its own.
+ */
+export function followUpsSummary(
+  text,
+  lineDates = new Map(),
+  now = Date.now(),
+  { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS } = {},
+) {
+  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, noStatus: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null, oldestOpenP3Row: null };
+  const words = STATUS_KINDS.filter((kind) => statusWords[kind]?.length).map((kind) => [kind, new RegExp(`^(?:${statusWords[kind].map(escapeRe).join('|')})(?![A-Za-z])`, 'i')]);
+  const column = (names, prefixes) => names.findIndex((n) => prefixes.some((p) => n.startsWith(p.toLowerCase())));
   let oldest = null;
   let oldestP3 = null;
+  let oldestRow = null;
   for (const { names, rows } of tables(text)) {
-    const st = names.findIndex((n) => n.startsWith('status'));
-    if (st === -1) continue;
+    const st = column(names, statusColumns);
+    if (st === -1) {
+      out.noStatus += rows.length;
+      continue;
+    }
+    const sev = column(names, severityColumns);
     for (const { cells, line } of rows) {
-      const kind = /^(open|scheduled|fixed|dropped)\b/i.exec(String(cells[st] ?? '').trim())?.[1].toLowerCase() ?? 'other';
+      const cell = String(cells[st] ?? '').trim().replace(/^[*_`]+/, '');
+      const kind = words.find(([, re]) => re.test(cell))?.[0] ?? 'other';
       out[kind] += 1;
       if (kind !== 'open') continue;
-      const p3 = cells.some((c) => /\bP3\b/.test(c));
+      const p3 = sev === -1 ? cells.some((c) => /\bP3\b/.test(c)) : /\bP3\b/.test(cells[sev] ?? '');
       if (p3) out.openP3 += 1;
       const at = lineDates.get(line);
       if (!Number.isFinite(at)) continue;
       if (oldest === null || at < oldest) oldest = at;
-      if (p3 && (oldestP3 === null || at < oldestP3)) oldestP3 = at;
+      if (p3 && (oldestP3 === null || at < oldestP3)) [oldestP3, oldestRow] = [at, cells[0]];
     }
   }
   if (oldest !== null) out.oldestOpenDays = Math.floor((now - oldest) / DAY);
   if (oldestP3 !== null) out.oldestOpenP3Days = Math.floor((now - oldestP3) / DAY);
+  if (oldestRow !== null) out.oldestOpenP3Row = oneLine(oldestRow).replace(/^[`*\s]+|[`*\s]+$/g, '') || null;
   return out;
 }
 
@@ -573,8 +604,8 @@ export function frictionThemes(records, win, limit = 6) {
 
 /**
  * At most MAX_CANDIDATES things for the retro review, one of each source in turn so no source fills
- * every slot: what the owner caught, cache-expiry rewrites, step outliers, unit outliers, repeated
- * friction, an old queue -- then the second of each, and so on.
+ * every slot: what the Read line warns of, what the owner caught, cache-expiry rewrites, step outliers,
+ * unit outliers, repeated friction, an old queue -- then the second of each, and so on.
  */
 export function candidates(d) {
   const sources = [
@@ -601,6 +632,7 @@ export function candidates(d) {
   if (q && q.oldestOpenDays !== null && q.oldestOpenDays >= QUEUE_ALERT_DAYS) {
     sources[5].push({ kind: 'machinery', text: `the oldest open follow-up is ${q.oldestOpenDays} days old (${q.open} open, ${q.openP3} naming a P3): a hygiene unit is due`, evidence: 'follow-ups doc' });
   }
+  sources.unshift((d.warnings ?? []).map((w) => ({ kind: 'machinery', text: w, evidence: 'Read line' })));
   const out = [];
   for (let i = 0; out.length < MAX_CANDIDATES && sources.some((s) => s.length > i); i++) {
     for (const s of sources) if (s[i] && out.length < MAX_CANDIDATES) out.push(s[i]);
@@ -620,6 +652,29 @@ function readCounts(g, records) {
     ledgerRows: g.ledger ? g.ledger.length : null,
     claudeRunRows: g.claudeRuns ? g.claudeRuns.length : null,
   };
+}
+
+/**
+ * What the Read line cannot say for itself: a figure that is missing or zero for a reason the
+ * project can fix. A list of strings, empty when all is well.
+ */
+function warningsFor(d, records) {
+  const out = [];
+  const t = d.kpis.transcripts;
+  const h = d.kpis.codexHost;
+  const spent = [t?.claudeUsd > 0 ? `${usd(t.claudeUsd)} of Claude spend` : null, h?.sessions > 0 ? `${h.sessions} Codex thread${h.sessions === 1 ? '' : 's'}` : null].filter(Boolean);
+  if (records.length === 0 && spent.length) {
+    out.push(`${spent.join(' and ')} in the window against no log rows: the harness log is not being written, LOG names a file that is not the log, or its columns do not match`);
+  }
+  const units = d.kpis.log.units;
+  if (units > 0 && !(t?.sessions > 0) && !(h?.sessions > 0)) {
+    out.push(`${units} unit${units === 1 ? '' : 's'} landed in the window but no Claude Code session or Codex thread was read, so the cost and session figures are missing: the retro reads Claude Code and Codex sessions only (another host's are not read), and a wrong projects directory or CLAUDE_CONFIG_DIR gives the same`);
+  }
+  const q = d.queue.followUps;
+  if (q && q.noStatus > 0 && q.open + q.scheduled + q.fixed + q.dropped + q.other === 0) {
+    out.push(`the follow-ups doc has ${q.noStatus} rows, all in tables with no status column (looked for: ${STATUS_COLUMNS.join(', ')}): none is counted`);
+  }
+  return out;
 }
 
 /**
@@ -689,6 +744,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     },
     decisions: { units: recent.length, classes: sum(recent, (s) => s.classes), by: sum(recent, (s) => s.by), questions: recent.reduce((n, s) => n + s.questions, 0) },
   };
+  d.warnings = warningsFor(d, records);
   d.candidates = candidates(d);
   return d;
 }
@@ -709,6 +765,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
     '',
     `Window ${d.since.slice(0, 16)}Z → ${d.until.slice(0, 16)}Z, baseline from ${d.baselineSince.slice(0, 10)} · generated by retro.mjs — regenerate, never edit by hand`,
     `Read: ${s.logRows ?? 0} log rows${s.undated ? ` (${s.undated} undated, left out)` : ''} · ${s.stepsFiles ?? 0} steps files · ${s.stateFiles ?? 0} state files · ${s.sessions ?? 0} sessions${s.codexSessions ? ` · ${s.codexSessions} Codex threads` : ''} · ${s.ledgerRows === null || s.ledgerRows === undefined ? 'no Codex ledger' : `${s.ledgerRows} Codex ledger rows`}${s.claudeRunRows === null || s.claudeRunRows === undefined ? '' : ` · ${s.claudeRunRows} claude-run ledger rows`}`,
+    ...(d.warnings ?? []).map((w) => `Warn: ${oneLine(w)}`),
     '',
     '## KPIs',
     '',
@@ -780,7 +837,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
   const q = d.queue.followUps;
   L.push(
     q
-      ? `- Follow-ups: ${q.open} open (${q.openP3} naming a P3; oldest ${q.oldestOpenDays === null ? '—' : `${q.oldestOpenDays} d`}) · ${q.scheduled} scheduled · ${q.fixed} fixed · ${q.dropped} dropped`
+      ? `- Follow-ups: ${q.open} open (${q.openP3} naming a P3${q.oldestOpenP3Row ? `, the oldest ${q.oldestOpenP3Row} at ${q.oldestOpenP3Days} d` : ''}; oldest ${q.oldestOpenDays === null ? '—' : `${q.oldestOpenDays} d`}) · ${q.scheduled} scheduled · ${q.fixed} fixed · ${q.dropped} dropped${q.noStatus ? ` · ${q.noStatus} rows in tables with no status column, left out` : ''}`
       : '- Follow-ups: no doc',
     `- P3 findings still to do in state files: ${d.queue.stateP3}`,
   );

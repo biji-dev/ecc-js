@@ -67,6 +67,51 @@ export function blameDates(top, rel) {
   return dates;
 }
 
+/**
+ * The follow-ups doc(s) -> { text, dates }, or null when no file exists. `specs` is one path or a list
+ * (relative to `top`); an entry ending in `/*.md` is every markdown file in that directory, sorted by
+ * name, and a missing file or directory is skipped. The texts, each without its trailing newline, are
+ * joined by one blank line, and `dates.get(line)` is the commit time of that line in its own file.
+ * A file is blamed once, on the first lookup of one of its lines, so a doc of many files is blamed
+ * only where an open row needs a date.
+ */
+export function readFollowUps(top, specs, blame = blameDates) {
+  const rels = [];
+  for (const spec of [specs].flat()) {
+    if (!spec.endsWith('/*.md')) {
+      rels.push(spec);
+      continue;
+    }
+    const dir = spec.slice(0, -'/*.md'.length);
+    let names = [];
+    try {
+      names = fs.readdirSync(path.join(top, dir)).filter((n) => n.endsWith('.md')).sort();
+    } catch {
+      // a missing directory holds nothing
+    }
+    for (const n of names) rels.push(`${dir}/${n}`);
+  }
+  const files = [];
+  let next = 1;
+  for (const rel of rels) {
+    const file = path.join(top, rel);
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue;
+    const text = readText(file).replace(/\r?\n$/, '');
+    files.push({ rel, text, start: next, blamed: null });
+    next += text.split('\n').length + 1;
+  }
+  if (files.length === 0) return null;
+  const dates = {
+    get(line) {
+      const f = files.findLast((x) => x.start <= line);
+      if (!f || line >= f.start + f.text.split('\n').length) return undefined;
+      f.blamed ??= blame(top, f.rel);
+      return f.blamed.get(line - f.start + 1);
+    },
+  };
+  return { text: files.map((f) => f.text).join('\n\n'), dates };
+}
+
 /** path (relative to top) -> the newest commit time (ms) that touched it, for every file under `dirs`. */
 export function lastCommitTimes(top, dirs) {
   let out;
@@ -120,8 +165,8 @@ export function readPrevious(dirs) {
 }
 
 /**
- * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` and `plansDirs` are
- * relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
+ * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` (a path or a list, see
+ * readFollowUps) and `plansDirs` are relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
  * `top` and its worktrees whose main file changed since `sinceMs`, and so are a Codex host's threads
  * (rollouts under `codexDir`, streamed: one can pass 512 MB).
@@ -131,7 +176,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
   if (logFile !== null && !fs.existsSync(logFile)) throw new Error(`no harness log at ${log}`);
   const g = {
     log: logFile === null ? { text: '', dates: new Map() } : { text: readText(logFile), dates: blameDates(top, log) },
-    followUps: null,
+    followUps: followUps ? readFollowUps(top, followUps) : null,
     states: [],
     steps: new Map(),
     rows: [],
@@ -142,9 +187,6 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     codex: [],
     claudeRuns: null,
   };
-  if (followUps && fs.existsSync(path.join(top, followUps))) {
-    g.followUps = { text: readText(path.join(top, followUps)), dates: blameDates(top, followUps) };
-  }
   const dirs = plansDirs.filter((d) => fs.existsSync(path.join(top, d)));
   const changed = lastCommitTimes(top, dirs);
   for (const dir of dirs) {

@@ -7,7 +7,7 @@
  * review of the digests (`learning.md` › The weekly job).
  *
  *   node <skill dir>/scripts/retro-weekly.mjs --register <repo> [--project <name>] [--log <rel>]
- *     [--follow-ups <rel>] [--plans <rel>]...
+ *     [--follow-ups <rel | dir/*.md>]... [--plans <rel>]...
  *   node <skill dir>/scripts/retro-weekly.mjs --unregister <repo | project>
  *   node <skill dir>/scripts/retro-weekly.mjs --list
  *   node <skill dir>/scripts/retro-weekly.mjs --run [--no-review] [--no-notify] [--budget <usd>] [--dry-run]
@@ -109,7 +109,7 @@ function resolved(entry) {
 }
 
 function describe(r) {
-  const f = (rel, from) => (rel ? `${rel} (${from})` : 'none');
+  const f = (rel, from) => (rel ? `${[rel].flat().join(', ')} (${from})` : 'none');
   return `log ${f(r.log, r.from.log)} · follow-ups ${f(r.followUps, r.from.followUps)} · plans ${r.plans.length ? `${r.plans.join(', ')} (${r.from.plans})` : 'none'}`;
 }
 

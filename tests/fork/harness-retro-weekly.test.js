@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'retro-weekly-core.mjs');
 const CLI_REL = path.join('scripts', 'retro-weekly.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 21;
+const EXPECTED_TESTS = 24;
 
 let passed = 0;
 let failed = 0;

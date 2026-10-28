@@ -1355,6 +1355,40 @@ test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may
   assert.strictEqual((hazardsOf(report(named), 'p3-queue-aging')[0] || {}).path, 'docs/qa/known-issues.md');
 });
 
+test('p3-queue-aging: with a Severity column only that cell makes a P3; a P1 row that names P3 in its Area raises nothing', () => {
+  const rows = ['| # | Area | Severity | Status |', '|---|---|---|---|', '| 1 | the P3 cleanup of a.ts | P1 | open |', '| 2 | b.ts | P3 | fixed `abc1234` |'];
+  const repo = mk({ 'docs/harness/follow-ups.md': `${rows.join('\n')}\n` });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'p3-queue-aging'), [], 'a P1 row is not a P3 because its Area says so');
+  const p3 = mk({ 'docs/harness/follow-ups.md': `${rows.concat('| 3 | c.ts | P3 | open |').join('\n')}\n` });
+  assert.match(hazardsOf(report(p3), 'p3-queue-aging')[0].detail, /^1 open P3 row, and no hygiene report/, 'the P3 row is counted, the P1 row is not');
+  const priority = mk({ 'docs/harness/follow-ups.md': '| # | Priority | Note | Status |\n|---|---|---|---|\n| 1 | P2 | P3 later | open |\n' });
+  assert.deepStrictEqual(hazardsOf(report(priority), 'p3-queue-aging'), [], 'a Priority column is a severity column too');
+});
+
+test('p3-queue-aging: the follow-ups role may be a list of paths and <dir>/*.md entries; the hazard names the first file with an open P3', () => {
+  const head = '| # | Area | Severity | Status |\n|---|---|---|---|\n';
+  const roles = { 'follow-ups': ['docs/fu/drops.md', 'docs/fu/batches/*.md'] };
+  const manifest = JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles });
+  const files = {
+    'docs/fu/drops.md': `${head}| 1 | a.ts | P1 | open |\n`,
+    'docs/fu/batches/b-1.md': `${head}| 2 | b.ts | P2 | open |\n`,
+    'docs/fu/batches/b-2.md': `${head}| 3 | c.ts | P3 | open |\n| 4 | d.ts | P3 | open |\n`,
+    'docs/fu/batches/notes.txt': 'not markdown\n',
+    '.agents/harness-manifest.json': manifest,
+  };
+  const repo = mk(files);
+  const found = hazardsOf(report(repo), 'p3-queue-aging');
+  assert.strictEqual(found.length, 1, 'the role list is read: the open P3 sits in a batch file');
+  assert.strictEqual(found[0].path, 'docs/fu/batches/b-2.md');
+  assert.match(found[0].detail, /^2 open P3 rows, and no hygiene report/, 'the count is over every file the role names');
+  // an unsafe entry drops the whole role: the usual places are tried, and none exists here
+  const unsafe = mk({ ...files, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(manifest), roles: { 'follow-ups': ['docs/fu/drops.md', '../outside.md'] } }) });
+  assert.deepStrictEqual(hazardsOf(report(unsafe), 'p3-queue-aging'), [], 'one unsafe entry drops the role');
+  // a string role still works
+  const one = mk({ 'docs/fu/one.md': `${head}| 1 | a.ts | P3 | open |\n`, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(manifest), roles: { 'follow-ups': 'docs/fu/one.md' } }) });
+  assert.strictEqual(hazardsOf(report(one), 'p3-queue-aging')[0].path, 'docs/fu/one.md');
+});
+
 test('mutants: the older report places and the phase-under-way rule each matter', () => {
   const repo = mk({
     '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n',

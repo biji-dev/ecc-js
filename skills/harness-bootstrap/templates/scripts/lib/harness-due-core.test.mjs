@@ -171,6 +171,24 @@ test('the P3 queue is named on the hygiene line, and due on its own only with no
   assert.equal(p3Due({ summary: { openP3: 12, oldestOpenP3Days: 13 }, hygieneBound: false, now: NOW, ageDays: 14 }), null);
 });
 
+test('p3Note and p3Due name the oldest open P3 row when the summary knows it, and read as before when it does not', () => {
+  const summary = { openP3: 12, oldestOpenP3Days: 20, oldestOpenP3Row: 'FU-3' };
+  assert.equal(p3Note(summary), '; 12 open P3, the oldest FU-3 at 20 d', 'p3Note names the row');
+  assert.equal(p3Note({ ...summary, oldestOpenP3Row: null }), '; 12 open P3, the oldest 20 d');
+  assert.equal(p3Note({ openP3: 2, oldestOpenP3Days: null, oldestOpenP3Row: null }), '; 2 open P3');
+  assert.equal(p3Due({ summary, hygieneBound: false, now: NOW, ageDays: 14, command: 'batch <date>' }).why, '12 open P3, the oldest FU-3 at 20 d (over 14)', 'p3Due names the row');
+  assert.equal(p3Due({ summary: { ...summary, oldestOpenP3Row: null }, hygieneBound: false, now: NOW, ageDays: 14 }).why, '12 open P3, the oldest 20 d (over 14)');
+});
+
+test('checkAll counts a P3 by the Severity cell when the doc has one: a P1 row that names P3 elsewhere is not counted, and the oldest P3 is named', () => {
+  const fuText = `${table(['#', 'Severity', 'Area', 'Status'], [['FU-1', 'P1', 'the P3 cleanup of a.ts', 'open'], ['FU-2', 'P3', 'b.ts', 'open']])}\n`;
+  const fuDates = new Map([[3, NOW - 90 * DAY], [4, NOW - 60 * DAY]]);
+  const items = checkAll({ now: NOW, log: null, followUps: { text: fuText, dates: fuDates }, reports: {}, merges: [], worktrees: [], proposals: null, seen: {}, project: 'p' });
+  const line = items.find((i) => i.kind === 'hygiene' || i.kind === 'p3');
+  assert.ok(line, `no hygiene or p3 line: ${items.map((i) => i.kind)}`);
+  assert.match(line.why, /1 open P3, the oldest FU-2 at 60 d/, 'one P3, and it is FU-2');
+});
+
 test('diskDue: under the minimum it runs the approved categories, or says none is approved; with what the last sweep freed', () => {
   assert.equal(diskDue({ free: 30e9, minGb: 25, approved: ['pnpm'] }), null);
   const due = diskDue({ free: 21.5e9, minGb: 25, approved: ['pnpm', 'uv'], last: { t: '2026-10-20T09:00:00Z', freed: 3.14e9 }, command: 'sweep --apply-approved' });
@@ -280,7 +298,7 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   const logText = `# Log\n\n${table(LOG_HEAD, [])}\n${['P1-01', 'P1-02', 'P1-03'].map(logRow).join('\n')}\n`;
   // header lines 1-4 at the log's birth, then one landing a day
   const logDates = new Map([[1, at('10T10:00:00')], [2, at('10T10:00:00')], [3, at('10T10:00:00')], [4, at('10T10:00:00')], [5, at('19T10:00:00')], [6, at('20T10:00:00')], [7, at('21T10:00:00')]]);
-  const fuText = `${table(['#', 'Severity', 'Status'], [['1', 'P3', 'open'], ['2', 'P2', 'open']])}\n`;
+  const fuText = `${table(['#', 'Severity', 'Status'], [['FU-1', 'P3', 'open'], ['FU-2', 'P2', 'open']])}\n`;
   const fuDates = new Map([[3, at('06T10:00:00')], [4, at('25T10:00:00')]]);
   const report = (kind, value, time) => ({ rel: fill(REPORTS[kind], value), time });
   const facts = {
@@ -307,7 +325,7 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   if (REPORTS.sweep !== null) assert.ok(kinds.includes('sweep'));
   if (REPORTS.hygiene !== null) {
     const hygiene = items.find((i) => i.kind === 'hygiene');
-    assert.match(hygiene.why, /since the log began, and no report yet; 1 open P3, the oldest 20 d$/);
+    assert.match(hygiene.why, /since the log began, and no report yet; 1 open P3, the oldest FU-1 at 20 d$/);
     assert.ok(!kinds.includes('p3'));
   } else assert.ok(kinds.includes('p3'));
   assert.ok(!kinds.includes('disk'));

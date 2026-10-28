@@ -13,7 +13,10 @@
  *   gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 412 -- pnpm -s --filter web test'
  *
  * 1. `<cmd> args…` runs without a shell; its stdout and stderr stream through unchanged. The run
- *    stops first (exit 1) when this process's `NODE_OPTIONS` names a `--test…` flag.
+ *    stops first (exit 1) when this process's `NODE_OPTIONS` names a `--test…` flag. On POSIX the
+ *    command leads a process group of its own with stdin ignored: outside the terminal's
+ *    foreground group a read of the tty would stop it, and a gate reads no input. A terminal
+ *    Ctrl-C then reaches the command once, through this process, not twice.
  * 2. The stream its runner writes the summary to (stdout; bun's stderr) holds exactly one summary of
  *    `--kind`, which is read (the rules are in run-counted-core.mjs). A summary on the other stream
  *    alone is not read: the run fails closed.
@@ -27,7 +30,11 @@
  * `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or `--test-shard`). A SIGINT, SIGTERM
  * or SIGHUP sent to this process is forwarded to the command, which is still waited for; the run
  * then fails (`run-counted: FAIL interrupted by <SIG>`) and exits as a shell would report the
- * command: its own code when non-zero, else 128 + the signal's number, never 0.
+ * command: its own code when non-zero, else 128 + the number of the signal it died of (or of the
+ * one forwarded), never 0. On POSIX the signal goes to the command's whole process group, so the
+ * processes it started stop with it. Once the command has exited, a process it left holding its
+ * pipes open is waited for at most STOP_GRACE_MS, and the run ends with what was read. A second
+ * stop signal kills the command's group with SIGKILL (exit 137), and the verdict names the first.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -44,6 +51,10 @@ function usage(msg) {
 
 /** The signals a gate runner stops a run with: each goes on to the command, and the run fails. */
 const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+/** After a forwarded signal and the command's exit, how long its pipes may stay open. */
+const STOP_GRACE_MS = 2000;
+/** POSIX: the command leads its own process group, so a signal reaches what it started. */
+const GROUP = process.platform !== 'win32';
 
 /** Spawn without a shell, stream both outputs through, keep both for the parser, forward a stop signal. */
 function run(cmd, args) {
@@ -52,16 +63,40 @@ function run(cmd, args) {
     const err = [];
     let settled = false;
     let interrupted = null;
-    const child = spawn(cmd, args, { stdio: ['inherit', 'pipe', 'pipe'] });
+    let exited = null;
+    let grace = null;
+    const child = spawn(cmd, args, { stdio: [GROUP ? 'ignore' : 'inherit', 'pipe', 'pipe'], detached: GROUP });
+    const read = (code, signal) => ({ exitCode: code, signal, spawnError: null, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
+    const signalCommand = (sig) => {
+      try {
+        if (!GROUP) throw new Error('no process group');
+        process.kill(-child.pid, sig);
+      } catch {
+        child.kill(sig);
+      }
+    };
+    // A command that exited may leave a process it started holding the pipes: `close` would never
+    // come. After a forwarded signal, wait for it STOP_GRACE_MS past the exit, then end the read.
+    const waitForClose = () => {
+      if (!interrupted || !exited || grace) return;
+      grace = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        if (!settled) settle(read(exited.code, exited.signal));
+      }, STOP_GRACE_MS);
+    };
     // Without a handler the signal ends this process at once and leaves the command running with
-    // no reader. The first signal is the one reported; a second is forwarded too.
+    // no reader. The first signal is the one reported; a second kills the command's group.
     const forward = (sig) => {
-      interrupted ??= sig;
-      child.kill(sig);
+      if (interrupted) return signalCommand('SIGKILL');
+      interrupted = sig;
+      signalCommand(sig);
+      waitForClose();
     };
     for (const sig of FORWARDED) process.on(sig, forward);
     const settle = (res) => {
       settled = true;
+      clearTimeout(grace);
       for (const sig of FORWARDED) process.off(sig, forward);
       resolve({ ...res, interrupted });
     };
@@ -77,9 +112,13 @@ function run(cmd, args) {
       if (settled) return;
       settle({ exitCode: null, signal: null, spawnError: e.message, stdout: '', stderr: '' });
     });
+    child.on('exit', (code, signal) => {
+      exited = { code, signal };
+      waitForClose();
+    });
     child.on('close', (code, signal) => {
       if (settled) return;
-      settle({ exitCode: code, signal, spawnError: null, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
+      settle(read(code, signal));
     });
   });
 }

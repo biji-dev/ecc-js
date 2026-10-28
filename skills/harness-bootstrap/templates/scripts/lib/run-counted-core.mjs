@@ -34,12 +34,12 @@
  *   counter; a second top-level plan, or a `# tests <n>` line anywhere with `# suites <n>` on
  *   the next line (a console `# tests 5` alone has none), is a second summary (a suite's own plan
  *   is indented). A file that registers no tests is reported as one passing top-level test named
- *   by its path, so a top-level `ok` named like a file (no whitespace, a `.js`, `.mjs`, `.cjs`,
- *   `.ts`, `.mts`, `.cts`, `.jsx` or `.tsx` ending, no directive, not `type: 'suite'`) fails the
- *   run; a test whose whole title is a bare file name reads the same, and the fix is to retitle
- *   it. `--test-name-pattern`, `--test-skip-pattern`, `--test-only` and `--test-shard` in a node
- *   command are a usage error, and the same flags in `NODE_OPTIONS` stop the run: each drops
- *   tests without counting them.
+ *   by its path, so a top-level `ok` named like a file (no whitespace unless the name is an
+ *   absolute path, `/…` or `C:\…`; a `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.jsx` or
+ *   `.tsx` ending; no directive; not `type: 'suite'`) fails the run; a test whose whole title is
+ *   a bare file name reads the same, and the fix is to retitle it. `--test-name-pattern`,
+ *   `--test-skip-pattern`, `--test-only` and `--test-shard` in a node command are a usage error,
+ *   and the same flags in `NODE_OPTIONS` stop the run: each drops tests without counting them.
  * - pytest: the whole line `<n> <word>, … in <t>s`, bare or between `=` rules.
  * - bun: the block of ` <n> pass`, ` <n> skip`, ` <n> todo`, ` <n> filtered out`, ` <n> fail`
  *   lines (with its `expect() calls` and `snapshots` lines) that ends at `Ran <n> tests across
@@ -188,8 +188,9 @@ const NODE_SUMMED = ['pass', 'fail', 'cancelled', 'skipped', 'todo'];
 const NODE_WORDS = { pass: 'passed', fail: 'failed', cancelled: 'cancelled', skipped: 'skipped', todo: 'todo' };
 const NODE_RESULT = /^\s*(?:not )?ok \d+(.*)$/;
 const NODE_PLAN = /^1\.\.\d+$/;
-// A top-level pass named like a file: node's report of a file that registered no tests.
-const NODE_FILE_RESULT = /^ok \d+ - (\S+\.(?:[cm]?[jt]s|[jt]sx))$/;
+// A top-level pass named like a file: node's report of a file that registered no tests. An
+// absolute path (`/…`, `C:\…`, `C:/…`) may hold whitespace; a relative one is read without.
+const NODE_FILE_RESULT = /^ok \d+ - ((?:\/|[A-Za-z]:[\\/]).*\.(?:[cm]?[jt]s|[jt]sx)|\S+\.(?:[cm]?[jt]s|[jt]sx))$/;
 // The spec reporter's info glyph (U+2139), built so no pictograph is in the file.
 const NODE_SPEC = new RegExp(`^${String.fromCodePoint(0x2139)} (tests|pass) \\d+$`);
 

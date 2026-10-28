@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'run-counted-core.mjs');
 const CLI_REL = 'run-counted.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 23;
+const EXPECTED_TESTS = 26;
 
 let passed = 0;
 let failed = 0;
@@ -114,6 +114,9 @@ mutantFails('reading a second node summary by its # tests line alone', 'if (plan
 mutantFails('reading a console # tests line as a node summary', " && NODE_COUNTER.exec(ls[i + 1] ?? '')?.[1] === 'suites'", '');
 mutantFails('counting a file that registered no tests as a pass', 'for (const f of nodeEmptyFiles(ls)) problems.push(', 'for (const f of []) problems.push(');
 mutantFails('not forwarding a stop signal to the command', 'for (const sig of FORWARDED) process.on(sig, forward);', '', CLI_REL);
+mutantFails("signalling the command alone, not its process group", 'process.kill(-child.pid, sig);', 'child.kill(sig);', CLI_REL);
+mutantFails('waiting for close forever after a forwarded signal', 'if (!interrupted || !exited || grace) return;', 'return;', CLI_REL);
+mutantFails('forwarding a second stop signal instead of SIGKILL', "if (interrupted) return signalCommand('SIGKILL');", 'if (interrupted) return signalCommand(sig);', CLI_REL);
 mutantFails('letting a skip through', "  'skipped',\n  'todo',", "  'todo',");
 mutantFails('letting a flaky test through', "  'flaky',\n", '');
 mutantFails('ignoring the node skip and todo markers', 'for (const m of summary.markers ?? [])', 'for (const m of [])');

@@ -252,6 +252,8 @@ test('node (TAP): a file that registered no tests is a problem, not one pass; a 
   assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', 'sub/blank.test.mjs')).problems, [empty('sub/blank.test.mjs')]);
   assert.deepEqual(parseSummary('node', TAP_SUITE.replaceAll('group', 'utils.ts')).problems, []);
   assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', 'reads a.mjs')).problems, []);
+  // an absolute path may hold whitespace: node prints it as given
+  for (const abs of ['/tmp/a b/empty.test.mjs', 'C:\\a b\\empty.test.mjs']) assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', abs)).problems, [empty(abs)]);
 });
 
 test('pytest: the final counts line in any order, bare (-q) or between = rules; deselected and xfailed count', () => {
@@ -432,6 +434,13 @@ test("the wrapper over node's own runner: a file that registers no tests fails, 
   fs.writeFileSync(path.join(d, 'real.test.mjs'), "import { test } from 'node:test';\ntest('one', () => {});\n");
   // relative names, run from the directory: node names the empty file by the path it was given
   const tap = (...files) => wrap(['--kind', 'node', '--min', '1', '--', process.execPath, '--test', '--test-reporter=tap', ...files], {}, d);
+  // and by an absolute path whose directory name has a space
+  const spaced = path.join(d, 'a dir');
+  fs.mkdirSync(spaced);
+  fs.writeFileSync(path.join(spaced, 'empty.test.mjs'), '');
+  const abs = tap(path.join(spaced, 'empty.test.mjs'));
+  assert.equal(abs.status, 1, abs.stdout + abs.stderr);
+  assert.match(abs.stdout, / dir\/empty\.test\.mjs registered no tests: node counted the file itself as one passing test$/m);
   for (const r of [tap('empty.test.mjs'), tap('empty.test.mjs', 'real.test.mjs')]) {
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /^run-counted: FAIL empty\.test\.mjs registered no tests: node counted the file itself as one passing test$/m);
@@ -483,38 +492,116 @@ function alive(pid) {
   }
 }
 
+// run-counted's STOP_GRACE_MS (2 s) and a margin: the bound on a wrapper that must not hang.
+const GRACE_BOUND_MS = 4000;
+
+/**
+ * A script that writes its PID to `pidFile` (written, then renamed, so it appears whole) once it
+ * runs, then waits. `trap`: SIGTERM is caught; `exitOnTrap` then exits 0, else it writes
+ * `${pidFile}.term` and keeps waiting. `launch`: it first starts that script on its own pipes.
+ */
+function waiter(file, pidFile, { trap = false, exitOnTrap = false, launch = null } = {}) {
+  const lines = ["import fs from 'node:fs';", "import { spawn } from 'node:child_process';"];
+  if (launch) lines.push(`spawn(process.execPath, [${JSON.stringify(launch)}], { stdio: 'inherit' });`);
+  if (trap) lines.push(`process.on('SIGTERM', () => ${exitOnTrap ? 'process.exit(0)' : `fs.writeFileSync(${JSON.stringify(`${pidFile}.term`)}, '')`});`);
+  lines.push(`fs.writeFileSync(${JSON.stringify(`${pidFile}.part`)}, String(process.pid));`, `fs.renameSync(${JSON.stringify(`${pidFile}.part`)}, ${JSON.stringify(pidFile)});`);
+  lines.push('setInterval(() => {}, 1000);');
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  return file;
+}
+
+/** Start the wrapper over `script`; `stop()` kills whatever is left of it and of the PIDs in `pids`. */
+function startWrap(script) {
+  const w = spawn(process.execPath, [WRAPPER, '--kind', 'node', '--min', '1', '--', process.execPath, script], { env: wrapEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = { out: '', closed: null, pids: [] };
+  w.stdout.on('data', (b) => (r.out += b));
+  w.on('close', (code, signal) => (r.closed = { code, signal }));
+  r.kill = (sig) => w.kill(sig);
+  r.stop = () => {
+    if (r.closed === null) w.kill('SIGKILL');
+    for (const pid of r.pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+  };
+  return r;
+}
+
+const pidOf = async (pidFile, r) => {
+  await until(() => fs.existsSync(pidFile), 2000, `${path.basename(pidFile)} to appear`);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  r.pids.push(pid);
+  return pid;
+};
+const INTERRUPTED = /^run-counted: FAIL interrupted by SIGTERM \(forwarded to the command\)$/m;
+
 test('the wrapper forwards SIGTERM to the command, waits for it and exits 128 + 15, even when the command traps it and exits 0', async () => {
   const d = tmp();
-  for (const trap of [false, true]) {
-    const pidFile = path.join(d, `pid-${trap}`);
-    const child = path.join(d, `wait-${trap}.mjs`);
-    // the PID file appears whole (written, then renamed) once the command is running
-    const lines = [
-      "import fs from 'node:fs';",
-      ...(trap ? ["process.on('SIGTERM', () => process.exit(0));"] : []),
-      `fs.writeFileSync(${JSON.stringify(`${pidFile}.part`)}, String(process.pid));`,
-      `fs.renameSync(${JSON.stringify(`${pidFile}.part`)}, ${JSON.stringify(pidFile)});`,
-      'setInterval(() => {}, 1000);',
-    ];
-    fs.writeFileSync(child, `${lines.join('\n')}\n`);
-    const w = spawn(process.execPath, [WRAPPER, '--kind', 'node', '--min', '1', '--', process.execPath, child], { env: wrapEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let closed = null;
-    w.stdout.on('data', (b) => (out += b));
-    w.on('close', (code, signal) => (closed = { code, signal }));
-    let pid = null;
+  for (const exitOnTrap of [false, true]) {
+    const pidFile = path.join(d, `pid-${exitOnTrap}`);
+    const r = startWrap(waiter(path.join(d, `wait-${exitOnTrap}.mjs`), pidFile, { trap: exitOnTrap, exitOnTrap }));
     try {
-      await until(() => fs.existsSync(pidFile), 2000, 'the command to start');
-      pid = Number(fs.readFileSync(pidFile, 'utf8'));
-      w.kill('SIGTERM');
-      await until(() => closed !== null, 2000, 'the wrapper to exit');
-      assert.deepEqual(closed, { code: 143, signal: null }, out);
-      assert.match(out, /^run-counted: FAIL interrupted by SIGTERM \(forwarded to the command\)$/m);
-      assert.doesNotMatch(out, /killed by SIGTERM|^COUNTED/m);
+      const pid = await pidOf(pidFile, r);
+      r.kill('SIGTERM');
+      await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+      assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+      assert.match(r.out, INTERRUPTED);
+      assert.doesNotMatch(r.out, /killed by SIGTERM|^COUNTED/m);
       await until(() => !alive(pid), 2000, 'the command to end');
     } finally {
-      if (closed === null) w.kill('SIGKILL');
-      if (pid !== null && alive(pid)) process.kill(pid, 'SIGKILL');
+      r.stop();
     }
+  }
+});
+
+test('the wrapper stops the processes the command started: SIGTERM reaches its whole process group', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'worker.pid');
+  const worker = waiter(path.join(d, 'worker.mjs'), pidFile);
+  const launcherPid = path.join(d, 'launcher.pid');
+  const r = startWrap(waiter(path.join(d, 'launcher.mjs'), launcherPid, { launch: worker }));
+  try {
+    await pidOf(launcherPid, r);
+    const pid = await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+    await until(() => !alive(pid), 2000, 'the worker to end');
+  } finally {
+    r.stop();
+  }
+});
+
+test('the wrapper does not hang on a worker that traps SIGTERM and holds the pipes open after the command exited', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'worker.pid');
+  const worker = waiter(path.join(d, 'worker.mjs'), pidFile, { trap: true });
+  const launcherPid = path.join(d, 'launcher.pid');
+  const r = startWrap(waiter(path.join(d, 'launcher.mjs'), launcherPid, { launch: worker }));
+  try {
+    await pidOf(launcherPid, r);
+    await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+  } finally {
+    r.stop();
+  }
+});
+
+test('a second SIGTERM kills a command that traps the first and never exits: exit 128 + 9, the first signal named', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'pid');
+  const r = startWrap(waiter(path.join(d, 'stubborn.mjs'), pidFile, { trap: true }));
+  try {
+    const pid = await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => fs.existsSync(`${pidFile}.term`), 2000, 'the command to get the first SIGTERM');
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 137, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+    await until(() => !alive(pid), 2000, 'the command to end');
+  } finally {
+    r.stop();
   }
 });

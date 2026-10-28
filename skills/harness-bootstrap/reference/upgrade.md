@@ -90,6 +90,13 @@ cp <skill dir>/<template> theirs   # then format both as <path> is, and give bot
 git merge-file -p <path> base theirs > merged
 ```
 
+Format only where the project does: where the file passes the formatter's check
+(`npx prettier --check <path>`, which passes a path its ignore file lists too, and
+`--stdin-filepath` leaves that path as it is). Where the file fails the check, the
+project does not format it, so leave the base and the template as the template
+wrote them: formatted, every line the formatter reflows would read as a project
+edit.
+
 Exit 0 is a clean merge. A conflict marks both sides: where the template now carries
 the project's own fix, take the template's side, and keep behaviour only this
 project has as a binding or a rule. Where it marks a binding the project set, keep
@@ -187,6 +194,18 @@ the registry, `.review-work/x` and the ledger directory of each wrapper the proj
 runs (`.codex-runs/x`, `.claude-runs/x`: a directory by a path inside it, since git
 reads an absent directory's bare name as not ignored). One that does not is a
 `missing` row: the next `git add -A` commits it.
+
+`[M]` **A merged script runs before the manifest is written.** A clean merge is not
+yet a working file: a function both sides added, the project in one place and the
+template in another, merges twice without a conflict, and the second declaration
+stops the file from loading. A guard that cannot load fails open: Claude Code reads
+a hook's exit 1 as a non-blocking error and runs the command. So each merged script
+passes `node --check <path>` (`bash -n <path>` for a shell script) and its own test
+(`node --test scripts/lib/<name>.test.mjs`, merged in the same change). A duplicate
+is a conflict git did not mark: where both copies do one job, the template has taken
+the project's fix, so keep the template's copy; where they differ, ask. A project
+test that pins what the template changed (a message, the rule that refuses a
+command) fails as well: the owner keeps the project's value or takes the template's.
 
 `[M]` After applying, write `.agents/harness-manifest.json` and commit it with the
 change (then register the repository for the weekly job, `learning.md` › The weekly

@@ -688,6 +688,7 @@ test('upgrade.md step 2: a file generated from a template whose template is newe
   const para = step2.slice(at, step2.indexOf('`[M]`', at));
   assert.ok(para.includes('folds in every fix the project made before the manifest was written'), 'the merge paragraph does not say why unchanged is not the template');
   assert.ok(para.includes('Format the base and the current template as the project formats the file first'), 'the merge paragraph does not format the base and the template first');
+  assert.ok(para.includes("Format only where the project does: where the file passes the formatter's check (`npx prettier --check <path>`, which passes a path its ignore file lists too, and `--stdin-filepath` leaves that path as it is). Where the file fails the check, the project does not format it, so leave the base and the template as the template wrote them: formatted, every line the formatter reflows would read as a project edit."), 'the merge paragraph formats the base and the template where the project does not format the file');
   assert.ok(para.includes('--base <path> > base') && para.includes('git merge-file -p <path> base theirs > merged'), 'the merge paragraph has no recipe');
   assert.ok(para.includes('A block entry merges on the block alone. `--base AGENTS.md#rules` prints the whole template, so cut the block, its marker lines included, out of the file, the base and the current template, merge the three cuts, and put the merged block back in place of the file\'s.'), 'the merge paragraph does not say how a block merges');
   assert.ok(para.includes("for f in AGENTS.md base theirs; do sed -n '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p' \"$f\" > \"$f.block\"; done") && para.includes('git merge-file -p AGENTS.md.block base.block theirs.block > merged.block'), 'the merge paragraph has no block recipe');
@@ -697,8 +698,12 @@ test('upgrade.md step 2: a file generated from a template whose template is newe
   assert.ok(step2.includes('Adopting it in place wraps the legacy text in `policy` markers where it stands, and the manifest records that block as `reviewed`; until it is wrapped, the status line is its only record'), 'step 2 does not say how a legacy policy adopted in place is recorded');
 });
 
-test('upgrade.md step 3: a kept row keeps its old hashes, a merged row records the template it merged in, and project-own and renamed entries are covered', () => {
+test('upgrade.md step 3: a merged script runs before the manifest, a kept row keeps its old hashes, a merged row records the template it merged in, and project-own and renamed entries are covered', () => {
   const step3 = upgradeStep('## Step 3', '## Markers in shared files');
+  assert.ok(step3.includes('**A merged script runs before the manifest is written.** A clean merge is not yet a working file: a function both sides added, the project in one place and the template in another, merges twice without a conflict, and the second declaration stops the file from loading.'), 'step 3 applies a clean merge without running it');
+  assert.ok(step3.includes("A guard that cannot load fails open: Claude Code reads a hook's exit 1 as a non-blocking error and runs the command."), 'step 3 does not say a guard that cannot load fails open');
+  assert.ok(step3.includes('each merged script passes `node --check <path>` (`bash -n <path>` for a shell script) and its own test (`node --test scripts/lib/<name>.test.mjs`, merged in the same change)'), 'step 3 does not run a merged script and its test');
+  assert.ok(step3.includes("A duplicate is a conflict git did not mark: where both copies do one job, the template has taken the project's fix, so keep the template's copy; where they differ, ask."), 'step 3 does not say which copy of a duplicate stays');
   assert.ok(step3.includes("**A kept row keeps its old hashes.** A `keep` row's `sha256` and `templateSha256` stay as the old manifest recorded them"), 'step 3 re-hashes a kept row');
   assert.ok(step3.includes('A merged row records the template it merged in (`templateSha256`) and the merged file (`sha256`)'), 'step 3 does not say what a merged row records');
   assert.ok(/\*\*Entries no template covers\.\*\* A harness file the project wrote itself in place of a template[^.]*is a `reviewed` entry with no `template`: an upgrade proposes section-level changes and never merges into it/.test(step3), 'step 3 does not cover a project-own harness file');
@@ -940,6 +945,27 @@ test("Step 2's merge gives the base and the template the file's own date, and a 
   const merged = git(dir, ['merge-file', '-p', 'file', 'base', 'theirs'], cleanGit);
   assert.strictEqual(merged.status, 0, 'a stamped base and template still conflict');
   assert.strictEqual(merged.stdout, '// tool (generated 2026-10-27).\n// says another.\nbody\n');
+});
+
+test('Step 3 runs a merged script: a function both sides added in different places merges clean twice, and node --check refuses the file', () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('merges twice without a conflict, and the second declaration stops the file from loading'), 'step 3 does not say a clean merge can declare a function twice');
+  if (!hasGit) return;
+  // why, in git and node: the project put its fix above the code, the template put the same fix below it
+  const dir = tmp('hb-twice-');
+  const write = (name, lines) => fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
+  const fix = ['function fix(x) {', '  return x + 1;', '}'];
+  const body = ['export const a = 1;', 'export const b = 2;', 'export const c = 3;', 'export const d = 4;'];
+  write('base', body);
+  write('file', [...fix, ...body]);
+  write('theirs', [...body, ...fix]);
+  const merged = git(dir, ['merge-file', '-p', 'file', 'base', 'theirs'], cleanGit);
+  assert.strictEqual(merged.status, 0, 'the two additions conflicted: git would have marked them');
+  assert.strictEqual(merged.stdout.split('function fix(').length - 1, 2, 'the clean merge does not hold the function twice');
+  fs.writeFileSync(path.join(dir, 'merged.mjs'), merged.stdout);
+  const check = spawnSync(process.execPath, ['--check', path.join(dir, 'merged.mjs')], { encoding: 'utf8' });
+  assert.notStrictEqual(check.status, 0, 'node --check passed a file that declares a function twice');
+  assert.match(check.stderr, /has already been declared/);
 });
 
 test('upgrade.md: a reference change takes a version, the base gets a sheet row, and a directory becomes the skill link in two commits', () => {

@@ -366,6 +366,54 @@ test('malformed input or a missing transcript never fails the turn', () => {
 
 console.log('\nharness skills: reference text (js.8)');
 
+const gateRef = name => fs.readFileSync(path.join(BOOTSTRAP, 'reference', name), 'utf8').replace(/\s+/g, ' ');
+
+test('--writer mixed is a diff the second family wrote part of; Opus and Sonnet together are bounded', () => {
+  for (const name of ['runner.md', 'gate-design.md', 'cross-model.md']) {
+    const text = gateRef(name);
+    assert.ok(/`mixed`[^.;]*second family|second family[^.;]*`mixed`/.test(text), `${name} does not say \`mixed\` is a diff the second family wrote part of`);
+    assert.ok(/Opus and Sonnet[^.;]*`bounded`|`bounded`[^.;]*Opus and Sonnet/.test(text), `${name} does not say Opus and Sonnet together are \`bounded\``);
+    assert.ok(!text.includes('more than one did'), `${name} still says \`mixed\` "when more than one did"`);
+    assert.ok(!text.includes('more than one executor is `mixed`'), `${name} still says a round split between executors is \`mixed\``);
+  }
+  const design = gateRef('gate-design.md');
+  const start = design.indexOf('**One fix brief per area, not per finding.**');
+  assert.ok(start >= 0, 'gate-design.md has no fix-brief paragraph');
+  const para = design.slice(start, design.indexOf('`[M]`', start));
+  assert.ok(!/the review gate then runs with `--writer second`/.test(para), 'the fix-brief paragraph still runs the gate with `--writer second` always');
+  assert.ok(para.includes('`bounded`') && para.includes('`mixed`'), 'the fix-brief paragraph does not name `mixed` and `bounded` for the round');
+});
+
+test('a P3 batch over critical code that Opus did not write gets the Opus code-reviewer, in gate-design.md and runner.md', () => {
+  const notOpus = /not written by Opus|Opus did not write/;
+  const design = gateRef('gate-design.md');
+  const row = design.slice(design.indexOf('| P3 only |'), design.indexOf('| P2 |', design.indexOf('| P3 only |')));
+  assert.ok(row.startsWith('| P3 only |'), 'gate-design.md has no `P3 only` row');
+  assert.ok(notOpus.test(row) && row.includes('Opus `code-reviewer`'), 'the `P3 only` row does not give a batch not written by Opus the Opus `code-reviewer`');
+  const start = design.indexOf('**P3s never open a fix round.**');
+  assert.ok(start >= 0, 'gate-design.md has no P3-batch paragraph');
+  const para = design.slice(start, design.indexOf('> Origin', start));
+  assert.ok(notOpus.test(para) && para.includes('Opus `code-reviewer`'), 'the P3-batch paragraph does not name the Opus `code-reviewer` for a batch over critical code');
+  assert.ok(para.includes('--max-fixed P3'), 'the P3-batch paragraph does not cite `review-gate.mjs --kind fix --max-fixed P3`');
+  const runner = gateRef('runner.md');
+  const at = runner.indexOf('**The P3 batch** runs once per slice set');
+  assert.ok(at >= 0, 'runner.md has no P3-batch bullet');
+  const bullet = runner.slice(at, runner.indexOf('- `[M]`', at));
+  assert.ok(notOpus.test(bullet) && bullet.includes('Opus `code-reviewer`'), "runner.md's P3-batch bullet does not name the Opus `code-reviewer` for a batch over critical code");
+});
+
+test('gate-design.md maps a three-level severity scale to P1 / P2 / P3, and P0 by its row', () => {
+  const design = gateRef('gate-design.md');
+  const start = design.indexOf('Agents that report CRITICAL / HIGH / MEDIUM / LOW');
+  assert.ok(start >= 0, 'gate-design.md has no severity-map sentence');
+  const para = design.slice(start, design.indexOf('Severity decides', start));
+  assert.ok(para.includes('three-level scale'), 'the severity map does not name a three-level scale');
+  for (const need of [/important or warning|warning or important/, /nice-to-have or suggestion|suggestion or nice-to-have/, /P1 \/ P2 \/ P3/]) {
+    assert.ok(need.test(para), `the three-level map does not say ${need}`);
+  }
+  assert.ok(/meets the P0 row is P0/.test(para), 'the severity map does not say a finding that meets the P0 row is P0');
+});
+
 test("runner.md's reuse paragraph names NODE_OPTIONS as part of the key", () => {
   const runner = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'runner.md'), 'utf8').replace(/\s+/g, ' ');
   const start = runner.indexOf('`run-gates.sh` reuses an all-PASS result');

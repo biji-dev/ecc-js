@@ -343,9 +343,9 @@ DOM snapshot; send screenshots to a model that reads images.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
-  <tier> --writer <role>` (the role that wrote it, `mixed` when more than one did)
-  and dispatch exactly
-  the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
+  <tier> --writer <role>` (the role that wrote it; `mixed` when the second family
+  wrote part of it, `bounded` when Opus and Sonnet wrote it together) and dispatch
+  exactly the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
   passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
   over the whole unit diff, the second family's adversarial pass carrying lane B's
   change surface (`blast-radius-auditor.md` › The brief), each triggered specialist,
@@ -371,13 +371,15 @@ DOM snapshot; send screenshots to a model that reads images.
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
   fix diff only — `--writer` is the role that wrote the fix: `main | bounded |
   second | mixed` (on Claude Code also `claude | sonnet | codex`; each role's model
-  per host in `gate-design.md` › Model and effort), required on every kind.
+  per host in `gate-design.md` › Model and effort), required on every kind, with
+  `mixed` and `bounded` as for the unit.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
 - `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
   fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
-  targeted tests, no re-review (`review-gate.mjs` says `p3-batch`). The P3s a unit
-  defers go to the follow-ups doc, and the hygiene unit batches them.
+  targeted tests, no re-review (`review-gate.mjs` says `p3-batch`) — except a batch
+  over critical code that Opus did not write, which the Opus `code-reviewer` reads.
+  The P3s a unit defers go to the follow-ups doc, and the hygiene unit batches them.
 - `[M]` Then the **FULL verify** (`context.md`): every gate, one line each, each red
   attributed against the merge base, working tree included. Where the project bound
   `SNAPSHOT_COPY`, it is `bash scripts/run-gates.sh --snapshot` once the unit's work

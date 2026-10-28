@@ -284,8 +284,10 @@ in one line and start it.
 | **P3** | a nit, a style point | **never opens one** — the P3 batch, or rides along on a line the round already changes |
 
 `[M]` Agents that report CRITICAL / HIGH / MEDIUM / LOW map to P0 / P1 / P2 / P3.
-Severity decides whether a finding enters a fix round; the scope class decides
-whether it belongs on this branch (`scope-guard.md`).
+A three-level scale (critical, then important or warning, then nice-to-have or
+suggestion) maps to P1 / P2 / P3; a finding that meets the P0 row is P0 whatever
+its label. Severity decides whether a finding enters a fix round; the scope class
+decides whether it belongs on this branch (`scope-guard.md`).
 
 ## Fix rounds — bounded by severity and by what the fix touches
 
@@ -297,7 +299,7 @@ line in the ledger. Its rules:
 
 | Round fixed | Cold code | Critical code |
 |---|---|---|
-| P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch` |
+| P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch`; a batch not written by Opus gets the Opus `code-reviewer` |
 | P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
 | any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
@@ -307,14 +309,16 @@ line in the ledger. Its rules:
 writes, the other re-reads — fix rounds included. It is required and names the
 writer's role on this host — `main | bounded | second | mixed` (on Claude Code
 also `claude | sonnet | codex`), each role's model per host in › Model and effort
-below; a round whose fix groups went to more than one executor is `mixed` and
-routes as `second`, and critical code that Sonnet wrote gets the Opus reviewer as
-the second family's does.
+below; a round whose executors include the second family beside another is `mixed`
+and routes as `second`, a round Opus and Sonnet wrote together is `bounded`, and
+critical code that Sonnet wrote gets the Opus reviewer as the second family's does.
 
 `[M]` **P3s never open a fix round.** They wait for **the P3 batch, one per slice
 set** — a Sonnet fixer (the second family's `fix-cold` where it runs) over every
-P3 still IN scope, with no re-review; a P3 on a line the round already changes rides
-along in that round. P3s deferred to the follow-ups doc get their own batch in the
+P3 still IN scope, with no re-review — except a batch over critical code that Opus
+did not write, which the Opus `code-reviewer` reads (`review-gate.mjs --kind fix
+--max-fixed P3` names it); a P3 on a line the round already changes rides along
+in that round. P3s deferred to the follow-ups doc get their own batch in the
 hygiene unit (`hygiene.md`). It was called the P3 sweep until v5, a name the
 workstream sweep (`sweep.md`) also uses.
 > Origin: in one 50-slice milestone, 20 of 50 fix rounds were opened by P3s alone,
@@ -333,8 +337,9 @@ owner's to order, and it is the adversarial pass.
 `[M]` **One fix brief per area, not per finding.** Fix groups whose files do not
 overlap go to one executor in one brief; groups that share files run in sequence.
 Fix groups on critical code go to Opus; the rest to the second family's `fix-cold`
-where it has quota, else Sonnet — and the review gate then runs with
-`--writer second`.
+where it has quota, else Sonnet — and the review gate then runs with the role
+that wrote the round: `--writer second` for the second family alone, `mixed` with
+Opus groups beside it, `bounded` where Sonnet took the rest beside Opus.
 
 `[M]` **A P0 or P1 introduced by the fix itself trips the stop** (`rules.md` §2). A
 pre-existing finding seen for the first time does not.

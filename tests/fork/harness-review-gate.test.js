@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
@@ -16,7 +17,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 53;
+const EXPECTED_TESTS = 62;
 
 let passed = 0;
 let failed = 0;
@@ -88,6 +89,91 @@ test('the shipped review-gate suite passes with the pinned test count', () => {
   assert.strictEqual(res.status, 0, out.slice(-1500));
   assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
   assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+  assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+});
+
+/** The core's [B] block rebound the way installs do, and the test's [B] block kept matching it. */
+const REBOUND_CRITICAL = 'export const CRITICAL = [/^src\\/(core|ui)\\//, /(^|\\/)AGENTS\\.md$/];';
+const CORE_CRITICAL = [CORE_REL, 'export const CRITICAL = [];', REBOUND_CRITICAL];
+const REBINDINGS = [
+  CORE_CRITICAL,
+  [CORE_REL, "'security-reviewer': [/auth|session|token|crypto|permission|rbac|tenant|webhook|public/i],", "'security-reviewer': [/./],"],
+  [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that are not production', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /^scripts\\//]; // paths that are not production'],
+  [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that count as tests', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /(^|\\/)\\.maestro\\//]; // paths that count as tests'],
+  [CORE_REL, 'export const FIX_LINES = 40;', 'export const FIX_LINES = 25;'],
+  [TEST_REL, 'const EXPECTED_CRITICAL = [];', REBOUND_CRITICAL.replace('export const CRITICAL', 'const EXPECTED_CRITICAL')],
+];
+
+/** Copy the shipped scripts, apply each rebinding (each needle exactly once), run the suite. */
+function reboundRun(rebindings) {
+  const copy = tmp('review-gate-rebound-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  for (const [rel, needle, replacement] of rebindings) {
+    const file = path.join(copy, rel);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, `${needle} is not in ${rel} exactly once`);
+    fs.writeFileSync(file, before.replace(needle, () => replacement));
+  }
+  const res = runSuite(copy);
+  return { res, out: res.stdout + res.stderr };
+}
+
+test('the shipped suite passes with the core\'s bindings rebound as an install binds them', () => {
+  const { res, out } = reboundRun(REBINDINGS);
+  const failing = out.match(/^not ok .*$/gm) ?? [];
+  assert.strictEqual(res.status, 0, `rebound: ${failing.length} failing, first: ${failing.slice(0, 3).join(' | ')}\n${out.slice(-1200)}`);
+  assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1200));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+  assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+});
+
+test('the core\'s CRITICAL rebound alone fails exactly one test: the [B] CRITICAL test', () => {
+  const { out } = reboundRun([CORE_CRITICAL]);
+  const failing = out.match(/^not ok .*$/gm) ?? [];
+  assert.strictEqual(failing.length, 1, `expected one failing test, got ${failing.length}: ${failing.join(' | ')}`);
+  assert.match(failing[0], /^not ok \d+ - \[B\] the core's CRITICAL is EXPECTED_CRITICAL/);
+});
+
+// the paths the template's NON_PRODUCTION must keep out of production
+const NINE = ['README.md', 'docs/x.ts', 'src/__tests__/a.ts', 'tests/a.js', 'test/a.js', 'e2e/a.ts', 'src/fixtures/a.json', 'src/a.test.ts', 'src/a.spec.mjs'];
+/** The template core's default bindings, read in a child process (the shipped suite no longer pins them). */
+function checkDefaults(scriptsDir) {
+  const url = pathToFileURL(path.join(scriptsDir, CORE_REL)).href;
+  const paths = { db: ['db/migrations/001_init.sql', 'src/db/schema.ts', 'src/ui/panel.tsx', 'src/a.ts'], production: ['src/a.ts', ...NINE] };
+  const code = `import * as c from ${JSON.stringify(url)};
+const p = ${JSON.stringify(paths)};
+console.log(JSON.stringify({
+  critical: c.CRITICAL.length,
+  triggers: Object.keys(c.TRIGGERS),
+  db: p.db.map((x) => c.TRIGGERS['database-reviewer'].some((re) => re.test(x))),
+  fixLines: c.FIX_LINES,
+  production: p.production.map(c.isProduction),
+}));`;
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: hermeticEnv() });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const got = JSON.parse(res.stdout);
+  assert.strictEqual(got.critical, 0, 'the template CRITICAL is not empty');
+  assert.deepStrictEqual(got.triggers, ['security-reviewer', 'silent-failure-hunter', 'database-reviewer'], 'the template TRIGGERS keys');
+  assert.deepStrictEqual(got.db, [true, true, false, false], `database-reviewer matches ${paths.db.join(', ')} as ${got.db.join(', ')}`);
+  assert.strictEqual(got.fixLines, 40, 'the template FIX_LINES');
+  assert.deepStrictEqual(got.production, [true, ...NINE.map(() => false)], `production: ${paths.production.join(', ')} as ${got.production.join(', ')}`);
+}
+
+test('the template core ships its default bindings', () => {
+  checkDefaults(SCRIPTS);
+});
+
+test('mutant: the database trigger matching every path fails the defaults check', () => {
+  const copy = tmp('review-gate-defaults-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const corePath = path.join(copy, CORE_REL);
+  const before = fs.readFileSync(corePath, 'utf8');
+  const mutated = before.replace('/\\.sql$/i,', '/./,');
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(corePath, mutated);
+  assert.throws(() => checkDefaults(copy), /database-reviewer matches/);
 });
 
 test('the suite is unaffected by GIT_DIR / GIT_INDEX_FILE of a caller repo (as inside a git hook)', () => {
@@ -122,8 +208,12 @@ test('mutant: a P3-only fix round that is no longer the P3 batch makes the suite
   mutantRun("maxFixed === 'P3')", "maxFixed === 'P3x')");
 });
 
-test('mutant: the database trigger matching every path makes the suite fail', () => {
-  mutantRun('/\\.sql$/i,', '/./,');
+test('mutant: a P3 batch over critical code by Sonnet or the second family is the P3 batch again, read by nobody', () => {
+  mutantRun("if (critical.length > 0 && writer !== 'claude')", 'if (false)');
+});
+
+test('mutant: the P3 batch\'s writer check dropped, so Opus\'s own batch gets the Opus reviewer too', () => {
+  mutantRun("if (critical.length > 0 && writer !== 'claude')", 'if (critical.length > 0)');
 });
 
 test('mutant: critical code written by the second family no longer gets a Claude reviewer', () => {

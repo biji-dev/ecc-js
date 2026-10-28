@@ -10,8 +10,9 @@
 // whole unit diff, P3s never open a fix round, Opus re-reviews only critical code with a P1
 // fixed, at most two Opus rounds, and a re-review is scoped to the fix. A fix written by the
 // second family is re-read by Claude, never by the family that wrote it. Critical code written by
-// anyone but Opus (the second family, Sonnet, or a mix) gets an Opus reviewer per slice. The
-// writer is never assumed: every decision names who wrote the diff (`--writer`, required).
+// anyone but Opus (the second family, Sonnet, or a mix) gets an Opus reviewer per slice, and a P3
+// batch over it gets one too. The writer is never assumed: every decision names who wrote the
+// diff (`--writer`, required).
 //
 // Decides from FACTS about a diff (paths, production lines, what a fix round fixed) which review
 // it is owed, so the main thread does not guess. No I/O here, so the test can pin each rule.
@@ -51,8 +52,9 @@ export const FIX_LINES = 40; // a critical P1 fix at or under this many producti
 export const KINDS = ['slice', 'unit', 'fix'];
 export const TIERS = ['small', 'full'];
 // who wrote the diff, as decide() routes it, in Claude Code's names: claude = Opus (main thread /
-// implementer), codex = the second family, sonnet = a Sonnet builder, mixed = several executors
-// (a fix round split between Opus and Codex). The CLI takes a role and maps it with writerRole.
+// implementer), codex = the second family, sonnet = a Sonnet builder (or Opus and Sonnet
+// together), mixed = several executors, the second family among them (routes like codex). The
+// CLI takes a role and maps it with writerRole.
 export const WRITERS = ['claude', 'codex', 'sonnet', 'mixed'];
 // --writer's role → the routing value; the same on every host
 export const ROLES = { main: 'claude', bounded: 'sonnet', second: 'codex', mixed: 'mixed' };
@@ -153,13 +155,16 @@ export function parseArgs(argv) {
 /**
  * kind 'slice': after a slice passes its gate, before the next builds on it.
  * kind 'unit':  step 8, once, over the whole unit diff from the merge base.
- * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet |
- * mixed (several executors, e.g. a fix round split between Opus and Codex; routes like codex).
+ * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet
+ * (Sonnet, or Opus and Sonnet together) | mixed (several executors, the second family among them;
+ * routes like codex).
  * kind 'fix':   once per fix round, over `<sha-before-the-fixes>..` (pass the whole round once,
  *               after its last fix group); `maxFixed` is the highest severity the round fixed
  *               (P0 counts as P1) and `round` counts fix rounds on this area from 1. For this
  *               kind `writer` is who wrote THE FIX: a codex, sonnet or mixed fix on critical code
  *               is re-read by Opus ('review'); a codex or mixed cold fix by a Sonnet reviewer.
+ *               A P3 round is the P3 batch ('p3-batch', no re-review) unless it touches critical
+ *               code and Opus did not write it: then the Opus reviewer reads it ('review').
  * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'p3-batch' |
  *           'second-family+opus' | 'escalate-adversarial'.
  * `files` is [{ path, lines }]; `reviewers` is the ordered list of reviewers to run (maybe empty).
@@ -267,12 +272,21 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   }
 
   // kind 'fix'
-  if (maxFixed === 'P3')
+  if (maxFixed === 'P3') {
+    // the batch is Sonnet's or the second family's: critical code in it still gets the Opus reader;
+    // no specialist joins (P3s are nits)
+    if (critical.length > 0 && writer !== 'claude')
+      return out(
+        'review',
+        ['opus-code-reviewer'],
+        `the P3 batch over critical code was written by ${WRITER_NAMES[writer]}, so Opus reads it (${named})`,
+      );
     return out(
       'p3-batch',
       [],
       'P3s never open a fix round: they wait for the P3 batch, one per slice set, no re-review',
     );
+  }
   if (docsOnly) return out('skip', [], DOCS_ONLY);
   const r = fixRound({ critical, maxFixed, round, prodLines, writer });
   // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)

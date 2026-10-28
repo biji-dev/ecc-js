@@ -17,7 +17,8 @@ the unit review covers it (a Sonnet `code-reviewer` for a Small unit or a cold f
 as `review-gate.mjs --writer second` says. `--writer` is the role that wrote the
 diff under review — the slice, the unit, or the fix: `main | bounded | second |
 mixed` (on Claude Code also `claude | sonnet | codex`), each role's model per host
-in `gate-design.md` › Model and effort.
+in `gate-design.md` › Model and effort. `mixed` is a diff the second family wrote
+part of; Opus and Sonnet together are `bounded`, which Codex still reviews.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for

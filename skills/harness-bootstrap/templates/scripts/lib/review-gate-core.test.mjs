@@ -1,9 +1,11 @@
 // harness-bootstrap review-gate tests (generated YYYY-MM-DD). Run: node --test scripts/lib/review-gate-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: INSTRUCTION_PATHS, INSTRUCTION_TEST_PATHS
-// and DOCS_PATHS below -- the paths the core's INSTRUCTIONS must name and must not; keep them
-// matching INSTRUCTIONS (and the test paths matching TESTS). The
-// tests inject their own CRITICAL set (and restore it) and read FIX_LINES / TRIGGERS, never a
-// project path or number.
+// [M] mechanism (ships as-is): every test. [B] binding: the block below -- EXPECTED_CRITICAL (the
+// risk map's critical paths, kept equal to the core's CRITICAL), the paths the core's NON_PRODUCTION
+// and TESTS must classify, and the paths its INSTRUCTIONS must name and must not; keep them
+// matching the core. Only the [B] tests read the core's bound values (and one shape test each);
+// every behaviour test runs under INJECTED, the tests' own copy of the template's bindings, with
+// CRITICAL set per call, so a project's bindings never change what they assert. FIX_LINES is read
+// relatively (FIX_LINES, FIX_LINES + 1), which holds for any value.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
 // global git config; no network, no real repository.
 import assert from 'node:assert/strict';
@@ -24,7 +26,6 @@ import {
   WRITERS,
   decide as decideCore,
   formatLine,
-  isCritical,
   isInstruction,
   isProduction,
   isTest,
@@ -35,25 +36,78 @@ import {
 
 const RUNNER = fileURLToPath(new URL('../review-gate.mjs', import.meta.url));
 
+// The bindings every behaviour test runs under: copies of the template's values, the tests' own
+// fixtures (they need not match a project's). CRITICAL is empty here; withCritical sets it per call.
+const INJECTED = {
+  CRITICAL: [],
+  NON_PRODUCTION: [/\.md$/, /^docs\//, /(^|\/)(__tests__|tests?|e2e|fixtures)\//, /\.(test|spec)\.[cm]?[jt]sx?$/],
+  TESTS: [/(^|\/)(__tests__|tests?|e2e)\//, /\.(test|spec)\.[cm]?[jt]sx?$/],
+  INSTRUCTIONS: [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//],
+  TRIGGERS: {
+    'security-reviewer': [/auth|session|token|crypto|permission|rbac|tenant|webhook|public/i],
+    'silent-failure-hunter': [/payment|billing|money|settle|ledger|invoice|refund|webhook|queue|job|notif/i],
+    'database-reviewer': [/(^|\/)migrations?\//i, /(^|\/)drizzle\//i, /\.sql$/i, /(^|\/)schema\.(ts|js|prisma|sql)$/i],
+  },
+};
+// the paths INJECTED's INSTRUCTIONS names: instruction files, then tests in an instruction directory
+const INSTRUCTION_FIXTURES = ['AGENTS.md', 'CLAUDE.md', 'packages/a/AGENTS.md', '.claude/agents/x.md', '.claude/skills/x/SKILL.md', '.claude/rules/x.md', '.agents/skills/x/SKILL.md', '.codex/config.toml', '.zcode/skills/x/SKILL.md'];
+const INSTRUCTION_TEST_FIXTURES = ['.agents/skills/checker/tests/checker.test.js', '.claude/hooks/x.test.mjs'];
+
+let injecting = 0;
+/**
+ * Run `fn` with the core's bindings replaced by INJECTED (and `overrides`), then restore them. The
+ * core reads its arrays and TRIGGERS live, so they are spliced and reassigned in place, in key order.
+ */
+function withBindings(overrides, fn) {
+  const want = { ...INJECTED, ...overrides };
+  const arrays = { CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS };
+  const saved = {};
+  for (const [name, arr] of Object.entries(arrays)) saved[name] = arr.splice(0, arr.length, ...want[name]);
+  const savedTriggers = { ...TRIGGERS };
+  const assign = (from) => {
+    for (const key of Object.keys(TRIGGERS)) delete TRIGGERS[key];
+    Object.assign(TRIGGERS, from);
+  };
+  assign(want.TRIGGERS);
+  injecting += 1;
+  try {
+    return fn();
+  } finally {
+    injecting -= 1;
+    for (const [name, arr] of Object.entries(arrays)) arr.splice(0, arr.length, ...saved[name]);
+    assign(savedTriggers);
+  }
+}
+/** Run `fn` under INJECTED, unless a caller already injected (then its CRITICAL holds). */
+const injected = (fn) => (injecting > 0 ? fn() : withBindings({}, fn));
+/** Run `fn` under INJECTED with CRITICAL bound to `patterns`. */
+const withCritical = (patterns, fn) => withBindings({ CRITICAL: patterns }, fn);
+const bound = (fn) => withCritical([/^src\/core\//], fn);
+
 // `writer` has no default in the core; the tests that are not about the writer name Opus ('claude').
-const decide = (o) => decideCore({ writer: 'claude', ...o });
+const decide = (o) => injected(() => decideCore({ writer: 'claude', ...o }));
 const f = (p, lines) => ({ path: p, lines });
 const COLD = 'src/ui/panel.tsx';
 const HOT = 'src/core/engine.ts';
 const TEST_FILE = 'src/core/engine.test.ts';
 
-/** Run `fn` with CRITICAL bound to `patterns`, then restore it (decide reads the live array). */
-function withCritical(patterns, fn) {
-  const saved = CRITICAL.splice(0, CRITICAL.length, ...patterns);
-  try {
-    return fn();
-  } finally {
-    CRITICAL.splice(0, CRITICAL.length, ...saved);
-  }
-}
-const bound = (fn) => withCritical([/^src\/core\//], fn);
-
-// ---- [B] the harness's own instruction files and host config: keep these matching INSTRUCTIONS
+// ---- [B] the risk map's critical paths: keep this equal to the core's CRITICAL
+const EXPECTED_CRITICAL = [];
+// what the core's NON_PRODUCTION and TESTS must classify so: production, not production, tests
+const PRODUCTION_PATHS = ['src/a.ts'];
+const NON_PRODUCTION_PATHS = [
+  'README.md',
+  'docs/x.ts',
+  'src/__tests__/a.ts',
+  'tests/a.js',
+  'test/a.js',
+  'e2e/a.ts',
+  'src/fixtures/a.json',
+  'src/a.test.ts',
+  'src/a.spec.mjs',
+];
+const TEST_PATHS = ['src/__tests__/a.ts', 'tests/a.js', 'test/a.js', 'e2e/a.ts', 'src/a.test.ts', 'src/a.spec.mjs'];
+// the harness's own instruction files and host config: keep these matching INSTRUCTIONS
 const INSTRUCTION_PATHS = [
   'AGENTS.md',
   'CLAUDE.md',
@@ -72,32 +126,42 @@ const DOCS_PATHS = ['README.md', 'docs/a.md', 'packages/a/README.md', 'notes/AGE
 // ---- end [B]
 const DOCS_ONLY = /^no production code and no tests: docs only$/;
 
-// ---- the shipped bindings
+// ---- the bound values: the [B] tests read them, the shape tests read their shape only
 
-test('the shipped bindings: CRITICAL is empty, and production / test shapes are recognised', () => {
-  assert.deepEqual(CRITICAL, []);
-  assert.ok(isProduction('src/a.ts'));
-  for (const p of [
-    'README.md',
-    'docs/x.ts',
-    'src/__tests__/a.ts',
-    'tests/a.js',
-    'test/a.js',
-    'e2e/a.ts',
-    'src/fixtures/a.json',
-    'src/a.test.ts',
-    'src/a.spec.mjs',
-  ])
-    assert.ok(!isProduction(p), p);
-  assert.ok(NON_PRODUCTION.length > 0 && TESTS.length > 0);
-  assert.ok(!isCritical(HOT), 'nothing is critical while CRITICAL is empty');
-  assert.deepEqual(Object.keys(TRIGGERS), [
-    'security-reviewer',
-    'silent-failure-hunter',
-    'database-reviewer',
-  ]);
-  assert.ok(Number.isInteger(FIX_LINES) && FIX_LINES > 0);
+test('[B] the core\'s CRITICAL is EXPECTED_CRITICAL, pattern for pattern', () => {
+  const shape = (list) => list.map((re) => `${re.source} /${re.flags}`);
+  assert.deepEqual(
+    shape(CRITICAL),
+    shape(EXPECTED_CRITICAL),
+    `the core's CRITICAL [${CRITICAL.join(', ')}] is not the test's EXPECTED_CRITICAL [${EXPECTED_CRITICAL.join(', ')}]: keep both on the risk map`,
+  );
 });
+
+test('[B] the core classifies PRODUCTION_PATHS, NON_PRODUCTION_PATHS and TEST_PATHS so', () => {
+  for (const p of PRODUCTION_PATHS) assert.ok(isProduction(p), `${p} is not production`);
+  for (const p of NON_PRODUCTION_PATHS) assert.ok(!isProduction(p), `${p} is production`);
+  for (const p of TEST_PATHS) assert.ok(isTest(p), `${p} is not a test`);
+});
+
+const regexps = (v) => Array.isArray(v) && v.every((re) => re instanceof RegExp);
+for (const [name, value, ok, what] of [
+  ['CRITICAL', CRITICAL, regexps(CRITICAL), 'an array of RegExp'],
+  ['NON_PRODUCTION', NON_PRODUCTION, regexps(NON_PRODUCTION) && NON_PRODUCTION.length > 0, 'a non-empty array of RegExp'],
+  ['TESTS', TESTS, regexps(TESTS) && TESTS.length > 0, 'a non-empty array of RegExp'],
+  ['INSTRUCTIONS', INSTRUCTIONS, regexps(INSTRUCTIONS) && INSTRUCTIONS.length > 0, 'a non-empty array of RegExp'],
+  [
+    'TRIGGERS',
+    TRIGGERS,
+    Object.getPrototypeOf(TRIGGERS) === Object.prototype &&
+      Object.entries(TRIGGERS).every(([k, v]) => /^[a-z][a-z0-9-]*$/.test(k) && regexps(v) && v.length > 0),
+    'a plain object of reviewer name to a non-empty array of RegExp',
+  ],
+  ['FIX_LINES', FIX_LINES, Number.isInteger(FIX_LINES) && FIX_LINES > 0, 'a positive integer'],
+])
+  test(`the bound ${name} is ${what}`, () => {
+    const shown = Array.isArray(value) || typeof value !== 'object' ? String(value) : Object.keys(value).join(', ');
+    assert.ok(ok, `the core's ${name} is not ${what}: ${shown}`);
+  });
 
 test('[B] the instruction files are production, whatever NON_PRODUCTION says; prose elsewhere stays docs', () => {
   assert.ok(INSTRUCTIONS.length > 0);
@@ -276,6 +340,38 @@ test('fix 1: a round that fixed only P3s is the P3 batch with no re-review, what
   }
 });
 
+test('fix 1b: a P3 batch over critical code that Opus did not write is read by the Opus reviewer, no specialist', () => {
+  const writers = [
+    ['sonnet', 'Sonnet'],
+    ['codex', 'the second family'],
+    ['mixed', 'several executors'],
+    [writerRole('bounded', 'codex'), 'Sonnet'],
+    [writerRole('second', 'codex'), 'the second family'],
+  ];
+  for (const file of [HOT, TEST_FILE])
+    for (const [writer, name] of writers) {
+      const r = bound(() => decide({ files: [f(file, 9)], kind: 'fix', maxFixed: 'P3', writer }));
+      assert.equal(r.decision, 'review', `a P3 batch over ${file} by ${writer} is not reviewed`);
+      assert.deepEqual(r.reviewers, ['opus-code-reviewer'], `${file} by ${writer}`);
+      assert.equal(r.reason, `the P3 batch over critical code was written by ${name}, so Opus reads it (${file})`);
+    }
+  // Opus's own batch, and cold code or docs by anyone, stay the P3 batch with no re-review
+  for (const [files, writer] of [
+    [[f(HOT, 9)], 'claude'],
+    [[f(TEST_FILE, 9)], 'claude'],
+    ...writers.flatMap(([w]) => [[[f(COLD, 9)], w], [[f('docs/x.md', 9)], w], [[f(COLD, 9), f('docs/x.md', 9)], w]]),
+  ]) {
+    const r = bound(() => decide({ files, kind: 'fix', maxFixed: 'P3', writer }));
+    assert.equal(r.decision, 'p3-batch', `${files.map((x) => x.path).join(' ')} by ${writer} is not the P3 batch`);
+    assert.deepEqual(r.reviewers, [], `${files.map((x) => x.path).join(' ')} by ${writer}`);
+  }
+  // a triggered specialist does not join it: P3s are nits
+  const auth = withCritical([/^src\/auth\//], () =>
+    decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P3', writer: 'sonnet' }),
+  );
+  assert.deepEqual(auth.reviewers, ['opus-code-reviewer'], 'a specialist joined the P3 batch');
+});
+
 test('fix 2: a fix round of docs alone is skipped', () => {
   const r = bound(() => decide({ files: [f('docs/x.md', 200)], kind: 'fix', maxFixed: 'P1' }));
   assert.equal(r.decision, 'skip');
@@ -448,7 +544,7 @@ test('reviewed 1: a test under a critical path is critical, and its unit is revi
 });
 
 test('reviewed 2: an instruction file alone is reviewed, never skipped', () => {
-  for (const p of INSTRUCTION_PATHS)
+  for (const p of INSTRUCTION_FIXTURES)
     for (const tier of ['small', 'full']) {
       const r = decide({ files: [f(p, 4)], kind: 'unit', tier });
       assert.equal(r.decision, 'review', `${p} ${tier}`);
@@ -505,11 +601,11 @@ test('reviewed 6: a fix round of tests is routed like code: critical is re-revie
 test('reviewed 7: a test in an instruction directory is a test: its lines never make a fix large, and it counts as one', () => {
   const hotA = (files) => withCritical([/^src\/a\.ts$/], () => decide({ files, kind: 'fix', maxFixed: 'P1' }));
   const alone = hotA([f('src/a.ts', 5)]);
-  const withTest = hotA([f('src/a.ts', 5), f(INSTRUCTION_TEST_PATHS[0], 100)]);
+  const withTest = hotA([f('src/a.ts', 5), f(INSTRUCTION_TEST_FIXTURES[0], 100)]);
   assert.deepEqual([withTest.prodLines, withTest.prodFiles, withTest.testFiles], [5, 1, 1]);
   assert.equal(withTest.decision, alone.decision);
   assert.deepEqual(withTest.reviewers, alone.reviewers);
-  const hook = decide({ files: [f(INSTRUCTION_TEST_PATHS[1], 12)], kind: 'unit', tier: 'small' });
+  const hook = decide({ files: [f(INSTRUCTION_TEST_FIXTURES[1], 12)], kind: 'unit', tier: 'small' });
   assert.equal(hook.decision, 'review');
   assert.deepEqual([hook.prodFiles, hook.testFiles], [0, 1]);
   assert.match(hook.reason, /; tests only, no production code$/);
@@ -618,6 +714,11 @@ test('formatLine prints one line: decision, reason, reviewers, facts, what was n
 
 // ---- the wrapper, end to end, in a temp repo
 
+// The CLI runs in a child process under the BOUND values: what it decides is compared with the
+// core's own result for the same files under them (no injection), so a project's bindings hold too.
+const bareLine = (o) => `${formatLine(decideCore({ writer: 'claude', ...o }))}\n`;
+const NEW = [f('src/new.ts', 3)];
+
 function cleanEnv() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
@@ -656,7 +757,7 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   // A clean tree has nothing to review: exit 0, one line.
   let res = gate('--base', base, '--kind', 'slice');
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /^review-gate: skip — no production code and no tests: docs only → none \[0 production files, 0 lines; not checked: .*\]\n$/);
+  assert.equal(res.stdout, bareLine({ files: [], kind: 'slice' }));
 
   // An untracked production file is seen (3 lines), and --kind unit names the full-tier reviewers.
   fs.mkdirSync(path.join(repo, 'src'));
@@ -664,21 +765,22 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   res = gate('--base', base, '--kind', 'unit');
   assert.equal(res.status, 0, res.stderr);
   assert.equal(res.stdout.trim().split('\n').length, 1);
-  assert.match(res.stdout, /^review-gate: review — .* → opus-code-reviewer \+ second-family-adversarial \[1 production files, 3 lines; /);
+  assert.equal(res.stdout, bareLine({ files: NEW, kind: 'unit' }));
   res = gate('--base', base, '--kind', 'slice', '--json');
   assert.equal(res.status, 0, res.stderr);
   const json = JSON.parse(res.stdout);
-  assert.equal(json.decision, 'second-family');
-  assert.equal(json.prodLines, 3);
+  const slice = decideCore({ files: NEW, kind: 'slice', writer: 'claude' });
+  assert.equal(json.decision, slice.decision);
+  assert.equal(json.prodLines, slice.prodLines);
 
   // --head limits the diff to the committed range: the untracked file is not in it.
   res = gate('--base', base, '--head', 'HEAD', '--kind', 'slice');
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /^review-gate: skip /);
+  assert.equal(res.stdout, bareLine({ files: [], kind: 'slice' }));
   git('add', '.');
   git('commit', '-q', '-m', 'work');
   res = gate('--base', base, '--head', 'HEAD', '--kind', 'slice', '--writer', 'codex');
-  assert.match(res.stdout, /^review-gate: defer — cold slice written by the second family/);
+  assert.equal(res.stdout, bareLine({ files: NEW, kind: 'slice', writer: 'codex' }));
 
   // Usage errors: a missing --base, a missing or bad --kind, a fix without --max-fixed, a bad flag.
   for (const args of [
@@ -790,6 +892,23 @@ test('writer mixed 2: a cold mixed fix round or slice is never a second-family-o
   assert.deepEqual(unit.reviewers, ['sonnet-code-reviewer']);
 });
 
+test('writer bounded: Opus and Sonnet together are bounded (sonnet on Claude Code), read by the second family; mixed means the second family wrote part of it', () => {
+  const coldSlice = (writer) => bound(() => decide({ files: [f(COLD, 20)], kind: 'slice', writer }));
+  const smallUnit = (writer) => decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer });
+  const hotSlice = (writer) => bound(() => decide({ files: [f(HOT, 20)], kind: 'slice', writer }));
+  for (const writer of [writerRole('bounded', 'codex'), writerRole('sonnet', 'claude')]) {
+    assert.deepEqual(coldSlice(writer).reviewers, ['second-family-review'], `a cold slice by ${writer}`);
+    assert.deepEqual(smallUnit(writer).reviewers, ['second-family-review'], `a small unit by ${writer}`);
+    const hot = hotSlice(writer);
+    assert.equal(hot.decision, 'required', `a critical slice by ${writer}`);
+    assert.deepEqual(hot.reviewers, ['opus-code-reviewer'], `a critical slice by ${writer}`);
+  }
+  const mixed = writerRole('mixed', 'codex');
+  assert.equal(coldSlice(mixed).decision, 'defer', 'a cold mixed slice');
+  assert.deepEqual(smallUnit(mixed).reviewers, ['sonnet-code-reviewer'], 'a small mixed unit');
+  assert.equal(hotSlice(mixed).decision, 'required', 'a critical mixed slice');
+});
+
 // ---- the host: --writer names the writer's role, so a family name never routes as Claude Code's
 
 /** A temp repo whose working tree holds a small unit: one untracked 3-line production file. */
@@ -838,12 +957,13 @@ test('host 1: on a Codex host a family name is refused, and the role main sends 
   // the reason names the writer, never the routing value (on Codex, "claude" would be the other family)
   res = gate(codex, '--writer', 'main');
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /^review-gate: review — small unit written by Opus: /);
+  assert.equal(res.stdout, bareLine({ files: NEW, kind: 'unit', tier: 'small', writer: 'claude' }));
   res = gate(codex, '--writer', 'main', '--json');
   assert.equal(res.status, 0, res.stderr);
   const json = JSON.parse(res.stdout);
-  assert.equal(json.decision, 'review');
-  assert.deepEqual(json.reviewers, ['second-family-review']);
+  const main = decideCore({ files: NEW, kind: 'unit', tier: 'small', writer: 'claude' });
+  assert.equal(json.decision, main.decision);
+  assert.deepEqual(json.reviewers, main.reviewers);
   assert.deepEqual([json.host, json.role], ['codex', 'main']);
 });
 
@@ -855,12 +975,12 @@ test('host 2: --host beats the environment, family names still route on Claude C
   res = gate({ HARNESS_HOST: 'zcode' }, '--writer', 'codex', '--host', 'claude', '--json');
   assert.equal(res.status, 0, res.stderr);
   const json = JSON.parse(res.stdout);
-  assert.deepEqual(json.reviewers, ['sonnet-code-reviewer']);
+  assert.deepEqual(json.reviewers, decideCore({ files: NEW, kind: 'unit', tier: 'small', writer: 'codex' }).reviewers);
   assert.deepEqual([json.host, json.role, json.writer], ['claude', 'codex', 'codex']);
   // the printed line is unchanged by the host
   res = gate({ HARNESS_HOST: 'codex' }, '--writer', 'second');
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /^review-gate: review — small unit written by the second family: .* → sonnet-code-reviewer \[1 production files, 3 lines; /);
+  assert.equal(res.stdout, bareLine({ files: NEW, kind: 'unit', tier: 'small', writer: 'codex' }));
   res = gate({ HARNESS_HOST: 'gemini' }, '--writer', 'main');
   assert.equal(res.status, 2, res.stdout);
   assert.match(res.stderr, /HARNESS_HOST must be one of claude, codex, zcode, kimi, not "gemini"/);

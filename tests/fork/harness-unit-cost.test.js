@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 63;
+const EXPECTED_TESTS = 68;
 
 let passed = 0;
 let failed = 0;
@@ -81,6 +81,7 @@ function mutantFails(name, needle, replacement, fileRel = CORE_REL) {
     fs.cpSync(SCRIPTS, copy, { recursive: true });
     const filePath = path.join(copy, fileRel);
     const before = fs.readFileSync(filePath, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, 'the needle must occur exactly once in the file it mutates');
     const mutated = before.replace(needle, replacement);
     assert.notStrictEqual(mutated, before, 'the mutation did not apply');
     fs.writeFileSync(filePath, mutated);
@@ -104,7 +105,8 @@ test('the shipped unit-cost suite passes with the pinned test count', () => {
 
 mutantFails('pricing a 1h cache write at the 5m rate', 'export const CACHE_WRITE_1H = 2;', 'export const CACHE_WRITE_1H = 1.25;');
 mutantFails('dropping the flat cache-write fallback', 'if (w1h + w5m === 0) w5m = num(usage.cache_creation_input_tokens);', '');
-mutantFails('counting a repeated (message.id, requestId) twice', 'if (seen.has(r.key)) return false;', 'if (false) return false;');
+mutantFails('counting a repeated (message.id, requestId) twice', 'if (i === undefined) {', 'if (true) {');
+mutantFails('keeping the first copy\'s usage instead of the copy with the most output', '} else if (r.output > out[i].output) {', '} else if (false) {');
 mutantFails('counting synthetic turns', "if (msg.model === '<synthetic>') continue;", '');
 mutantFails('ignoring the upper bound of the window', 'return (lo === null || ts >= lo) && (hi === null || ts <= hi);', 'return lo === null || ts >= lo;');
 mutantFails('attributing subagent dollars to the main thread', 'out[r.kind] += r.cost;', 'out.main += r.cost;');
@@ -144,7 +146,10 @@ mutantFails('leaving claude-run\'s dollars out of the cost', 'const total = clau
 mutantFails('printing Claude\'s cache line for a Codex thread alone', 'if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);', 'extra.cache = summarizeCache(rows, window);', CLI_REL);
 mutantFails('taking another thread\'s subagent', '(m.session === id || m.parent === id)', 'true', SOURCES_REL);
 mutantFails('splitting a line at a read boundary', 'const data = Buffer.concat([rest, buf.subarray(0, n)]);', 'const data = Buffer.from(buf.subarray(0, n));', SOURCES_REL);
-mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => here !== null && owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('counting the Codex runs of every worktree', '? worktreeRuns(parseLedger(readText(ledger)), args.cwdMatch) : null;', '? parseLedger(readText(ledger)) : null;', CLI_REL);
+mutantFails('leaving a ledger\'s window open', 'if (lo === Infinity) return window;', 'return window;');
+mutantFails('replacing a bound the owner gave with the sessions\' time', 'since: given(window.since) ? window.since : new Date(lo).toISOString(),', 'since: new Date(lo).toISOString(),');
 mutantFails('placing a run made through a link by its unresolved path', 'const d = realPath(dir);', 'const d = path.resolve(dir);', SOURCES_REL);
 mutantFails('missing a thread archived to archived_sessions', "walk(path.join(path.dirname(dir), 'archived_sessions'));", '', SOURCES_REL);
 
@@ -164,7 +169,7 @@ function fixture() {
   fs.writeFileSync(path.join(proj, 's1.jsonl'), `${turn('a', 'claude-opus-5-5', 1_000_000)}\n${turn('a', 'claude-opus-5-5', 1_000_000)}\n`);
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x.jsonl'), `${turn('b', 'claude-sonnet-5-5', 1_000_000)}\n`);
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ agentType: 'implementer' }));
-  const run = { at: '2026-10-24T01:00:00Z', kind: 'review', cwd: '/p/app', ms: 10, limitsBefore: { usedPercent: 1, resetsAt: 5 }, limitsAfter: { usedPercent: 3, resetsAt: 5 } };
+  const run = { at: '2026-10-24T01:00:00Z', kind: 'review', cwd: root, ms: 10, limitsBefore: { usedPercent: 1, resetsAt: 5 }, limitsAfter: { usedPercent: 3, resetsAt: 5 } };
   fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run)}\n`);
   return root;
 }

@@ -197,15 +197,35 @@ export function parseTranscript(text, ctx = {}) {
   return rows;
 }
 
-/** Drop repeats of the same (message.id, requestId); the first one seen wins. Keyless rows stay. */
+// What a row's usage is: the fields a later copy of the same message may carry more of.
+const USAGE_FIELDS = ['output', 'input', 'cacheRead', 'cacheWrite', 'writeCost', 'cost'];
+
+/**
+ * One row per (message.id, requestId). Claude Code writes a streamed message once per content block,
+ * each line carrying the usage so far, so the copies of one message can differ in their output tokens
+ * (a subagent's transcript is where they do). The row keeps the first copy's place, time and labels with
+ * the usage of the copy that has the most output; of equal outputs the first stays. Keyless rows stay.
+ * Pure: a row that takes a later copy's usage is a new object, the rows it was given are not touched.
+ */
 export function dedupeRows(rows) {
-  const seen = new Set();
-  return rows.filter((r) => {
-    if (r.key === null) return true;
-    if (seen.has(r.key)) return false;
-    seen.add(r.key);
-    return true;
-  });
+  const at = new Map();
+  const out = [];
+  for (const r of rows) {
+    if (r.key === null) {
+      out.push(r);
+      continue;
+    }
+    const i = at.get(r.key);
+    if (i === undefined) {
+      at.set(r.key, out.length);
+      out.push(r);
+    } else if (r.output > out[i].output) {
+      const kept = { ...out[i] };
+      for (const k of USAGE_FIELDS) kept[k] = r[k];
+      out[i] = kept;
+    }
+  }
+  return out;
 }
 
 /** A time inside [since, until]; a missing bound is open. With a bound, an unreadable time is out. */
@@ -215,6 +235,28 @@ export function inWindow(ts, since, until) {
   if (lo === null && hi === null) return true;
   if (!Number.isFinite(ts)) return false;
   return (lo === null || ts >= lo) && (hi === null || ts <= hi);
+}
+
+/**
+ * The window a ledger's runs are counted in: `window` is { since, until } as given (ISO strings or
+ * null), `times` the sessions' times in ms. A ledger holds every run its checkout ever made, so a bound
+ * the owner left out is the sessions' first (`since`) or last (`until`) readable time, not open. With no
+ * readable time the window is as given.
+ */
+export function ledgerWindow(window, times) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const t of times) {
+    if (!Number.isFinite(t)) continue;
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  if (lo === Infinity) return window;
+  const given = (b) => b !== null && b !== undefined;
+  return {
+    since: given(window.since) ? window.since : new Date(lo).toISOString(),
+    until: given(window.until) ? window.until : new Date(hi).toISOString(),
+  };
 }
 
 /** Rows -> dollars (total, main thread, subagents, per model family), turns, output tokens, Claude %. */

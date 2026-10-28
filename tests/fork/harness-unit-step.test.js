@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'unit-step-core.mjs');
 const CLI_REL = 'unit-step.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 11;
+const EXPECTED_TESTS = 13;
 
 let passed = 0;
 let failed = 0;
@@ -95,7 +95,8 @@ mutantFails('leaving the open step running past the next start', 'cur.implicit =
 mutantFails('turning a repeated start into a new interval', 'if (cur && cur.step === m.step && cur.round === m.round) {\n        problems.push', 'if (false) {\n        problems.push');
 mutantFails('closing a step on a done for another round', '} else if (cur && cur.step === m.step && cur.round === m.round) {', '} else if (cur && cur.step === m.step) {');
 mutantFails('sorting markers by file order instead of time', 'x.m.ts - y.m.ts || x.i - y.i', 'x.i - y.i');
-mutantFails('accepting a path separator in a unit id', 'const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;', 'const UNIT_ID = /^[A-Za-z0-9.][A-Za-z0-9._/-]*$/;');
+mutantFails('accepting a path that climbs out of the steps directory in a unit id', "export const UNIT_ID_SOURCE = '[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';", "export const UNIT_ID_SOURCE = '[A-Za-z0-9.][A-Za-z0-9._-]*(?:/[A-Za-z0-9.][A-Za-z0-9._-]*)?';");
+mutantFails('refusing a harness/<slug> unit id', "(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';", "';");
 mutantFails('dropping the warning for a done with no start', "if (!open) return `no step is open, so done of ${label(next)} has no start`;", "if (!open) return '';");
 mutantFails('refusing an out-of-order marker instead of appending it', 'if (warning) process.stderr.write', 'if (warning) return usage(warning);\n  if (warning) process.stderr.write', CLI_REL);
 

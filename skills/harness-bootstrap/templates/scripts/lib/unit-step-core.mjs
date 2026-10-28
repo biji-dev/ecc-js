@@ -20,8 +20,12 @@ export const STEPS_DIR = 'docs/plans';
 
 export const EVENTS = ['start', 'done'];
 export const MAX_ROUND = 99;
-// A unit id names a file, so it carries no path separator; a step id is the runner's own (`0a`, `8c`).
-const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// A unit id names a file: `<unit>.steps.jsonl` sits beside the state file. One `/` nests the file under
+// the id's first segment (`harness/sweep-2026-10-28`, `change/fix-login`); each segment starts with a
+// letter or digit, so `..`, an absolute path and a third level stay refused. The source is exported
+// so every reader of a unit id (unit-cost's step tag, retro's marker command) matches the same rule.
+export const UNIT_ID_SOURCE = '[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';
+const UNIT_ID = new RegExp(`^${UNIT_ID_SOURCE}$`);
 const STEP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 /** `8b r2` -- how a step and its round are named everywhere (reports, dispatch tags). */

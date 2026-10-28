@@ -125,6 +125,12 @@ function worktreeRuns(runs, cwdMatch) {
   return runs.filter((e) => here !== null && owner(e.cwd) === here);
 }
 
+/** The --by-step unit: --unit, else the one unit all the markers name (`harness/x` lives in `harness/x.steps.jsonl`), else the file's name. */
+function stepsUnit(args, markers) {
+  const named = [...new Set(markers.map((m) => m.unit))];
+  return args.unit ?? (named.length === 1 && named[0] !== '' ? named[0] : path.basename(args.byStep).replace(/\.steps\.jsonl$/, ''));
+}
+
 function main() {
   let args;
   let claude;
@@ -158,8 +164,8 @@ function main() {
       if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);
     }
     if (args.byStep) {
-      const unit = args.unit ?? path.basename(args.byStep).replace(/\.steps\.jsonl$/, '');
-      extra.steps = summarizeSteps(rows, parseSteps(readText(args.byStep)), { ...window, unit });
+      const markers = parseSteps(readText(args.byStep));
+      extra.steps = summarizeSteps(rows, markers, { ...window, unit: stepsUnit(args, markers) });
     }
     const ledger = args.ledger ?? defaultLedger();
     const entries = ledger && fs.existsSync(ledger) ? worktreeRuns(parseLedger(readText(ledger)), args.cwdMatch) : null;
@@ -178,9 +184,10 @@ function main() {
   }
   if (args.line) process.stdout.write(`${summaryLine(claude, codex, extra)}\n`);
   else if (args.json) {
-    const { claudeRuns = null, host = null, percent: _percent, ...rest } = extra;
+    // `codexPercent` is the union % the summary line prints on a Codex host (the host's turns and the ledger's runs).
+    const { claudeRuns = null, host = null, percent = null, ...rest } = extra;
     const summary = summaryLine(claude, codex, extra);
-    process.stdout.write(`${JSON.stringify({ claude, codex, claudeRuns, codexHost: host, summary, ...rest }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ claude, codex, claudeRuns, codexHost: host, codexPercent: percent, summary, ...rest }, null, 2)}\n`);
   } else process.stdout.write(formatReport(claude, codex, extra));
 }
 

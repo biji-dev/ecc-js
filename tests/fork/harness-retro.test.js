@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 42;
+const EXPECTED_TESTS = 44;
 
 let passed = 0;
 let failed = 0;
@@ -160,7 +160,9 @@ mutantFails("charging a unit for another unit's dispatch", 'const claimed = clai
 mutantFails("dropping a tagged dispatch's turns after its unit's last marker", 'return rows.filter((r) => own(r) || ', 'return rows.filter((r) => ');
 mutantFails("a unit's span built without its dispatches", 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until, owners)', 'rowsForUnit(g.rows, g.sessionUnits, id, markers, win.until)');
 mutantFails('matching a unit id inside a longer one', '(?![A-Za-z0-9]|\\\\.[A-Za-z0-9])', '');
-mutantFails('cutting a marker command\'s unit id short', '(?=[\\s"\\\\]|$)/g', '/g');
+mutantFails('cutting a marker command\'s unit id short', '(?=[\\\\s"\\\\\\\\]|$)`, \'g\'', '`, \'g\'');
+mutantFails('keying a nested steps file by its basename', 'path.relative(path.join(top, dir), file)', 'path.basename(file)', GATHER_REL);
+mutantFails('leaving the log rows no table took unmentioned', 'if (leftOut.length) out.push(leftOutWarning(leftOut));', '');
 mutantFails('keeping stop-word pairs as friction themes', ' && !STOP.has(a) && !STOP.has(b)', '');
 mutantFails("taking a sibling repository's Codex thread", 'return hostRollouts(dir, sinceMs).filter(({ meta }) => inside(meta.cwd));', 'return hostRollouts(dir, sinceMs);', SOURCES_REL);
 mutantFails("leaving claude-run's ledger unread", 'if (fs.existsSync(claudeFile)) g.claudeRuns = parseLedger(readText(claudeFile));', '', GATHER_REL);

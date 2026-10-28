@@ -18,6 +18,8 @@ import {
   formatLine,
   formatReport,
   groupUnits,
+  leftOutRows,
+  leftOutWarning,
   ownerWaitMinutes,
   parseArgs,
   parseCost,
@@ -96,6 +98,8 @@ test('parseElapsed splits work and owner wait from a combined cell', () => {
 
 test('parseCost reads $, Claude % and Codex % and leaves absent parts null', () => {
   assert.deepEqual(parseCost('Cost $12.35 · Claude 0.6% · Codex 1.5% (3 runs)'), { cost: 12.35, claudePct: 0.6, codexPct: 1.5 });
+  // unit-cost's line with runs that reported no cost still reads as the same cost and percents.
+  assert.deepEqual(parseCost('Cost $20.00 · Claude 0.6% (2 claude-run, 2 without a cost, 1 not run) · Codex 6% (host, 3 runs)'), { cost: 20, claudePct: 0.6, codexPct: 6 });
   assert.deepEqual(parseCost('$562 · Claude ~28%'), { cost: 562, claudePct: 28, codexPct: null });
   assert.deepEqual(parseCost('Codex no ledger'), { cost: null, claudePct: null, codexPct: null });
   assert.deepEqual(parseCost(''), { cost: null, claudePct: null, codexPct: null });
@@ -107,6 +111,26 @@ test('tierWord takes the leading tier word and ignores the parenthetical that fo
   assert.equal(tierWord('  Small (cold)'), 'small');
   assert.equal(tierWord('Fully loaded'), '');
   assert.equal(tierWord(''), '');
+});
+
+test('tierWord reads Hot-small by default and the words a project binds, longest first, each matched literally', () => {
+  assert.equal(tierWord('Hot-small'), 'hot-small');
+  assert.equal(tierWord('Hot-small (rework)'), 'hot-small');
+  assert.equal(tierWord('Small'), 'small');
+  assert.equal(tierWord('S · x', ['s', 'm', 'l']), 's');
+  assert.equal(tierWord('M'), '');
+  assert.equal(tierWord('Medium', ['s', 'm', 'l']), '');
+  assert.equal(tierWord('Hot-small', ['hot', 'hot-small']), 'hot-small');
+  assert.equal(tierWord('Hot', ['hot', 'hot-small']), 'hot');
+  assert.equal(tierWord('C++ (old)', ['c++', 'c']), 'c++');
+  assert.equal(tierWord('Cxx', ['c++']), '');
+  assert.equal(tierWord('a.c', ['a.c']), 'a.c');
+  assert.equal(tierWord('abc', ['a.c']), '');
+  // parseLog hands the bound words to it; the default list keeps a Hot-small row in the tier figures.
+  const rows = [['U1', 'Hot-small', '10m'], ['U2', 'S', '20m']];
+  const log = table(['Unit', 'Tier', 'Elapsed'], rows);
+  assert.deepEqual(parseLog(log).map((r) => r.tier), ['hot-small', '']);
+  assert.deepEqual(parseLog(log, { tierWords: ['s', 'm', 'l'] }).map((r) => r.tier), ['', 's']);
 });
 
 test('parseLog reads a Tier column and the combined Unit · Mode · Type · Tier cell (tier is the last part)', () => {
@@ -255,11 +279,15 @@ test('owner wait is summed over every term unit-record writes: durations joined 
   assert.equal(ownerWaitMinutes('1h20m'), 80);
   assert.equal(ownerWaitMinutes(`asked ${d}T05:00:00Z → answered ${d}T05:30:00Z; asked ${d}T06:00:00Z → answered ${d}T07:20:00Z`), 110);
   // Text unit-record's parser cannot read falls back to the first duration, then to nothing.
+  // A recorded wait of nothing is 0 minutes; a bare number with no unit stays unreadable.
+  assert.equal(ownerWaitMinutes('0'), 0);
+  assert.equal(ownerWaitMinutes('45'), null);
   assert.equal(ownerWaitMinutes('~2h55'), 175);
   assert.equal(ownerWaitMinutes('Gate 1 asked'), null);
   assert.equal(ownerWaitMinutes(`asked ${d}T06:00:00Z → pending`), null);
   const text = table(['Unit', 'Tier', 'Elapsed', 'Owner wait'], [['U1', 'Full', '10m', '10m + 60m'], ['U2', 'Full', '10m', '1h'], ['U3', 'Full', '10m', `${d}T05:00:00Z → ${d}T05:50:00Z`]]);
   assert.deepEqual(parseLog(text).map((r) => r.ownerWait), [70, 60, 50]);
+  assert.equal(parseLog(table(['Unit', 'Tier', 'Elapsed', 'Owner wait'], [['U4', 'Full', '10m', '0']]))[0].ownerWait, 0);
   // The Elapsed-cell form (`work 100m · owner 40m`) is unchanged.
   assert.equal(parseLog(LOG)[0].ownerWait, 40);
 });
@@ -295,6 +323,37 @@ test('a unit with several deliverable rows is one sample: work, owner wait and c
   assert.equal(estimate(records, { tier: 'full', cohort: /^EP-1 /i }).rows, 1);
 });
 
+// A 4-column log table, a blank line, then rows written for an older, 3-column header.
+const OLD_ROWS = '| U2 | Full | 10m |\n| U3 | Full | 20m |';
+const REPRO = `${table(['Unit', 'Tier', 'Elapsed', 'Cost'], [['U1', 'Full', '10m', '$1.00']])}\n\n${OLD_ROWS}\n`;
+
+test('leftOutRows returns the rows no table took, with their lines, from the scan tables() makes', () => {
+  assert.deepEqual(parseLog(REPRO).map((r) => r.unit), ['U1'], 'the rows are not records');
+  assert.deepEqual(leftOutRows(REPRO), [
+    { line: 5, cells: ['U2', 'Full', '10m'] },
+    { line: 6, cells: ['U3', 'Full', '20m'] },
+  ]);
+  assert.deepEqual(leftOutRows(LOG), []);
+  assert.deepEqual(leftOutRows(''), []);
+  // A row with as many cells as an earlier table joins it, so nothing is left out.
+  const joined = `${table(['Unit', 'Tier', 'Elapsed', 'Cost'], [['U1', 'Full', '10m', '$1.00']])}\n\n| U2 | Full | 20m | $2.00 |\n`;
+  assert.deepEqual(leftOutRows(joined), []);
+  assert.deepEqual(parseLog(joined).map((r) => r.unit), ['U1', 'U2']);
+  // A header row and its separator are never left out.
+  assert.deepEqual(leftOutRows(`${REPRO}\n${table(['Unit', 'Tier', 'Elapsed'], [])}\n`), [
+    { line: 5, cells: ['U2', 'Full', '10m'] },
+    { line: 6, cells: ['U3', 'Full', '20m'] },
+  ]);
+});
+
+test('leftOutWarning counts the rows and names their lines; no row, no warning', () => {
+  assert.equal(leftOutWarning(leftOutRows(REPRO)), '2 log row(s) left out: no table above has as many columns (line 5, 6)');
+  assert.equal(leftOutWarning(leftOutRows(LOG)), '');
+  assert.equal(leftOutWarning([{ line: 9, cells: ['x'] }]), '1 log row(s) left out: no table above has as many columns (line 9)');
+  const many = Array.from({ length: 14 }, (_, i) => ({ line: i + 1, cells: ['x'] }));
+  assert.match(leftOutWarning(many), /^14 log row\(s\) left out: .* \(line 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …\)$/);
+});
+
 function cli(args) {
   const env = { ...process.env, HOME: tmpDir('estimate-home-') };
   return spawnSync(process.execPath, [RUNNER, ...args], { env, encoding: 'utf8' });
@@ -318,6 +377,21 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   assert.equal(cli(['--log', log, '--bogus']).status, 2);
   assert.equal(cli(['--log', log, '--slices', '3']).status, 2);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['empty.md', 'log.md']);
+});
+
+test('the wrapper warns on stderr of log rows left out, exits 0 as before, and says nothing when none is', () => {
+  const dir = tmpDir('estimate-');
+  const log = path.join(dir, 'log.md');
+  fs.writeFileSync(log, `# Harness log\n\n${LOG}\n`);
+  const clean = cli(['--log', log]);
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.equal(clean.stderr, '');
+  fs.writeFileSync(log, `# Harness log\n\n${LOG}\n\n| EP-9 | Full | 10m |\n| EP-10 | Full | 20m |\n`);
+  const r = cli(['--log', log]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, 'estimate: warning: 2 log row(s) left out: no table above has as many columns (line 11, 12)\n');
+  assert.equal(r.stdout, clean.stdout, 'the estimate itself is unchanged');
+  assert.equal(cli(['--log', log, '--json']).stderr, r.stderr);
 });
 
 test('a log with its headers and no rows yet says no history, the install\'s first Gate 1', () => {

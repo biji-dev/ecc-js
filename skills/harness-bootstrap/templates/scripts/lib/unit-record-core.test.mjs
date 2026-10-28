@@ -11,6 +11,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  LOG_COLUMNS,
   MAX_COMMITS,
   buildRecord,
   formatElapsed,
@@ -275,6 +276,21 @@ test('parseDuration: 1h20m, 45m, 2h, 1h 20m, sums over , and +; anything else is
     assert.equal(parseDuration(bad), null, bad);
 });
 
+test('parseDuration: a bare 0 is zero minutes, but a bare 45 stays unreadable (minutes or hours cannot be told)', () => {
+  assert.equal(parseDuration('0'), 0);
+  assert.equal(parseDuration(' 0 '), 0);
+  assert.equal(parseDuration('0 + 10m'), 10);
+  assert.equal(parseDuration('1h, 0'), 60);
+  for (const bad of ['45', '00', '0 + 45', '10m + 45', '0x']) assert.equal(parseDuration(bad), null, bad);
+});
+
+test('Owner wait: 0 is a recorded wait of nothing: the Elapsed line and the draft row carry the work time', () => {
+  const r = buildRecord({ state: parseState('Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\nOwner wait: 0\n'), commits: [], diffstat: '', gatesSummary: null, now: NOW });
+  assert.match(r, /^- Elapsed: 3h12m work · 3h12m wall · owner wait 0$/m);
+  const cells = splitRow(r.split('\n').find((l) => l.startsWith('| U-1 ')));
+  assert.deepEqual([cells[2], cells[3]], ['3h12m', '0']);
+});
+
 test('Elapsed is work time: wall minus owner wait, with the draft row carrying the work time', () => {
   const rec = (header, extra = {}) =>
     buildRecord({ state: parseState(`Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\n${header}`), commits: [], diffstat: '', gatesSummary: null, now: NOW, ...extra });
@@ -323,6 +339,27 @@ test('the draft row has the 14 log columns in order, with Deliverable, owner wai
   assert.equal(bare[10], '<fill: node scripts/unit-cost.mjs --session …>');
   // A pipe in the cost line is escaped, so the row keeps its cell count.
   assert.equal(row('a | b').length, 14);
+});
+
+test('the draft row follows a bound LOG_COLUMNS: the default is today\'s row, a reordered list reorders the cells, an unknown name is a fill', () => {
+  const state = parseState(STATE.replace('Tier: Full', 'Tier: Full\nDeliverable: docs/x.md'));
+  const COST = 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)';
+  const draft = (columns) => {
+    const rec = buildRecord({ state, commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, cost: COST, ...(columns ? { columns } : {}) });
+    const lines = rec.split('\n');
+    return lines[lines.indexOf('Draft log row:') + 1];
+  };
+  const today =
+    '| EP-27.04 · plan · Code · Full | docs/x.md | 1h52m | 1h20m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | ' +
+    `${COST} | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |`;
+  assert.equal(draft(), today);
+  assert.equal(draft(LOG_COLUMNS), today);
+  assert.equal(LOG_COLUMNS.length, 14);
+  // Names are matched by prefix, case, a leading ★ or * and hyphens ignored; the row is built in the given order.
+  assert.equal(draft(['COST', 'Friction', 'Unit · Mode · Type · Tier', '*Owner-wait']), `| ${COST} | <fill: friction> | EP-27.04 · plan · Code · Full | 1h20m |`);
+  assert.equal(draft([`${String.fromCodePoint(0x2605)} Missed by harness`, 'Defects', 'Yield by source']), '| <fill: missed by harness> | 0/1 | codex-review 0/1/0 |');
+  // A name with no known cell is the session's to fill, under its own name.
+  assert.equal(draft(['Deliverable', 'Reviewer', 'Elapsed (work)']), '| docs/x.md | <fill: Reviewer> | 1h52m |');
 });
 
 test('owner wait as <ISO> → <ISO> pairs: summed, prose ignored, an unclosed pair runs to now, pairs beat durations', () => {

@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   MAX_ROUND,
+  UNIT_ID_SOURCE,
   checkNext,
   formatIntervals,
   formatMinutes,
@@ -58,7 +59,7 @@ test('parseArgs rejects a wrong count, a path in the unit id, a bad step, event 
   assert.throws(() => parseArgs(['U-1', '8b']), /needs <unit> <step> start\|done/);
   assert.throws(() => parseArgs(['U-1', '8b', 'start', 'extra']), /needs <unit>/);
   assert.throws(() => parseArgs(['../U-1', '8b', 'start']), /bad unit id/);
-  assert.throws(() => parseArgs(['a/b', '8b', 'start']), /bad unit id/);
+  assert.throws(() => parseArgs(['a/b/c', '8b', 'start']), /bad unit id/);
   assert.throws(() => parseArgs(['U-1', '8 b', 'start']), /bad step/);
   assert.throws(() => parseArgs(['U-1', '8b', 'begin']), /start or done/);
   assert.throws(() => parseArgs(['U-1', '8b', 'start', '--round', '0']), /--round/);
@@ -68,6 +69,18 @@ test('parseArgs rejects a wrong count, a path in the unit id, a bad step, event 
   assert.throws(() => parseArgs(['U-1', '8b', 'start', '--dir']), /needs a value/);
   assert.throws(() => parseArgs(['U-1', '8b', 'start', '--wat']), /unknown option --wat/);
   assert.throws(() => parseArgs(['U-1', '8b', '--list']), /--list takes the unit id only/);
+});
+
+test('parseArgs takes a unit id of one segment, or two joined by one slash, and refuses every other path', () => {
+  assert.equal(parseArgs(['harness/x', '0', 'start']).unit, 'harness/x');
+  assert.equal(parseArgs(['harness/sweep-2026-10-28', '0', 'start']).unit, 'harness/sweep-2026-10-28');
+  assert.equal(parseArgs(['change/fix-login', '0', 'done']).unit, 'change/fix-login');
+  assert.equal(parseArgs(['harness/x', '--list']).unit, 'harness/x');
+  for (const bad of ['../x', '/x', 'x/', 'a//b', 'a/b/c', 'x/..', 'x/.hidden', '.x/y', 'x/../y']) {
+    assert.throws(() => parseArgs([bad, '0', 'start']), /bad unit id/, bad);
+    assert.throws(() => parseArgs([bad, '--list']), /bad unit id/, bad);
+  }
+  assert.match(UNIT_ID_SOURCE, /\//);
 });
 
 test('stepLine and parseSteps round-trip; torn, foreign and incomplete lines are skipped; round defaults to 1', () => {
@@ -195,8 +208,24 @@ test('the wrapper appends an out-of-order marker with a warning, and exits 2 on 
   assert.equal(done.status, 0);
   assert.match(done.stderr, /warning: no step is open/);
   assert.equal(fs.readFileSync(path.join(dir, 'U-1.steps.jsonl'), 'utf8').trim().split('\n').length, 1);
-  const bad = cli(root, ['U/1', '8b', 'start', '--dir', path.join(root, 'other')]);
+  const bad = cli(root, ['U//1', '8b', 'start', '--dir', path.join(root, 'other')]);
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /usage: node scripts\/unit-step\.mjs/);
   assert.equal(fs.existsSync(path.join(root, 'other')), false);
+});
+
+test('the wrapper nests a harness/<slug> unit under its first segment, beside its state file, and --list reads it back', () => {
+  const root = tmpDir('unit-step-cli-');
+  const dir = path.join(root, 'plans');
+  const at = (min) => new Date(Date.parse('2026-10-26T01:00:00Z') + min * MIN).toISOString();
+  const start = cli(root, ['harness/x', '0', 'start', '--dir', dir, '--at', at(0)]);
+  assert.equal(start.status, 0, start.stderr);
+  assert.match(start.stdout, /^unit-step: harness\/x 0 r1 start /);
+  const file = path.join(dir, 'harness', 'x.steps.jsonl');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8').trim()).unit, 'harness/x');
+  assert.equal(fs.existsSync(path.join(dir, 'x.steps.jsonl')), false);
+  assert.equal(cli(root, ['harness/x', '0', 'done', '--dir', dir, '--at', at(9)]).status, 0);
+  const list = cli(root, ['--list', 'harness/x', '--dir', dir]);
+  assert.equal(list.status, 0, list.stderr);
+  assert.match(list.stdout, /^0 r1 +2026-10-26 01:00 → 01:09 {2}9m$/m);
 });

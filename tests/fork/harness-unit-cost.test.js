@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 72;
+const EXPECTED_TESTS = 77;
 
 let passed = 0;
 let failed = 0;
@@ -139,7 +139,12 @@ mutantFails('letting an unreadable time set a subagent\'s first turn', "if (r.ki
 mutantFails('taking a subagent rollout\'s copy of its parent\'s meta for its own', 'if (!state.meta) Object.assign(s, codexMeta(p));', 'Object.assign(s, codexMeta(p));');
 mutantFails('counting a codex exec run as the host\'s', "host: id !== null && m.originator !== 'codex_exec' && src !== 'exec',", 'host: id !== null,');
 mutantFails('holding an async question open until a result', 'if (!e.async) asks.set(e.id, e.ts);', 'asks.set(e.id, e.ts);');
-mutantFails('taking the owner\'s reply to an async question for a line Codex wrote', 'const CODEX_INJECTED = /^\\s*<(?!send_user_message_question_reply>)/;', 'const CODEX_INJECTED = /^\\s*</;');
+mutantFails('taking the owner\'s reply to an async question for a line Codex wrote', 'if (!tag || tag[1] === CODEX_OWNER_TAG) return false;', 'if (!tag) return false;');
+mutantFails('taking an unclosed element for a line Codex wrote', 'if (c === -1) return false;', 'if (c === -1) return true;');
+mutantFails('reading a step tag of a harness/<slug> unit as none', '(${UNIT_ID_SOURCE}) s(', '([A-Za-z0-9][A-Za-z0-9._-]*) s(');
+mutantFails('leaving the runs without a cost out of the summary line', "${claudeRuns.unpriced ? `, ${claudeRuns.unpriced} without a cost` : ''}", "");
+mutantFails('dropping the Codex % from --json', 'codexPercent: percent, ', '', CLI_REL);
+mutantFails('taking a nested steps file\'s unit from its basename', "named.length === 1 && named[0] !== '' ? named[0] : ", '', CLI_REL);
 mutantFails('adding a running total instead of its growth', 'const before = prev?.[k] ?? 0;', 'const before = 0;');
 mutantFails('counting the quota between two turns', 'if (cur && cur.seg === r.seg && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;', 'if (cur && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;');
 mutantFails('leaving claude-run\'s dollars out of the cost', 'const total = claude.total + (claudeRuns?.usd ?? 0);', 'const total = claude.total;');

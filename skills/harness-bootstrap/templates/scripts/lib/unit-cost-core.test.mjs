@@ -774,6 +774,22 @@ test('parseTag reads [<unit> s<step> r<n>] anywhere in a description, the round 
   assert.equal(parseTag('[EP-27.03 8c]'), null);
 });
 
+test('parseTag reads a harness/<slug> unit and refuses a path that climbs or nests deeper', () => {
+  assert.deepEqual(parseTag('[harness/x s8c r2] codex review'), { unit: 'harness/x', step: '8c', round: 2 });
+  assert.deepEqual(parseTag('[change/fix-login s4] build'), { unit: 'change/fix-login', step: '4', round: 1 });
+  assert.equal(parseTag('[../x s1]'), null);
+  assert.equal(parseTag('[a/b/c s1]'), null);
+  assert.equal(parseTag('[/x s1]'), null);
+});
+
+test('summarizeSteps: a subagent tagged with a harness/<slug> unit is placed by its tag', () => {
+  const markers = [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30), marker('8c', 'done', 50)];
+  const rows = [pricedRow(5, 1), pricedRow(10, 8, { kind: 'sub', agentId: 'a1', description: '[harness/x s8c r1] codex review' })];
+  const by = Object.fromEntries(summarizeSteps(rows, markers, { unit: 'harness/x' }).steps.map((x) => [x.label, x]));
+  near(by['8c r1'].usd, 8);
+  near(by['4 r1'].usd, 1);
+});
+
 test('summarizeSteps: main turns by interval, subagents by their tag or else their first turn, the rest unmarked', () => {
   const markers = [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30), marker('8c', 'done', 50)];
   const rows = [
@@ -956,6 +972,28 @@ test('the wrapper adds --times and --by-step from the session, its subagents\' t
   assert.equal(cli(root, [...args, '--line']).status, 2);
 });
 
+test('--by-step on a nested steps file takes the unit its markers name; --unit wins; a file with no unit falls back to its basename', () => {
+  const root = tmpDir('unit-cost-nested-');
+  const proj = path.join(root, 'projects', '-p-app');
+  fs.mkdirSync(path.join(proj, 's8', 'subagents'), { recursive: true });
+  const usage = { output_tokens: M / PRICE.opus[1] };
+  fs.writeFileSync(path.join(proj, 's8.jsonl'), [userLine(0, 'sweep'), turn({ id: 'm1', req: 'r1', at: atMin(1), usage })].join('\n'));
+  fs.writeFileSync(path.join(proj, 's8', 'subagents', 'agent-1.jsonl'), `${turn({ id: 's1', req: 'sr1', at: atMin(2), usage })}\n`);
+  fs.writeFileSync(path.join(proj, 's8', 'subagents', 'agent-1.meta.json'), JSON.stringify({ agentType: 'reviewer', description: '[harness/x s8c] review' }));
+  fs.mkdirSync(path.join(root, 'harness'));
+  const steps = path.join(root, 'harness', 'x.steps.jsonl');
+  const lines = (unit) => [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30)].map((m) => jline({ ...m, ts: undefined, unit })).join('\n');
+  fs.writeFileSync(steps, lines('harness/x'));
+  const base = ['--session', 's8', '--projects-dir', path.join(root, 'projects'), '--by-step', steps, '--json'];
+  const j = JSON.parse(cli(root, base).stdout);
+  assert.equal(j.steps.unit, 'harness/x');
+  const by = Object.fromEntries(j.steps.steps.map((x) => [x.label, x]));
+  assert.equal(by['8c r1'].agents, 1);
+  assert.equal(JSON.parse(cli(root, [...base, '--unit', 'other/y']).stdout).steps.unit, 'other/y');
+  fs.writeFileSync(steps, lines(''));
+  assert.equal(JSON.parse(cli(root, base).stdout).steps.unit, 'x');
+});
+
 // ---- a Codex host (its rollouts under $CODEX_HOME/sessions) and the claude-run ledger
 
 const cx = (min, type, payload) => jline({ timestamp: atMin(min), type, payload });
@@ -1034,6 +1072,47 @@ test('parseCodexSession reads a rollout: its own meta, turns, readings, question
   // An exec run is no host session; torn and foreign lines are skipped.
   const exec = parseCodexSession([cxMeta(0, { id: 'ex-1', session_id: 'ex-1', originator: 'codex_exec', source: 'exec' }), '{"torn', 'not json', '']);
   assert.deepEqual([exec.id, exec.host, exec.readings.length], ['ex-1', false, 0]);
+});
+
+test('a Codex user message is its own when it is whole elements, optionally after an AGENTS.md first line; anything the owner typed is a prompt', () => {
+  const kind = (text) => {
+    const e = parseCodexSession([cxMeta(0), cxUser(1, text)]).events;
+    assert.equal(e.length, 1, text);
+    return e[0].type;
+  };
+  const agents = '# AGENTS.md instructions for /r/app\n\n<INSTRUCTIONS>\nuse <b>tabs</b>\n</INSTRUCTIONS>';
+  const env = '<environment_context>\n  <cwd>/r/app</cwd>\n</environment_context>';
+  for (const own of [
+    '<user_action>\n  <context>opened a page</context>\n</user_action>',
+    env,
+    `  ${env}  \n`,
+    agents,
+    `${agents}\n${env}`,
+    '<marker/>',
+    '<a x="1">one</a>\n<a>two</a>',
+    '<a>outer <a>inner</a> tail</a>',
+  ]) {
+    assert.equal(kind(own), 'note', own);
+  }
+  for (const mine of [
+    '<- that test',
+    '<b>x</b> and more',
+    '<image name=[Image #1]>\nsee this',
+    '<image>x</image> and what does this do',
+    `${env} then fix it`,
+    '<a>open',
+    '# AGENTS.md instructions for /r/app\nplease read it',
+    'plain words',
+    '<send_user_message_question_reply> [{"answer":"yes"}]',
+    '<send_user_message_question_reply>yes</send_user_message_question_reply>',
+  ]) {
+    assert.equal(kind(mine), 'prompt', mine);
+  }
+  // A 40 KB instructions message is one linear pass.
+  const t0 = Date.now();
+  assert.equal(kind(`# AGENTS.md instructions for /r/app\n\n<INSTRUCTIONS>\n${'<x> y </x>\n'.repeat(4000)}</INSTRUCTIONS>`), 'note');
+  assert.equal(kind(`<a>${'<a>'.repeat(5000)}`), 'prompt');
+  assert.ok(Date.now() - t0 < 2000, 'a long message is scanned in linear time');
 });
 
 test('summarizeCodexHost: tokens are the growth of the running totals inside the window; turns, questions and compactions are the main thread\'s', () => {
@@ -1123,6 +1202,9 @@ test('summaryLine adds claude-run dollars to the cost and its Claude %, and name
   const runs = { runs: 2, notRun: 0, usd: 7.655 };
   assert.equal(summaryLine(claude, null, { claudeRuns: runs }), `Cost $20.00 · Claude ${pct}% (2 claude-run) · Codex no ledger`);
   assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, notRun: 1 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 1 not run) · Codex no ledger`);
+  // A run with no cost (a timeout) is named, so the dollars are not read as the whole spend.
+  assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, unpriced: 2 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 2 without a cost) · Codex no ledger`);
+  assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, unpriced: 1, notRun: 1 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 1 without a cost, 1 not run) · Codex no ledger`);
   assert.equal(summaryLine(claude, null, { host: { percent: 5 }, percent: 5 }), 'Cost $12.35 · Claude 0.6% · Codex 5% (host)');
   assert.equal(summaryLine(claude, { percent: 1.5, runs: 3, notRun: 1 }, { host: { percent: 5 }, percent: 6 }), 'Cost $12.35 · Claude 0.6% · Codex 6% (host, 3 runs, 1 not run)');
   // Without either, the line is the one it always was.
@@ -1201,6 +1283,16 @@ test('the wrapper takes a Codex thread id: its rollout under $CODEX_HOME/session
   const missing = cli(root, ['--session', 'th-404', ...base], root, env);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /session th-404 not found/);
+});
+
+test('--json carries the union Codex % of a Codex host as codexPercent, and null without one', () => {
+  const root = fixture();
+  const env = { CODEX_HOME: codexHome() };
+  const base = ['--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'none.jsonl'), '--json'];
+  const host = JSON.parse(cli(root, ['--session', 'th-1', ...base], root, env).stdout);
+  assert.equal(host.codexPercent, 6);
+  assert.equal(host.summary.match(/Codex ([\d.]+)%/)[1], String(host.codexPercent));
+  assert.equal(JSON.parse(cli(root, ['--session', 'sess1', ...base], root, env).stdout).codexPercent, null);
 });
 
 test('the wrapper reads the main checkout\'s claude-run ledger from a worktree and adds the dollars of the runs made in that worktree', () => {

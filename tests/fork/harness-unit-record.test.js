@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
@@ -15,7 +16,7 @@ const TEST_REL = path.join('lib', 'unit-record-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-record-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 37;
+const EXPECTED_TESTS = 40;
 
 let passed = 0;
 let failed = 0;
@@ -120,23 +121,36 @@ mutantFails('counting a step again on its later ledger rows', 'if (seen.has(id))
 mutantFails('reading a Gate row as no step', ".replace(/^Gate (\\d+)(?=\\s|$)/i, 'g$1')", '');
 mutantFails('leaving the open step without a time up to now', 'stepIntervals(markers, Date.parse(now))', 'stepIntervals(markers)');
 mutantFails('dropping the Steps line', '...(times ? [`- Steps: ${times.line}`] : []),', '');
+mutantFails('reading a bare 0 owner wait as unreadable', "if (term === '0') continue;", '');
+mutantFails('swapping the Yield and Friction columns of the draft row', "'Yield by source',\n  'Friction',", "'Friction',\n  'Yield by source',");
+mutantFails('ignoring the bound log columns', '${columns.map((name) => logCell(name, known)).join', '${LOG_COLUMNS.map((name) => logCell(name, known)).join');
 mutantFails('ignoring --steps', "if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));", '', 'unit-record.mjs');
 
-test('the draft log row has log-format.md\'s columns, in its order (Yield before Friction)', () => {
+test('the core\'s default LOG_COLUMNS are log-format.md\'s columns, in its order, and each one has a cell (Yield, Friction, Missed)', () => {
   const doc = fs.readFileSync(path.join(ROOT, 'skills', 'harness-bootstrap', 'reference', 'log-format.md'), 'utf8');
   const columns = [];
   for (const line of doc.slice(doc.indexOf('| Unit · Mode · Type · Tier')).split('\n')) {
     if (!line.startsWith('| ')) break;
     columns.push(line.split(' | ')[0].replace(/^\| /, '').replace(/[*★]/g, '').trim());
   }
-  const core = fs.readFileSync(path.join(SCRIPTS, CORE_REL), 'utf8');
-  const row = /`\| \$\{cell\(unit\)\}.*\|`/.exec(core);
-  assert.ok(row, 'the draft row template is in the core');
-  const cells = row[0].slice(2, -2).split(' | ');
+  const core = path.join(SCRIPTS, CORE_REL);
+  const probe = `
+    import { LOG_COLUMNS, buildRecord, parseState } from ${JSON.stringify(pathToFileURL(core).href)};
+    const state = parseState('Unit: U-1\\nClaimed: 2026-10-24T03:10:00Z\\n\\n## Findings\\n| ID | Sev | Source | Also | Status | Note |\\n|---|---|---|---|---|---|\\n| F-1 | P1 | codex-review | | fixed abc1234 | a |\\n');
+    const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: '2026-10-24T06:22:00Z' });
+    const lines = rec.split('\\n');
+    process.stdout.write(JSON.stringify({ columns: LOG_COLUMNS, row: lines[lines.indexOf('Draft log row:') + 1] }));
+  `;
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8', env: hermeticEnv(cleanup) });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepStrictEqual(out.columns.map((c) => c.replace(/[*★]/g, '').trim()), columns);
+  const cells = out.row.slice(2, -2).split(' | ');
   assert.strictEqual(cells.length, columns.length, `${cells.length} cells for ${columns.length} columns`);
-  assert.strictEqual(cells[columns.indexOf('Yield by source')], '${yieldCompact}');
+  assert.strictEqual(cells[columns.indexOf('Yield by source')], 'codex-review 0/1/0');
   assert.match(cells[columns.indexOf('Friction')], /friction/);
   assert.match(cells[columns.indexOf('Missed by harness')], /missed by harness/);
+  for (const [i, name] of columns.entries()) assert.ok(!cells[i].startsWith(`<fill: ${name}>`), `${name} has no cell of its own`);
 });
 
 test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) leaves that repo untouched', () => {

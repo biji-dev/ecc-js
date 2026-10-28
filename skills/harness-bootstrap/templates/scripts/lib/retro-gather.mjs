@@ -166,6 +166,19 @@ export function readPrevious(dirs) {
 }
 
 /**
+ * A steps file's markers into `steps` (unit -> markers): each under its own unit (`harness/x` sits in
+ * `harness/x.steps.jsonl`), one with none under `fallback`, the file's path under its plans dir.
+ */
+function addSteps(steps, markers, fallback) {
+  if (markers.length === 0 && !steps.has(fallback)) steps.set(fallback, []);
+  for (const m of markers) {
+    const unit = m.unit || fallback;
+    if (!steps.has(unit)) steps.set(unit, []);
+    steps.get(unit).push(m);
+  }
+}
+
+/**
  * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` (a path or a list, see
  * readFollowUps) and `plansDirs` are relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
@@ -197,8 +210,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
         g.states.push({ path: rel, text: readText(file), changed: changed.get(rel) ?? fs.statSync(file).mtimeMs });
         continue;
       }
-      const unit = path.basename(file, '.steps.jsonl');
-      g.steps.set(unit, [...(g.steps.get(unit) ?? []), ...parseSteps(readText(file))]);
+      addSteps(g.steps, parseSteps(readText(file)), path.relative(path.join(top, dir), file).split(path.sep).join('/').replace(/\.steps\.jsonl$/, ''));
     }
   }
   const roots = worktreePaths(top);

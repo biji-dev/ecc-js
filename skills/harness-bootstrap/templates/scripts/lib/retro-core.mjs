@@ -14,7 +14,7 @@
  * history, the outliers, the repeated friction and at most five candidates -- is what a reviewer, or
  * the next round, can read in one pass.
  */
-import { fmtMinutes, groupUnits, parseLog, percentile, tables } from './estimate-core.mjs';
+import { fmtMinutes, groupUnits, leftOutRows, leftOutWarning, parseLog, percentile, tables } from './estimate-core.mjs';
 import {
   dedupeRows,
   fmtTokens,
@@ -29,7 +29,7 @@ import {
   summarizeSteps,
 } from './unit-cost-core.mjs';
 import { parseState } from './unit-record-core.mjs';
-import { stepIntervals } from './unit-step-core.mjs';
+import { UNIT_ID_SOURCE, stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] Where the digests go (committed), and where the log, the follow-ups doc and the unit plans
@@ -93,7 +93,7 @@ const VALUE_FLAGS = {
 // The digest's machine-readable tail, read back as the next retro's baseline.
 const DATA_BLOCK = /<!-- retro-data (\{.*\}) -->/;
 // A main thread's step-marker command names the unit it ran: `unit-step.mjs <unit> <step> start`.
-const MARKER_CMD = /unit-step\.mjs\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=[\s"\\]|$)/g;
+const MARKER_CMD = new RegExp(`unit-step\\.mjs\\s+(${UNIT_ID_SOURCE})(?=[\\s"\\\\]|$)`, 'g');
 // Words too common to start or end a friction theme.
 const STOP = new Set(
   'about above after again also because been before being between both could does doing done during each from have having here into just like made make many more most much must need never only other over same should since some such than that their them then there these they this those through under until very were what when where which while with would your unit units step steps time times owner the and for was but not its one two all any can did had has how out own see set per via new off are'.split(
@@ -658,9 +658,11 @@ function readCounts(g, records) {
  * What the Read line cannot say for itself: a figure that is missing or zero for a reason the
  * project can fix. A list of strings, empty when all is well. `claudeRows` says whether the window
  * holds a Claude transcript row, main or subagent: the sessions figure counts main-thread rows only.
+ * `leftOut` is the log's rows no table took (estimate-core's leftOutRows).
  */
-function warningsFor(d, records, claudeRows) {
+function warningsFor(d, records, claudeRows, leftOut = []) {
   const out = [];
+  if (leftOut.length) out.push(leftOutWarning(leftOut));
   const t = d.kpis.transcripts;
   const h = d.kpis.codexHost;
   const spent = [t?.claudeUsd > 0 ? `${usd(t.claudeUsd)} of Claude spend` : null, h?.sessions > 0 ? `${h.sessions} Codex thread${h.sessions === 1 ? '' : 's'}` : null].filter(Boolean);
@@ -745,7 +747,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     },
     decisions: { units: recent.length, classes: sum(recent, (s) => s.classes), by: sum(recent, (s) => s.by), questions: recent.reduce((n, s) => n + s.questions, 0) },
   };
-  d.warnings = warningsFor(d, records, g.rows.some((r) => inWin(r.ts)));
+  d.warnings = warningsFor(d, records, g.rows.some((r) => inWin(r.ts)), leftOutRows(g.log.text));
   d.candidates = candidates(d);
   return d;
 }

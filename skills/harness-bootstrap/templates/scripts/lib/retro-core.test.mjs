@@ -50,7 +50,7 @@ import {
   unitSteps,
   windowFor,
 } from './retro-core.mjs';
-import { readFollowUps } from './retro-gather.mjs';
+import { gather, readFollowUps } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
 
@@ -301,11 +301,14 @@ test('markerUnits reads the unit of each unit-step command in a raw transcript, 
   const tool = (command) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
   const text = [
     tool('node scripts/unit-step.mjs EP-27.04 8 start && node scripts/review-gate.mjs --kind unit'),
-    tool('node scripts/unit-step.mjs harness/x 0 start'), // unit-step refuses a slash; never read as `harness`
+    tool('node scripts/unit-step.mjs harness/x 0 start'), // a nested id is read whole, never as `harness`
+    tool('node scripts/unit-step.mjs ../x 0 start'), // a climbing path names no unit
     tool('node scripts/unit-step.mjs U-2\nnode other.mjs'),
     JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'run `node scripts/unit-step.mjs <unit> <step> start`' }] } }),
   ].join('\n');
-  assert.deepEqual([...markerUnits(text)].sort(), ['EP-27.04', 'U-2']);
+  assert.deepEqual([...markerUnits(text)].sort(), ['EP-27.04', 'U-2', 'harness/x']);
+  assert.equal(markerUnits(tool('node scripts/unit-step.mjs ../x 0 start')).size, 0);
+  assert.equal(markerUnits(tool('node scripts/unit-step.mjs a/b/c 0 start')).size, 0);
 });
 
 test('stepOfDescription: the tag of this unit wins, another unit\'s tag is not ours, else the step words, by whole id', () => {
@@ -704,6 +707,19 @@ test('buildRetro does not warn of a missing session when a subagent of an earlie
   assert.equal(buildRetro(gatherOf({ log: g.log }), { project: 'demo', now: NOW }).warnings.length, 1, 'with no row at all it still warns');
 });
 
+test('buildRetro warns of log rows no table took, with the count and the lines, in the digest\'s Warn lines', () => {
+  // Rows written below the table for an older, narrower header: no table above has as many columns.
+  const text = `${table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)])}\n\n| EP-8 · plan · Code · Full | 30m | 5m |\n| EP-9 · plan · Code · Full | 40m | 5m |\n`;
+  const t = at('22T10:00:00');
+  const d = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text, dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
+  const left = '2 log row(s) left out: no table above has as many columns (line 5, 6)';
+  assert.deepEqual(d.warnings, [left]);
+  assert.deepEqual(warnLines(d), [`Warn: ${left}`]);
+  assert.equal(d.kpis.log.units, 1, 'the figures are as they were: the rows are still not read');
+  const clean = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
+  assert.deepEqual(clean.warnings, []);
+});
+
 test('buildRetro warns of neither when the log has rows and sessions, nor of sessions when a Codex host ran the units', () => {
   assert.deepEqual(fixtureData().warnings, [], 'a log with rows and sessions warns of nothing');
   const t = at('22T10:00:00');
@@ -865,6 +881,21 @@ const WINDOW = ['--since', '2026-10-19T00:00:00Z', '--until', '2026-10-26T00:00:
 function run(f, args, cwd = f.repo, extra = {}) {
   return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env: cleanEnv(extra), encoding: 'utf8' });
 }
+
+test('gather keys a steps file by its markers\' unit, and by its path under the plans dir when a marker names none', () => {
+  const top = tmpDir('retro-nested-');
+  const line = (unit, step, event, min) => stepLine({ t: `2026-10-23T10:${String(min).padStart(2, '0')}:00Z`, unit, step, event, round: 1 });
+  const write = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(top, rel)), { recursive: true });
+    fs.writeFileSync(path.join(top, rel), text);
+  };
+  write(`${PLANS_DIR}/harness/x.steps.jsonl`, `${line('harness/x', '0', 'start', 0)}\n${line('harness/x', '0', 'done', 5)}\n`);
+  write(`${PLANS_DIR}/harness/y.steps.jsonl`, `${line('', '1', 'start', 0)}\n`);
+  write(`${PLANS_DIR}/EP-2.steps.jsonl`, `${line('EP-2', '2', 'start', 0)}\n`);
+  const g = gather({ top, log: null, plansDirs: [PLANS_DIR], projectsDir: path.join(top, 'no-projects') });
+  assert.deepEqual([...g.steps.keys()].sort(), ['EP-2', 'harness/x', 'harness/y']);
+  assert.equal(g.steps.get('harness/x').length, 2);
+});
 
 test('the wrapper: --dry-run prints the digest from the dated log, steps, follow-ups and this repo\'s sessions, writing nothing', () => {
   const f = fixture();

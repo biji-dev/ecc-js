@@ -656,9 +656,10 @@ function readCounts(g, records) {
 
 /**
  * What the Read line cannot say for itself: a figure that is missing or zero for a reason the
- * project can fix. A list of strings, empty when all is well.
+ * project can fix. A list of strings, empty when all is well. `claudeRows` says whether the window
+ * holds a Claude transcript row, main or subagent: the sessions figure counts main-thread rows only.
  */
-function warningsFor(d, records) {
+function warningsFor(d, records, claudeRows) {
   const out = [];
   const t = d.kpis.transcripts;
   const h = d.kpis.codexHost;
@@ -667,7 +668,7 @@ function warningsFor(d, records) {
     out.push(`${spent.join(' and ')} in the window against no log rows: the harness log is not being written, LOG names a file that is not the log, or its columns do not match`);
   }
   const units = d.kpis.log.units;
-  if (units > 0 && !(t?.sessions > 0) && !(h?.sessions > 0)) {
+  if (units > 0 && !claudeRows && !(h?.sessions > 0)) {
     out.push(`${units} unit${units === 1 ? '' : 's'} landed in the window but no Claude Code session or Codex thread was read, so the cost and session figures are missing: the retro reads Claude Code and Codex sessions only (another host's are not read), and a wrong projects directory or CLAUDE_CONFIG_DIR gives the same`);
   }
   const q = d.queue.followUps;
@@ -744,7 +745,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     },
     decisions: { units: recent.length, classes: sum(recent, (s) => s.classes), by: sum(recent, (s) => s.by), questions: recent.reduce((n, s) => n + s.questions, 0) },
   };
-  d.warnings = warningsFor(d, records);
+  d.warnings = warningsFor(d, records, g.rows.some((r) => inWin(r.ts)));
   d.candidates = candidates(d);
   return d;
 }

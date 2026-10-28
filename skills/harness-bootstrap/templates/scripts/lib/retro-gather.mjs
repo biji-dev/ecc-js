@@ -97,14 +97,15 @@ export function readFollowUps(top, specs, blame = blameDates) {
     const file = path.join(top, rel);
     if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue;
     const text = readText(file).replace(/\r?\n$/, '');
-    files.push({ rel, text, start: next, blamed: null });
-    next += text.split('\n').length + 1;
+    const lines = text.split('\n').length;
+    files.push({ rel, text, start: next, lines, blamed: null });
+    next += lines + 1;
   }
   if (files.length === 0) return null;
   const dates = {
     get(line) {
       const f = files.findLast((x) => x.start <= line);
-      if (!f || line >= f.start + f.text.split('\n').length) return undefined;
+      if (!f || line >= f.start + f.lines) return undefined;
       f.blamed ??= blame(top, f.rel);
       return f.blamed.get(line - f.start + 1);
     },

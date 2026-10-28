@@ -94,6 +94,38 @@ test('the shipped harness-due suite passes with the pinned test count', () => {
   assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
 });
 
+/** The follow-up bindings a project may rebind, each rewritten once in a copy of the shipped scripts. */
+const REBINDINGS = [
+  [path.join('lib', 'retro-core.mjs'), "export const FOLLOW_UPS = 'docs/harness/follow-ups.md';", "export const FOLLOW_UPS = ['docs/fu/*.md', 'docs/other.md'];"],
+  [path.join('lib', 'harness-due-core.mjs'), "export const FOLLOW_UPS = 'docs/harness/follow-ups.md';", "export const FOLLOW_UPS = ['docs/fu/*.md', 'docs/other.md'];"],
+  [path.join('lib', 'retro-core.mjs'), "export const STATUS_COLUMNS = ['status'];", "export const STATUS_COLUMNS = ['decision'];"],
+  [
+    path.join('lib', 'retro-core.mjs'),
+    "export const STATUS_WORDS = { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] };",
+    "export const STATUS_WORDS = { open: ['todo'], scheduled: ['planned'], fixed: ['done'], dropped: ['wontfix'] };",
+  ],
+  [path.join('lib', 'retro-core.mjs'), "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
+];
+
+test('the shipped suite passes with the follow-up bindings rebound', () => {
+  const copy = tmp('harness-due-rebound-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  for (const [rel, needle, replacement] of REBINDINGS) {
+    const file = path.join(copy, rel);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, `${needle} is not in ${rel} exactly once`);
+    fs.writeFileSync(file, before.replace(needle, () => replacement));
+  }
+  const res = runSuite(copy, cleanup);
+  const out = res.stdout + res.stderr;
+  const first = (out.match(/^\s*(?:not ok|error:|\+ actual).*$/m) ?? [''])[0].trim();
+  assert.strictEqual(res.status, 0, `rebound: ${first}\n${out.slice(-1200)}`);
+  assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1200));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+  assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+});
+
 mutantFails('blocking a phase that a merge already opened', 'const opens = rows === 0 && merged === 0;', 'const opens = rows === 0;');
 mutantFails('matching a preflight report by case', '.some((r) => path.posix.basename(r.rel).toLowerCase() === want)', '.some((r) => path.posix.basename(r.rel) === want)');
 mutantFails('counting landings from the log rows alone', 'const landings = Math.max(after(landed), after(merged));', 'const landings = after(landed);');

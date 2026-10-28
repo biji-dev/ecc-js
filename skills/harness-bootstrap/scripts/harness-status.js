@@ -775,14 +775,22 @@ function buildReport() {
   // one unsafe entry drops the whole role
   const roleNamed = role => {
     const v = manifest && manifest.roles ? manifest.roles[role] : null;
-    const rels = (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).map(safeRel);
-    if (!rels.length || !rels.every(Boolean)) return [];
-    return rels.flatMap(rel => {
-      if (!rel.endsWith('/*.md')) return [rel];
-      const dir = rel.slice(0, -'/*.md'.length);
+    // a glob is judged as written: `./*.md` is the root's files, a bare `*.md` a literal name
+    const parsed = (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).map(spec => {
+      if (typeof spec === 'string' && spec.endsWith('/*.md')) {
+        const dir = spec.slice(0, -'/*.md'.length);
+        const rel = dir === '.' ? '.' : safeRel(dir);
+        return rel && { dir: rel };
+      }
+      const rel = safeRel(spec);
+      return rel && { file: rel };
+    });
+    if (!parsed.length || !parsed.every(Boolean)) return [];
+    return parsed.flatMap(p => {
+      if (p.file) return [p.file];
       let names = [];
-      try { names = fs.readdirSync(abs(dir)).filter(n => n.endsWith('.md')).sort(); } catch { /* no such directory */ }
-      return names.map(n => `${dir}/${n}`);
+      try { names = fs.readdirSync(abs(p.dir)).filter(n => n.endsWith('.md')).sort(); } catch { /* no such directory */ }
+      return names.map(n => (p.dir === '.' ? n : `${p.dir}/${n}`));
     });
   };
   const roleFile = (role, list) => [...roleNamed(role), ...list].find(isFile) || null;

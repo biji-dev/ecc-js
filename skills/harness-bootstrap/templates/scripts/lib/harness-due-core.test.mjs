@@ -12,6 +12,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { blameDates } from './retro-gather.mjs';
+import { SEVERITY_COLUMNS, STATUS_COLUMNS, STATUS_WORDS } from './retro-core.mjs';
 import {
   CADENCE,
   FOLLOW_UPS,
@@ -48,6 +49,13 @@ const at = (s) => Date.parse(`2026-10-${s}Z`);
 const PHASE = /^([A-Za-z]+-?\d+)[-.]\w/;
 const PREFLIGHT = 'docs/preflight/<phase>.md';
 const fill = (template, value) => template.replace(/<\w+>/, value);
+// A follow-ups table for code that reads the project's own bindings: the status and severity headers
+// and the open word come from them, so a project that rebinds them still passes. The file a fixture
+// writes it to is FOLLOW_UPS (a list's first entry; a `dir/*.md` entry becomes `dir/follow-ups.md`).
+const ST = STATUS_COLUMNS[0];
+const SEV = SEVERITY_COLUMNS[0];
+const OPEN = STATUS_WORDS.open[0];
+const FU_FILE = [FOLLOW_UPS].flat()[0].replace(/\/\*\.md$/, '/follow-ups.md');
 
 const tempDirs = [];
 function tmpDir(prefix) {
@@ -181,7 +189,7 @@ test('p3Note and p3Due name the oldest open P3 row when the summary knows it, an
 });
 
 test('checkAll counts a P3 by the Severity cell when the doc has one: a P1 row that names P3 elsewhere is not counted, and the oldest P3 is named', () => {
-  const fuText = `${table(['#', 'Severity', 'Area', 'Status'], [['FU-1', 'P1', 'the P3 cleanup of a.ts', 'open'], ['FU-2', 'P3', 'b.ts', 'open']])}\n`;
+  const fuText = `${table(['#', SEV, 'Area', ST], [['FU-1', 'P1', 'the P3 cleanup of a.ts', OPEN], ['FU-2', 'P3', 'b.ts', OPEN]])}\n`;
   const fuDates = new Map([[3, NOW - 90 * DAY], [4, NOW - 60 * DAY]]);
   const items = checkAll({ now: NOW, log: null, followUps: { text: fuText, dates: fuDates }, reports: {}, merges: [], worktrees: [], proposals: null, seen: {}, project: 'p' });
   const line = items.find((i) => i.kind === 'hygiene' || i.kind === 'p3');
@@ -298,7 +306,7 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   const logText = `# Log\n\n${table(LOG_HEAD, [])}\n${['P1-01', 'P1-02', 'P1-03'].map(logRow).join('\n')}\n`;
   // header lines 1-4 at the log's birth, then one landing a day
   const logDates = new Map([[1, at('10T10:00:00')], [2, at('10T10:00:00')], [3, at('10T10:00:00')], [4, at('10T10:00:00')], [5, at('19T10:00:00')], [6, at('20T10:00:00')], [7, at('21T10:00:00')]]);
-  const fuText = `${table(['#', 'Severity', 'Status'], [['FU-1', 'P3', 'open'], ['FU-2', 'P2', 'open']])}\n`;
+  const fuText = `${table(['#', SEV, ST], [['FU-1', 'P3', OPEN], ['FU-2', 'P2', OPEN]])}\n`;
   const fuDates = new Map([[3, at('06T10:00:00')], [4, at('25T10:00:00')]]);
   const report = (kind, value, time) => ({ rel: fill(REPORTS[kind], value), time });
   const facts = {
@@ -365,7 +373,7 @@ function fixture() {
   };
   git(['init', '-q', '-b', MAIN]);
   write(LOG, `# Log\n\n${table(LOG_HEAD, [])}\n${logRow('P1-01')}\n${logRow('P1-02')}\n`);
-  write(FOLLOW_UPS, `${table(['#', 'Severity', 'Status'], [['1', 'P3', 'open']])}\n`);
+  write(FU_FILE, `${table(['#', SEV, ST], [['1', 'P3', OPEN]])}\n`);
   git(['add', '.']);
   git(['commit', '-q', '-m', 'the log']);
   if (REPORTS.sweep !== null) {

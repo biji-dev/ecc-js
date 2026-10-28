@@ -20,6 +20,9 @@ import {
   OUTLIER_X,
   PLANS_DIR,
   REPORTS_DIR,
+  SEVERITY_COLUMNS,
+  STATUS_COLUMNS,
+  STATUS_WORDS,
   agentCosts,
   buildRetro,
   candidates,
@@ -81,6 +84,15 @@ const logRow = (id, tier, work, cost, missed = '—', friction = '—', defects 
 ];
 // The table's first data row is line 3.
 const datesFor = (...days) => new Map(days.map((d, i) => [i + 3, at(d)]));
+// A follow-ups table for the code that reads the project's own bindings (buildRetro): the status and
+// severity headers and the open word come from them, so a project that rebinds them still passes.
+const ST = STATUS_COLUMNS[0];
+const SEV = SEVERITY_COLUMNS[0];
+const OPEN = STATUS_WORDS.open[0];
+const fuTable = (rows) => table(['#', ST], rows.map((id) => [id, OPEN]));
+// The file a fixture writes the follow-ups doc to: a string binding is that path, a list's first
+// entry is, and a `dir/*.md` entry becomes `dir/follow-ups.md`.
+const FU_FILE = [FOLLOW_UPS].flat()[0].replace(/\/\*\.md$/, '/follow-ups.md');
 
 let rowKey = 0;
 function row({ ts, cost = 1, kind = 'main', session = 's1', agentId = null, desc = null, cacheRead = 0, cacheWrite = 0, input = 0, writeCost = 0 }) {
@@ -166,6 +178,13 @@ test('logRecords adds Defects, Missed by harness and Friction, empties every way
   assert.deepEqual(recs[0].defects, { p0: 0, p1: 1 });
 });
 
+// The bindings these tests depend on are passed in, so a project that rebinds its own still passes them.
+const FU_OPTS = {
+  statusColumns: ['status'],
+  statusWords: { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] },
+  severityColumns: ['sev', 'priority'],
+};
+
 test('followUpsSummary counts rows by status, the open ones naming a P3, and the oldest open row\'s and open P3\'s age', () => {
   const text = table(['#', 'Area', 'Why it waits', 'Filed by', 'Status'], [
     ['1', 'a.ts:3', 'P3 naming', 'EP-1', 'open'],
@@ -176,7 +195,7 @@ test('followUpsSummary counts rows by status, the open ones naming a P3, and the
     ['6', 'f.ts', '?', 'EP-3', 'parked'],
   ]);
   const dates = new Map([[3, NOW - 20 * DAY], [7, NOW - 30 * DAY]]);
-  assert.deepEqual(followUpsSummary(text, dates, NOW), {
+  assert.deepEqual(followUpsSummary(text, dates, NOW, FU_OPTS), {
     open: 2,
     scheduled: 1,
     fixed: 1,
@@ -188,17 +207,10 @@ test('followUpsSummary counts rows by status, the open ones naming a P3, and the
     oldestOpenP3Days: 20,
     oldestOpenP3Row: '1',
   });
-  assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenDays, null);
-  assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenP3Days, null);
-  assert.equal(followUpsSummary('no table', new Map(), NOW).oldestOpenP3Row, null);
+  assert.equal(followUpsSummary('no table', new Map(), NOW, FU_OPTS).oldestOpenDays, null);
+  assert.equal(followUpsSummary('no table', new Map(), NOW, FU_OPTS).oldestOpenP3Days, null);
+  assert.equal(followUpsSummary('no table', new Map(), NOW, FU_OPTS).oldestOpenP3Row, null);
 });
-
-// The bindings these tests depend on are passed in, so a project that rebinds its own still passes them.
-const FU_OPTS = {
-  statusColumns: ['status'],
-  statusWords: { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] },
-  severityColumns: ['sev', 'priority'],
-};
 
 test('followUpsSummary: rows in a table with no status column are counted apart and left out of every count', () => {
   const text = [table(['#', 'Area', 'Sev'], [['1', 'a.ts', 'P3'], ['2', 'b.ts', 'P2']]), '', table(['#', 'Status'], [['3', 'open'], ['4', 'fixed']])].join('\n');
@@ -241,6 +253,15 @@ test('followUpsSummary: oldestOpenP3Row is the first cell of the oldest dated op
   assert.equal(s.oldestOpenP3Row, 'FU-3', 'the oldest dated open P3 row, not a fixed one, a P2 or an undated one');
   assert.deepEqual([s.oldestOpenP3Days, s.oldestOpenDays, s.openP3], [20, 50, 3]);
   assert.equal(followUpsSummary(text, new Map(), NOW, FU_OPTS).oldestOpenP3Row, null, 'with no dates there is no oldest row');
+});
+
+test('the follow-up bindings keep their shape: lower-case column prefixes, the four kinds with words, a path or a list of paths', () => {
+  for (const list of [STATUS_COLUMNS, SEVERITY_COLUMNS]) {
+    assert.ok(Array.isArray(list) && list.length > 0 && list.every((n) => typeof n === 'string' && n !== '' && n === n.toLowerCase()), `not a non-empty list of lower-case names: ${JSON.stringify(list)}`);
+  }
+  assert.deepEqual(Object.keys(STATUS_WORDS).sort(), ['dropped', 'fixed', 'open', 'scheduled']);
+  for (const [kind, words] of Object.entries(STATUS_WORDS)) assert.ok(Array.isArray(words) && words.length > 0 && words.every((w) => typeof w === 'string' && w !== ''), `${kind} has no words`);
+  assert.ok([FOLLOW_UPS].flat().length > 0 && [FOLLOW_UPS].flat().every((p) => typeof p === 'string' && p !== ''), 'FOLLOW_UPS is not a path or a non-empty list of paths');
 });
 
 test('stateSummary counts the decision log by Class and By, open questions apart, and the P3s still to do', () => {
@@ -508,7 +529,7 @@ function fixtureData() {
   const t = at('22T10:00:00');
   const g = {
     log: { text, dates: datesFor('22T10:00:00', '23T10:00:00', '10T10:00:00') },
-    followUps: { text: table(['#', 'Status'], [['1', 'open']]), dates: new Map([[3, NOW - 15 * DAY]]) },
+    followUps: { text: fuTable(['1']), dates: new Map([[3, NOW - 15 * DAY]]) },
     states: [{ text: 'Unit: EP-1\n\n## Decisions\n| ID | Class | By |\n|---|---|---|\n| DEC-1 | T | agent |\n', changed: t }],
     steps: new Map([['EP-2', [marker(t, '2', 'start'), marker(t + 30 * 60_000, '8b', 'start'), marker(t + 40 * 60_000, '8b', 'done')]]]),
     rows: [row({ ts: t + 60_000, cost: 3 }), row({ ts: t + 31 * 60_000, cost: 1 }), row({ ts: t, kind: 'sub', agentId: 'z', desc: 'EP-1 8b record writer', cost: 7 })],
@@ -638,7 +659,7 @@ const warnLines = (d) => formatDigest(d).split('\n').filter((l) => l.startsWith(
 
 test('buildRetro warns when the window has Claude spend and the log has no rows: the digest says so right after Read, and it is the first candidate', () => {
   const t = at('22T10:00:00');
-  const d = buildRetro(gatherOf({ rows: [row({ ts: t, cost: 3 }), row({ ts: t + 60_000, cost: 0.5 })], sessions: 1, followUps: { text: table(['#', 'Status'], [['1', 'open']]), dates: new Map() } }), { project: 'demo', now: NOW });
+  const d = buildRetro(gatherOf({ rows: [row({ ts: t, cost: 3 }), row({ ts: t + 60_000, cost: 0.5 })], sessions: 1, followUps: { text: fuTable(['1']), dates: new Map() } }), { project: 'demo', now: NOW });
   assert.ok(Array.isArray(d.warnings), 'buildRetro returns a warnings list');
   assert.equal(d.warnings.length, 1, `warnings: ${JSON.stringify(d.warnings)}`);
   assert.match(d.warnings[0], /\$3\.50/, 'the warning names the spend');
@@ -670,6 +691,19 @@ test('buildRetro warns when units landed in the window and no Claude session or 
   assert.match(formatDigest(d), /^\| Transcripts \| none found for this repository \| — \|$/m, 'the KPI row is unchanged');
 });
 
+test('buildRetro does not warn of a missing session when a subagent of an earlier main thread worked in the window', () => {
+  // The main turn is before the window, so the figure counts no session in it; the subagent's spend is read.
+  const g = gatherOf({
+    log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') },
+    rows: [row({ ts: at('10T10:00:00'), cost: 1 }), row({ ts: at('22T10:00:00'), kind: 'sub', agentId: 'z', desc: 'EP-1 8b record writer', cost: 2 })],
+    sessions: 1,
+  });
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  assert.deepEqual([d.kpis.log.units, d.kpis.transcripts.sessions, d.kpis.transcripts.claudeUsd], [1, 0, 2], 'the figures are as they were: no main-thread session in the window, the subagent spend read');
+  assert.deepEqual(d.warnings, [], 'a Claude transcript row in the window, main or subagent, is a session read');
+  assert.equal(buildRetro(gatherOf({ log: g.log }), { project: 'demo', now: NOW }).warnings.length, 1, 'with no row at all it still warns');
+});
+
 test('buildRetro warns of neither when the log has rows and sessions, nor of sessions when a Codex host ran the units', () => {
   assert.deepEqual(fixtureData().warnings, [], 'a log with rows and sessions warns of nothing');
   const t = at('22T10:00:00');
@@ -698,7 +732,7 @@ test('buildRetro: a follow-ups doc whose every table lacks a status column warns
   assert.match(bare.warnings[0], /status/, 'the warning names the columns it looked for');
   assert.match(formatDigest(bare), /^- Follow-ups: 0 open .* · 3 rows in tables with no status column, left out$/m);
   // A doc with a status table too is read, not warned about; its Queue line names the oldest P3 row.
-  const mixed = fu([table(['#', 'Sev', 'Status'], [['FU-3', 'P3', 'open'], ['FU-4', 'P3', 'open']]), '', table(['#', 'Area'], [['5', 'x'], ['6', 'y']])].join('\n'), new Map([[3, NOW - 20 * DAY], [4, NOW - 5 * DAY]]));
+  const mixed = fu([table(['#', SEV, ST], [['FU-3', 'P3', OPEN], ['FU-4', 'P3', OPEN]]), '', table(['#', 'Area'], [['5', 'x'], ['6', 'y']])].join('\n'), new Map([[3, NOW - 20 * DAY], [4, NOW - 5 * DAY]]));
   assert.deepEqual(mixed.warnings, [], 'a doc with one status table is read, not warned about');
   assert.equal(mixed.queue.followUps.oldestOpenP3Row, 'FU-3');
   assert.match(formatDigest(mixed), /^- Follow-ups: 2 open \(2 naming a P3, the oldest FU-3 at 20 d; oldest 20 d\) · 0 scheduled · 0 fixed · 0 dropped · 2 rows in tables with no status column, left out$/m);
@@ -801,7 +835,7 @@ function fixture() {
   git(['init', '-q', '-b', 'main']);
   const head = table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10, 'caught it', 'stale env file')]);
   write(LOG, `# Log\n\n${head}\n`);
-  write(FOLLOW_UPS, `${table(['#', 'Status'], [['1', 'open']])}\n`);
+  write(FU_FILE, `${fuTable(['1'])}\n`);
   write(`${PLANS_DIR}/EP-2.state.md`, 'Unit: EP-2\n');
   write(`${PLANS_DIR}/EP-2.steps.jsonl`, `${stepLine({ t: '2026-10-23T10:00:00Z', unit: 'EP-2', step: '2', event: 'start', round: 1 })}\n${stepLine({ t: '2026-10-23T10:30:00Z', unit: 'EP-2', step: '2', event: 'done', round: 1 })}\n`);
   git(['add', '.']);

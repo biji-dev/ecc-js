@@ -1389,6 +1389,17 @@ test('p3-queue-aging: the follow-ups role may be a list of paths and <dir>/*.md 
   assert.strictEqual(hazardsOf(report(one), 'p3-queue-aging')[0].path, 'docs/fu/one.md');
 });
 
+test('p3-queue-aging: the role `./*.md` is the root\'s markdown files, as the retro reads it; a bare `*.md` is a literal name and reads none', () => {
+  const doc = '| # | Area | Severity | Status |\n|---|---|---|---|\n| 1 | a.ts | P3 | open |\n';
+  const withRole = role => mk({ 'known.md': doc, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles: { 'follow-ups': role } }) });
+  const root = hazardsOf(report(withRole(['./*.md'])), 'p3-queue-aging');
+  assert.strictEqual(root.length, 1, 'the root glob is read: the open P3 sits in a root file');
+  assert.strictEqual(root[0].path, 'known.md');
+  assert.strictEqual(hazardsOf(report(withRole('./*.md')), 'p3-queue-aging').length, 1, 'a string role may be the glob too');
+  assert.deepStrictEqual(hazardsOf(report(withRole(['*.md'])), 'p3-queue-aging'), [], 'a bare *.md is a literal file name');
+  assert.deepStrictEqual(hazardsOf(report(withRole(['../*.md'])), 'p3-queue-aging'), [], 'a glob outside the repository drops the role');
+});
+
 test('mutants: the older report places and the phase-under-way rule each matter', () => {
   const repo = mk({
     '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n',

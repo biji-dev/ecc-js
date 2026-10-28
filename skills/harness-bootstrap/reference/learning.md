@@ -13,7 +13,7 @@ projects only when someone carried it by hand.
 
 | Step | Where it runs | Writes | Cadence |
 |---|---|---|---|
-| the retro | in each project, `scripts/retro.mjs` | `docs/harness/reports/retro-<YYYY-Www>.md`, committed | weekly |
+| the retro | in each project, `scripts/retro.mjs` | `retro-<YYYY-Www>.md` under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`), committed | weekly |
 | the retro review | across projects, `scripts/retro-weekly.mjs` from this skill | `~/.agents/harness/retro/proposals-<YYYY-Www>.md` | weekly, on a schedule |
 | Phase F | in this skill's own repository | the next harness round's plan | when a review proposes a promotion |
 

@@ -21,9 +21,10 @@ merge, whichever counts more.
 > landings" (2026-10-11), whose report opened with "the weekly cadence is enforced
 > by nothing mechanical".
 
-`[M]` **The report is committed** at `docs/harness/reports/sweep-<date>.md`, never
-in a gitignored directory: job 3 compares against the last report, and the next
-due-check counts from it.
+`[M]` **The report is committed** at `REPORTS.sweep` in `harness-due-core.mjs`
+(default `docs/harness/reports/sweep-<date>.md`), never in a gitignored
+directory: job 3 compares against the last report, and the next due-check counts
+from it.
 
 ## The risk it exists for
 

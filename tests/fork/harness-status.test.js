@@ -140,7 +140,8 @@ function snapshot(dir) {
 /** Writes a copy of the shipped script with one named replacement applied; asserts it applied. */
 function mutantOf(from, to) {
   const src = fs.readFileSync(SCRIPT, 'utf8');
-  const mutated = src.replace(from, to);
+  assert.strictEqual(src.split(from).length - 1, 1, `the replaced text is not in the script exactly once: ${from}`);
+  const mutated = src.replace(from, () => to);
   assert.notStrictEqual(mutated, src, `replacement did not apply: ${from}`);
   const file = path.join(tmp('harness-status-mutant-'), 'harness-status.js');
   fs.writeFileSync(file, mutated);
@@ -1024,7 +1025,7 @@ test('6. the Codex size limit is read from CODEX_HOME or ~/.codex config.toml', 
 });
 
 test('6. mutant: the hard-coded limit would flag a raised-limit install', () => {
-  const m = mutantOf('sizes.codexLimit.bytes', '32768');
+  const m = mutantOf('> sizes.codexLimit.bytes', '> 32768');
   const home = tmp('harness-status-codexhome-');
   write(home, '.codex/config.toml', 'project_doc_max_bytes = 65536\n');
   const repo = mk({ 'AGENTS.md': 'a'.repeat(40000) });
@@ -1429,7 +1430,7 @@ const THREE = {
   zcode: { main: { model: 'GLM-5.3' }, bounded: { model: 'GLM-5.3-Flash' }, second: 'codex', fallback: 'claude' },
 };
 
-test('host-models-missing: harness-host with no models file, a file that is not one, a manifest target with no entry', () => {
+test('host-models-missing: harness-host with no models file or a file that is not one; a manifest target with no entry is not one', () => {
   const repo = mk({ 'scripts/harness-host.mjs': '// x\n' });
   const missing = hazardsOf(report(repo), 'host-models-missing');
   assert.strictEqual(missing.length, 1, JSON.stringify(missing));
@@ -1442,8 +1443,8 @@ test('host-models-missing: harness-host with no models file, a file that is not 
   write(repo, MODELS, models({ claude: THREE.claude }));
   write(repo, 'scripts/codex-run.mjs', '// x\n');
   write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['change'], targets: ['claude', 'codex'], entries: [] }));
-  const target = hazardsOf(report(repo), 'host-models-missing');
-  assert.deepStrictEqual(target.map(h => h.detail), ['the manifest targets codex and .agents/harness-models.json has no codex entry']);
+  // the models file lists the hosts the project runs, not every manifest target
+  assert.deepStrictEqual(hazardsOf(report(repo), 'host-models-missing'), [], 'a claude-only models file is complete for targets claude and codex');
   assert.deepStrictEqual(hazardsOf(report(mk({})), 'host-models-missing'), [], 'an install without harness-host owes no models file');
 });
 
@@ -1467,6 +1468,191 @@ test('mutant: the wrapper check skipped -> second-family-absent is never raised'
   const repo = mk({ [MODELS]: models(THREE) });
   assert.ok(hazardsOf(report(repo), 'second-family-absent').length > 0);
   assert.deepStrictEqual(hazardsOf(report(repo, mutant), 'second-family-absent'), []);
+});
+
+// ── js.8: bound reports and phases, archived state files, the registry from a worktree, legacy policy headings, copied skills ──
+
+console.log('\nharness-status: js.8 due-checks, registry and skills');
+
+// the installed core, as text: only the lines harness-status reads (it never imports a core)
+const DEFAULT_REPORT_LINES = [
+  "preflight: 'docs/harness/reports/preflight-<phase>.md',",
+  "sweep: 'docs/harness/reports/sweep-<date>.md',",
+  "retro: 'docs/harness/reports/retro-<week>.md',",
+  "hygiene: 'docs/harness/reports/hygiene-<date>.md',",
+];
+const DEFAULT_PHASE_LINE = 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;';
+function dueCore(over = {}, phaseLine = DEFAULT_PHASE_LINE) {
+  const lines = DEFAULT_REPORT_LINES.filter(l => !Object.keys(over).some(k => l.startsWith(`${k}:`)));
+  return ["export const MAIN = 'main';", 'export const REPORTS = {', ...lines.map(l => `  ${l}`), ...Object.values(over).map(l => `  ${l}`), '};', phaseLine, ''].join('\n');
+}
+const CORE = 'scripts/lib/harness-due-core.mjs';
+const PREFLIGHT_SKILL = { '.agents/skills/phase-preflight/SKILL.md': '# phase-preflight\n' };
+
+test('D1: a preflight report bound elsewhere in the installed core clears preflight-missing, and a missing one is named at the bound place', () => {
+  const base = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight-<phase>.md', // moved" }) };
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...base, 'docs/x/preflight-P2.md': '# P2\n' })), 'preflight-missing'), [], 'the report sits at the bound place');
+  const missing = hazardsOf(report(mk(base)), 'preflight-missing');
+  assert.strictEqual(missing.length, 1, JSON.stringify(missing));
+  assert.match(missing[0].detail, /has no preflight report at docs\/x\/preflight-P2\.md$/, 'the hazard names the bound place and no other');
+  // harness-due reads the bound path only: the older places do not count
+  const older = hazardsOf(report(mk({ ...base, 'docs/preflight/P2.md': '# P2\n', 'docs/harness/reports/preflight-P2.md': '# P2\n' })), 'preflight-missing');
+  assert.strictEqual(older.length, 1, 'a report at a default place is not at the bound one');
+  // a double-quoted path reads the same
+  const dq = mk({ ...base, [CORE]: dueCore({ preflight: 'preflight: "docs/x/preflight-<phase>.md"' }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(dq), 'preflight-missing'), []);
+});
+
+test('D1: the core is found by the manifest entry whose template is the due core, else at scripts/lib', () => {
+  const manifest = JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['plan'], targets: ['claude'], entries: [{ path: 'tools/due-core.mjs', kind: 'generated', template: 'templates/scripts/lib/harness-due-core.mjs', sha256: 'x' }] });
+  const repo = mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), 'tools/due-core.mjs': dueCore({ preflight: "preflight: 'docs/y/pf-<phase>.md'," }), 'docs/y/pf-P2.md': '# P2\n', '.agents/harness-manifest.json': manifest });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'preflight-missing'), [], 'the entry names where the core is installed');
+});
+
+test('D1: a kind bound to null is never due: no preflight-missing, no sweep-overdue', () => {
+  const log = { 'docs/harness/log.md': dueLog(['P2-01']) };
+  const withCore = (over, extra = {}) => mk({ ...PREFLIGHT_SKILL, ...log, ...extra, [CORE]: dueCore(over) });
+  assert.strictEqual(hazardsOf(report(withCore({})), 'preflight-missing').length, 1, 'control: bound to its default place the report is missing');
+  assert.deepStrictEqual(hazardsOf(report(withCore({ preflight: 'preflight: null,' })), 'preflight-missing'), [], 'preflight: null');
+  const sweepFiles = { '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n', '.agents/harness-manifest.json': dueManifest(daysAgo(30)) };
+  assert.strictEqual(hazardsOf(report(mk({ ...sweepFiles, [CORE]: dueCore({}) })), 'sweep-overdue').length, 1, 'control: a 30-day-old install with no sweep');
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...sweepFiles, [CORE]: dueCore({ sweep: 'sweep: null // none here' }) })), 'sweep-overdue'), [], 'sweep: null');
+  // a bound sweep place counts, and the hazard that finds none names it
+  const bound = { ...sweepFiles, [CORE]: dueCore({ sweep: "sweep: 'ops/sweep-<date>.md'," }) };
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...bound, [`ops/sweep-${daysAgo(1)}.md`]: '# s\n' })), 'sweep-overdue'), []);
+  assert.match(hazardsOf(report(mk(bound)), 'sweep-overdue')[0].detail, /^no sweep report at ops\/sweep-<date>\.md$/);
+});
+
+test('D1: a kind written any other way keeps the usual places, as does a core with no REPORTS block', () => {
+  const log = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']) };
+  const literal = mk({ ...log, [CORE]: dueCore({ preflight: 'preflight: `docs/x/preflight-<phase>.md`,' }), 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(literal), 'preflight-missing'), [], 'a template literal is not read: the older place still counts');
+  const atX = mk({ ...log, [CORE]: dueCore({ preflight: 'preflight: `docs/x/preflight-<phase>.md`,' }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.strictEqual(hazardsOf(report(atX), 'preflight-missing').length, 1, 'and the template literal\'s own place does not');
+  const noBlock = mk({ ...log, [CORE]: "export const MAIN = 'main';\n", 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(noBlock), 'preflight-missing'), []);
+  // a path whose file name carries no placeholder is not one harness-due can read
+  const none = mk({ ...log, [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight.md'," }), 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(none), 'preflight-missing'), []);
+});
+
+test('D2: the bound PHASE_OF decides the phase; a phase with no digit can have a report', () => {
+  const files = (phaseLine, extra = {}) => mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['DATA-12']), [CORE]: dueCore({}, phaseLine), ...extra });
+  const bound = 'export const PHASE_OF = /^([A-Z]+)-\\d/;';
+  const missing = hazardsOf(report(files(bound)), 'preflight-missing');
+  assert.strictEqual(missing.length, 1, 'the bound regex gives DATA-12 the phase DATA');
+  assert.match(missing[0].detail, /^phase DATA is under way \(1 log row\) and has no preflight report at docs\/harness\/reports\/preflight-DATA\.md$/);
+  assert.deepStrictEqual(hazardsOf(report(files(bound, { 'docs/harness/reports/preflight-DATA.md': '# DATA\n' })), 'preflight-missing'), [], 'a report named for a phase without a digit is found');
+  // flags are kept
+  assert.strictEqual(hazardsOf(report(files('export const PHASE_OF = /^([a-z]+)-\\d/i;')), 'preflight-missing').length, 1);
+  // the default regex when the core binds none
+  assert.deepStrictEqual(hazardsOf(report(files('')), 'preflight-missing'), [], 'DATA-12 has no phase under the default regex');
+  assert.strictEqual(hazardsOf(report(mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']) })), 'preflight-missing').length, 1, 'no core: the default regex');
+});
+
+test('D2: a PHASE_OF that is a function, an expression or a literal that does not compile skips preflight-missing', () => {
+  const log = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01', 'DATA-12']) };
+  assert.strictEqual(hazardsOf(report(mk({ ...log, [CORE]: dueCore({}) })), 'preflight-missing').length, 1, 'control: the default regex finds P2 under way');
+  for (const line of [
+    'export const PHASE_OF = (id) => /^T-([A-Z]+)-\\d/.exec(id)?.[1] ?? null;',
+    'export const PHASE_OF = new RegExp("^([A-Z]+)-\\\\d");',
+    'export const PHASE_OF = /^(P\\d+/;',
+  ]) {
+    assert.deepStrictEqual(hazardsOf(report(mk({ ...log, [CORE]: dueCore({}, line) })), 'preflight-missing'), [], line);
+  }
+});
+
+test('F37: a state file under an archive directory is neither budgeted nor listed; one elsewhere still is', () => {
+  const rep = report(mk({ 'docs/plans/archive/T-1.state.md': 'x'.repeat(9216), 'docs/plans/T-2.state.md': 'x'.repeat(9216) }));
+  assert.deepStrictEqual(rep.sizes.stateFiles.map(s => s.path), ['docs/plans/T-2.state.md']);
+  assert.deepStrictEqual(hazardsOf(rep, 'state-file-over-budget').map(h => h.path), ['docs/plans/T-2.state.md']);
+});
+
+/** A repository with an untracked, ignored registry holding one held row and a guard, plus a linked worktree of it. */
+function worktreeFixture() {
+  const repo = mk({
+    '.gitignore': '.claude/registry.md\n',
+    '.agents/harness-manifest.json': dueManifest(daysAgo(1)),
+    '.claude/registry.md': '# Registry\n<!-- harness:active -->\n| 1 | T-1 | task/t-1 |\n<!-- /harness:active -->\n',
+    '.git/hooks/pre-commit': '#!/bin/sh\n# harness-bootstrap commit guard\nexit 0\n',
+    '.git/hooks/pre-merge-commit': '#!/bin/sh\n# harness-bootstrap commit guard\nexit 0\n',
+  });
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'init']);
+  const wt = path.join(tmp('harness-status-wt-'), 'wt');
+  git(repo, ['worktree', 'add', '-q', '-b', 'wt', wt]);
+  return { repo, wt };
+}
+
+test('F54: a linked worktree reads the registry in the main checkout, as the guard does', () => {
+  const { repo, wt } = worktreeFixture();
+  assert.ok(!fs.existsSync(path.join(wt, '.claude', 'registry.md')), 'the registry is untracked: the worktree has none of its own');
+  const rep = report(wt);
+  assert.ok(!ids(rep).includes('lock-missing'), ids(rep).join());
+  assert.ok(!ids(rep).includes('guard-missing'), ids(rep).join());
+  assert.strictEqual(rep.registry.held, 1);
+  assert.strictEqual(rep.registry.path, path.relative(wt, path.join(repo, '.claude', 'registry.md')).split(path.sep).join('/'));
+  assert.match(rep.registry.path, /^\.\.\/.*\/\.claude\/registry\.md$/);
+  // the main checkout reads as before
+  const main = report(repo);
+  assert.strictEqual(main.registry.path, '.claude/registry.md');
+  assert.strictEqual(main.registry.held, 1);
+  assert.ok(!ids(main).includes('lock-missing'));
+  // a registry with no markers is named at the path it was read from
+  write(repo, '.claude/registry.md', '# Registry\n| 1 | T-1 |\n');
+  assert.strictEqual(hazardsOf(report(wt), 'registry-no-markers')[0].path, report(wt).registry.path);
+});
+
+test('F1: a hot-modules or critical-code heading is a legacy policy and needs a status line; prose is not', () => {
+  const hot = hazardsOf(report(mk({ 'AGENTS.md': '# Agents\n\nBody\n\n### Hot modules\n\n| Path | Why |\n|---|---|\n| src/pay.ts | money |\n' })), 'policy-no-status');
+  assert.strictEqual(hot.length, 1, JSON.stringify(hot));
+  assert.strictEqual(hot[0].path, 'AGENTS.md');
+  assert.strictEqual(hot[0].line, 5);
+  assert.match(hot[0].detail, /hot-modules or critical-code heading/);
+  const critical = hazardsOf(report(mk({ 'CLAUDE.md': '# P\n\n## Critical code\n\n- src/pay.ts\n' })), 'policy-no-status');
+  assert.deepStrictEqual(critical.map(h => h.line), [3]);
+  assert.deepStrictEqual(hazardsOf(report(mk({ 'AGENTS.md': '# A\n\nTouch the critical code and the hot modules with care.\n' })), 'policy-no-status'), [], 'prose without a heading');
+  assert.deepStrictEqual(hazardsOf(report(mk({ 'AGENTS.md': '# A\n\n## Hot modules\n\n- x\n\nNever-auto policy: REVIEWED because the owner read it\n' })), 'policy-no-status'), [], 'a status line settles it');
+  const both = hazardsOf(report(mk({ 'AGENTS.md': '# A\n\n## Hot modules\n\n- x\n\n## Never-auto\n\n- y\n' })), 'policy-no-status');
+  assert.strictEqual(both.length, 1, 'one hazard per doc');
+  assert.match(both[0].detail, /^has a never-auto section but no/);
+});
+
+test('I2: a copied skill is compared file by file, not by its SKILL.md alone', () => {
+  const same = { '.agents/skills/x/SKILL.md': 'one\n', '.claude/skills/x/SKILL.md': 'one\n' };
+  assert.deepStrictEqual(hazardsOf(report(mk(same)), 'skill-link-drift'), [], 'identical SKILL.md files');
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...same, '.agents/skills/x/reference/a.md': 'a\r\nb\n', '.claude/skills/x/reference/a.md': 'a\nb\n' })), 'skill-link-drift'), [], 'identical copies, whatever the line ends');
+  const differ = hazardsOf(report(mk({ ...same, '.agents/skills/x/reference/a.md': 'a\n', '.claude/skills/x/reference/a.md': 'b\n', '.agents/skills/x/reference/b.md': 'c\n', '.claude/skills/x/reference/b.md': 'd\n' })), 'skill-link-drift');
+  assert.strictEqual(differ.length, 1, 'one hazard per skill');
+  assert.strictEqual(differ[0].path, '.claude/skills/x');
+  assert.match(differ[0].detail, /reference\/a\.md/, differ[0].detail);
+  assert.match(differ[0].detail, /2 files differ/, differ[0].detail);
+  assert.match(differ[0].detail, /not a symlink/);
+  const oneSide = hazardsOf(report(mk({ ...same, '.claude/skills/x/reference/extra.md': 'e\n' })), 'skill-link-drift');
+  assert.strictEqual(oneSide.length, 1);
+  assert.match(oneSide[0].detail, /reference\/extra\.md/);
+  const missing = hazardsOf(report(mk({ ...same, '.agents/skills/x/scripts/run.sh': '#!/bin/sh\n' })), 'skill-link-drift');
+  assert.strictEqual(missing.length, 1);
+  assert.match(missing[0].detail, /scripts\/run\.sh/);
+  assert.match(missing[0].detail, /1 file differs/);
+});
+
+test('mutants (js.8): the archive skip, the common-dir lookup, the whole-skill compare and the bound reports each matter', () => {
+  const archive = mk({ 'docs/plans/archive/T-1.state.md': 'x'.repeat(9216) });
+  assert.deepStrictEqual(hazardsOf(report(archive), 'state-file-over-budget'), []);
+  assert.strictEqual(hazardsOf(report(archive, mutantOf(' || inArchive(rel)', '')), 'state-file-over-budget').length, 1, 'the archive skip removed');
+
+  const { wt } = worktreeFixture();
+  assert.ok(!ids(report(wt)).includes('lock-missing'));
+  assert.ok(ids(report(wt, mutantOf("gitOut(['rev-parse', '--git-common-dir'])", "'.git'"))).includes('lock-missing'), 'the registry read from the worktree itself');
+
+  const copy = mk({ '.agents/skills/x/SKILL.md': 'one\n', '.claude/skills/x/SKILL.md': 'one\n', '.agents/skills/x/reference/a.md': 'a\n', '.claude/skills/x/reference/a.md': 'b\n' });
+  assert.ok(ids(report(copy)).includes('skill-link-drift'));
+  assert.ok(!ids(report(copy, mutantOf('const names = [...new Set([...left.keys(), ...right.keys()])].sort();', "const names = ['SKILL.md'];"))).includes('skill-link-drift'), 'the copy compared by its SKILL.md alone');
+
+  const moved = mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight-<phase>.md'," }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(moved), 'preflight-missing'), []);
+  assert.strictEqual(hazardsOf(report(moved, mutantOf('if (block) for (const kind of Object.keys(DUE_REPORTS)) {', 'if (false) for (const kind of Object.keys(DUE_REPORTS)) {')), 'preflight-missing').length, 1, 'the bound REPORTS ignored');
 });
 
 // ── mutation ─────────────────────────────────────────────────────────────────

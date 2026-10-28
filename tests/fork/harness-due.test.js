@@ -17,7 +17,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 19;
+const EXPECTED_TESTS = 23;
 
 let passed = 0;
 let failed = 0;
@@ -140,6 +140,7 @@ mutantFails('moving a seen week backward', "if (!(typeof out[project] === 'strin
 mutantFails('counting a report no commit holds by its file time', 'found.filter((r) => times.has(r.rel)).map((r) => ({ rel: r.rel, time: times.get(r.rel) }))', 'found.map((r) => ({ rel: r.rel, time: times.get(r.rel) ?? mtime(path.join(top, r.rel)) }))', CLI_REL);
 mutantFails("counting a landed branch's merge of the mainline as a landing", "'--merges', '--first-parent', ", "'--merges', ", CLI_REL);
 mutantFails('dating a line not committed yet by the time of the blame', 'committed ? time : null', 'time', GATHER_REL);
+mutantFails('counting every merge subject as naming a function-bound phase', '.some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())', '.some(() => true)');
 mutantFails('exiting 0 when the claim is blocked', 'if (blocking) process.exitCode = 1;', '', CLI_REL);
 
 test('the shipped suite never skips: bound to no preflight and a 72 h idle time it still passes with skipped 0 and todo 0', () => {
@@ -159,6 +160,19 @@ test('the shipped suite never skips: bound to no preflight and a 72 h idle time 
   assert.strictEqual(tapCount(out, 'skipped'), 0, out.slice(-800));
   assert.strictEqual(tapCount(out, 'todo'), 0, out.slice(-800));
   assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+});
+
+test('the COMMANDS defaults cite the references that hold the procedures, not skills nothing generates', () => {
+  const text = fs.readFileSync(path.join(SCRIPTS, CORE_REL), 'utf8');
+  const block = /^export const COMMANDS = \{\n([\s\S]*?)^\};/m.exec(text);
+  assert.ok(block, 'no COMMANDS block in the core');
+  const lines = block[1].split('\n');
+  const line = (kind) => lines.find((l) => l.trim().startsWith(`${kind}:`)) ?? '';
+  for (const word of ['phase-preflight', 'workstream-sweep', 'task-runner']) assert.ok(!block[1].includes(word), `COMMANDS still names ${word}`);
+  for (const [kind, reference] of [['preflight', 'preflight'], ['sweep', 'sweep'], ['hygiene', 'hygiene'], ['p3', 'hygiene']]) {
+    assert.ok(line(kind).includes(`harness-bootstrap\\'s reference/${reference}.md`), `COMMANDS.${kind} does not cite reference/${reference}.md: ${line(kind)}`);
+  }
+  assert.match(text, /bind each one to the project's own skill/, 'the comment does not say to bind each to the project\'s own skill');
 });
 
 test('CLI smoke: claiming the first row of a phase with no preflight report exits 1 and names the report', () => {

@@ -65,7 +65,8 @@ is the machine sweep's (`machine.md`).
 
 ## The report
 
-`[M]` **`docs/harness/reports/hygiene-<date>.md`, committed with the unit**, at most
+`[M]` **The report, committed with the unit** at `REPORTS.hygiene` in
+`harness-due-core.mjs` (default `docs/harness/reports/hygiene-<date>.md`), at most
 4 KB `[B]`. For each job: what it found, what it changed (commits), what it left and
 why, and the follow-ups doc's counts by status before and after. The report is what
 restarts `DUE hygiene`'s count, so a hygiene unit that lands without one is due again

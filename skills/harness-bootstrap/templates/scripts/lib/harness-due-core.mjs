@@ -33,8 +33,10 @@ export const REPORTS = {
   retro: 'docs/harness/reports/retro-<week>.md',
   hygiene: 'docs/harness/reports/hygiene-<date>.md',
 };
-// [B] The phase a row id belongs to: the first group. An id it does not match belongs to no
-// phase (P2-16 -> P2, EP-27.04 -> EP-27; T-DATA-037 and CR-021 -> none).
+// [B] The phase a row id belongs to: a RegExp whose first group is the phase, or a function
+// id -> phase | null. The function form is for a phase that is not a prefix of the id (a table
+// bound here, for instance). An id the RegExp does not match, or the function gives null,
+// belongs to no phase (P2-16 -> P2, EP-27.04 -> EP-27; T-DATA-037 and CR-021 -> none).
 export const PHASE_OF = /^([A-Za-z]+-?\d+)[-.]\w/;
 // [B] A recurring report is due this many days after the newest one, or once this many units
 // have landed since it (null: by days only). The log moves them.
@@ -57,13 +59,14 @@ export const WORKTREE_IDLE_HOURS = 6;
 // points to.
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
 // [B] What each line tells the runner to run; `<phase>`, `<date>`, `<file>`, `<week>` and
-// `<paths>` are filled in.
+// `<paths>` are filled in. The defaults cite harness-bootstrap's references, which hold the
+// procedures; bind each one to the project's own skill where the project generated one.
 export const COMMANDS = {
-  preflight: 'run the phase preflight for <phase> (the phase-preflight skill); its escalations are Gate 1 cards',
-  sweep: 'the next unit: harness/sweep-<date> (the workstream-sweep skill)',
+  preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',
+  sweep: 'the next unit: harness/sweep-<date> (harness-bootstrap\'s reference/sweep.md)',
   retro: 'the next unit: harness/retro-<date> (node scripts/retro.mjs, then commit the digest)',
-  hygiene: 'the next unit: harness/hygiene-<date> (the task-runner › The hygiene unit)',
-  p3: 'the next unit: harness/p3-batch-<date>, the hygiene unit\'s P3 batch alone (the task-runner › The hygiene unit)',
+  hygiene: 'the next unit: harness/hygiene-<date> (harness-bootstrap\'s reference/hygiene.md)',
+  p3: 'the next unit: harness/p3-batch-<date>, the hygiene unit\'s P3 batch alone (harness-bootstrap\'s reference/hygiene.md)',
   disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',
   worktrees: 'git worktree remove <paths>, each once no registry row names it',
   proposals: 'read <file>; route each proposal (T: a harness/<slug> unit, C: the next Gate 2 brief), then node scripts/harness-due.mjs --seen <week>',
@@ -77,7 +80,10 @@ const GB = 1e9;
 // A row id names a branch's unit: plan ids, change slugs, harness/<slug>.
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const WEEK_ID = /^\d{4}-W\d{2}$/;
-const PLACEHOLDERS = { phase: '([A-Za-z]+-?\\d+)', date: '(\\d{4}-\\d{2}-\\d{2})', week: '(\\d{4}-W\\d{2})' };
+// An id-like token of a merge subject, for a function PHASE_OF: words joined by `-` or `.`, never a `/`.
+const ID_TOKEN = /[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)+/g;
+// a phase is whatever either form of PHASE_OF can give, so a name with no digit (DATA) is one
+const PLACEHOLDERS = { phase: '([A-Za-z0-9][A-Za-z0-9_-]*)', date: '(\\d{4}-\\d{2}-\\d{2})', week: '(\\d{4}-W\\d{2})' };
 const VALUE_FLAGS = { '--claim': 'claim', '--seen': 'seen', '--now': 'now', '--home': 'home' };
 // A Projects line that names every project.
 const EVERY = /\b(?:all|every|each)\b/i;
@@ -106,9 +112,14 @@ export function parseArgs(argv) {
   return a;
 }
 
-/** The phase a row id belongs to (PHASE_OF's first group), or null. */
+/** The phase a row id belongs to (a RegExp's first group, or a function's result), or null. */
 export function phaseOf(id, pattern = PHASE_OF) {
-  return pattern.exec(String(id ?? '').trim())?.[1] ?? null;
+  const trimmed = String(id ?? '').trim();
+  if (typeof pattern === 'function') {
+    const phase = pattern(trimmed);
+    return typeof phase === 'string' && phase !== '' ? phase : null;
+  }
+  return pattern.exec(trimmed)?.[1] ?? null;
 }
 
 /** A report template -> its directory, its placeholder and a file-name pattern whose group is the placeholder's value. */
@@ -144,8 +155,11 @@ export function preflightDue({ claim, reports = [], logIds = [], merges = [], te
   if (reports.some((r) => path.posix.basename(r.rel).toLowerCase() === want)) return null;
   const rel = template.replace('<phase>', phase);
   const rows = logIds.filter((id) => phaseOf(id, pattern)?.toLowerCase() === phase.toLowerCase()).length;
-  const mention = new RegExp(`\\b${esc(phase)}[-.]\\w`, 'i');
-  const merged = merges.filter((s) => mention.test(s)).length;
+  // a RegExp phase is named by `<phase>-x` or `<phase>.x`; a function's by an id-like token it gives the phase
+  const mention = typeof pattern === 'function'
+    ? (subject) => (subject.match(ID_TOKEN) ?? []).some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())
+    : ((re) => (subject) => re.test(subject))(new RegExp(`\\b${esc(phase)}[-.]\\w`, 'i'));
+  const merged = merges.filter(mention).length;
   const opens = rows === 0 && merged === 0;
   const why = opens
     ? `no report at ${rel}, and ${claim} opens the phase: the claim waits for it`

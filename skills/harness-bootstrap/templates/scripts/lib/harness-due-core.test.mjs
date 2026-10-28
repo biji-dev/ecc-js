@@ -18,6 +18,7 @@ import {
   FOLLOW_UPS,
   LOG,
   MAIN,
+  PHASE_OF,
   REBUILDABLE,
   REPORTS,
   WORKTREE_IDLE_HOURS,
@@ -47,6 +48,8 @@ const HOUR = 3_600_000;
 const NOW = Date.parse('2026-10-26T12:00:00Z');
 const at = (s) => Date.parse(`2026-10-${s}Z`);
 const PHASE = /^([A-Za-z]+-?\d+)[-.]\w/;
+// a PHASE_OF given as a function: the phase is the word between T- and the number, which no prefix of the id gives
+const TABLE_PHASE = (id) => /^T-([A-Z]+)-\d/.exec(id)?.[1] ?? null;
 const PREFLIGHT = 'docs/preflight/<phase>.md';
 const fill = (template, value) => template.replace(/<\w+>/, value);
 // A follow-ups table for code that reads the project's own bindings: the status and severity headers
@@ -99,12 +102,59 @@ test('phaseOf takes the phase from a row id; an id outside every phase has none'
   for (const id of ['T-DATA-037', 'CR-021', 'harness/hygiene-2026-10-26', 'P2', '', null]) assert.equal(phaseOf(id, PHASE), null);
 });
 
+test('phaseOf also takes a function id -> phase | null; a result that is not a non-empty string is no phase', () => {
+  assert.equal(phaseOf('T-DATA-037', TABLE_PHASE), 'DATA');
+  assert.equal(phaseOf('CR-021', TABLE_PHASE), null);
+  assert.equal(phaseOf('T-DATA-037', () => ''), null);
+  assert.equal(phaseOf('T-DATA-037', () => undefined), null);
+  assert.equal(phaseOf('T-DATA-037', () => 42), null);
+  const seen = [];
+  phaseOf('  T-DATA-037 ', (id) => (seen.push(id), null));
+  assert.deepEqual(seen, ['T-DATA-037'], 'the function is called with the trimmed id');
+});
+
+test('preflightDue with a function PHASE_OF: the opening row blocks; a log row or a merge naming a row of the phase does not', () => {
+  const base = { reports: [], template: PREFLIGHT, pattern: TABLE_PHASE, command: 'preflight <phase>' };
+  const opens = preflightDue({ ...base, claim: 'T-DATA-001', logIds: ['T-OPS-001'], merges: ['Merge task/T-OPS-001: done'] });
+  assert.deepEqual(opens, {
+    kind: 'preflight',
+    subject: 'DATA',
+    why: 'no report at docs/preflight/DATA.md, and T-DATA-001 opens the phase: the claim waits for it',
+    command: 'preflight DATA',
+    blocking: true,
+  });
+  const logged = preflightDue({ ...base, claim: 'T-DATA-002', logIds: ['T-DATA-001', 'T-OPS-001'], merges: [] });
+  assert.equal(logged.blocking, false);
+  assert.match(logged.why, /the phase is under way \(1 log row, 0 merges\)$/);
+  const merged = preflightDue({ ...base, claim: 'T-DATA-002', logIds: [], merges: ['Merge task/T-DATA-002: first'] });
+  assert.equal(merged.blocking, false);
+  assert.match(merged.why, /\(0 log rows, 1 merge\)$/);
+  // a subject that names another phase's id, or an id the function gives no phase, does not count
+  assert.equal(preflightDue({ ...base, claim: 'T-DATA-001', logIds: [], merges: ['Merge T-DATAX-1: other', 'Merge CR-021: none'] }).blocking, true);
+  // a report clears it, whatever its case; a claim the function gives no phase has nothing to check
+  assert.equal(preflightDue({ ...base, claim: 'T-DATA-001', reports: [{ rel: 'docs/preflight/data.md', time: NOW }] }), null);
+  assert.equal(preflightDue({ ...base, claim: 'CR-021' }), null);
+});
+
+test('a phase report is named by any phase either form of PHASE_OF can give, a digit or none', () => {
+  assert.deepEqual(matchReports('docs/r/preflight-<phase>.md', ['preflight-DATA.md', 'preflight-P2.md', 'preflight-EP-27.md', 'preflight-.md', 'preflight-a b.md', 'notes.md']).map((r) => r.value), ['DATA', 'P2', 'EP-27']);
+  assert.deepEqual(matchReports('docs/r/<date>.md', ['DATA.md', '2026-10-18.md']).map((r) => r.value), ['2026-10-18'], 'a date and a week keep their shapes');
+});
+
+test('PHASE_OF is a RegExp or a function, and phaseOf takes the binding as it is', () => {
+  assert.ok(PHASE_OF instanceof RegExp || typeof PHASE_OF === 'function', 'PHASE_OF is neither a RegExp nor a function');
+  for (const id of ['P2-16', 'EP-27.04', 'T-DATA-037', 'CR-021', '']) {
+    const phase = phaseOf(id);
+    assert.ok(phase === null || (typeof phase === 'string' && phase !== ''), `phaseOf(${JSON.stringify(id)}) is ${JSON.stringify(phase)}`);
+  }
+});
+
 test('reportShape keeps the placeholder in the file name, and matchReports finds a directory\'s reports', () => {
   assert.deepEqual(matchReports('docs/sweeps/<date>.md', ['2026-10-18.md', 'latest.md', '2026-10-18.md.bak', 'README.md']), [
     { rel: 'docs/sweeps/2026-10-18.md', value: '2026-10-18' },
   ]);
   assert.deepEqual(matchReports('r/retro-<week>.md', ['retro-2026-W43.md', 'retro-2026-43.md']), [{ rel: 'r/retro-2026-W43.md', value: '2026-W43' }]);
-  assert.deepEqual(matchReports(PREFLIGHT, ['P2.md', 'p3.md', 'P2-notes.md']).map((r) => r.value), ['P2', 'p3']);
+  assert.deepEqual(matchReports(PREFLIGHT, ['P2.md', 'p3.md', 'P2.notes.md']).map((r) => r.value), ['P2', 'p3']);
   assert.throws(() => reportShape('docs/<phase>/report.md'), /belongs in its file name/);
   assert.throws(() => reportShape('docs/<phase>-<date>.md'), /carries one of/);
   assert.throws(() => reportShape('docs/<slug>.md'), /carries one of/);

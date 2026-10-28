@@ -447,6 +447,75 @@ test('no test source under tests/fork or the templates holds an AWS-key-shaped l
   assert.deepStrictEqual(hits, [], `AWS-key-shaped literal in ${hits.join(', ')}`);
 });
 
+const squashed = rel => fs.readFileSync(path.join(BOOTSTRAP, rel), 'utf8').replace(/\s+/g, ' ');
+const BOUND_PATH = (kind) => `\`REPORTS.${kind}\` in \`harness-due-core.mjs\` (default \`docs/harness/reports/`;
+
+for (const [rel, kind] of [['reference/preflight.md', 'preflight'], ['reference/sweep.md', 'sweep'], ['reference/hygiene.md', 'hygiene']]) {
+  test(`${rel} names its report at REPORTS.${kind} in harness-due-core.mjs, with the default`, () => {
+    assert.ok(squashed(rel).includes(BOUND_PATH(kind)), `${rel} does not name the report at \`REPORTS.${kind}\` in \`harness-due-core.mjs\` with its default`);
+  });
+}
+
+test('runner.md "No queue is stored" names the reports at REPORTS.<kind> in harness-due-core.mjs', () => {
+  const runner = squashed('reference/runner.md');
+  const from = runner.indexOf('**No queue is stored.**');
+  assert.ok(from >= 0, 'runner.md has no "No queue is stored" paragraph');
+  const paragraph = runner.slice(from, runner.indexOf('> Origin', from));
+  assert.ok(paragraph.includes('`REPORTS.<kind>` in `harness-due-core.mjs` (default `docs/harness/reports/<file>`)'), 'the paragraph does not name `REPORTS.<kind>` in `harness-due-core.mjs`');
+});
+
+for (const code of ['preflight-missing', 'sweep-overdue']) {
+  test(`upgrade.md's ${code} row names the report at REPORTS.<kind> in harness-due-core.mjs`, () => {
+    const upgrade = squashed('reference/upgrade.md');
+    const at = upgrade.indexOf(`| \`${code}\``);
+    assert.ok(at >= 0, `upgrade.md has no ${code} row`);
+    const row = upgrade.slice(at, upgrade.indexOf(' | ', upgrade.indexOf(' | ', at + 3) + 3));
+    assert.ok(/`REPORTS\.(<kind>|preflight)` in `harness-due-core\.mjs` \(default `docs\/harness\/reports\//.test(row), `the ${code} row does not name the report at \`REPORTS.<kind>\` in \`harness-due-core.mjs\``);
+  });
+}
+
+for (const [rel, row] of [['reference/learning.md', '| the retro |'], ['SKILL.md', '| `scripts/retro.mjs` + ']]) {
+  test(`${rel}'s retro row cites retro-core's REPORTS_DIR with its default`, () => {
+    const text = squashed(rel);
+    const at = text.indexOf(row);
+    assert.ok(at >= 0, `${rel} has no ${row} row`);
+    const cell = text.slice(at, text.indexOf(' | ', text.indexOf(' | ', at + row.length + 3) + 3) + 400);
+    assert.ok(cell.includes('`REPORTS_DIR`') && cell.includes('default `docs/harness/reports/`'), `${rel}'s retro row does not cite retro-core's \`REPORTS_DIR\` (default \`docs/harness/reports/\`)`);
+  });
+}
+
+test('preflight.md says the first row of a phase is the first row whose id PHASE_OF gives that phase', () => {
+  const text = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'preflight.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(text.includes('first row whose id `PHASE_OF` gives that phase'), 'preflight.md does not define the first row of a phase by `PHASE_OF`');
+});
+
+test('upgrade.md owes the models file an entry for each host the project runs, not for every manifest target', () => {
+  const text = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'upgrade.md'), 'utf8').replace(/\s+/g, ' ');
+  const at = text.indexOf('| `host-models-missing`');
+  assert.ok(at >= 0, 'upgrade.md has no host-models-missing row');
+  const row = text.slice(at, text.indexOf(' | `second-family-absent`', at));
+  assert.ok(!row.includes('every target the manifest names'), 'the host-models-missing row still asks for every manifest target');
+  assert.ok(row.includes('each host the project runs'), 'the host-models-missing row does not ask for an entry for each host the project runs');
+  assert.ok(/harness-host[^|]*flags the session's own host/.test(row), "the host-models-missing row does not say step 0's harness-host flags the session's own host");
+});
+
+test('SKILL.md lists COMMANDS among the harness-due bindings', () => {
+  const text = squashed('SKILL.md');
+  const at = text.indexOf('| `scripts/harness-due.mjs` + ');
+  assert.ok(at >= 0, 'SKILL.md has no harness-due row');
+  const row = text.slice(at, text.indexOf(' | `scripts/lib/run-sources.mjs`', at));
+  assert.ok(row.includes('`PHASE_OF`, `COMMANDS`,'), 'the harness-due row does not list `COMMANDS` among the bindings');
+});
+
+test("SKILL.md's phase preflight row says the due-checks' COMMANDS cite these references, and to bind COMMANDS to the project's own skill", () => {
+  const text = squashed('SKILL.md');
+  const at = text.indexOf('| phase preflight · workstream sweep |');
+  assert.ok(at >= 0, 'SKILL.md has no phase preflight row');
+  const row = text.slice(at, text.indexOf('| segment runner |', at));
+  assert.ok(row.includes('`COMMANDS` cite these references'), "the row does not say the due-checks' `COMMANDS` cite these references");
+  assert.ok(row.includes("bind `COMMANDS` to the project's own skill"), "the row does not say to bind `COMMANDS` to the project's own skill where it generates one");
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

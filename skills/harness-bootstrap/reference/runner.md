@@ -140,8 +140,9 @@ and never asks a question. What each line makes the runner do:
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a unit
 that is due stays due until its report is committed, and nothing has to remember
-it. Reports are committed under `docs/harness/reports/`, never a gitignored
-directory: a report nobody can count does not exist for the next check.
+it. Reports are committed at `REPORTS.<kind>` in `harness-due-core.mjs` (default
+`docs/harness/reports/<file>`), never in a gitignored directory: a report nobody can
+count does not exist for the next check.
 > Origin: 13 preflights and sweeps in two projects caught real problems, and each
 > ran because someone asked: the owner asked six times, two sweeps ran overdue
 > ("overdue by four days and fourteen landings"), one project kept its

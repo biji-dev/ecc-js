@@ -45,16 +45,16 @@ limit.
 
 | File | Holds | Budget `[B]` |
 |---|---|---|
-| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the tier and gate tables; the policy; commands; the area-rules index | its current size, rounded up — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
-| `CLAUDE.md` | `@AGENTS.md`, then Claude specifics only | its current size, rounded up |
+| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the tier and gate tables; the policy; commands; the area-rules index | its current size, rounded up to the next 1,024 bytes — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
+| `CLAUDE.md` | `@AGENTS.md`, then Claude specifics only | its current size, rounded up to the next 1,024 bytes |
 | `.claude/rules/<area>.md` | rules that apply to one area, with `paths:` frontmatter so Claude Code loads them on reading a matching file | per file |
 | `docs/harness/rule-origins.md` | the full origin of every shipped rule (`rules.md` §1), generated | none |
 | the state file | one unit's state (`scope-guard.md`) | 8 KB |
 | each `SKILL.md` | one skill | 500 lines |
 
 `[M]` **Budgets ratchet from the current size.** Generation sets each to the file's
-size today, rounded up, and the lint fails only above it. A 118 KB `CLAUDE.md` must
-not fail on day one; it must not grow either.
+size today, rounded up to the next 1,024 bytes, and the lint fails only above it. A
+118 KB `CLAUDE.md` must not fail on day one; it must not grow either.
 
 `[M]` **Area rules are indexed in `AGENTS.md`**, one line each:
 ``- `<file>.md` — <what it covers> (`<first path glob>` …)``; a rule in a

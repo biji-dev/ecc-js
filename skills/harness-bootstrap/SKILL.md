@@ -323,8 +323,13 @@ harness's docs (`docs/harness/`, `docs/plans/`) move wherever Phase A agreed whe
 `docs/` is a governed set.
 
 **Fit the project's tooling.** Run the project's own lint, format and type check over
-the generated files before hashing. Where the harness's Node scripts break its
-config (a strict TypeScript lint with no Node globals; with nothing to run yet, the
+the generated files before hashing, and every other check its CI runs, the gates
+`run-gates.sh` binds (one project's structural check refused a module outside every
+workspace and turned the mainline red on the new scripts). Where the harness's Node
+scripts break its config (a strict TypeScript lint with no Node globals; a type-aware
+lint: the `.mjs` files are in no tsconfig, so typescript-eslint's project service reads
+each as a parse error — scope `tseslint.configs.disableTypeChecked` to the harness's
+script paths, one project had 46 such errors; with nothing to run yet, the
 flip does this — `foundation.md`), add one block scoped to those
 paths; keep the template scripts out of the formatter (a reformat breaks their hash,
 and the agent-docs test reads its CONFIG block); add `.review-work/`, `.codex-runs/` and

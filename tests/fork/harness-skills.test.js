@@ -524,6 +524,29 @@ test("SKILL.md's phase preflight row says the due-checks' COMMANDS cite these re
   assert.ok(row.includes("bind `COMMANDS` to the project's own skill"), "the row does not say to bind `COMMANDS` to the project's own skill where it generates one");
 });
 
+test('"rounded up" always says to what: the next 1,024 bytes', () => {
+  const refs = fs.readdirSync(path.join(BOOTSTRAP, 'reference')).filter(f => f.endsWith('.md')).map(f => path.join('reference', f));
+  for (const rel of ['SKILL.md', ...refs, path.join('templates', 'scripts', 'check-agent-docs.mjs')]) {
+    // a comment wraps behind `//`: squash those markers too
+    const text = squashed(rel).replace(/ \/\/ /g, ' ');
+    let at = text.indexOf('rounded up');
+    while (at >= 0) {
+      const after = text.slice(at + 'rounded up'.length, at + 'rounded up'.length + ' to the next 1,024 bytes'.length);
+      assert.strictEqual(after, ' to the next 1,024 bytes', `${rel} says "rounded up" without "to the next 1,024 bytes" after it: ...${text.slice(Math.max(0, at - 40), at + 50)}...`);
+      at = text.indexOf('rounded up', at + 1);
+    }
+  }
+});
+
+test("SKILL.md's \"Fit the project's tooling\" paragraph names every other CI check (run-gates.sh) and scoping disableTypeChecked to the harness's scripts", () => {
+  const text = squashed('SKILL.md');
+  const start = text.indexOf("**Fit the project's tooling.**");
+  assert.ok(start >= 0, 'SKILL.md has no "Fit the project\'s tooling" paragraph');
+  const para = text.slice(start, text.indexOf('**Project rules tighten', start));
+  assert.ok(para.includes('`run-gates.sh`'), "the tooling paragraph does not name `run-gates.sh` (the gates bind every other check the project's CI runs)");
+  assert.ok(para.includes('`tseslint.configs.disableTypeChecked`'), 'the tooling paragraph does not name `tseslint.configs.disableTypeChecked` for a type-aware lint');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

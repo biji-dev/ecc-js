@@ -3,7 +3,8 @@
 // [M] mechanism (ship as-is): everything below the CONFIG block - the ten checks, the glob matcher,
 //     `--rules-for`, `--base` and `--json`.
 // [B] binding (re-derived per project): the CONFIG block only. Generation sets each budget to the
-//     file's current size rounded up, so a budget is a ratchet: a check fails only ABOVE it.
+//     file's current size rounded up to the next 1,024 bytes, so a budget is a ratchet: a check fails only
+//     ABOVE it. A budget set to null is off (its check does not run); a missing one fails.
 //
 // Checks (all run; every failure is reported; exit 1 if any failed):
 //   import       CLAUDE.md's first non-blank line is `@AGENTS.md`
@@ -15,7 +16,7 @@
 //   frontmatter  skills and agents carry valid frontmatter; read-only agents hold no write tools
 //   secrets      no credential-shaped strings in the instruction files
 //   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
-//                AGENTS.md and rule files without `paths:` (skipped when budgets.base is unset)
+//                AGENTS.md and rule files without `paths:` (off when budgets.base is null)
 //   citations    each AGENTS.md section the instruction files or the code cite still exists: `AGENTS.md` › Name,
 //                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently)
 //
@@ -28,14 +29,18 @@ import { join, dirname, normalize, relative, isAbsolute, sep } from 'node:path';
 
 // ---- [B] binding: re-derive per project -------------------------------------------------------
 export const CONFIG = {
-  // Bytes (files and base) and lines (skillLines). Set to the current size rounded up at generation time;
-  // base is the always-loaded total, lowered as it shrinks (each 10K tokens is about 2% of main-thread spend).
+  // Bytes (files and base) and lines (skillLines). The byte budgets of AGENTS.md, CLAUDE.md, rule and base are set
+  // to the current size rounded up to the next 1,024 bytes at generation time; skillLines and stateFile keep their
+  // defaults. base is the always-loaded total, lowered as it shrinks (each 10K tokens is about 2% of main-thread
+  // spend). Each of the six is a whole number >= 0 or null, which turns that budget off; a missing key fails.
   budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192, base: 49152 },
   rulesDir: '.claude/rules',
   indexFile: 'AGENTS.md', // holds the area-rules index
   skillDirs: ['.claude/skills', '.agents/skills'],
   agentDirs: ['.claude/agents'],
   statePattern: 'docs/plans/**/*.state.md',
+  // A prefix counts only when its directory exists at the root (`src/` needs a root `src`): a monorepo has none,
+  // and its rule files cite workspace-relative paths that are not root paths.
   pathPrefixes: ['src/', 'apps/', 'packages/', 'lib/', 'docs/', 'scripts/', '.claude/', '.agents/'],
   intentionallyAbsent: [], // backticked paths cited as deliberately absent
   requireImport: true, // CLAUDE.md line 1 must be @AGENTS.md
@@ -348,6 +353,13 @@ function main() {
       return false;
     }
   };
+  const isDir = (p) => {
+    try {
+      return statSync(abs(p)).isDirectory(); // a file named like the directory does not count
+    } catch {
+      return false;
+    }
+  };
   const read = (p) => readFileSync(abs(p), 'utf8').replace(/\r\n/g, '\n');
   const size = (p) => statSync(abs(p)).size;
   const fail = (check, file, line, detail) => failures.push({ check, file, line: line || 0, detail });
@@ -408,16 +420,52 @@ function main() {
 
   const ruleDirExists = existsSync(abs(CONFIG.rulesDir));
   const ruleFiles = listRules(CONFIG.rulesDir);
-  const skillFiles = CONFIG.skillDirs.flatMap((dir) =>
+  // A skill reached through two skill directories (one links into the other) is read once, by its real path.
+  // Of the paths that share one, keep the one not behind a symlink (the file a fix edits), else the first listed.
+  const realRoot = realpathSync(ROOT);
+  const realOf = (p) => {
+    try {
+      return realpathSync(abs(p));
+    } catch {
+      return abs(p); // unresolvable: kept as it is
+    }
+  };
+  const unlinked = (p) => realOf(p) === join(realRoot, p);
+  const skillByReal = new Map();
+  for (const p of CONFIG.skillDirs.flatMap((dir) =>
     existsSync(abs(dir))
       ? readdirSync(abs(dir))
           .sort()
           .map((d) => `${dir}/${d}/SKILL.md`)
           .filter(isFile)
       : [],
-  );
+  )) {
+    const key = realOf(p);
+    const kept = skillByReal.get(key);
+    if (!kept || (!unlinked(kept) && unlinked(p))) skillByReal.set(key, p);
+  }
+  const skillFiles = [...skillByReal.values()];
   const agentFiles = CONFIG.agentDirs.flatMap((dir) => listMd(dir, (f) => f.endsWith('.md')));
-  const stateFiles = files.filter((f) => matchGlob(f, CONFIG.statePattern));
+  // State files are the pattern's matches in the git list plus every match on disk under the pattern's static
+  // prefix (its segments before the first one holding a wildcard), so a gitignored state file is seen too. Real
+  // directories only. With no static prefix the git list stays the only source: a walk from the root would read
+  // node_modules.
+  const statePrefix = (() => {
+    const segs = CONFIG.statePattern.split('/');
+    const at = segs.findIndex((s) => /[*?[{]/.test(s));
+    return (at === -1 ? segs.slice(0, -1) : segs.slice(0, at)).join('/');
+  })();
+  const walkFiles = (dir) => {
+    if (!existsSync(abs(dir))) return [];
+    return readdirSync(abs(dir), { withFileTypes: true }).flatMap((entry) => {
+      const p = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) return walkFiles(p);
+      return isFile(p) ? [p] : [];
+    });
+  };
+  const stateFiles = [
+    ...new Set([...files, ...(statePrefix ? walkFiles(statePrefix) : [])].filter((f) => matchGlob(f, CONFIG.statePattern))),
+  ].sort();
   const topFiles = ['AGENTS.md', 'CLAUDE.md'].filter(isFile);
   const docFiles = [...topFiles, ...ruleFiles, ...skillFiles, ...agentFiles];
 
@@ -471,17 +519,24 @@ function main() {
   for (const f of ruleFiles) if (!parsePaths(read(f))?.length) load(f, 'a rule without paths:', 0);
   const baseFiles = [...base].map(([file, via]) => ({ file, via, bytes: size(file) }));
   const baseTotal = baseFiles.reduce((n, f) => n + f.bytes, 0);
-  const baseTarget = CONFIG.budgets.base;
+  // A budget is a whole number >= 0, or null (off). budgetOf is null for off, missing and invalid alike: the
+  // problem itself is reported once, by check 2.
+  const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base'];
+  const budgetOf = (key) => {
+    const v = CONFIG.budgets?.[key];
+    return Number.isInteger(v) && v >= 0 ? v : null;
+  };
+  const baseTarget = budgetOf('base');
 
   // `--base`: the always-loaded files, largest first, against the target; then exit.
   if (wantBase) {
     baseFiles.sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file));
-    const over = baseTarget === undefined ? null : Math.max(0, baseTotal - baseTarget);
+    const over = baseTarget === null ? null : Math.max(0, baseTotal - baseTarget);
     if (wantJson) {
-      console.log(JSON.stringify({ total: baseTotal, target: baseTarget ?? null, over, files: baseFiles }, null, 2));
+      console.log(JSON.stringify({ total: baseTotal, target: baseTarget, over, files: baseFiles }, null, 2));
       return;
     }
-    const target = baseTarget === undefined ? 'no target set (budgets.base)' : `target ${baseTarget}`;
+    const target = baseTarget === null ? 'no target set (budgets.base)' : `target ${baseTarget}`;
     console.log(`check-agent-docs --base: every session loads ${baseTotal} bytes from this repository, ${target}`);
     for (const f of baseFiles) console.log(`  ${String(f.bytes).padStart(8)}  ${f.file}${f.via === 'loaded' ? '' : ` (${f.via})`}`);
     if (over) console.log(`  ${over} bytes over the target - move content into path-scoped rules, skills or reference files`);
@@ -504,35 +559,35 @@ function main() {
   }
 
   // 2. budget
+  // A key that is missing or not a whole number fails once and its files are not checked; null is off.
+  const shown = (v) => (typeof v === 'number' && !Number.isFinite(v) ? String(v) : (JSON.stringify(v) ?? String(v)));
+  for (const key of BUDGET_KEYS) {
+    const v = CONFIG.budgets?.[key];
+    if (v === null || budgetOf(key) !== null) continue;
+    const what =
+      v === undefined ? 'is missing - set a number, or null to turn it off' : `is ${shown(v)}, not a whole number or null`;
+    fail('budget', '', 0, `CONFIG.budgets.${key} ${what}`);
+  }
   for (const f of topFiles) {
-    const limit = CONFIG.budgets[f];
-    if (limit === undefined) continue;
+    const limit = budgetOf(f);
+    if (limit === null) continue;
     const n = size(f);
     verify(n <= limit, 'budget', f, 0, `${n} bytes, budget ${limit} - move content into path-scoped rules`);
   }
-  for (const f of ruleFiles) {
+  const ruleLimit = budgetOf('rule');
+  for (const f of ruleLimit === null ? [] : ruleFiles) {
     const n = size(f);
-    verify(n <= CONFIG.budgets.rule, 'budget', f, 0, `${n} bytes, budget ${CONFIG.budgets.rule} - split or trim it`);
+    verify(n <= ruleLimit, 'budget', f, 0, `${n} bytes, budget ${ruleLimit} - split or trim it`);
   }
-  for (const f of stateFiles) {
+  const stateLimit = budgetOf('stateFile');
+  for (const f of stateLimit === null ? [] : stateFiles) {
     const n = size(f);
-    verify(
-      n <= CONFIG.budgets.stateFile,
-      'budget',
-      f,
-      0,
-      `${n} bytes, budget ${CONFIG.budgets.stateFile} - archive finished entries`,
-    );
+    verify(n <= stateLimit, 'budget', f, 0, `${n} bytes, budget ${stateLimit} - archive finished entries`);
   }
-  for (const f of skillFiles) {
+  const skillLimit = budgetOf('skillLines');
+  for (const f of skillLimit === null ? [] : skillFiles) {
     const n = read(f).replace(/\n$/, '').split('\n').length;
-    verify(
-      n <= CONFIG.budgets.skillLines,
-      'budget',
-      f,
-      0,
-      `${n} lines, budget ${CONFIG.budgets.skillLines} - move detail into reference files`,
-    );
+    verify(n <= skillLimit, 'budget', f, 0, `${n} lines, budget ${skillLimit} - move detail into reference files`);
   }
 
   // 3. rule-paths
@@ -607,7 +662,7 @@ function main() {
   // 5. links and 6. paths cite files that may be gitignored (a registry kept out of the repo by design): a cited
   // path that is absent but ignored passes. Candidates are collected first so git is asked once per run.
   const refs = [];
-  const ref = (check, file, line, p, detail) => refs.push({ check, file, line, p, detail });
+  const ref = (check, file, line, cands, detail) => refs.push({ check, file, line, cands: [].concat(cands), detail });
 
   // 5. links
   for (const f of docFiles) {
@@ -622,28 +677,37 @@ function main() {
         } catch {
           // keep the raw target
         }
-        const resolved = decoded.startsWith('/') ? normalize(decoded.slice(1)) : normalize(join(dirname(f), decoded));
-        ref('links', f, i + 1, resolved, `link target \`${target}\` does not exist`);
+        // A relative link is read against the citing file's directory and, where that fails, against the
+        // repository root: a nested file (a rule, a skill) often links `docs/x.md` meaning the repository's.
+        const rootRel = normalize(decoded.startsWith('/') ? decoded.slice(1) : decoded);
+        const escapes = rootRel === '..' || rootRel.startsWith('../');
+        const cands = decoded.startsWith('/')
+          ? [rootRel]
+          : [...new Set([normalize(join(dirname(f), decoded)), ...(escapes ? [] : [rootRel])])];
+        ref('links', f, i + 1, cands, `link target \`${target}\` does not exist`);
       }
     });
   }
 
   // 6. paths
   const absent = new Set(CONFIG.intentionallyAbsent);
+  // A prefix counts only when the directory it names (up to its last `/`) exists at the root, so a monorepo's
+  // workspace-relative citations (`src/x.ts` in a rule for one app) are not read as root paths.
+  const prefixes = CONFIG.pathPrefixes.filter((p) => !p.includes('/') || isDir(p.slice(0, p.lastIndexOf('/'))));
   for (const f of docFiles) {
     proseLines(read(f)).forEach((line, i) => {
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const span = m[1].trim().replace(/[:,;.]+$/, '');
-        if (!CONFIG.pathPrefixes.some((p) => span.startsWith(p))) continue;
+        if (!prefixes.some((p) => span.startsWith(p))) continue;
         if (/\s/.test(span) || /[*?[{]/.test(span) || /<[^>]*>/.test(span)) continue;
         const p = span.replace(/#.*$/, '').replace(/:\d+(-\d+)?$/, '').replace(/\/$/, '');
         if (absent.has(p) || absent.has(span)) continue;
-        ref('paths', f, i + 1, p, `\`${span}\` does not exist - fix the path or say what replaced it`);
+        ref('paths', f, i + 1, [p], `\`${span}\` does not exist - fix the path or say what replaced it`);
       }
     });
   }
-  const ignored = gitIgnored(refs.filter((r) => !exists(r.p)).map((r) => r.p));
-  for (const r of refs) verify(exists(r.p) || ignored.has(r.p), r.check, r.file, r.line, r.detail);
+  const ignored = gitIgnored(refs.flatMap((r) => r.cands).filter((p) => !exists(p)));
+  for (const r of refs) verify(r.cands.some((p) => exists(p) || ignored.has(p)), r.check, r.file, r.line, r.detail);
 
   // 7. frontmatter
   const WRITE_TOOLS = /\b(Bash|Edit|Write|NotebookEdit)\b/g;
@@ -704,7 +768,7 @@ function main() {
   }
 
   // 9. base
-  if (baseTarget !== undefined) {
+  if (baseTarget !== null) {
     verify(
       baseTotal <= baseTarget,
       'base',

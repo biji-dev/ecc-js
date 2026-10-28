@@ -16,7 +16,9 @@ it — usually just before they live it. §1 cites this skill's reference files
 `claim-auditor.md`) and the generated `docs/harness/rule-origins.md` carries those
 citations into the project, so that file opens with one line saying that a bare
 `<name>.md` it cites is a reference file of the harness-bootstrap skill, not a
-project file.
+project file. A rule the project already states in its own words keeps them: the
+rules block keeps the bold rule and, in place of its why clause, `Stated in the
+project's words: <path> › <heading>`, so no section is left a bare heading.
 
 ---
 
@@ -87,7 +89,7 @@ names all assert; none verify.
 > checked, and a column named `hashed_token` held a plaintext value.
 
 **The record is written last, from the diff — its fields generated, its prose
-audited by someone who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
+audited at Full by someone who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
 > Origin: *"a report is a claim — verify it before presenting it"* was a rule
 > addressed to the author. After it was written, one task shipped **eight** false
 > claims, and **nine of the first twenty-one** tasks shipped at least one. None
@@ -305,7 +307,7 @@ round by area.
 > whole context.
 
 **Run the full verification once per unit, not once per slice.** Slices run their
-targeted tests; the full run belongs to step 8 and to the merge.
+targeted tests; the full run belongs to step 8a and to the merge.
 > Origin, the third project: one change request ran the full suite 39 times, 8.4
 > hours of wall time.
 

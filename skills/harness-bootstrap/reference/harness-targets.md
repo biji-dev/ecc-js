@@ -30,8 +30,9 @@ file and `.claude/skills/` as the real store. Say what a second agent would then
 miss, and let the owner choose.
 
 `[M]` **Edit the real file, never through the link.** A new skill gets its link
-in the same commit. On Windows without symlink support, copy instead and add a
-check that the two copies match.
+in the same commit. On Windows without symlink support, or where the project
+refuses committed symlinks, copy instead: `harness-status.js` compares the copy
+with the real store file by file (`skill-link-drift`).
 
 `[M]` **A plain file read does not expand `@AGENTS.md`.** Any agent told to read
 the rules (the auditors especially) reads both files.

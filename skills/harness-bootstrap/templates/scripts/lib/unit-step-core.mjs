@@ -13,7 +13,7 @@
  */
 
 // ---- [B] project bindings
-// [B] The directory of the unit's state file (scope-guard.md › the state file). The steps file
+// [B] The directory of the unit's state file (harness-bootstrap's reference/scope-guard.md › The state file). The steps file
 // `<unit>.steps.jsonl` sits beside the state file and is committed with it.
 export const STEPS_DIR = 'docs/plans';
 // ---- end [B]
@@ -157,7 +157,8 @@ const hhmm = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 
 /**
  * The `--list` text: one line per interval (UTC times), then every problem prefixed with `!`. A step
- * closed by the next start carries no note: that is the runner's normal path (`runner.md`).
+ * closed by the next start carries no note: that is the runner's normal path (harness-bootstrap's
+ * reference/runner.md › Step markers).
  */
 export function formatIntervals({ intervals, problems }) {
   const lines = intervals.map((iv) => {

@@ -35,8 +35,10 @@ is very hard to argue with.
 trace lands on a section that does not decide what the task needs, undefined or
 drifting terms, dependency gaps, weak acceptance criteria. **Catchable.**
 
-`[M]` **Environment** — declared versions against installed ones, claimed ports
-against what is listening, lockfile health. **Catchable by probing.**
+`[M]` **Environment** — declared versions against installed ones; the ports the repo
+declares (dev and preview scripts, env examples, compose and server config), and the
+defaults of the tools it runs where it declares none, against what is listening
+(`lsof -nP -iTCP -sTCP:LISTEN`); lockfile health. **Catchable by probing.**
 
 `[M]` **Emergent** — a library behaving differently from its documentation. **Not
 catchable.** A clean preflight does not promise an uninterrupted phase, and the

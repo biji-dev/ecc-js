@@ -366,7 +366,7 @@ export function verdict({ kind, min, exitCode, signal = null, spawnError = null,
   }
   if (reasons.length) return { ok: false, lines: reasons.map((r) => `run-counted: FAIL ${r}`) };
   const out = [];
-  if (summary.passed > min) out.push(`run-counted: ${min} → ${summary.passed}: raise --min in scripts/run-gates.sh`);
+  if (summary.passed > min) out.push(`run-counted: ${min} → ${summary.passed}: raise --min on the gate's line`);
   out.push(`COUNTED ${kind} ${summary.passed} passed (min ${min})`);
   return { ok: true, lines: out };
 }

@@ -17,7 +17,8 @@
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
  *   --writer       REQUIRED, never assumed: the ROLE that wrote the diff (for --kind fix: the fix),
- *                  on this host (gate-design.md › Model and effort): main = the judgment model (Opus
+ *                  on this host (harness-bootstrap's reference/gate-design.md › Model and effort):
+ *                  main = the judgment model (Opus
  *                  on Claude Code) | bounded = the bounded model (Sonnet) | second = the second
  *                  family | mixed = several executors, the second family among them (routes like
  *                  second); main and bounded together are bounded. On Claude Code

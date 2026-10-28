@@ -167,7 +167,7 @@ function runHook(event, dir, { script = QUIET, pressure = '0', session = 's', tm
       assert.strictEqual(res.status, 0, res.stderr);
       return JSON.parse(res.stdout).systemMessage;
     };
-    assert.match(message(tmp('leftover-h-')), /The machine is tight \(memory pressure warn\)\. the harness-bootstrap skill's scripts\/machine-sweep\.mjs --report lists the rest \(machine\.md\)\.$/);
+    assert.match(message(tmp('leftover-h-')), /The machine is tight \(memory pressure warn\)\. the harness-bootstrap skill's scripts\/machine-sweep\.mjs --report lists the rest \(the skill's reference\/machine\.md\)\.$/);
     const installed = tmp('leftover-h-');
     fs.mkdirSync(path.join(installed, '.agents', 'harness', 'machine-sweep'), { recursive: true });
     fs.writeFileSync(path.join(installed, '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'), '');

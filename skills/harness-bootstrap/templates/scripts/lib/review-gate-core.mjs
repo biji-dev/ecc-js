@@ -20,8 +20,8 @@
 // alone: a weakened test is a weakened control, and a test under a critical path is critical.
 //
 // THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
-// model, a bounded model and a second family (gate-design.md › Model and effort). Read as Claude
-// Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
+// model, a bounded model and a second family (harness-bootstrap's reference/gate-design.md › Model
+// and effort). Read as Claude Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
 // unit went to the bounded model -- the family that wrote it. So `--writer` names the role, and a
 // family name counts only on Claude Code (or an unknown host, where every v4 install ran).
 
@@ -31,7 +31,7 @@ import { HOSTS } from './harness-host-core.mjs';
 export const CRITICAL = []; // path regexes of critical code (risk map › critical); empty until bound
 export const NON_PRODUCTION = [/\.md$/, /^docs\//, /(^|\/)(__tests__|tests?|e2e|fixtures)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that are not production code (docs, tests, fixtures)
 export const TESTS = [/(^|\/)(__tests__|tests?|e2e)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that count as tests (calls the test analyzer at the unit review)
-// the harness's own instruction files and host config: Code, never docs (runner.md › Task type first)
+// the harness's own instruction files and host config: Code, never docs (harness-bootstrap's reference/runner.md › Task type first)
 export const INSTRUCTIONS = [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//];
 export const TRIGGERS = {
   // specialist reviewer → path regexes that call it at the unit review (the project's risk map)
@@ -247,7 +247,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
         : prod.every((f) => isInstruction(f.path))
           ? '; instruction files, no other production code'
           : '';
-    // critical code is Full (gate-design.md › tiers): a mis-tiered unit gets the full lineup anyway
+    // critical code is Full (harness-bootstrap's reference/gate-design.md › Tiers): a mis-tiered unit gets the full lineup anyway
     const escalate = tier === 'small' && critical.length > 0;
     if (tier === 'small' && !escalate) {
       // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Sonnet
@@ -289,7 +289,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   }
   if (docsOnly) return out('skip', [], DOCS_ONLY);
   const r = fixRound({ critical, maxFixed, round, prodLines, writer });
-  // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)
+  // the specialist whose trigger the fix hits joins its re-review (harness-bootstrap's reference/gate-design.md › Fix rounds)
   if (specialists.length === 0) return out(r.decision, r.reviewers, r.reason);
   if (r.decision === 'skip')
     return out('review', specialists, `${r.reason}; the triggered specialist re-reads the fix`);

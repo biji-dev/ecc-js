@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { pathToFileURL } = require('url');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
@@ -83,6 +84,17 @@ test('the shipped docs-drift suite passes with the pinned test count', () => {
   assert.strictEqual(res.status, 0, out.slice(-1500));
   assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
   assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+});
+
+/** The shipped suite reads whatever a project binds, so the template's own bindings are checked here. */
+test('the template core ignores every lockfile name, bun.lock included, and counts decide as generic', () => {
+  const url = pathToFileURL(path.join(SCRIPTS, CORE_REL)).href;
+  const code = `import * as c from ${JSON.stringify(url)}; console.log(JSON.stringify({ ignore: c.IGNORE_TOKENS, generic: c.GENERIC }));`;
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: hermeticEnv() });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const got = JSON.parse(res.stdout);
+  assert.deepStrictEqual(got.ignore, ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'tsconfig.json'], 'the template IGNORE_TOKENS');
+  assert.deepStrictEqual(got.generic, ['index', 'main', 'utils', 'types', 'config', 'default', 'test', 'README', 'decide'], 'the template GENERIC: decide is an export of the review gate core');
 });
 
 test('mutant: dropping the word boundary on identifiers makes the suite fail', () => {

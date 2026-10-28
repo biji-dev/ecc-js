@@ -55,9 +55,11 @@ use the folder this `SKILL.md` was read from.
 
 Every reference line is marked **`[M]` mechanism** — ship it — or **`[B]`
 binding** — re-derive it from this project. Generating means writing files that
-name **this** project's real paths, commands and column names inline. Never an
-indirection layer: the runners work partly because the format is literally in the
-instructions, and an adapter is a place to guess wrong.
+name **this** project's real paths, commands and column names inline, and stamps
+each template's `generated YYYY-MM-DD` header with the day it ran (an upgrade's
+merge keeps the stamp the install has). Never an indirection layer: the runners
+work partly because the format is literally in the instructions, and an adapter is
+a place to guess wrong.
 
 ### Who orchestrates
 
@@ -85,7 +87,7 @@ orient:
   is an assertion.
 - **A "done" report ends with the step ledger; a step missing from it did not
   run.**
-- **The record is written last, from the diff — fields generated, prose audited by someone else.**
+- **The record is written last, from the diff — fields generated, prose audited at Full by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
 - **Never ask the owner for a new session or a hand-off.**
@@ -264,10 +266,10 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
-| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
+| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` (a copy where the project refuses committed symlinks, `harness-targets.md`) | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
 | `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `effort: high`, `tools: Read, Grep, Glob`; states its bound |
 | `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B's fallback when the second family is unavailable · `model: opus`, `effort: high`, `tools: Read, Grep, Glob` |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages and restores |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages only in a worktree of its own and restores |
 | `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices, `effort: high`, `autoCompactWindow: 250000` |
 | every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
 | `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line |

@@ -701,6 +701,191 @@ test('upgrade.md step 3: a kept row keeps its old hashes, a merged row records t
   assert.ok(step3.includes('A renamed file moves its entry, `template` and `templateSha256` included, to the new path'), 'step 3 does not cover a renamed entry');
 });
 
+const TEMPLATES = path.join(BOOTSTRAP, 'templates');
+const templateFiles = (dir = TEMPLATES) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+  const full = path.join(dir, entry.name);
+  return entry.isDirectory() ? templateFiles(full) : [full];
+});
+const templateRel = file => path.relative(TEMPLATES, file).split(path.sep).join('/');
+
+test("every template cites a reference file as harness-bootstrap's reference/<file>, never by its bare name", () => {
+  const refs = fs.readdirSync(path.join(BOOTSTRAP, 'reference')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3));
+  const cite = new RegExp(`(^|[^\\w.-])((?:[\\w.-]+/)*)(${refs.join('|')})\\.md\\b`, 'g');
+  // harness-host-core.test.mjs asserts which references the templates cite, so it names them bare. The
+  // comment above harness-guard.test.mjs's [B] IDS line keeps its old text: an install fills the line
+  // below it, and a three-way merge conflicts when both sides change adjacent lines.
+  const exemptFile = 'scripts/lib/harness-host-core.test.mjs';
+  const exemptLine = '// [B] Every id shape the plan uses: ID_PATTERN must take each one whole (commit-guard.md).';
+  const hits = [];
+  for (const file of templateFiles()) {
+    const rel = templateRel(file);
+    if (rel === exemptFile) continue;
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (line.trim() === exemptLine) return;
+      const named = line.includes('harness-bootstrap') || (lines[i - 1] || '').includes('harness-bootstrap');
+      for (const [, , dir, name] of line.matchAll(cite)) {
+        if (dir && dir !== 'reference/') continue; // a project's own file of the same name
+        if (dir === 'reference/' && named) continue;
+        hits.push(`${rel}:${i + 1} ${dir}${name}.md`);
+      }
+    });
+  }
+  assert.deepStrictEqual(hits, [], `a template cites a reference without naming the skill: ${hits.join('; ')}`);
+});
+
+test('a template citation reference/<file> › <heading> names a heading that file has', () => {
+  const headings = file => [...fs.readFileSync(path.join(BOOTSTRAP, 'reference', file), 'utf8')
+    .matchAll(/^(?:#+ (.+)|(?:`\[[MB]\]` )?\*\*([^*]+?)\.?\*\*)/gm)].map(m => (m[1] || m[2]).trim());
+  const missing = [];
+  let seen = 0;
+  for (const file of templateFiles()) {
+    // a comment wrapped over two lines reads as one
+    const text = fs.readFileSync(file, 'utf8').replace(/\n[ \t]*(?:\/\/|\*|#)?[ \t]*/g, ' ');
+    for (const [, ref, heading] of text.matchAll(/reference\/([a-z-]+\.md) › ([^)]+)\)/g)) {
+      seen += 1;
+      if (!headings(ref).some(h => h === heading || h.startsWith(`${heading} —`))) missing.push(`${templateRel(file)}: ${ref} › ${heading}`);
+    }
+  }
+  assert.ok(seen > 0, 'no template cites a reference heading');
+  assert.deepStrictEqual(missing, [], `a citation names no heading of its reference: ${missing.join('; ')}`);
+});
+
+test('the FULL verify runs once, at the end of step 8a after the doc sweep: the sequence, the tier table, the steps and every reference that names it', () => {
+  const runner = squashed('reference/runner.md');
+  assert.ok(runner.includes('8a docs the doc sweep · then the FULL verify run'), "runner.md's sequence does not end step 8a with the FULL verify");
+  assert.ok(!runner.includes('bounded fix rounds · the FULL verify run'), "runner.md's sequence still runs the FULL verify in step 8");
+  assert.ok(runner.includes('| 8a verify | scoped | FULL once before merge | FULL |') && !runner.includes('| 8 verify |'), "runner.md's tier table does not give the verify to step 8a");
+  const at8 = runner.indexOf('**Step 8 — review.**');
+  const at8a = runner.indexOf('**Step 8a — docs, then the FULL verify.**');
+  assert.ok(at8 >= 0 && at8a > at8, 'runner.md has no step 8 heading followed by "Step 8a — docs, then the FULL verify."');
+  assert.ok(!runner.slice(at8, at8a).includes('FULL'), 'step 8 still holds the FULL verify');
+  const step8a = runner.slice(at8a, runner.indexOf('**Step 8b', at8a));
+  const sweepAt = step8a.indexOf('**The doc sweep**');
+  assert.ok(sweepAt >= 0 && step8a.indexOf("Then the **FULL verify** (`context.md`), after the sweep's edits and every test a step added") > sweepAt, 'step 8a does not run the doc sweep, then the FULL verify');
+  assert.ok(runner.includes('verify once, at the end of step 8a — **never once per slice**'), 'step 2 does not place the one FULL verify at the end of step 8a');
+  assert.ok(runner.includes("since step 8a's verify") && runner.includes('reuses the step 8a result'), 'step 9 does not re-verify against the step 8a result');
+  assert.ok(runner.includes('a tests step after regression → before the FULL verify · doc sweep → 8a, then the FULL verify · ship → 9'), 'the eleven-step correspondence does not place a tests step before the FULL verify');
+  assert.ok(squashed('reference/rules.md').includes('the full run belongs to step 8a and to the merge'), 'rules.md does not give the full run to step 8a');
+  const context = squashed('reference/context.md');
+  assert.ok(context.includes('| 8a verify FULL | ran |') && !context.includes('| 8 verify FULL |'), "context.md's ledger example does not name the FULL verify 8a");
+  const delegate = fs.readFileSync(path.join(DELEGATE, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(delegate.includes("the runner's step 8a FULL verify is that check"), "delegate-tasks' SKILL.md does not name step 8a's FULL verify");
+});
+
+test("the record and Gate 2 measure a deliverable from its own start, and Gate 2 also shows the unit's total since the claim", () => {
+  const runner = squashed('reference/runner.md');
+  assert.ok(runner.includes('--session <every session id since the start, comma-separated> --since <start>)"') && !runner.includes('--since <claimed>'), "step 8b's cost line does not run from <start>");
+  assert.ok(runner.includes("`<start>` is the state file's `Deliverable started:`, else the claim: the row's own window, as for Elapsed (`log-format.md`)"), 'step 8b does not say where <start> comes from');
+  assert.ok(runner.includes("the deliverable's window (the record's Cost line) and the unit's total since the claim (`unit-cost.mjs`; `--by-step` for where it went)"), 'Gate 2 does not show both windows');
+  const log = squashed('reference/log-format.md');
+  assert.ok(log.includes("`unit-cost.mjs`'s line over the deliverable's window (from `Deliverable started:`, else the claim, as for Elapsed)"), "log-format.md's Cost row does not name the deliverable's window");
+  assert.ok(log.includes("Both run ledgers, codex-run's and claude-run's, count only the runs made in the unit's worktree, from the window's start to its sessions' last line."), "log-format.md's Cost row does not say which runs the ledgers count");
+});
+
+test("the step markers name the done command, tell review-gate's rounds from a step's, and keep an eleven-step install's own ids", () => {
+  const runner = squashed('reference/runner.md');
+  assert.ok(runner.includes('so `done` (`node scripts/unit-step.mjs <unit> <step> done`) is needed only after the last step and before a stop'), 'runner.md does not give the done command');
+  const core = fs.readFileSync(path.join(TEMPLATES, 'scripts', 'lib', 'unit-step-core.mjs'), 'utf8');
+  assert.ok(core.includes("export const EVENTS = ['start', 'done'];"), 'unit-step-core.mjs has no done event');
+  assert.ok(runner.includes("review-gate counts fix rounds, not step rounds, so its `--round 1` runs inside step 8's round 2"), 'runner.md does not tell review-gate rounds from step rounds');
+  assert.ok(runner.includes('keep their numbers, and those numbers are their step ids: in the markers, the dispatch tags and the ledger'), "an eleven-step install's numbers are not its step ids");
+  assert.ok(runner.includes('Such an install reads this file\'s step numbers through the correspondence: "step 9" is its ship step.'), 'runner.md does not say how an eleven-step install reads its step numbers');
+  assert.ok(runner.includes('the land step (9) ends with `node scripts/harness-due.mjs`'), 'the due-check names step 9 by its number alone');
+});
+
+test('a Missed by harness that comes after the land gets a commit of its own, and the row is undated until then', () => {
+  const runner = squashed('reference/runner.md');
+  const at9 = runner.indexOf('**Step 9 — land.**');
+  assert.ok(at9 >= 0, 'runner.md has no step 9 heading');
+  const step9 = runner.slice(at9, runner.indexOf('**Step 10', at9));
+  assert.ok(step9.includes('**A Missed that comes after the land** — the merge policy merged, and the owner spoke later — goes in a commit of its own that edits that row'), 'step 9 has no rule for a Missed after the land');
+  assert.ok(step9.includes('(under `SCOPE=repo` the guard refuses a mainline commit while any row is held)') && step9.includes("Until it is committed the row has no date, and the retro's digest says so (`learning.md`)"), "step 9's Missed rule does not say where it commits or what the retro shows");
+  const log = squashed('reference/log-format.md');
+  assert.ok(log.includes('filled from what the owner volunteered at Gate 2, before the land commit, never asked as a question'), "log-format.md's Missed row does not say it is filled before the land commit");
+  assert.ok(log.includes('One the owner volunteers after the land gets a commit of its own (`runner.md` › Step 9)'), "log-format.md's Missed row does not cover one that comes after the land");
+});
+
+test('the claim auditor and a reviewer that mutates code work in a worktree of their own, and prove each restore with cmp', () => {
+  const auditor = squashed('reference/claim-auditor.md');
+  assert.ok(auditor.includes('it sabotages only in a worktree of its own, never the shared tree another agent may be reading; every protection it removes, it restores from a copy taken first, and it proves the restore with `cmp` before reporting'), "claim-auditor.md's tools paragraph does not confine sabotage to its own worktree");
+  assert.ok(!auditor.includes('`git diff --stat` being empty'), 'claim-auditor.md still proves a restore with git diff --stat');
+  const at = auditor.indexOf('- **Mutation-check the top suspects');
+  assert.ok(at >= 0, 'claim-auditor.md has no mutation-check bullet');
+  const bullet = auditor.slice(at, auditor.indexOf('- **The fix commits are a fresh diff.**', at));
+  for (const step of ['`git worktree add --detach <temp dir> HEAD` outside the repository', '`cp` it to the scratch directory', 'prove it with `cmp <copy> <file>` before the next suspect', 'Remove the worktree at the end. Never `git checkout -- <file>`.']) {
+    assert.ok(bullet.includes(step), `the mutation bullet lacks: ${step}`);
+  }
+  assert.ok(!bullet.includes('`git apply` it back'), 'the mutation bullet still restores by re-applying the patch');
+  assert.ok(squashed('reference/runner.md').includes('A reviewer that mutates code to prove a test does it in a worktree of its own, never the shared tree (`claim-auditor.md`).'), 'runner.md does not confine a mutating reviewer to its own worktree');
+  assert.ok(squashed('SKILL.md').includes('states that it sabotages only in a worktree of its own and restores'), "SKILL.md's claim-auditor row does not say where it sabotages");
+});
+
+test("the record rule's prose audit is at Full, in rules.md, the rules block and SKILL.md; a rule the project states keeps its words and cites them", () => {
+  const rule = '**The record is written last, from the diff — its fields generated, its prose audited at Full by someone who did not write it.**';
+  const rules = squashed('reference/rules.md');
+  const block = squashed('templates/agents-rules.md');
+  assert.ok(rules.includes(rule), "rules.md's record rule does not say at Full");
+  assert.ok(block.includes(rule), "the rules block's record rule does not say at Full");
+  assert.ok(squashed('SKILL.md').includes('fields generated, prose audited at Full by someone else.**'), "SKILL.md's record rule does not say at Full");
+  const citation = "`Stated in the project's words: <path> › <heading>`";
+  const preamble = rules.slice(0, rules.indexOf('## 1 · Ship these'));
+  assert.ok(preamble.includes(`A rule the project already states in its own words keeps them: the rules block keeps the bold rule and, in place of its why clause, ${citation}, so no section is left a bare heading.`), 'the rules.md preamble does not give the citation form');
+  assert.ok(block.includes(`keep the bold rule, and in place of its why clause write ${citation}. No section is left a bare heading.`), 'the rules block does not give the citation form');
+});
+
+test('sweep.md: a status advances only on a mainline commit, velocity reads Elapsed (work) as log-format.md reconciles it, and landings come from --first-parent', () => {
+  const sweep = squashed('reference/sweep.md');
+  assert.ok(sweep.includes('only on a commit you can name that is on the mainline (`git merge-base --is-ancestor <sha> <mainline>`): a fix still on an unmerged branch is reported, never advanced'), 'sweep.md advances a status on a commit off the mainline');
+  assert.ok(sweep.includes('`fixed <sha>` against the commit once it is on the mainline'), "sweep.md's fixed rows are not checked against the mainline");
+  assert.ok(sweep.includes("the work time per unit from the log's Elapsed (work), reconciled as `log-format.md` says: a row that cannot be reconciled is marked, left out and counted"), "sweep.md's velocity does not read Elapsed (work) as log-format.md reconciles it");
+  assert.ok(sweep.includes('with the tier reported alongside only to show whether it tracks') && !sweep.includes('`Size`'), 'sweep.md reports a Size the log does not have');
+  assert.ok(sweep.includes("which tripwires fired (`rules.md` §2: read from the log's Verdicts, Retries and Friction cells and the state files' decision logs)"), 'sweep.md does not say where the tripwires are read');
+  assert.ok(sweep.includes('landing shapes, read from `git log --first-parent --format=%s <mainline>` on the real history — merges and direct landings both —') && !sweep.includes('git log --merges'), 'sweep.md reads only merge commits');
+});
+
+test('preflight.md probes the ports the repo declares, and the defaults of the tools it runs where it declares none', () => {
+  const preflight = squashed('reference/preflight.md');
+  assert.ok(preflight.includes('the ports the repo declares (dev and preview scripts, env examples, compose and server config), and the defaults of the tools it runs where it declares none, against what is listening (`lsof -nP -iTCP -sTCP:LISTEN`)'), 'preflight.md does not say which ports it probes');
+  assert.ok(!preflight.includes('claimed ports'), 'preflight.md still probes only claimed ports');
+});
+
+test("SKILL.md says generating stamps each template's generated date, and the templates carry the placeholder", () => {
+  assert.ok(squashed('SKILL.md').includes("and stamps each template's `generated YYYY-MM-DD` header with the day it ran (an upgrade's merge keeps the stamp the install has)"), 'SKILL.md does not say who stamps the generated date');
+  assert.ok(fs.readFileSync(path.join(TEMPLATES, 'run-gates.sh'), 'utf8').includes('(generated YYYY-MM-DD)'), 'run-gates.sh carries no generated placeholder');
+});
+
+test('a copy stands in for the skill link where a project refuses committed symlinks, and harness-status compares it file by file', () => {
+  assert.ok(squashed('reference/harness-targets.md').includes('On Windows without symlink support, or where the project refuses committed symlinks, copy instead: `harness-status.js` compares the copy with the real store file by file (`skill-link-drift`).'), 'harness-targets.md does not cover a project that refuses committed symlinks');
+  assert.ok(fs.readFileSync(path.join(BOOTSTRAP, 'scripts', 'harness-status.js'), 'utf8').includes("haz('skill-link-drift'"), 'harness-status.js raises no skill-link-drift');
+  assert.ok(squashed('SKILL.md').includes('(a copy where the project refuses committed symlinks, `harness-targets.md`)'), "SKILL.md's runner row does not name the copy");
+});
+
+test('scope-guard.md: the steps file is committed when the state file is, and stays on the machine where state files stay out of git', () => {
+  assert.ok(squashed('reference/scope-guard.md').includes('Committed when the state file is — where the project keeps its state files out of git, both stay on this machine — and kept after the unit lands'), 'scope-guard.md commits the steps file whatever the state file does');
+});
+
+test("learning.md: the digest is committed as written, and a row is dated by git blame -w with only the repository's ignore file, as retro-gather runs it", () => {
+  const learning = squashed('reference/learning.md');
+  assert.ok(learning.includes('**The digest is committed as the retro wrote it.**') && learning.includes("list `REPORTS_DIR` in the project formatter's ignore file (`.prettierignore` or its equivalent)"), "learning.md does not keep the digest out of the project's formatter");
+  const at = learning.indexOf('**How a row gets its date.**');
+  assert.ok(at >= 0 && learning.includes('› How a row gets its date)'), 'learning.md has no "How a row gets its date" paragraph for the retro to cite');
+  const para = learning.slice(at, learning.indexOf('`[M]`', at));
+  for (const part of ['`git blame -w`', "`--no-ignore-revs-file` clears whatever `blame.ignoreRevsFile` a machine's git config names", '`.git-blame-ignore-revs`', '`git mv`', 'With `FILED_AT` bound (off by default)']) {
+    assert.ok(para.includes(part), `"How a row gets its date" lacks: ${part}`);
+  }
+  const gather = fs.readFileSync(path.join(TEMPLATES, 'scripts', 'lib', 'retro-gather.mjs'), 'utf8');
+  assert.ok(gather.includes("['blame', '-w', '--line-porcelain', '--no-ignore-revs-file']"), 'retro-gather.mjs does not blame as learning.md says');
+  assert.ok(learning.includes('out, with a `Warn:` line under Read and the same line on stderr'), 'learning.md does not say an undated row gets a Warn: line');
+  assert.ok(learning.includes('`FILED_AT` (`null`)'), "learning.md's bindings do not list FILED_AT");
+});
+
+test("run-counted's raise message names the gate's line, and context.md quotes it", () => {
+  const core = fs.readFileSync(path.join(TEMPLATES, 'scripts', 'lib', 'run-counted-core.mjs'), 'utf8');
+  assert.ok(core.includes(": raise --min on the gate's line`") && !core.includes('raise --min in scripts/run-gates.sh'), "run-counted's raise message names a file the project may not have");
+  assert.ok(squashed('reference/context.md').includes("raise --min on the gate's line`), wherever the project defines its gates"), 'context.md does not quote the raise message');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

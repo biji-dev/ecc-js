@@ -323,7 +323,7 @@ test('counter words are own keys only, and colour is the one escape stripped', (
 test('verdict: success ends with exactly the COUNTED line, above the floor with the raise hint; every reason is a line', () => {
   const s = parseSummary('vitest', '      Tests  52 passed (52)\n');
   assert.deepEqual(verdict({ kind: 'vitest', min: 52, exitCode: 0, summary: s }), { ok: true, lines: ['COUNTED vitest 52 passed (min 52)'] });
-  assert.deepEqual(verdict({ kind: 'vitest', min: 50, exitCode: 0, summary: s }).lines, ['run-counted: 50 → 52: raise --min in scripts/run-gates.sh', 'COUNTED vitest 52 passed (min 50)']);
+  assert.deepEqual(verdict({ kind: 'vitest', min: 50, exitCode: 0, summary: s }).lines, ["run-counted: 50 → 52: raise --min on the gate's line", 'COUNTED vitest 52 passed (min 50)']);
   assert.deepEqual(verdict({ kind: 'vitest', min: 60, exitCode: 0, summary: s }).lines, ['run-counted: FAIL 52 passed, below --min 60']);
   assert.deepEqual(BAD_COUNTERS, ['failed', 'errors', 'skipped', 'todo', 'flaky', 'interrupted', 'not run', 'cancelled', 'filtered out', 'deselected', 'xfailed', 'xpassed']);
   const all = Object.fromEntries(BAD_COUNTERS.map((c) => [c, 1]));

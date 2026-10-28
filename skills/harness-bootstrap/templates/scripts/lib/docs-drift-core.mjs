@@ -60,10 +60,11 @@ export const IGNORE_TOKENS = [
   'pnpm-lock.yaml',
   'yarn.lock',
   'bun.lockb',
+  'bun.lock', // bun 1.2 and later
   'tsconfig.json',
 ];
 // File stems and exported names so common that a mention proves nothing.
-export const GENERIC = ['index', 'main', 'utils', 'types', 'config', 'default', 'test', 'README'];
+export const GENERIC = ['index', 'main', 'utils', 'types', 'config', 'default', 'test', 'README', 'decide'];
 // ---- end [B]
 
 /** Exit codes the caller branches on. */

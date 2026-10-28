@@ -28,7 +28,7 @@ export const MAX_COMMITS = 40;
 // A name is matched case-insensitively by prefix (a leading `★` or `*` ignored) to the cell this
 // core knows for it (unit, deliverable, elapsed, owner wait, defects, scope, gate, verdicts, retries,
 // model, cost, missed, yield, friction); any other name gets `<fill: name>`. The default is
-// log-format.md's table.
+// the table in harness-bootstrap's reference/log-format.md.
 export const LOG_COLUMNS = [
   'Unit · Mode · Type · Tier',
   'Deliverable',

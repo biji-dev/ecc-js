@@ -127,10 +127,10 @@ async function main() {
   }
   if (!found.length && !tight) return;
   const list = found.join('; ');
-  // the installed copy exists only once the owner approved a category (machine.md)
+  // the installed copy exists only once the owner approved a category (harness-bootstrap's reference/machine.md)
   const sweep = existsSync(join(homedir(), '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'))
     ? 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --report lists the rest'
-    : "the harness-bootstrap skill's scripts/machine-sweep.mjs --report lists the rest (machine.md)";
+    : "the harness-bootstrap skill's scripts/machine-sweep.mjs --report lists the rest (the skill's reference/machine.md)";
   if (input.hook_event_name === 'Stop') {
     const parts = [];
     if (found.length) parts.push(`Still running from this checkout: ${list}`);

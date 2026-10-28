@@ -23,7 +23,7 @@ read-only; what they propose is routed into work that already has a gate (below)
 ## The retro
 
 `[M]` `scripts/retro.mjs` reads what is already on disk — the log (each row dated by
-the commit that last changed it, `git blame`), the follow-ups doc, the state and
+the commit that last changed it, › How a row gets its date), the follow-ups doc, the state and
 steps files, earlier digests, the Claude Code transcripts of the sessions that ran
 in the repository or one of its worktrees, the threads a Codex host ran there
 (`$CODEX_HOME/sessions` and `archived_sessions`, `CODEX_HOME` defaulting to `~/.codex`),
@@ -51,10 +51,25 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
 `[M]` **The window** runs from the end of the newest digest of another week (else
 seven days back) to now. A second run in the same week rewrites that week's digest.
 
+`[M]` **The digest is committed as the retro wrote it.** It is regenerated, never
+edited, so a formatter that re-pads tables on commit would change it: list
+`REPORTS_DIR` in the project formatter's ignore file (`.prettierignore` or its
+equivalent).
+
+`[M]` **How a row gets its date.** `git blame -w`: a formatter's re-pad of a table
+keeps its rows' dates. Blame looks past the commits listed in the repository's
+`.git-blame-ignore-revs` (a commit that repairs the log's columns), and only those:
+`--no-ignore-revs-file` clears whatever `blame.ignoreRevsFile` a machine's git config
+names, since a named file that is missing stops blame and would undate every row. A
+state file moved with `git mv` keeps the time of its last change. With `FILED_AT`
+bound (off by default), a follow-up is aged from the filing date in its own cells,
+not from its line's commit; the weekly job, which reads no project binding, dates
+by line.
+
 `[M]` **Data it cannot see, said in the digest's Read line rather than guessed:**
 
 - A log row that is not committed has no date; it is counted as undated and left
-  out.
+  out, with a `Warn:` line under Read and the same line on stderr.
 - A turn held by the step intervals of two units goes to the unit whose step started
   last (planning the next unit while this one waits on Gate 2 is the next unit's
   work); a dispatch goes to the unit its tag or description names, all of it, though
@@ -71,7 +86,7 @@ seven days back) to now. A second run in the same week rewrites that week's dige
   and state files and its ledgers (one project on its first run: 48 log rows, no
   transcripts).
 
-`[B]` `REPORTS_DIR`, `LOG`, `FOLLOW_UPS`, `PLANS_DIR`, the log columns
+`[B]` `REPORTS_DIR`, `LOG`, `FOLLOW_UPS`, `PLANS_DIR`, `FILED_AT` (`null`), the log columns
 (`EXTRA_COLUMNS`, and estimate-core's), `OUTLIER_X` 2, `MIN_COHORT` 3, `MIN_SHARE`
 5, `REWRITE_ALERT_PERCENT` 5, `QUEUE_ALERT_DAYS` 14, and the `STEP_WORDS` that map
 an untagged dispatch to its step.

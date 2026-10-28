@@ -237,7 +237,7 @@ output that matters), or `skipped` / `unavailable` / `degraded` with the reason.
 | 8 review — code-reviewer + security-reviewer | ran | 3 findings: 2 fixed (abc1234), 1 → follow-ups |
 | 8 second-family review | unavailable | `codex-run: unavailable kind=review … usage limit` — degraded, Opus stood in |
 | 8 lane B blast radius | ran | 2 readers outside the diff fixed (def5678) |
-| 8 verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
+| 8a verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
 ```
 
 `[M]` Then five lists:
@@ -279,9 +279,10 @@ gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-
 ```
 
 `--min` is today's count. A run above it prints the raise (`run-counted: 412 → 418:
-raise --min in scripts/run-gates.sh`); the unit that added the tests raises it. No
-summary is a FAIL, so a `--filter` that matched no package, `--if-present` with no
-script anywhere and `--passWithNoTests` fail where they passed. Bind one counted gate
+raise --min on the gate's line`), wherever the project defines its gates; the unit
+that added the tests raises it. No summary is a FAIL, so a `--filter` that matched
+no package, `--if-present` with no script anywhere and `--passWithNoTests` fail
+where they passed. Bind one counted gate
 per package: a second summary in one output fails too. A plain `gate` passes on exit
 0 alone, so bind a build without `--if-present` and a pnpm filter with
 `--fail-if-no-match`: pnpm 10.30 exits 0 when `-r --if-present run build` finds no

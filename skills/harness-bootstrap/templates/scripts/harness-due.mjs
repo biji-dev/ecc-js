@@ -3,8 +3,8 @@
 // [M] mechanism (ships as-is): everything. The [B] bindings (the mainline, the paths, the phase in a
 // row id, the cadences, the limits, the commands) live at the top of scripts/lib/harness-due-core.mjs.
 /**
- * The runner runs it at step 0, before the claim, and at step 9, after the merge (runner.md ›
- * Due-checks):
+ * The runner runs it at step 0, before the claim, and at step 9, after the merge (harness-bootstrap's
+ * reference/runner.md › Due-checks):
  *
  *   node scripts/harness-due.mjs [--claim <row id>] [--json] [--now <ISO>] [--home <dir>]
  *   node scripts/harness-due.mjs --seen <YYYY-Www> [--home <dir>]

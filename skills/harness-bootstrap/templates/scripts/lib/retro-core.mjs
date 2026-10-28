@@ -88,7 +88,7 @@ export const MAX_BYTES = 8192;
 export const MAX_CANDIDATES = 5;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
-// The runner's steps in sequence order (`runner.md` › The sequence), for listing.
+// The runner's steps in sequence order (harness-bootstrap's reference/runner.md › The sequence), for listing.
 const STEP_ORDER = ['0a', '0', '1', 'g1', '2', '3', '4', '5', '6', '7', '8', '8a', '8b', '8c', 'g2', '9', '10'];
 // An empty cell, however it says so: ``, `—`, `none`, `none (owner, Gate 2)`, `— (none named)`.
 const EMPTY = /^(?:|none|nothing|n\/a|-|—|–)(?:[\s.,;:]*\(.*\))?[\s.]*$/i;
@@ -651,7 +651,7 @@ export function candidates(d) {
   if (t && t.rewriteShare >= REWRITE_ALERT_PERCENT) {
     sources[1].push({
       kind: 'threshold',
-      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (context.md › The gate wait)`,
+      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (harness-bootstrap's reference/context.md › The gate wait)`,
       evidence: 'transcripts',
     });
   }

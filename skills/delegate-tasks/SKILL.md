@@ -238,7 +238,7 @@ they stay in the session. Codex, ZCode and Kimi forms are in
   the accessibility snapshot against the spec's visual contract.
 - Blocked tasks: fix the **spec**, re-dispatch only that executor.
 - Run the project's strongest check once yourself — **standalone only.** Inside a
-  harness the runner's step 8 FULL verify is that check; run nothing extra on the
+  harness the runner's step 8a FULL verify is that check; run nothing extra on the
   same tree.
 - **Commit gate.** Standalone: present the diff summary and proposed conventional
   commit messages, and commit only when the user confirms. Inside a harness: the

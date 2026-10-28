@@ -9,7 +9,7 @@
  * claude-run's, and writes
  * `<REPORTS_DIR>/retro-<YYYY-Www>.md`, at most 8 KB: KPIs against the four weeks before, outliers,
  * where the money went by step, friction, what the owner caught, the queue, and at most five
- * candidates for the retro review (`learning.md`).
+ * candidates for the retro review (harness-bootstrap's reference/learning.md).
  *
  *   node scripts/retro.mjs [--since <ISO>] [--until <ISO>] [--projects-dir <dir>] [--ledger <path>]
  *     [--dry-run | --json | --export <dir>]

@@ -238,12 +238,48 @@ export function inWindow(ts, since, until) {
 }
 
 /**
- * The window a ledger's runs are counted in: `window` is { since, until } as given (ISO strings or
- * null), `times` the sessions' times in ms. A ledger holds every run its checkout ever made, so a bound
- * the owner left out is the sessions' first (`since`) or last (`until`) readable time, not open. With no
- * readable time the window is as given.
+ * A transcript's text -> { times, live }: the time of every line, whatever its type (a tool result is
+ * written after the turn that called the tool), and whether a tool is running now -- the last assistant
+ * message called a tool and no result has followed. The copies of one streamed message are one message.
+ * A line with no readable time has none.
  */
-export function ledgerWindow(window, times) {
+export function transcriptTimes(text) {
+  const times = [];
+  let pending = new Set();
+  let lastId = null;
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let d;
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = Date.parse(d?.timestamp);
+    if (Number.isFinite(ts)) times.push(ts);
+    const msg = d?.message;
+    const content = Array.isArray(msg?.content) ? msg.content : [];
+    if (d?.type === 'assistant' && msg) {
+      const id = msg.id ?? null;
+      if (id === null || id !== lastId) pending = new Set();
+      lastId = id;
+      for (const c of content) if (c?.type === 'tool_use' && c.id) pending.add(c.id);
+    } else if (d?.type === 'user') {
+      for (const c of content) if (c?.type === 'tool_result') pending.delete(c.tool_use_id);
+    }
+  }
+  return { times, live: pending.size > 0 };
+}
+
+/**
+ * The window a ledger's runs are counted in: `window` is { since, until } as given (ISO strings or
+ * null), `times` the sessions' times in ms, `now` the time in ms while a session is still running a
+ * tool, else null. A ledger holds every run its checkout ever made, so a bound the owner left out is
+ * the sessions' first (`since`) or last (`until`) readable time, not open; a live session's `until` is
+ * now, since the run its tool started is not in the transcript yet. With no readable time the window
+ * is as given.
+ */
+export function ledgerWindow(window, times, now = null) {
   let lo = Infinity;
   let hi = -Infinity;
   for (const t of times) {
@@ -255,7 +291,7 @@ export function ledgerWindow(window, times) {
   const given = (b) => b !== null && b !== undefined;
   return {
     since: given(window.since) ? window.since : new Date(lo).toISOString(),
-    until: given(window.until) ? window.until : new Date(hi).toISOString(),
+    until: given(window.until) ? window.until : new Date(now ?? hi).toISOString(),
   };
 }
 

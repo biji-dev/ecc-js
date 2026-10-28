@@ -40,6 +40,7 @@ import {
   summarizeSteps,
   summarizeTimes,
   summaryLine,
+  transcriptTimes,
   unionMs,
 } from './unit-cost-core.mjs';
 import { codexProjectSessions, codexSessionFiles, codexSessionsDir, fileLines } from './run-sources.mjs';
@@ -325,6 +326,43 @@ test('ledgerWindow fills only the bounds the owner left out, with the sessions\'
   // a long session\'s times do not overflow an argument list
   const many = Array.from({ length: 200_000 }, (_, i) => lo + i);
   assert.deepEqual(ledgerWindow({ since: null, until: null }, many), { since: new Date(lo).toISOString(), until: new Date(lo + 199_999).toISOString() });
+});
+
+test('transcriptTimes takes the time of every line, and says a tool is running when the last call has no result', () => {
+  const line = (type, min, message, extra = {}) => JSON.stringify({ type, timestamp: atMin(min), message, ...extra });
+  const call = (min, id, tool) => line('assistant', min, { id, content: [{ type: 'tool_use', id: tool, name: 'Bash', input: {} }] });
+  const said = (min, id) => line('assistant', min, { id, content: [{ type: 'text', text: 'ok' }] });
+  const result = (min, tool) => line('user', min, { content: [{ type: 'tool_result', tool_use_id: tool, content: 'done' }] });
+  const read = (...lines) => transcriptTimes(lines.join('\n'));
+  const at = (...mins) => mins.map((m) => T0 + m * MIN);
+  // every type of line has a time; a line without one, a torn line and a blank one have none
+  const all = read(line('user', 0, { content: 'go' }), said(1, 'a'), call(2, 'b', 't1'), result(3, 't1'), line('system', 4, undefined), JSON.stringify({ type: 'user', message: {} }), '{"type":"user"', '');
+  assert.deepEqual(all.times, at(0, 1, 2, 3, 4));
+  assert.equal(all.live, false);
+  // a call whose result is not written yet is running now
+  assert.deepEqual(read(line('user', 0, { content: 'go' }), call(2, 'b', 't1')), { times: at(0, 2), live: true });
+  assert.equal(read(call(2, 'b', 't1'), result(3, 't1')).live, false);
+  // the copies of one streamed message are one message: a text copy after the call does not end it
+  assert.equal(read(call(2, 'b', 't1'), said(2, 'b')).live, true);
+  // parallel calls: running until every one has its result
+  const two = [call(2, 'b', 't1'), call(2, 'b', 't2')];
+  assert.equal(read(...two, result(3, 't1')).live, true);
+  assert.equal(read(...two, result(3, 't1'), result(4, 't2')).live, false);
+  // a later message of the assistant's own means the call was answered or given up
+  assert.equal(read(call(2, 'b', 't1'), said(5, 'c')).live, false);
+  assert.deepEqual(read(''), { times: [], live: false });
+  // a long transcript's times do not overflow an argument list
+  assert.equal(transcriptTimes(Array.from({ length: 200_000 }, (_, i) => said(i % 60, `m${i}`)).join('\n')).times.length, 200_000);
+});
+
+test('ledgerWindow ends an open until at now while a session is live, and a bound the owner gave stays', () => {
+  const lo = Date.parse('2026-10-24T01:00:00Z');
+  const hi = Date.parse('2026-10-24T03:00:00Z');
+  const now = Date.parse('2026-10-24T05:00:00Z');
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, [lo, hi], now), { since: new Date(lo).toISOString(), until: new Date(now).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: null, until: '2026-10-24T03:10:00Z' }, [lo, hi], now), { since: new Date(lo).toISOString(), until: '2026-10-24T03:10:00Z' });
+  assert.deepEqual(ledgerWindow({ since: '2026-10-24T00:00:00Z', until: null }, [lo, hi], now), { since: '2026-10-24T00:00:00Z', until: new Date(now).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, [lo, hi], null), { since: new Date(lo).toISOString(), until: new Date(hi).toISOString() });
 });
 
 test('parseLedger skips blank and torn lines and non-object values', () => {
@@ -1255,6 +1293,50 @@ test('a ledger counts only the runs between the sessions\' first and last turn, 
   assert.deepEqual(read('--since', at('00:00'), '--until', at('04:00')), [3, 8, 3, 7, 2]);
   // the turns themselves keep the window as given
   assert.equal(read('--since', at('02:00'))[4], 1);
+});
+
+/**
+ * A session whose main thread ends in `tail` (lines after two usage turns at 01:00 and 03:00), both run
+ * ledgers made in the directory it is read from; returns the runs each counts for the extra arguments.
+ */
+function tailCase(tail) {
+  const root = tmpDir('unit-cost-tail-');
+  const proj = path.join(root, 'projects', '-p-app');
+  fs.mkdirSync(proj, { recursive: true });
+  const at = (hhmm) => `2026-10-24T${hhmm}:00Z`;
+  const call = (id, hhmm) => JSON.stringify({ type: 'assistant', timestamp: at(hhmm), requestId: `r-${id}`, message: { id, model: 'claude-opus-5-5', usage: { output_tokens: 1 }, content: [{ type: 'tool_use', id: `t-${id}`, name: 'Bash', input: {} }] } });
+  fs.writeFileSync(path.join(proj, 'sess1.jsonl'), `${[call('a', '01:00'), ...tail(call, at)].join('\n')}\n`);
+  const rows = [
+    [at('00:30'), 10, 12, 1],
+    [at('02:00'), 20, 21, 2],
+    [at('03:30'), 30, 35, 4],
+  ].map(([when, lo, hi, costUsd]) => JSON.stringify({ at: when, kind: 'review', cwd: root, outcome: 'ok', costUsd, ms: 1, limitsBefore: { usedPercent: lo, resetsAt: 111 }, limitsAfter: { usedPercent: hi, resetsAt: 111 } }));
+  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${rows.join('\n')}\n`);
+  fs.mkdirSync(path.join(root, '.claude-runs'));
+  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${rows.join('\n')}\n`);
+  return (...more) => {
+    const r = cli(root, ['--session', 'sess1', '--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'ledger.jsonl'), '--json', ...more]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout);
+    return [j.codex.runs, j.claudeRuns.runs];
+  };
+}
+
+test('a session that ends with a tool result after its last turn counts the run that tool result holds, in both ledgers', () => {
+  const read = tailCase((call, at) => [
+    call('b', '03:00'),
+    JSON.stringify({ type: 'user', timestamp: at('03:40'), message: { content: [{ type: 'tool_result', tool_use_id: 't-b', content: 'done' }] } }),
+  ]);
+  // the run at 03:30 is between the last turn and the last line
+  assert.deepEqual(read(), [2, 2]);
+  assert.deepEqual(read('--until', '2026-10-24T03:10:00Z'), [1, 1]);
+});
+
+test('a session still running a tool counts the runs up to now, and a bound the owner gave stays', () => {
+  const read = tailCase((call) => [call('b', '03:00')]);
+  // the tool call has no result yet: the run at 03:30 may be the one it started
+  assert.deepEqual(read(), [2, 2]);
+  assert.deepEqual(read('--until', '2026-10-24T03:10:00Z'), [1, 1]);
 });
 
 test('a Codex host\'s Codex % counts the ledger\'s runs only between the threads\' first and last time', () => {

@@ -21,7 +21,7 @@
  *                        Codex reports tokens and quota, not dollars
  *   --projects-dir <d>   default $CLAUDE_CONFIG_DIR/projects when set, else ~/.claude/projects
  *   --since / --until    only turns inside this ISO window; a ledger's runs are counted only between
- *                        the sessions' first and last turn, so a bound left out ends there
+ *                        the sessions' first and last line, or until now while one is running a tool
  *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
  *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
  *   --cwd-match <s>      only ledger runs (Codex and claude-run) whose cwd contains this substring;
@@ -40,7 +40,8 @@
  * The two run ledgers (the main checkout's .codex-runs/ledger.jsonl and .claude-runs/ledger.jsonl, when
  * there are any) are written by every worktree of the repository, so a ledger's runs are this unit's
  * only when made in this worktree, judged by each run's real cwd, and between the sessions' first and
- * last turn. claude-run's add their dollars to the cost: it keeps no transcript.
+ * last line (a bound left out ends there). claude-run's add their dollars to the cost: it keeps no
+ * transcript.
  *
  * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs
  * and a Codex host's turns, so it includes any other work on the same account in that window.
@@ -71,6 +72,7 @@ import {
   summarizeSteps,
   summarizeTimes,
   summaryLine,
+  transcriptTimes,
 } from './lib/unit-cost-core.mjs';
 import {
   CLAUDE_LEDGER_DIR,
@@ -139,9 +141,11 @@ function main() {
     const threads = files.map((file) => parseCodexSession(fileLines(file)));
     const rows = texts.flatMap(({ text, ctx }) => parseTranscript(text, ctx));
     const window = { since: args.since, until: args.until };
-    // The sessions' own turns keep the window as given; a ledger's runs are counted between their first and last time.
-    const times = [...rows.map((r) => r.ts), ...threads.flatMap((t) => [...t.starts, ...t.readings.map((r) => r.ts)])];
-    const runWindow = ledgerWindow(window, times);
+    // The sessions' own turns keep the window as given; a ledger's runs are counted between their first and
+    // last line (a tool result comes after its turn), or until now while a tool is running.
+    const lines = texts.map(({ text }) => transcriptTimes(text));
+    const times = [...lines.flatMap((l) => l.times), ...threads.flatMap((t) => [...t.starts, ...t.readings.map((r) => r.ts)])];
+    const runWindow = ledgerWindow(window, times, lines.some((l) => l.live) ? Date.now() : null);
     claude = summarizeClaude(rows, window);
     if (args.times) {
       const events = [

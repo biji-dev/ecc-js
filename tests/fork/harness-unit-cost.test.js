@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 68;
+const EXPECTED_TESTS = 72;
 
 let passed = 0;
 let failed = 0;
@@ -150,6 +150,8 @@ mutantFails('adding the claude-run dollars of every worktree', 'return runs.filt
 mutantFails('counting the Codex runs of every worktree', '? worktreeRuns(parseLedger(readText(ledger)), args.cwdMatch) : null;', '? parseLedger(readText(ledger)) : null;', CLI_REL);
 mutantFails('leaving a ledger\'s window open', 'if (lo === Infinity) return window;', 'return window;');
 mutantFails('replacing a bound the owner gave with the sessions\' time', 'since: given(window.since) ? window.since : new Date(lo).toISOString(),', 'since: new Date(lo).toISOString(),');
+mutantFails('taking the ledger window from the usage rows only', 'const times = [...lines.flatMap((l) => l.times),', 'const times = [...rows.map((r) => r.ts),', CLI_REL);
+mutantFails('ignoring that a session is still running a tool', 'lines.some((l) => l.live) ? Date.now() : null', 'null', CLI_REL);
 mutantFails('placing a run made through a link by its unresolved path', 'const d = realPath(dir);', 'const d = path.resolve(dir);', SOURCES_REL);
 mutantFails('missing a thread archived to archived_sessions', "walk(path.join(path.dirname(dir), 'archived_sessions'));", '', SOURCES_REL);
 

@@ -61,7 +61,9 @@ export function leftovers(root) {
       if (!cwd || (cwd !== root && !cwd.startsWith(root + sep))) continue;
       if (main && cwd.startsWith(worktrees)) continue;
       const ports = [...new Set(names.map((n) => n.slice(n.lastIndexOf(':') + 1)))].join(',');
-      found.push(`:${ports} ${run('ps', ['-o', 'command=', '-p', pid]).trim().slice(0, 60)} (pid ${pid})`);
+      // the executable only: a command line can carry a secret (macOS's comm is the full path)
+      const exe = run('ps', ['-o', 'comm=', '-p', pid]).trim();
+      found.push(`:${ports} ${exe.slice(exe.lastIndexOf('/') + 1)} (pid ${pid})`);
     }
   }
   // by the executable's name alone: a shell whose command text mentions one is not one

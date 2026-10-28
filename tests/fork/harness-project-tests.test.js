@@ -18,9 +18,9 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
   'command-guard': 15,
-  'edit-guard': 8,
+  'edit-guard': 9,
   'harness-guard': 7,
-  'context-budget': 6,
+  'context-budget': 7,
   'run-gates': 4,
 };
 
@@ -200,8 +200,20 @@ mutantFails(
 mutantFails(
   'an edit guard whose .env pattern is case-sensitive, so .ENV gets through',
   '.claude/hooks/edit-guard.mjs',
-  '[^/]*)?$/i,',
-  '[^/]*)?$/,',
+  '\\.env)$/i,',
+  '\\.env)$/,',
+);
+mutantFails(
+  'an edit guard that reads a Codex patch header only at column 0, so an indented one gets through',
+  '.claude/hooks/edit-guard.mjs',
+  '/^\\s*\\*\\*\\* (?:',
+  '/^\\*\\*\\* (?:',
+);
+mutantFails(
+  'an edit guard with the old .env pattern, which allows .envrc and prod.env and refuses .env.production.example',
+  '.claude/hooks/edit-guard.mjs',
+  '/(^|\\/)(?:\\.env(?:rc)?(?:[.~_-](?!(?:[^/]*\\.)?(?:example|sample|template)$)[^/]*)?|[^/]+\\.env)$/i',
+  '/(^|\\/)\\.env(\\.(?!example$|sample$|template$)[^/]*)?$/i',
 );
 mutantFails(
   'a commit guard that never refuses the mainline while a row is held',
@@ -214,6 +226,18 @@ mutantFails(
   '.claude/hooks/context-budget.mjs',
   'if (isCompaction(line)) return null;',
   '',
+);
+mutantFails(
+  'a context budget whose GATE_TEXT was rebound, which its own suite would read back',
+  '.claude/hooks/context-budget.mjs',
+  'export const GATE_TEXT = 150_000;',
+  'export const GATE_TEXT = 1_000_000;',
+);
+mutantFails(
+  'a context budget whose WARN default was rebound, which its own suite would read back',
+  '.claude/hooks/context-budget.mjs',
+  'const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 220_000);',
+  'const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 900_000);',
 );
 mutantFails(
   'a runner that matches the count regex on the coloured log',

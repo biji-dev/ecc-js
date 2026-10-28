@@ -11,6 +11,7 @@
 //   Codex        apply_patch (the Edit and Write matchers alias it; tool_name stays apply_patch):
 //                tool_input.command holds the patch, whose `*** Add File:`, `*** Update File:`,
 //                `*** Delete File:` and `*** Move to:` lines name the paths, relative to `cwd`
+//                (apply_patch takes them indented too)
 // A refusal exits 2 with `BLOCKED (protected-path): <path> ...` on stderr, which both hosts read
 // as a block. Input that does not parse, or names no path, exits 0: the hook never blocks on its
 // own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted.
@@ -21,12 +22,14 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// [B] Repo-relative paths (`/` separators) an agent never edits: env files that hold secrets (a
-// committed template, .env.example, .env.sample or .env.template, stays editable) and installed
-// packages. A project adds its own: a lock file, an auth-state directory, generated code. Every
+// [B] Repo-relative paths (`/` separators) an agent never edits: env files that hold secrets and
+// installed packages. An env file is `.env` or `.envrc`, either with a suffix after `.`, `-`, `_` or
+// `~` (.env.local, .env-local, .env~, .envrc.local), or any `<name>.env` (prod.env); a committed
+// template whose last suffix is example, sample or template (.env.example, .env.production.example)
+// stays editable. A project adds its own: a lock file, an auth-state directory, generated code. Every
 // pattern takes `i`, a project's own too: macOS and Windows volumes are case-insensitive by default,
 // so `.ENV` is `.env` there and `NODE_MODULES/x` writes into node_modules.
-export const PROTECTED = [/(^|\/)\.env(\.(?!example$|sample$|template$)[^/]*)?$/i, /(^|\/)node_modules(\/|$)/i];
+export const PROTECTED = [/(^|\/)(?:\.env(?:rc)?(?:[.~_-](?!(?:[^/]*\.)?(?:example|sample|template)$)[^/]*)?|[^/]+\.env)$/i, /(^|\/)node_modules(\/|$)/i];
 
 /** `p` relative to `root` with `/` separators when inside it, else `p` itself. */
 function repoRel(root, p) {
@@ -83,7 +86,7 @@ export function editedPaths(input, root = ROOT) {
   const patch = Array.isArray(toolInput.command) ? toolInput.command.join('\n') : toolInput.command;
   if (typeof patch === 'string' && patch.includes('*** Begin Patch')) {
     for (const line of patch.split(/\r?\n/)) {
-      const m = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
+      const m = /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
       if (m) raw.push(m[1].trim());
     }
   }

@@ -136,8 +136,10 @@ call it; never maintain the same sequence in three skill files.
 - **The edit guard** — `templates/edit-guard.mjs`, a `PreToolUse` hook on `Edit`,
   `Write`, `MultiEdit` and `NotebookEdit`, installed to `.claude/hooks/edit-guard.mjs`.
   It reads the paths from stdin (`tool_input.file_path`, `notebook_path`) and refuses,
-  with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets and
-  installed packages, while a committed `.env.example` stays editable. It tests the
+  with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets
+  (`.env`, `.envrc`, `*.env` and their suffixed forms such as `.env.local`) and
+  installed packages, while a committed template such as `.env.example` or
+  `.env.production.sample` stays editable. It tests the
   path as written and the path the write lands on, through symlinks, and matches
   without case (macOS and Windows volumes ignore it): `.ENV`, or `deps/` linked to
   `node_modules/`, is refused too. It replaces
@@ -192,9 +194,9 @@ call it; never maintain the same sequence in three skill files.
   trusted. Its stdin carries `tool_name`, `tool_input` and `cwd`; "`Bash` and
   `apply_patch` use `tool_input.command`". Every file edit reports as `apply_patch`
   (the `Edit` and `Write` matchers alias it), and the edit guard reads the patch's
-  `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines
-  against `cwd`. Exit 2 blocks, as on Claude Code. Set `timeout`: Codex's default is
-  600 seconds.
+  `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines,
+  indented or not, against `cwd`. Exit 2 blocks, as on Claude Code. Set `timeout`:
+  Codex's default is 600 seconds.
 
   ```json
   { "hooks": { "PreToolUse": [

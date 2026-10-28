@@ -1655,6 +1655,153 @@ test('mutants (js.8): the archive skip, the common-dir lookup, the whole-skill c
   assert.strictEqual(hazardsOf(report(moved, mutantOf('if (block) for (const kind of Object.keys(DUE_REPORTS)) {', 'if (false) for (const kind of Object.keys(DUE_REPORTS)) {')), 'preflight-missing').length, 1, 'the bound REPORTS ignored');
 });
 
+// ── the upgrade path: template state and the merge base (js.8) ──────────────
+
+console.log('\nharness-status: template state and --base');
+
+// One template in two versions: the second changes a line the project's fix does not touch.
+const TEMPLATE_V1 = ['// demo template', 'export const A = 1;', '', 'export const B = 2;', '', 'export const C = 3;', ''].join('\n');
+const TEMPLATE_V2 = TEMPLATE_V1.replace('export const C = 3;', 'export const C = 30; // the template fix');
+const LOCAL_FIX = TEMPLATE_V1.replace('export const A = 1;', 'export const A = 1; // the project fix');
+
+/** A skill repository holding the script and both versions of templates/demo.mjs, one commit each. */
+function skillClone() {
+  const clone = mk({ 'skills/harness-bootstrap/templates/demo.mjs': TEMPLATE_V1 });
+  const script = path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.copyFileSync(SCRIPT, script);
+  git(clone, ['add', '-A']);
+  git(clone, ['commit', '-q', '-m', 'v1']);
+  write(clone, 'skills/harness-bootstrap/templates/demo.mjs', TEMPLATE_V2);
+  git(clone, ['commit', '-q', '-am', 'v2']);
+  return { clone, script };
+}
+
+/** An install of templates/demo.mjs whose manifest records `templateSha` and the file as it is now. */
+function installOf(text, templateSha) {
+  const repo = mk({ 'scripts/demo.mjs': text, 'docs/harness-log.md': '# Harness log\n' });
+  const h = hashes(repo, ['scripts/demo.mjs']);
+  const manifest = {
+    schema: 1, skill: 'harness-bootstrap', skillVersion: 5, generated: '2026-10-27', modes: ['change'], targets: ['claude'],
+    entries: [
+      { path: 'scripts/demo.mjs', kind: 'generated', template: 'templates/demo.mjs', templateSha256: templateSha, sha256: h['scripts/demo.mjs'] },
+      { path: 'scripts/old.mjs', kind: 'generated', template: 'templates/old.mjs', templateSha256: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      { path: 'scripts/bare.mjs', kind: 'generated', template: 'templates/demo.mjs', sha256: 'c'.repeat(64) },
+      { path: 'docs/harness-log.md', kind: 'scaffold' },
+    ],
+  };
+  write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest, null, 2));
+  return repo;
+}
+
+test('template state (js.8): an entry whose template changed since the install reads newer; current, gone and unrecorded too', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const rep = report(repo, script);
+  const row = (rel) => rep.entries.find(e => e.path === rel);
+  assert.strictEqual(row('scripts/demo.mjs').status, 'unchanged', 'the project fix predates the manifest, so it is folded into sha256');
+  assert.strictEqual(row('scripts/demo.mjs').template, 'newer');
+  assert.strictEqual(row('scripts/old.mjs').template, 'gone', 'the skill no longer ships templates/old.mjs');
+  assert.strictEqual(row('scripts/bare.mjs').template, 'unrecorded', 'no templateSha256');
+  assert.ok(!('template' in row('docs/harness-log.md')), 'an entry with no template has no template state');
+  assert.deepStrictEqual(rep.templates, { current: 0, newer: 1, gone: 1, unrecorded: 1, invalid: 0 });
+  const r = run(repo, ['--text'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('scripts/demo.mjs | generated | unchanged | template newer'), r.stdout);
+  assert.ok(r.stdout.includes('docs/harness-log.md | scaffold | scaffold\n'), 'a row with no template is unchanged');
+  assert.match(r.stdout, /^templates: 1 newer, 0 current, 1 gone, 1 unrecorded \(against the skill at .+\)$/m);
+  // recorded against the new template, the same install reads current
+  assert.strictEqual(report(installOf(LOCAL_FIX, sha(TEMPLATE_V2)), script).entries.find(e => e.path === 'scripts/demo.mjs').template, 'current');
+});
+
+test('template state (js.8): a template path outside templates/ is invalid and is never read', () => {
+  const { script } = skillClone();
+  const repo = mk({ 'scripts/x.mjs': 'x\n' });
+  const entries = ['../../../etc/hosts', 'scripts/harness-status.js', '/etc/hosts'].map((t, i) => ({ path: `scripts/x${i}.mjs`, kind: 'generated', template: t, templateSha256: 'd'.repeat(64), sha256: 'e'.repeat(64) }));
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, modes: ['change'], entries }));
+  const rep = report(repo, script);
+  assert.deepStrictEqual(rep.entries.map(e => e.template), ['invalid', 'invalid', 'invalid']);
+  assert.strictEqual(rep.templates.invalid, 3);
+});
+
+test('--base (js.8): prints the template an entry was installed from, found by its hash in the skill repository history', () => {
+  const { clone, script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const before = `${snapshot(repo)}\n${snapshot(clone)}`;
+  const r = run(repo, ['--base', 'scripts/demo.mjs'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, TEMPLATE_V1, 'stdout is the base text, byte for byte');
+  assert.match(r.stderr, /base of scripts\/demo\.mjs: templates\/demo\.mjs at [0-9a-f]{12} \(\d{4}-\d{2}-\d{2}\)/);
+  // the current template is found as well (the newest commit holds it)
+  const now = installOf(LOCAL_FIX, sha(TEMPLATE_V2));
+  assert.strictEqual(run(now, ['--base', 'scripts/demo.mjs'], script).stdout, TEMPLATE_V2);
+  assert.strictEqual(`${snapshot(repo)}\n${snapshot(clone)}`, before, 'nothing was written in the install or the skill repository');
+});
+
+test('--base (js.8): a skill copy outside any repository reads the clone --history names; a shallow clone or no history exits 1 and names --history', () => {
+  const { clone } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const copy = tmp('harness-status-skillcopy-');
+  fs.cpSync(path.join(clone, 'skills', 'harness-bootstrap'), path.join(copy, 'harness-bootstrap'), { recursive: true });
+  const copied = path.join(copy, 'harness-bootstrap', 'scripts', 'harness-status.js');
+  const withHistory = run(repo, ['--base', 'scripts/demo.mjs', '--history', clone], copied);
+  assert.strictEqual(withHistory.status, 0, withHistory.stderr);
+  assert.strictEqual(withHistory.stdout, TEMPLATE_V1);
+  const none = run(repo, ['--base', 'scripts/demo.mjs'], copied);
+  assert.strictEqual(none.status, 1, none.stderr);
+  assert.strictEqual(none.stdout, '');
+  assert.match(none.stderr, /--history <a full clone of the skill repository>/);
+  const shallow = tmp('harness-status-shallow-');
+  const c = spawnSync('git', ['clone', '-q', '--depth', '1', `file://${clone}`, shallow], { encoding: 'utf8', env: ENV });
+  assert.strictEqual(c.status, 0, c.stderr);
+  const thin = run(repo, ['--base', 'scripts/demo.mjs', '--history', shallow], copied);
+  assert.strictEqual(thin.status, 1, 'a shallow clone holds only the newest version');
+  assert.match(thin.stderr, /no commit in .+ holds templates\/demo\.mjs with sha256 [0-9a-f]{12}/);
+  assert.match(thin.stderr, /shallow clone/);
+});
+
+test('--base (js.8): bad arguments exit 2 with the usage', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  for (const args of [['--base'], ['--base', 'docs/harness-log.md'], ['--base', 'scripts/nothing.mjs'], ['--base', 'scripts/bare.mjs'], ['--history', '.'], ['--base', 'scripts/demo.mjs', '--text'], ['--base', 'scripts/demo.mjs', '--hash', 'x']]) {
+    const r = run(repo, args, script);
+    assert.strictEqual(r.status, 2, `${args.join(' ')}: exit ${r.status} ${r.stderr}`);
+    assert.strictEqual(r.stdout, '', args.join(' '));
+    assert.match(r.stderr, /usage: [\s\S]*--base <path> \[--history <clone>\]/, args.join(' '));
+  }
+});
+
+test('upgrade merge (js.8): git merge-file over the file, its base and the new template keeps the project fix and takes the template fix; the same line conflicts', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const dir = tmp('harness-status-merge-');
+  const base = run(repo, ['--base', 'scripts/demo.mjs'], script);
+  assert.strictEqual(base.status, 0, base.stderr);
+  write(dir, 'base.mjs', base.stdout);
+  write(dir, 'new.mjs', TEMPLATE_V2);
+  write(dir, 'file.mjs', LOCAL_FIX);
+  const merge = (ours) => spawnSync('git', ['merge-file', '-p', ours, 'base.mjs', 'new.mjs'], { cwd: dir, encoding: 'utf8', env: ENV });
+  const clean = merge('file.mjs');
+  assert.strictEqual(clean.status, 0, clean.stdout);
+  assert.strictEqual(clean.stdout, LOCAL_FIX.replace('export const C = 3;', 'export const C = 30; // the template fix'));
+  write(dir, 'same.mjs', TEMPLATE_V1.replace('export const C = 3;', 'export const C = 4; // the project fix'));
+  const conflict = merge('same.mjs');
+  assert.ok(conflict.status > 0, `a fix on the line the template changed conflicts (exit ${conflict.status})`);
+  assert.match(conflict.stdout, /^<{7} /m);
+  assert.ok(conflict.stdout.includes('// the project fix') && conflict.stdout.includes('// the template fix'), 'both sides are shown');
+});
+
+test('mutant (js.8): a template state that ignores the hash reads every template current', () => {
+  const { clone } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const src = fs.readFileSync(path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js'), 'utf8');
+  const from = "sha(text) === entry.templateSha256 ? 'current' : 'newer'";
+  assert.strictEqual(src.split(from).length - 1, 1, 'the compare is in the script exactly once');
+  fs.writeFileSync(path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'mutant.js'), src.replace(from, () => "'current'"));
+  const mutant = path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'mutant.js');
+  assert.strictEqual(report(repo, mutant).entries.find(e => e.path === 'scripts/demo.mjs').template, 'current');
+});
+
 // ── mutation ─────────────────────────────────────────────────────────────────
 
 console.log('\nharness-status: mutation');

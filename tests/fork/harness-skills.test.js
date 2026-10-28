@@ -657,6 +657,50 @@ test('cross-model.md names CODEX_CANDIDATES before codex on PATH, and says codex
   assert.ok(/codex-run lowers `max` to `xhigh` without `--allow-max`/.test(text), 'cross-model.md does not say codex-run lowers max without --allow-max');
 });
 
+const upgradeStep = (from, to) => {
+  const upgrade = squashed('reference/upgrade.md');
+  const start = upgrade.indexOf(from);
+  assert.ok(start >= 0, `upgrade.md has no ${from}`);
+  return upgrade.slice(start, upgrade.indexOf(to, start));
+};
+
+test('upgrade.md step 1 names the template states and --base, with the clone --history the script asks for', () => {
+  const step1 = upgradeStep('## Step 1', '## Step 2');
+  for (const state of ['`current`', '`newer`', '`gone`', '`unrecorded`', '`invalid`']) {
+    assert.ok(step1.includes(state), `step 1 does not name the template state ${state}`);
+  }
+  assert.ok(step1.includes('`--base <path>` prints the template an entry was generated from'), 'step 1 does not name --base');
+  const script = fs.readFileSync(path.join(BOOTSTRAP, 'scripts', 'harness-status.js'), 'utf8');
+  const clone = /const FULL_CLONE = 'pass (--history <[^>]+>)';/.exec(script);
+  assert.ok(clone, 'harness-status.js has no FULL_CLONE line');
+  assert.ok(step1.includes(`\`${clone[1]}\``), `step 1 does not name ${clone[1]} as the script does`);
+});
+
+test('upgrade.md step 2: a file generated from a template whose template is newer is merged three-way, never replaced', () => {
+  const step2 = upgradeStep('## Step 2', '## Step 3');
+  assert.ok(step2.includes('`Default` is one of `replace · merge · keep · generate · ask · wait`'), "step 2's defaults do not include merge");
+  assert.ok(/\| `unchanged` or `edited`, template `newer` \| the three-way merge below[^|]*\| \*\*merge\*\* when clean; \*\*ask\*\* on a conflict/.test(step2), 'step 2 has no merge row for a newer template');
+  assert.ok(/\| `unchanged` or `edited`, template `current` \| nothing/.test(step2), 'step 2 has no row for a current template');
+  assert.ok(!step2.includes('replace with the newer template'), 'step 2 still replaces a file generated from a template');
+  const at = step2.indexOf('**A file generated from a template is merged, never regenerated.**');
+  assert.ok(at >= 0, 'step 2 has no merge paragraph');
+  const para = step2.slice(at, step2.indexOf('`[M]`', at));
+  assert.ok(para.includes('folds in every fix the project made before the manifest was written'), 'the merge paragraph does not say why unchanged is not the template');
+  assert.ok(para.includes('Format the base and the current template as the project formats the file first'), 'the merge paragraph does not format the base and the template first');
+  assert.ok(para.includes('--base <path> > base') && para.includes('git merge-file -p <path> base theirs > merged'), 'the merge paragraph has no recipe');
+  assert.ok(para.includes("where the template now carries the project's own fix, take the template's side"), 'the merge paragraph does not say how a conflict resolves');
+  assert.ok(/`edited` \(generated from a reference, hash differs\) \| where a version row names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project edit and stays/.test(step2), 'an edited reference-generated block does not keep the hunks its reference change does not explain');
+  assert.ok(step2.includes('Adopting it in place wraps the legacy text in `policy` markers where it stands, and the manifest records that block as `reviewed`; until it is wrapped, the status line is its only record'), 'step 2 does not say how a legacy policy adopted in place is recorded');
+});
+
+test('upgrade.md step 3: a kept row keeps its old hashes, a merged row records the template it merged in, and project-own and renamed entries are covered', () => {
+  const step3 = upgradeStep('## Step 3', '## Markers in shared files');
+  assert.ok(step3.includes("**A kept row keeps its old hashes.** A `keep` row's `sha256` and `templateSha256` stay as the old manifest recorded them"), 'step 3 re-hashes a kept row');
+  assert.ok(step3.includes('A merged row records the template it merged in (`templateSha256`) and the merged file (`sha256`)'), 'step 3 does not say what a merged row records');
+  assert.ok(/\*\*Entries no template covers\.\*\* A harness file the project wrote itself in place of a template[^.]*is a `reviewed` entry with no `template`: an upgrade proposes section-level changes and never merges into it/.test(step3), 'step 3 does not cover a project-own harness file');
+  assert.ok(step3.includes('A renamed file moves its entry, `template` and `templateSha256` included, to the new path'), 'step 3 does not cover a renamed entry');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

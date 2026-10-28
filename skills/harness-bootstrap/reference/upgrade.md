@@ -27,6 +27,10 @@ It never writes. It reports:
   manifest, every fingerprinted file as `legacy` (including lineage-neutral harness
   files such as `codex-run.mjs`, `check-agent-docs.mjs`, `run-gates.sh`, the hooks,
   the decision log and the follow-ups doc);
+- **template state** — on each entry generated from a template: `current`, `newer`
+  (the skill changed the template since the entry was written), `gone` (the skill
+  no longer ships it), `unrecorded` (no `templateSha256`) or `invalid`, counted on
+  one line of the text report;
 - **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md` and
   `CLAUDE.md`, and whether it balances;
 - **sizes**, **id prefixes** in use (`DEC-`, `D-`, `D<n>`, `Q-`, counted outside
@@ -34,7 +38,10 @@ It never writes. It reports:
 - **hazards** — by id, with the file and line.
 
 Run it without `--text` for JSON. `--hash <path>[#block]` prints the hash the
-manifest records for a file or block.
+manifest records for a file or block. `--base <path>` prints the template an entry
+was generated from, the version its `templateSha256` names, found in the skill's
+git history: the base of Step 2's merge. A plugin cache is a shallow clone that
+holds one commit, so there pass `--history <a full clone of the skill repository>`.
 
 `[M]` Quote its output at the top of the sheet. A lineage judged by eye misses the
 install that names its runner something else — and the script misses what it does
@@ -49,17 +56,40 @@ not fingerprint, so read the repo too.
 ```
 
 `Lineage` is the mode the row belongs to (`plan`, `change`, or `core` for both);
-hazard rows carry `—`. `Default` is one of `replace · keep · generate · ask · wait`.
+hazard rows carry `—`. `Default` is one of `replace · merge · keep · generate · ask ·
+wait`.
 
 | Status | Proposed | Default |
 |---|---|---|
-| `unchanged` (generated, hash matches) | replace with the newer template — a no-op when the manifest's `skillVersion` is current; say so | replace |
-| `edited` (generated, hash differs) | the edit, section by section — for a template-generated file against the template with this project's bindings; for a reference-generated block against the block as the manifest's commit wrote it (`git show <that commit>:AGENTS.md`), since only a hash is stored | **keep** |
+| `unchanged` or `edited`, template `newer` | the three-way merge below, listing the template's hunks | **merge** when clean; **ask** on a conflict, both sides shown |
+| `unchanged` or `edited`, template `current` | nothing: the template has not changed since; say so | keep |
+| `unchanged` or `edited`, template `unrecorded` or `invalid` | no base to merge from: the file against the current template with this project's bindings, section by section | ask |
+| `unchanged` or `edited`, template `gone` | what the version row says took its place; the entry dropped once the owner agrees | ask |
+| `unchanged` (generated from a reference, hash matches) | the block regenerated from the current reference where a version row since the manifest's `skillVersion` names that reference; otherwise nothing, and say so | replace |
+| `edited` (generated from a reference, hash differs) | where a version row names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project edit and stays; otherwise the edit, section by section, against the block as the manifest's commit wrote it (`git show <that commit>:AGENTS.md`), since only a hash is stored | **ask** where a version row names the reference, else **keep** |
 | `reviewed` (policy, risk map, earned rules) | nothing, or a section-level suggestion | keep |
 | `scaffold` (registry, log, follow-ups, decision log) | nothing; add a column only if the newer format needs it | keep |
 | `ignored` (a gitignored scaffold absent here, e.g. the registry in a fresh clone) | nothing | keep |
 | `legacy` (no manifest) | section-level proposals only | **keep** |
 | `missing` | the file, newly generated | generate — but **ask** for rows that depend on Phase B (policy, risk map, merge policy, `CODEOWNERS`) and route them there |
+
+`[M]` **A file generated from a template is merged, never regenerated.** Its
+`sha256` folds in every fix the project made before the manifest was written, so
+`unchanged` does not mean "as the template wrote it", and a replace drops those
+fixes. The merge is three-way: the file, its base (`--base`) and the current
+template. Format the base and the current template as the project formats the file
+first (prettier: `npx prettier --stdin-filepath <path>`); a formatter that reflowed
+the file would otherwise make every line an edit:
+
+```
+node <skill dir>/scripts/harness-status.js <repo> --base <path> > base
+cp <skill dir>/<template> theirs   # then format base and theirs as <path> is formatted
+git merge-file -p <path> base theirs > merged
+```
+
+Exit 0 is a clean merge. A conflict marks both sides: where the template now carries
+the project's own fix, take the template's side, and keep behaviour only this
+project has as a binding or a rule.
 
 `[M]` **Without a manifest, build the `missing` rows yourself:** compare the repo
 against the Phase C core table and the mode's set in `SKILL.md`. A component the
@@ -75,8 +105,10 @@ reviewed; then its status line reads `REVIEWED <date> (adopted)`. Nobody can kno
 whether an unstamped policy was ever read. Recognise one by what it governs, not
 its heading: a never-auto section, a hot-modules or critical-code table that keys
 review or merging, a locked-decisions list. Where it spans two files, the status
-line goes above the copy in the harness file and the other links to it. No policy
-at all → Phase B, its rows `ask`.
+line goes above the copy in the harness file and the other links to it. Adopting it
+in place wraps the legacy text in `policy` markers where it stands, and the
+manifest records that block as `reviewed`; until it is wrapped, the status line is
+its only record, and the sheet says so. No policy at all → Phase B, its rows `ask`.
 
 `[M]` **Roles are kept by name.** The manifest maps each role to the project's
 existing name; the upgrade edits that file, never installs a second one beside it.
@@ -138,6 +170,21 @@ reads every file as edited. Hashes are over LF-normalised text; a block's hash
 covers the text strictly between its markers. `templateSha256` is the same command
 run on the skill itself: `node <skill dir>/scripts/harness-status.js <skill dir>
 --hash templates/<file>`.
+
+`[M]` **A kept row keeps its old hashes.** A `keep` row's `sha256` and
+`templateSha256` stay as the old manifest recorded them. Re-hashed, a kept edit
+reads `unchanged` and the next upgrade regenerates over it; a `templateSha256` moved
+to the current template makes the next merge read the template's changes as the
+project's reverts, and keep them. A merged row records the template it merged in
+(`templateSha256`) and the merged file (`sha256`); a replaced or generated row is
+hashed fresh.
+
+`[M]` **Entries no template covers.** A harness file the project wrote itself in
+place of a template (its own agent-docs lint, its own runner) is a `reviewed` entry
+with no `template`: an upgrade proposes section-level changes and never merges into
+it. An entry whose file the project deleted reads `missing`: ask whether to generate
+it again or drop the entry. A renamed file moves its entry, `template` and
+`templateSha256` included, to the new path.
 
 `[M]` **What is not an entry.** A symlink (record its real file); a shared JSON file
 the project also edits, such as `.claude/settings.json` — record the hook entries

@@ -7,20 +7,29 @@
 //   node harness-status.js <repo>                 JSON report on stdout
 //   node harness-status.js <repo> --text          human-readable report
 //   node harness-status.js <repo> --hash <spec>.. sha256 lines, spec = path or path#block
-// Exit 0 on success, 2 on bad arguments or a missing path/block.
+//   node harness-status.js <repo> --base <path> [--history <clone>]
+//                                                 the template text a manifest entry was
+//                                                 generated from, found by its templateSha256
+//                                                 in this skill's git history: the base of an
+//                                                 upgrade's three-way merge (upgrade.md)
+// Exit 0 on success, 2 on bad arguments or a missing path/block, 1 when --base finds no commit
+// that holds the base.
 //
 // Read-only: the only commands run are `git rev-parse --show-toplevel`,
 // `git rev-parse --git-path hooks` (finds the hooks directory of a linked worktree, a
 // submodule, or a core.hooksPath, including a relative or ~/ path),
 // `git rev-parse --git-common-dir` (finds the main checkout, where the registry lives, as the
-// commit guard does) and
-// `git check-ignore -q` (a gitignored scaffold that is absent reads `ignored`). This is an
-// accepted deviation from "git config --get / ls-files only": none of them writes, every
-// inherited GIT_* variable is removed (a git hook's GIT_DIR must not redirect the lookup) and
-// GIT_OPTIONAL_LOCKS=0 is set so no git command refreshes the index. When git fails, or
-// <repo> is not itself a repository top level, the hooks directory falls back to
-// <repo>/.git/hooks and nothing counts as ignored. Outside <repo> it reads only
-// $CODEX_HOME/config.toml (default ~/.codex/config.toml) for project_doc_max_bytes.
+// commit guard does), `git check-ignore -q` (a gitignored scaffold that is absent reads
+// `ignored`) and, for --base, `git log` and `git cat-file blob` in this skill's own repository
+// or the clone --history names. This is an accepted deviation from "git config --get /
+// ls-files only": none of them writes, every inherited GIT_* variable is removed (a git hook's
+// GIT_DIR must not redirect the lookup) and GIT_OPTIONAL_LOCKS=0 is set so no git command
+// refreshes the index. When git fails, or <repo> is not itself a repository top level, the
+// hooks directory falls back to <repo>/.git/hooks and nothing counts as ignored. Outside <repo>
+// it reads only $CODEX_HOME/config.toml (default ~/.codex/config.toml) for
+// project_doc_max_bytes, and this skill's own templates/: each template-backed entry's
+// `template` state compares the template it names with the templateSha256 its manifest
+// recorded.
 //
 // The read-only claim rule is exported (READONLY_CLAIM) so the agent-docs lint can use the
 // same regex: `require('./harness-status.js').READONLY_CLAIM`.
@@ -35,6 +44,10 @@ const { spawnSync } = require('child_process');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worktrees', 'dist', 'build', 'coverage']);
 const MAX_READ = 2 * 1024 * 1024;
 const MANIFEST = '.agents/harness-manifest.json';
+// the skill this script ships in: a template-backed manifest entry names a file under its
+// templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
+const SKILL_DIR = path.join(__dirname, '..');
+const TEMPLATE_STATES = ['current', 'newer', 'gone', 'unrecorded', 'invalid'];
 const SKILL_ROOTS = ['.claude/skills', '.agents/skills'];
 const DOCS = ['AGENTS.md', 'CLAUDE.md'];
 const PLAN_SKILLS = ['task-runner', 'segment-runner', 'phase-preflight', 'workstream-sweep'];
@@ -101,7 +114,8 @@ function fail(message) {
   if (message) process.stderr.write(`harness-status: ${message}\n`);
   process.stderr.write(
     'usage: node harness-status.js <repo> [--text]\n' +
-    '       node harness-status.js <repo> --hash <path|path#block>...\n'
+    '       node harness-status.js <repo> --hash <path|path#block>...\n' +
+    '       node harness-status.js <repo> --base <path> [--history <clone>]\n'
   );
   process.exit(2);
 }
@@ -239,6 +253,13 @@ function gitOut(args) {
   const r = spawnSync('git', ['-C', REPO, ...args], { encoding: 'utf8', env: gitEnv() });
   if (r.error || r.status !== 0) return null;
   return r.stdout.replace(/\r?\n$/, '');
+}
+
+/** git in another directory (the skill's history), stdout untouched: a blob is printed as it is. */
+function gitAt(dir, args) {
+  const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: gitEnv(), maxBuffer: 256 * 1024 * 1024 });
+  if (r.error || r.status !== 0) return null;
+  return r.stdout;
 }
 
 /** True when <repo> is itself a repository top level (not a plain directory nested in another one). */
@@ -978,6 +999,7 @@ function buildReport() {
     manifest,
     lineage: { plan, change, verdict, source: lineageSource },
     entries,
+    templates: templateCounts(entries),
     markers,
     sizes,
     ids,
@@ -1027,6 +1049,24 @@ function hostHazards(haz) {
   for (const [host, entry] of Object.entries(hostModels)) secondFamilyHazard(host, entry, haz);
 }
 
+/** The entry's template in this skill against the templateSha256 its manifest recorded: current,
+ *  newer (the skill changed it since: an upgrade merges it, upgrade.md step 2), gone (the skill
+ *  no longer ships it), unrecorded (no templateSha256) or invalid (a path outside templates/). */
+function templateState(entry) {
+  const rel = safeRel(entry.template);
+  if (!rel || !rel.startsWith('templates/')) return 'invalid';
+  let text;
+  try { text = fs.readFileSync(path.join(SKILL_DIR, ...rel.split('/')), 'utf8'); } catch { return 'gone'; }
+  if (typeof entry.templateSha256 !== 'string') return 'unrecorded';
+  return sha(text) === entry.templateSha256 ? 'current' : 'newer';
+}
+
+function templateCounts(entries) {
+  const counts = Object.fromEntries(TEMPLATE_STATES.map(s => [s, 0]));
+  for (const e of entries) if (e.template) counts[e.template] += 1;
+  return counts;
+}
+
 function manifestEntry(entry) {
   if (!entry || typeof entry !== 'object' || typeof entry.path !== 'string' || typeof entry.kind !== 'string') {
     return { path: String(entry && entry.path), kind: String(entry && entry.kind), status: 'invalid', detail: 'malformed entry' };
@@ -1034,6 +1074,7 @@ function manifestEntry(entry) {
   const row = { path: entry.path };
   if (entry.block) row.block = entry.block;
   row.kind = entry.kind;
+  if (typeof entry.template === 'string') row.template = templateState(entry);
   const rel = safeRel(entry.path);
   if (!rel) return { ...row, status: 'missing', detail: 'path is not repo-relative' };
   const text = read(rel, Infinity);
@@ -1145,7 +1186,11 @@ function renderText(r) {
     out.push('  (none)');
   } else {
     out.push('  Path[#block] | Kind | Status');
-    for (const e of r.entries) out.push(`  ${e.path}${e.block ? `#${e.block}` : ''} | ${e.kind} | ${e.status}`);
+    for (const e of r.entries) out.push(`  ${e.path}${e.block ? `#${e.block}` : ''} | ${e.kind} | ${e.status}${e.template ? ` | template ${e.template}` : ''}`);
+  }
+  if (r.entries.some(e => e.template)) {
+    const t = r.templates;
+    out.push(`templates: ${t.newer} newer, ${t.current} current, ${t.gone} gone, ${t.unrecorded} unrecorded${t.invalid ? `, ${t.invalid} invalid` : ''} (against the skill at ${SKILL_DIR})`);
   }
   out.push('');
   if (!r.markers.length) {
@@ -1183,42 +1228,104 @@ function renderText(r) {
   return `${out.join('\n').replace(/[^\x20-\x7e\n]/g, '?')}\n`;
 }
 
+// ---- --base -----------------------------------------------------------------
+
+const FULL_CLONE = 'pass --history <a full clone of the skill repository>';
+
+/** --base: prints the template text a manifest entry was generated from, found in the skill
+ *  repository's history by the templateSha256 the manifest recorded: the base of the
+ *  upgrade's three-way merge (upgrade.md step 2). Exit 1 when no commit holds it. */
+function printBase(spec, history) {
+  const rel = safeRel(spec);
+  let entries = null;
+  try { entries = JSON.parse(read(MANIFEST, Infinity)).entries; } catch { entries = null; }
+  if (!Array.isArray(entries)) fail(`--base needs ${MANIFEST} with an entries list`);
+  const entry = entries.find(e => e && typeof e === 'object' && e.path === rel && !e.block && typeof e.template === 'string');
+  if (!rel || !entry) fail(`${MANIFEST} has no template-backed entry ${spec}`);
+  if (typeof entry.templateSha256 !== 'string') fail(`${spec} records no templateSha256: its base is unknown`);
+  const template = safeRel(entry.template);
+  if (!template || !template.startsWith('templates/')) fail(`${spec}: its template ${entry.template} is not under templates/`);
+  const top = history === null
+    ? (gitAt(SKILL_DIR, ['rev-parse', '--show-toplevel']) || '').trim()
+    : path.resolve(history);
+  if (!top) {
+    process.stderr.write(`harness-status: the skill at ${SKILL_DIR} is not in a git repository: ${FULL_CLONE}\n`);
+    process.exit(1);
+  }
+  // every version of the template any commit wrote (a merge's own resolution too), oldest last
+  const log = gitAt(top, ['log', '--all', '-m', '--no-abbrev', '--format=%x01%H %cs', '--raw', '--', `:(top,glob)**/${template}`]);
+  if (log === null) {
+    process.stderr.write(`harness-status: ${top} is not a git repository: ${FULL_CLONE}\n`);
+    process.exit(1);
+  }
+  const written = new Map();
+  for (const chunk of log.split('\x01').slice(1)) {
+    const [commit, date] = chunk.slice(0, chunk.indexOf('\n')).split(' ');
+    for (const m of chunk.matchAll(/^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) /gm)) {
+      if (!/^0+$/.test(m[1])) written.set(m[1], { commit, date });
+    }
+  }
+  for (const [blob, at] of written) {
+    const text = gitAt(top, ['cat-file', 'blob', blob]);
+    if (text === null || sha(text) !== entry.templateSha256) continue;
+    process.stdout.write(text);
+    process.stderr.write(`harness-status: base of ${rel}: ${template} at ${at.commit.slice(0, 12)} (${at.date})\n`);
+    process.exit(0);
+  }
+  process.stderr.write(`harness-status: no commit in ${top} holds ${template} with sha256 ${entry.templateSha256.slice(0, 12)}; a plugin cache is a shallow clone: ${FULL_CLONE}\n`);
+  process.exit(1);
+}
+
 // ---- main -------------------------------------------------------------------
 
-function main() {
-  const argv = process.argv.slice(2);
-  let repoArg = null;
-  let text = false;
-  let specs = null;
-  for (const a of argv) {
-    if (a === '--text') text = true;
-    else if (specs) specs.push(a);
-    else if (a === '--hash') specs = [];
-    else if (a.startsWith('--')) fail(`unknown option ${a}`);
-    else if (repoArg === null) repoArg = a;
+/** { repoArg, text, specs, base, history } from argv; an unknown option or a missing value exits 2. */
+function parseArgs(argv) {
+  const out = { repoArg: null, text: false, specs: null, base: null, history: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--text') out.text = true;
+    else if (out.specs) out.specs.push(a);
+    else if (a === '--hash') out.specs = [];
+    else if (a === '--base' || a === '--history') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) fail(`${a} needs a value`);
+      out[a.slice(2)] = value;
+      i += 1;
+    } else if (a.startsWith('--')) fail(`unknown option ${a}`);
+    else if (out.repoArg === null) out.repoArg = a;
     else fail(`unexpected argument ${a}`);
   }
+  return out;
+}
+
+/** --hash: one sha256 line per spec; exit 2 when any path or block is missing. */
+function printHashes(specs) {
+  let missing = false;
+  for (const spec of specs) {
+    const r = hashSpec(spec);
+    if (r.error) {
+      process.stderr.write(`harness-status: ${r.error}\n`);
+      missing = true;
+    } else {
+      process.stdout.write(`${r.hash}  ${spec}\n`);
+    }
+  }
+  process.exit(missing ? 2 : 0);
+}
+
+function main() {
+  const { repoArg, text, specs, base, history } = parseArgs(process.argv.slice(2));
   if (repoArg === null) fail('missing <repo>');
   if (specs && text) fail('--hash and --text cannot be combined');
   if (specs && !specs.length) fail('--hash needs at least one path or path#block');
+  if (base !== null && (specs || text)) fail('--base cannot be combined with --hash or --text');
+  if (history !== null && base === null) fail('--history needs --base');
   REPO = path.resolve(repoArg);
   let s = null;
   try { s = fs.statSync(REPO); } catch { s = null; }
   if (!s || !s.isDirectory()) fail(`not a directory: ${repoArg}`);
-
-  if (specs) {
-    let missing = false;
-    for (const spec of specs) {
-      const r = hashSpec(spec);
-      if (r.error) {
-        process.stderr.write(`harness-status: ${r.error}\n`);
-        missing = true;
-      } else {
-        process.stdout.write(`${r.hash}  ${spec}\n`);
-      }
-    }
-    process.exit(missing ? 2 : 0);
-  }
+  if (base !== null) printBase(base, history);
+  if (specs) printHashes(specs);
 
   const report = buildReport();
   process.stdout.write(text ? renderText(report) : `${JSON.stringify(report, null, 2)}\n`);

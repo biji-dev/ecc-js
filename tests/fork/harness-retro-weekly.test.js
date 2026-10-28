@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'retro-weekly-core.mjs');
 const CLI_REL = path.join('scripts', 'retro-weekly.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 24;
+const EXPECTED_TESTS = 27;
 
 let passed = 0;
 let failed = 0;
@@ -101,11 +101,24 @@ mutantFails('a dry run that exports', '  if (opts.dryRun) return dryRun({ opts, 
 mutantFails('a cron line that redirects into a log directory that may not exist', 'mkdir -p ${shq(path.dirname(logFile))} && ', '');
 mutantFails('a cron line without the Claude Code config directory', "configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''", "''");
 mutantFails('a Windows task without the Claude Code config directory', "...(configDir ? ['--config-dir', configDir] : [])", '');
+mutantFails('a LaunchAgent without the Codex home', "codexHome ? `<key>CODEX_HOME</key><string>${xml(codexHome)}</string>` : ''", "''");
+mutantFails('a cron line without the Codex home', "codexHome ? `CODEX_HOME=${shq(codexHome)} ` : ''", "''");
+mutantFails('a Windows task without the Codex home', "...(codexHome ? ['--codex-home', codexHome] : [])", '');
+mutantFails('--codex-home read and dropped', '  if (opts.codexHome) process.env.CODEX_HOME = path.resolve(opts.codexHome);\n', '', CLI_REL);
+mutantFails('a schedule that ignores CODEX_HOME', 'process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : null', 'null', CLI_REL);
 mutantFails('--config-dir read and dropped', '  if (opts.configDir) process.env.CLAUDE_CONFIG_DIR = path.resolve(opts.configDir);\n', '', CLI_REL);
 mutantFails('reading the transcripts from ~/.claude whatever CLAUDE_CONFIG_DIR says', "path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')", "path.join(os.homedir(), '.claude', 'projects')", CLI_REL);
 mutantFails('exiting 0 when the review failed', 'return failed.length || (opts.review && !review.ok && !review.skipped) ? 1 : 0;', 'return failed.length ? 1 : 0;', CLI_REL);
 mutantFails('scheduling the versioned node binary an upgrade removes', 'const node = scheduledNode();', 'const node = process.execPath;', CLI_REL);
 mutantFails('scheduling whatever node is first on PATH', 'fs.realpathSync(onPath) === fs.realpathSync(process.execPath)', 'true', CLI_REL);
+
+test('learning.md\'s Schedule paragraph says the schedule carries CODEX_HOME and --codex-home beside the config directory', () => {
+  const text = fs.readFileSync(path.join(SKILL, 'reference', 'learning.md'), 'utf8');
+  const start = text.indexOf('**Schedule.**');
+  assert.ok(start >= 0, 'no Schedule paragraph');
+  const para = text.slice(start, text.indexOf('\n\n', start));
+  for (const word of ['`CLAUDE_CONFIG_DIR`', '`CODEX_HOME`', '`--config-dir`', '`--codex-home`']) assert.ok(para.includes(word), `the Schedule paragraph does not name ${word}`);
+});
 
 test('CLI smoke: --print-schedule names the installed copy and --list says when nothing is registered', () => {
   const home = tmp('retro-weekly-cli-');

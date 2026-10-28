@@ -36,6 +36,9 @@ export const RECORDED_IDLE_HOURS = 6;
 // A second run stops while the first runs, however long that takes. A lock entry whose process is
 // gone is a finished or crashed run's; one naming no process id, a stray one's after this long.
 export const LOCK_STALE_MINUTES = 60;
+// A run writes its lock entry after it starts, and ps reads the start to the second: a process that
+// started more than this after its entry was written is not the run that wrote it.
+export const LOCK_START_SLACK_MS = 5000;
 // The ignored paths a removed worktree may lose (harness-due's REBUILDABLE).
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
 // ---- end settings
@@ -429,15 +432,18 @@ export const lockEntry = (pid, now) => `${pid}-${now.toString(36)}`;
  * (`holder`, its pid or 'unknown'), else go on. Each run writes its entry before it lists the
  * directory and removes no live run's entry, so of two runs that start together each finds the
  * other's and both stop: the takeover of a dead run's lock can never let two runs free at once.
+ * `started(pid)` is when the process now holding a live entry's pid started (ms), or null when that
+ * cannot be told, which is staleLock's old rule.
  */
-export function lockDecision({ mine, entries, alive, now }, minutes = LOCK_STALE_MINUTES) {
+export function lockDecision({ mine, entries, alive, started = () => null, now }, minutes = LOCK_STALE_MINUTES) {
   const own = lockPid(mine);
   const remove = [];
   let holder = null;
   for (const e of entries) {
     if (e.name === mine) continue;
     const pid = lockPid(e.name);
-    if (pid === own || staleLock({ pid, alive: pid !== null && alive(pid), written: e.written, now }, minutes)) remove.push(e.name);
+    const live = pid !== null && alive(pid);
+    if (pid === own || staleLock({ pid, alive: live, written: e.written, now, started: live ? started(pid) : null }, minutes)) remove.push(e.name);
     else if (holder === null) holder = pid ?? 'unknown';
   }
   return { remove, holder };
@@ -445,12 +451,25 @@ export function lockDecision({ mine, entries, alive, now }, minutes = LOCK_STALE
 
 /**
  * Whether a lock entry is a dead run's, to remove: the process it names is gone (`alive`, the CLI's
- * kill -0), or it names none and was `written` over LOCK_STALE_MINUTES ago. Age alone never frees
- * a live run's entry: du, `brew cleanup` and the docker prunes may each take ten minutes.
+ * kill -0), or the process now holding that pid `started` after the entry was `written` (by more
+ * than LOCK_START_SLACK_MS): the system reuses pids, so an entry older than its process is an earlier
+ * run's, and a killed sweep's entry would otherwise stop every later sweep until that process exits.
+ * With `started` or `written` unknown the pid alone decides. An entry naming no pid is stale once
+ * `written` over LOCK_STALE_MINUTES ago. Age alone never frees a live run's entry: du, `brew cleanup`
+ * and the docker prunes may each take ten minutes.
  */
-export function staleLock({ pid, alive, written, now }, minutes = LOCK_STALE_MINUTES) {
-  if (Number.isInteger(pid)) return !alive;
+export function staleLock({ pid, alive, written, now, started = null }, minutes = LOCK_STALE_MINUTES) {
+  if (Number.isInteger(pid)) return !alive || (Number.isFinite(started) && Number.isFinite(written) && started > written + LOCK_START_SLACK_MS);
   return Number.isFinite(written) && now - written > minutes * 60_000;
+}
+
+/** Milliseconds in the `[[dd-]hh:]mm:ss` that `ps -o etime=` prints (padded or not); null for anything else. */
+export function etimeMs(text) {
+  const m = /^\s*(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)\s*$/.exec(String(text ?? ''));
+  if (!m) return null;
+  const [d, h, min, sec] = [m[1], m[2], m[3], m[4]].map((x) => (x === undefined ? 0 : Number(x)));
+  if (sec > 59 || (m[2] !== undefined && min > 59)) return null;
+  return (((d * 24 + h) * 60 + min) * 60 + sec) * 1000;
 }
 
 /** Bytes as the report prints them. */

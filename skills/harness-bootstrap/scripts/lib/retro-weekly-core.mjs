@@ -42,6 +42,7 @@ const VALUE_FLAGS = {
   '--home': 'home',
   '--projects-dir': 'projectsDir',
   '--config-dir': 'configDir',
+  '--codex-home': 'codexHome',
   '--claude': 'claude',
   '--budget': 'budget',
 };
@@ -65,6 +66,7 @@ export function parseArgs(argv) {
     home: null,
     projectsDir: null,
     configDir: null,
+    codexHome: null,
     claude: null,
     budget: REVIEW_BUDGET_USD,
     review: true,
@@ -299,9 +301,10 @@ const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 /**
  * The LaunchAgent plist: the program and its arguments, the weekly calendar slot, PATH (and the
- * Claude Code config directory when one is set: launchd never sees the shell's), and one log file.
+ * Claude Code config directory and the Codex home when they are set: launchd never sees the shell's),
+ * and one log file.
  */
-export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile, configDir = null }) {
+export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile, configDir = null, codexHome = null }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -314,7 +317,7 @@ export function launchdPlist({ label = LABEL, programArguments, schedule = SCHED
     '  </array>',
     '  <key>StartCalendarInterval</key>',
     `  <dict><key>Weekday</key><integer>${schedule.weekday}</integer><key>Hour</key><integer>${schedule.hour}</integer><key>Minute</key><integer>${schedule.minute}</integer></dict>`,
-    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string>${configDir ? `<key>CLAUDE_CONFIG_DIR</key><string>${xml(configDir)}</string>` : ''}</dict>`,
+    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string>${configDir ? `<key>CLAUDE_CONFIG_DIR</key><string>${xml(configDir)}</string>` : ''}${codexHome ? `<key>CODEX_HOME</key><string>${xml(codexHome)}</string>` : ''}</dict>`,
     `  <key>StandardOutPath</key><string>${xml(logFile)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(logFile)}</string>`,
     '  <key>ProcessType</key><string>Background</string>',
@@ -334,16 +337,17 @@ export const shellLine = (args) => args.map(shq).join(' ');
  * The cron line (Linux) and the schtasks line (Windows) for the same weekly slot. The cron line makes
  * the log's directory first: the shell opens the redirect before the command runs, and a missing
  * directory fails it, so the job would never start. A set `configDir` goes in as the command's
- * CLAUDE_CONFIG_DIR, which cron never inherits; schtasks sets no environment, so its task passes
- * the directory as `--config-dir`.
+ * CLAUDE_CONFIG_DIR, which cron never inherits, and a set `codexHome` as its CODEX_HOME (where the retro
+ * reads the Codex host's threads); schtasks sets no environment, so its task passes them as
+ * `--config-dir` and `--codex-home`.
  */
-export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null }) {
+export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null, codexHome = null }) {
   const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const hhmm = `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
   const [program, ...rest] = programArguments;
-  const tr = [program, ...rest, ...(configDir ? ['--config-dir', configDir] : [])].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
+  const tr = [program, ...rest, ...(configDir ? ['--config-dir', configDir] : []), ...(codexHome ? ['--codex-home', codexHome] : [])].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
   return {
-    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
+    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${codexHome ? `CODEX_HOME=${shq(codexHome)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
     schtasks: `schtasks /Create /F /SC WEEKLY /D ${days[schedule.weekday]} /ST ${hhmm} /TN harness-retro-weekly /TR "${tr}"`,
   };
 }

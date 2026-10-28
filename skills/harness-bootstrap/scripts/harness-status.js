@@ -7,11 +7,12 @@
 //   node harness-status.js <repo>                 JSON report on stdout
 //   node harness-status.js <repo> --text          human-readable report
 //   node harness-status.js <repo> --hash <spec>.. sha256 lines, spec = path or path#block
-//   node harness-status.js <repo> --base <path> [--history <clone>]
+//   node harness-status.js <repo> --base <path|path#block> [--history <clone>]
 //                                                 the template text a manifest entry was
 //                                                 generated from, found by its templateSha256
 //                                                 in this skill's git history: the base of an
-//                                                 upgrade's three-way merge (upgrade.md)
+//                                                 upgrade's three-way merge (upgrade.md); for a
+//                                                 block, the whole template, markers and all
 // Exit 0 on success, 2 on bad arguments or a missing path/block, 1 when --base finds no commit
 // that holds the base.
 //
@@ -115,7 +116,7 @@ function fail(message) {
   process.stderr.write(
     'usage: node harness-status.js <repo> [--text]\n' +
     '       node harness-status.js <repo> --hash <path|path#block>...\n' +
-    '       node harness-status.js <repo> --base <path> [--history <clone>]\n'
+    '       node harness-status.js <repo> --base <path|path#block> [--history <clone>]\n'
   );
   process.exit(2);
 }
@@ -224,11 +225,14 @@ function blockText(text, block) {
   return null;
 }
 
-function hashSpec(spec) {
+/** `path` or `path#block` → { rel (null when not repo-relative), block (null for a whole file) }. */
+function splitSpec(spec) {
   const cut = spec.lastIndexOf('#');
-  const relRaw = cut > 0 ? spec.slice(0, cut) : spec;
-  const block = cut > 0 ? spec.slice(cut + 1) : null;
-  const rel = safeRel(relRaw);
+  return { rel: safeRel(cut > 0 ? spec.slice(0, cut) : spec), block: cut > 0 ? spec.slice(cut + 1) : null };
+}
+
+function hashSpec(spec) {
+  const { rel, block } = splitSpec(spec);
   if (!rel) return { error: `invalid path in ${spec}` };
   const text = read(rel, Infinity);
   if (text === null) return { error: `file not found: ${rel}` };
@@ -1234,13 +1238,16 @@ const FULL_CLONE = 'pass --history <a full clone of the skill repository>';
 
 /** --base: prints the template text a manifest entry was generated from, found in the skill
  *  repository's history by the templateSha256 the manifest recorded: the base of the
- *  upgrade's three-way merge (upgrade.md step 2). Exit 1 when no commit holds it. */
+ *  upgrade's three-way merge (upgrade.md step 2). A block entry (`path#block`, as --hash takes
+ *  it) prints its whole template, the hash covering the whole file; the merge cuts the block out
+ *  of it. Exit 1 when no commit holds it. */
 function printBase(spec, history) {
-  const rel = safeRel(spec);
+  const { rel, block } = splitSpec(spec);
+  const name = block === null ? rel : `${rel}#${block}`;
   let entries = null;
   try { entries = JSON.parse(read(MANIFEST, Infinity)).entries; } catch { entries = null; }
   if (!Array.isArray(entries)) fail(`--base needs ${MANIFEST} with an entries list`);
-  const entry = entries.find(e => e && typeof e === 'object' && e.path === rel && !e.block && typeof e.template === 'string');
+  const entry = entries.find(e => e && typeof e === 'object' && e.path === rel && (block === null ? !e.block : e.block === block) && typeof e.template === 'string');
   if (!rel || !entry) fail(`${MANIFEST} has no template-backed entry ${spec}`);
   if (typeof entry.templateSha256 !== 'string') fail(`${spec} records no templateSha256: its base is unknown`);
   const template = safeRel(entry.template);
@@ -1269,7 +1276,7 @@ function printBase(spec, history) {
     const text = gitAt(top, ['cat-file', 'blob', blob]);
     if (text === null || sha(text) !== entry.templateSha256) continue;
     process.stdout.write(text);
-    process.stderr.write(`harness-status: base of ${rel}: ${template} at ${at.commit.slice(0, 12)} (${at.date})\n`);
+    process.stderr.write(`harness-status: base of ${name}: ${template} at ${at.commit.slice(0, 12)} (${at.date})\n`);
     process.exit(0);
   }
   process.stderr.write(`harness-status: no commit in ${top} holds ${template} with sha256 ${entry.templateSha256.slice(0, 12)}; a plugin cache is a shallow clone: ${FULL_CLONE}\n`);

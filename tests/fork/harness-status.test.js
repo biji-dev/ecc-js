@@ -1664,15 +1664,16 @@ const TEMPLATE_V1 = ['// demo template', 'export const A = 1;', '', 'export cons
 const TEMPLATE_V2 = TEMPLATE_V1.replace('export const C = 3;', 'export const C = 30; // the template fix');
 const LOCAL_FIX = TEMPLATE_V1.replace('export const A = 1;', 'export const A = 1; // the project fix');
 
-/** A skill repository holding the script and both versions of templates/demo.mjs, one commit each. */
-function skillClone() {
-  const clone = mk({ 'skills/harness-bootstrap/templates/demo.mjs': TEMPLATE_V1 });
+/** A skill repository holding the script and two versions of one template (by default
+ *  templates/demo.mjs), one commit each. */
+function skillClone(template = 'templates/demo.mjs', v1 = TEMPLATE_V1, v2 = TEMPLATE_V2) {
+  const clone = mk({ [`skills/harness-bootstrap/${template}`]: v1 });
   const script = path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js');
   fs.mkdirSync(path.dirname(script), { recursive: true });
   fs.copyFileSync(SCRIPT, script);
   git(clone, ['add', '-A']);
   git(clone, ['commit', '-q', '-m', 'v1']);
-  write(clone, 'skills/harness-bootstrap/templates/demo.mjs', TEMPLATE_V2);
+  write(clone, `skills/harness-bootstrap/${template}`, v2);
   git(clone, ['commit', '-q', '-am', 'v2']);
   return { clone, script };
 }
@@ -1767,7 +1768,7 @@ test('--base (js.8): bad arguments exit 2 with the usage', () => {
     const r = run(repo, args, script);
     assert.strictEqual(r.status, 2, `${args.join(' ')}: exit ${r.status} ${r.stderr}`);
     assert.strictEqual(r.stdout, '', args.join(' '));
-    assert.match(r.stderr, /usage: [\s\S]*--base <path> \[--history <clone>\]/, args.join(' '));
+    assert.match(r.stderr, /usage: [\s\S]*--base <path\|path#block> \[--history <clone>\]/, args.join(' '));
   }
 });
 
@@ -1789,6 +1790,49 @@ test('upgrade merge (js.8): git merge-file over the file, its base and the new t
   assert.ok(conflict.status > 0, `a fix on the line the template changed conflicts (exit ${conflict.status})`);
   assert.match(conflict.stdout, /^<{7} /m);
   assert.ok(conflict.stdout.includes('// the project fix') && conflict.stdout.includes('// the template fix'), 'both sides are shown');
+});
+
+// A block entry: a rules template in two versions, its block installed in a project's AGENTS.md
+// with a binding the project filled. The second version changes a rule and the comment above the
+// block, which the install deleted.
+const RULES_V1 = ['<!-- demo rules block (generated YYYY-MM-DD).', 'Delete this comment after copying. -->', '<!-- harness:begin rules -->', '## Rules', '', '- **Rule one.** See the runner.', '', '- **Rule two.** Why two.', '', '- **Rule three.** Why three.', '<!-- harness:end rules -->', ''].join('\n');
+const RULES_V2 = RULES_V1.replace('Why three.', 'Why three, at Full.').replace('Delete this comment', 'Bind the names, then delete this comment');
+const installedBlock = (rules) => rules.split('\n').slice(2).join('\n').replace('See the runner.', 'See `scripts/run-task.mjs`.');
+const agentsWith = (block) => `# Project\n\nProject text before.\n\n${block}\nProject text after.\n`;
+
+test('--base (js.8): a block entry prints its whole template; the block cut from the file, the base and the template merges three-way, keeping the project fix', () => {
+  const { script } = skillClone('templates/rules.md', RULES_V1, RULES_V2);
+  const agents = agentsWith(installedBlock(RULES_V1));
+  const repo = mk({ 'AGENTS.md': agents });
+  const h = hashes(repo, ['AGENTS.md#rules']);
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({
+    schema: 1, skillVersion: 5, modes: ['change'], entries: [
+      { path: 'AGENTS.md', block: 'other', kind: 'generated', template: 'templates/demo.mjs', templateSha256: sha(TEMPLATE_V1), sha256: 'e'.repeat(64) },
+      { path: 'AGENTS.md', block: 'rules', kind: 'generated', template: 'templates/rules.md', templateSha256: sha(RULES_V1), sha256: h['AGENTS.md#rules'] },
+    ],
+  }, null, 2));
+  assert.strictEqual(report(repo, script).entries.find(e => e.block === 'rules').template, 'newer');
+  const r = run(repo, ['--base', 'AGENTS.md#rules'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, RULES_V1, 'stdout is the whole template the block came from, byte for byte');
+  assert.match(r.stderr, /base of AGENTS\.md#rules: templates\/rules\.md at [0-9a-f]{12} \(\d{4}-\d{2}-\d{2}\)/);
+  for (const spec of ['AGENTS.md', 'AGENTS.md#nope']) {
+    const bad = run(repo, ['--base', spec], script);
+    assert.strictEqual(bad.status, 2, `${spec}: exit ${bad.status} ${bad.stderr}`);
+    assert.ok(bad.stderr.includes(`has no template-backed entry ${spec}\n`), bad.stderr);
+  }
+  // upgrade.md step 2's recipe: cut the block, marker lines included, out of all three, merge the cuts, put the result back
+  const dir = tmp('harness-status-block-');
+  write(dir, 'AGENTS.md', agents);
+  write(dir, 'base', r.stdout);
+  write(dir, 'theirs', RULES_V2);
+  const cut = (f) => spawnSync('sed', ['-n', '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p', f], { cwd: dir, encoding: 'utf8' }).stdout;
+  for (const f of ['AGENTS.md', 'base', 'theirs']) write(dir, `${f}.block`, cut(f));
+  const merged = spawnSync('git', ['merge-file', '-p', 'AGENTS.md.block', 'base.block', 'theirs.block'], { cwd: dir, encoding: 'utf8', env: ENV });
+  assert.strictEqual(merged.status, 0, merged.stdout);
+  const ours = cut('AGENTS.md');
+  assert.strictEqual(agents.split(ours).length, 2, 'the cut is the block, once');
+  assert.strictEqual(agents.replace(ours, () => merged.stdout), agentsWith(installedBlock(RULES_V2)), 'the binding the project filled and the text around the block stay; the rule the template changed comes in');
 });
 
 test('mutant (js.8): a template state that ignores the hash reads every template current', () => {

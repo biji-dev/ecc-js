@@ -115,6 +115,37 @@ async function main() {
     ['env bash -c "git commit -n"', 'no-verify'],
     ['eval "git commit -n -m x"', 'no-verify'],
     ['eval git commit -n -m x', 'no-verify'],
+    // env -S splits its string into a command line; a value-taking option of env (GNU -a, BSD -P)
+    // and a long option's unambiguous prefix are skipped with their value
+    ["env -S 'git commit --no-verify -m x'", 'no-verify'],
+    ["env -S'git commit -n -m x'", 'no-verify'],
+    ["env -iS 'git commit -n -m x'", 'no-verify'],
+    ["env --split-string 'git commit -n -m x'", 'no-verify'],
+    ["env --split-string='git commit -n -m x'", 'no-verify'],
+    ["env --s 'git commit -n -m x'", 'no-verify'],
+    ["env -S 'git commit -m x' -n", 'no-verify'],
+    ["env -S 'HUSKY=0 git commit -m x'", 'no-verify'],
+    ["env -S 'codex exec x' &", 'codex-background'],
+    ['env -P /usr/bin git commit -n -m x', 'no-verify'],
+    ['env -a g0 git commit -n -m x', 'no-verify'],
+    ['env --u HOME git commit -n -m x', 'no-verify'],
+    ['timeout --sig KILL 5 git commit -n -m x', 'no-verify'],
+    // a shell's options may follow its -c, and every common shell takes -c
+    ["bash -c -- 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -x 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -o pipefail 'git commit -n -m x'", 'no-verify'],
+    ["bash -co pipefail 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -O extglob 'git commit -n -m x'", 'no-verify'],
+    ["bash -Ec 'git commit -n -m x'", 'no-verify'],
+    ["sh -c - 'git commit -n -m x'", 'no-verify'],
+    ["ksh -c 'git commit -n -m x'", 'no-verify'],
+    ["/bin/ksh -c 'git commit --no-verify -m x'", 'no-verify'],
+    ["mksh -c 'git commit -n -m x'", 'no-verify'],
+    ["csh -c 'git commit -n -m x'", 'no-verify'],
+    ["tcsh -c 'git commit -n -m x'", 'no-verify'],
+    ["fish -c 'git commit -n -m x'", 'no-verify'],
+    ["fish --command 'git commit -n -m x'", 'no-verify'],
+    ["fish --command='git commit -n -m x'", 'no-verify'],
     ['git commit -n -m x 2>&1 | tail -3', 'no-verify'],
     ['git commit --no-verif -m x', 'no-verify'],
     ['git commit --no-v -m x', 'no-verify'],
@@ -199,6 +230,7 @@ async function main() {
     ['git checkout main && git merge --no-ff --no-verify feature/x', 'no-verify'],
     ['git pull --no-verify origin main', 'no-verify'],
     ['HUSKY=0 git merge feature/x', 'no-verify'],
+    ['HUSKY=0 git pull origin main', 'no-verify'],
     // push skips pre-push with --no-verify (git takes --no-veri and --no-verif as abbreviations)
     ['git push --no-verify origin feature/x', 'no-verify'],
     ['git push --no-veri origin feature/x', 'no-verify'],
@@ -398,6 +430,17 @@ async function main() {
     '/bin/bash -c "git commit -m x"',
     'eval "git commit -m x"',
     'eval "echo git commit -n"',
+    // env -S, a shell's options after -c and the other shells run what they are given, nothing more
+    "env -S 'git status'",
+    "env -S 'git commit -m x' -m 'say -n here'",
+    'env -S',
+    'env -P /usr/bin git status',
+    'env --unset=HOME git status',
+    "bash -c -x 'git commit -m x'",
+    "bash --norc -c 'git status'",
+    "ksh -c 'git log -n 5'",
+    'bash script.sh -x',
+    'sh -c',
     // quoted values stay values
     'git commit -m "--no-verify"',
     'git commit --message="--no-verify"',
@@ -758,7 +801,7 @@ async function main() {
     ['husky', "env.HUSKY === '0'", "env.HUSKY === 'never'"],
     ['config-unset', 'if (unset) return true;', ''],
     ['delete', "const dropped = del ? refs : refs.filter((r) => r.startsWith(':'));", 'const dropped = [];'],
-    ['wrapper-env', "['env', 'uCS']", "['env-x', 'uCS']"],
+    ['wrapper-env', "['env', 'uCSaP']", "['env-x', 'uCSaP']"],
     ['wrapper-timeout', "['timeout', 'sk']", "['timeout-x', 'sk']"],
     ['wrapper-nice', "['nice', 'n']", "['nice-x', 'n']"],
     ['wrapper-sudo', "['sudo', 'ughpCDRrtTU']", "['sudo-x', 'ughpCDRrtTU']"],
@@ -814,6 +857,9 @@ async function main() {
     ['newline-continue', "if (t === '\\n' && continued) continue;", ''],
     ['runner-first-word', 'argv.slice(1).some((w) => SCRIPT_RUNNERS.has(basename(w)))', "SCRIPT_RUNNERS.has(basename(argv.slice(1).find((w) => !w.startsWith('-')) ?? ''))"],
     ['resolved-env', "const huskyOff = env.HUSKY === '0';", 'const huskyOff = cmd.env.some((e) => /^HUSKY=0$/.test(parts.unq(e)));'],
+    ['pull-husky', '(mergeSkipsHooks(parts.rest) || huskyOff)', "(mergeSkipsHooks(parts.rest) || (huskyOff && parts.sub === 'merge'))"],
+    ['env-split', "if (name === 'env' && w[k] === 'S') split", "if (false) split"],
+    ['shell-after-c', 'let j = at + 1 + takes(words[at]);', 'let j = at + 1; if (false)'],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
@@ -869,6 +915,9 @@ async function main() {
     ['runner-basename', 'comparing the script path literally lets scripts/codex-run.mjs through', 'node scripts/codex-run.mjs review &'],
     ['newline-continue', 'ending the list at a newline after && lets `codex exec x &&\\n echo ok &` through', 'codex exec x &&\n echo ok &'],
     ['runner-first-word', 'taking the first non-option word as the script lets `node --title harness ...` through', 'node --title harness scripts/codex-run.mjs review &'],
+    ['pull-husky', 'ignoring HUSKY=0 on a pull lets it through', 'HUSKY=0 git pull origin main'],
+    ['env-split', 'skipping env -S as a plain option value lets its string through', "env -S 'git commit -n -m x'"],
+    ['shell-after-c', 'taking the word after -c as the script lets `bash -c -x` through', "bash -c -x 'git commit -n -m x'"],
   ];
   for (const [label, title, command, o] of kills) {
     test(`mutation (${label}): ${title}`, () => {

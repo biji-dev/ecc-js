@@ -38,10 +38,11 @@ It never writes. It reports:
 - **hazards** — by id, with the file and line.
 
 Run it without `--text` for JSON. `--hash <path>[#block]` prints the hash the
-manifest records for a file or block. `--base <path>` prints the template an entry
-was generated from, the version its `templateSha256` names, found in the skill's
-git history: the base of Step 2's merge. A plugin cache is a shallow clone that
-holds one commit, so there pass `--history <a full clone of the skill repository>`.
+manifest records for a file or block. `--base <path>[#block]` prints the template
+an entry was generated from, the version its `templateSha256` names, found in the
+skill's git history: the base of Step 2's merge (for a block, its whole template). A
+plugin cache is a shallow clone that holds one commit, so there pass
+`--history <a full clone of the skill repository>`.
 
 `[M]` Quote its output at the top of the sheet. A lineage judged by eye misses the
 install that names its runner something else — and the script misses what it does
@@ -65,7 +66,7 @@ wait`.
 | `unchanged` or `edited`, template `current` | nothing: the template has not changed since; say so | keep |
 | `unchanged` or `edited`, template `unrecorded` or `invalid` | no base to merge from: the file against the current template with this project's bindings, section by section | ask |
 | `unchanged` or `edited`, template `gone` | what the version row says took its place; the entry dropped once the owner agrees | ask |
-| `unchanged` (generated from a reference, hash matches) | the block regenerated from the current reference where a version row since the manifest's `skillVersion` names that reference; otherwise nothing, and say so | replace |
+| `unchanged` (generated from a reference, hash matches) | where a version row since the manifest's `skillVersion` names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project fix the hash folded in and stays; otherwise nothing, and say so | **replace** where the reference change explains every hunk, else **ask** |
 | `edited` (generated from a reference, hash differs) | where a version row names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project edit and stays; otherwise the edit, section by section, against the block as the manifest's commit wrote it (`git show <that commit>:AGENTS.md`), since only a hash is stored | **ask** where a version row names the reference, else **keep** |
 | `reviewed` (policy, risk map, earned rules) | nothing, or a section-level suggestion | keep |
 | `scaffold` (registry, log, follow-ups, decision log) | nothing; add a column only if the newer format needs it | keep |
@@ -94,6 +95,18 @@ the project's own fix, take the template's side, and keep behaviour only this
 project has as a binding or a rule. Where it marks a binding the project set, keep
 the project's value and take the template's lines around it: git marks a change on
 the line beside another change as a conflict.
+
+A block entry merges on the block alone. `--base AGENTS.md#rules` prints the whole
+template, so cut the block, its marker lines included, out of the file, the base and
+the current template, merge the three cuts, and put the merged block back in place of
+the file's. The text around the block is the project's and stays out of the merge:
+
+```
+node <skill dir>/scripts/harness-status.js <repo> --base AGENTS.md#rules > base
+cp <skill dir>/templates/agents-rules.md theirs   # then format both as AGENTS.md is
+for f in AGENTS.md base theirs; do sed -n '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p' "$f" > "$f.block"; done
+git merge-file -p AGENTS.md.block base.block theirs.block > merged.block
+```
 
 `[M]` **Without a manifest, build the `missing` rows yourself:** compare the repo
 against the Phase C core table and the mode's set in `SKILL.md`. A component the
@@ -319,36 +332,42 @@ does: the repository registered for the weekly job (`learning.md` › The weekly
 ### Upgrading to v6
 
 `[M]` **What regenerates.** An entry generated from a reference v6 changed is
-regenerated and diffed (Step 2): the `rules` block (`templates/agents-rules.md`, 8
-bytes longer), `docs/harness/rule-origins.md` (`rules.md` §1; it opens with a line
-saying a bare `<name>.md` it cites is this skill's reference), the `context` block
-(`context.md`; its Tool discipline section is unchanged, so the agents' copies
-stand), the `scope` block (`scope-guard.md`), the blocks Phase C writes from
-`gate-design.md`, the runner skill and the implementer agent (`runner.md`), the
-claim auditor (`claim-auditor.md`), `CLAUDE.md` (`harness-targets.md`), and a
-preflight, sweep or hygiene skill the project generated (`preflight.md`,
-`sweep.md`, `hygiene.md`). Where Codex is a target, each regenerated agent's
+regenerated and diffed (Step 2): `docs/harness/rule-origins.md` (`rules.md` §1; it
+opens with a line saying a bare `<name>.md` it cites is this skill's reference), the
+`context` block (`context.md`; its Tool discipline section is unchanged, so the
+agents' copies stand), the `scope` block (`scope-guard.md`), the blocks Phase C
+writes from `gate-design.md`, the runner skill and the implementer agent
+(`runner.md`), the claim auditor (`claim-auditor.md`), `CLAUDE.md`
+(`harness-targets.md`), and a preflight, sweep or hygiene skill the project
+generated (`preflight.md`, `sweep.md`, `hygiene.md`). The `rules` block comes from
+a template (`templates/agents-rules.md`, 8 bytes longer): where the manifest records
+that `template`, the block reads `template newer` and merges as Step 2 merges a
+block; where it records none, the block is regenerated and diffed with the rest.
+Where Codex is a target, each regenerated agent's
 `.codex/agents/<name>.toml` takes the new brief as `developer_instructions`, with
-`model` and `model_reasoning_effort` still from the models file (`harness-targets.md` ›
-Codex). The lane A and lane B auditors stand, and their Codex files with them. The risk map is `reviewed`, so the one list of the harness's own critical
-paths (`policy-derivation.md`) reaches the owner as a proposal. On a ZCode host the
-command and edit guards wire into `.zcode/config.json`, with `hooks.enabled: true`
-(`harness-targets.md` › ZCode): a `missing` row where the project has not wired
-them. The registry keeps its columns: the guard
-finds `Branch` and `Worktree` by name, so a `Task` column stays.
+`model` and `model_reasoning_effort` still from the models file
+(`harness-targets.md` › Codex). The lane A and lane B auditors stand, and their
+Codex files with them. The risk map is `reviewed`, so the one list of the harness's
+own critical paths (`policy-derivation.md`) reaches the owner as a proposal. On a
+ZCode host the command and edit guards wire into `.zcode/config.json`, with
+`hooks.enabled: true` (`harness-targets.md` › ZCode): a `missing` row where the
+project has not wired them. The registry keeps its columns: the guard finds
+`Branch` and `Worktree` by name, so a `Task` column stays.
 
-`[M]` **New bindings, each defaulting to v5's behaviour.** `MAINLINE` in the commit
-guard (`main`); `CODEX_CANDIDATES` in `codex-run-core.mjs` (`.local/bin/codex` under
-the home directory, tried before `codex` on `PATH`; `CODEX_BIN` still comes first);
-`TIER_WORDS` in `estimate-core.mjs` (`trivial`, `hot-small`, `small`, `full`,
+`[M]` **New bindings, each defaulting to v5's behaviour but two.** `MAINLINE` in the
+commit guard (`main`); `CODEX_CANDIDATES` in `codex-run-core.mjs` (`.local/bin/codex`
+under the home directory, tried before `codex` on `PATH`; `CODEX_BIN` still comes
+first); `TIER_WORDS` in `estimate-core.mjs` (`trivial`, `hot-small`, `small`, `full`,
 `docs`); `STATUS_COLUMNS`, `STATUS_WORDS`, `SEVERITY_COLUMNS` and `FILED_AT` (`null`,
 off) in `retro-core.mjs`; `INSTRUCTIONS` in `review-gate-core.mjs` (`AGENTS.md`,
 `CLAUDE.md`, `.claude/`, `.agents/`, `.codex/` and `.zcode/`, reviewed as code
-whatever `NON_PRODUCTION` says); `LOG_COLUMNS` in `unit-record-core.mjs` (the
-header in `log-format.md`). `FOLLOW_UPS` may now be a list, `PHASE_OF` a function
-from a row id to its phase or `null`, and a project rule in the command guard reads
-`env` and `background` too. Bind each where the project differs: `MAINLINE` to its
-mainline, `LOG_COLUMNS` to its log's header.
+whatever `NON_PRODUCTION` says); `LOG_COLUMNS` in `unit-record-core.mjs` (the header
+in `log-format.md`). The two: v5 ran `codex` from `PATH` (bind `CODEX_CANDIDATES` to
+`[]` to keep that), and v5 skipped the instruction files as docs, which v6 reviews
+(*What the owner reviews again*). `FOLLOW_UPS` may now be a list, `PHASE_OF` a
+function from a row id to its phase or `null`, and a project rule in the command
+guard reads `env` and `background` too. Bind each where the project differs:
+`MAINLINE` to its mainline, `LOG_COLUMNS` to its log's header.
 
 `[M]` **The shipped tests bind their own values.** The tests of the command guard,
 the budget hook, the commit guard, the due-checks, the review gate and the records

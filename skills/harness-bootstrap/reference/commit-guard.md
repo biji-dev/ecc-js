@@ -208,7 +208,9 @@ counts too, whatever name it is merged by (`refs/heads/…`, `origin/…`, a cop
 branch, a pull): it is refused when it is a held branch's tip with work of its own.
 A held branch with no work of its own, its tip already in `MAINLINE` (claimed at the
 mainline's tip, no commits yet), adds nothing held, so merging that commit goes
-through; with no `MAINLINE` branch every held tip counts as work. Logged three times
-in one project and twice in another before it was written down.
+through; with no `MAINLINE` branch every held tip counts as work. A row this checkout
+owns, one that names its branch or task id and locks it, never refuses: the owning run
+may pull its own branch back, diverged, and merge a branch that carries its task id.
+Logged three times in one project and twice in another before it was written down.
 
 `[M]` Write the merge message to a file. `git merge` does not read stdin.

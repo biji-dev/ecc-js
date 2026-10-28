@@ -243,3 +243,41 @@ test("each plan id: its task branch is refused until the id's row is held, then 
     assert.equal(own.moved, true, `${id}: ${own.stderr}`);
   }
 });
+
+test('the run that holds a row pulls its own branch back, diverged: its own row does not refuse the merge', () => {
+  const d = repo();
+  const origin = tmp('harness-guard-origin-');
+  git(origin, 'init', '-q', '--bare');
+  git(d, 'remote', 'add', 'origin', origin);
+  registry(d, [['probe', OWNER]]);
+  git(d, 'switch', '-q', '-c', OWNER);
+  assert.equal(commit(d, 'owner work', 'b.txt').moved, true);
+  assert.equal(git(d, 'push', '-q', 'origin', OWNER).status, 0, 'push');
+  // the pushed branch moves on elsewhere: a copy, committed past the hooks, pushed over it
+  git(d, 'switch', '-q', '-c', 'probe/elsewhere');
+  fs.writeFileSync(path.join(d, 'c.txt'), 'elsewhere\n');
+  git(d, 'add', 'c.txt');
+  assert.equal(git(d, 'commit', '-q', '--no-verify', '-m', 'elsewhere').status, 0);
+  assert.equal(git(d, 'push', '-q', 'origin', `probe/elsewhere:${OWNER}`).status, 0, 'push over it');
+  git(d, 'switch', '-q', OWNER);
+  assert.equal(commit(d, 'owner again', 'b.txt').moved, true);
+  const pull = git(d, 'pull', '-q', '--no-rebase', '--no-edit', 'origin', OWNER);
+  assert.equal(pull.status, 0, `the owning run's pull of its own branch was refused: ${pull.stderr}`);
+  assert.ok(fs.existsSync(path.join(d, 'c.txt')), 'the pull merged');
+});
+
+test("each plan id: a branch carrying the id merges into the id's task branch while its row is held", () => {
+  const d = repo();
+  for (const id of IDS) {
+    git(d, 'switch', '-q', '-C', taskBranch(id), MAINLINE);
+    registry(d, [[id, '']]);
+    assert.equal(commit(d, `${id} work`, 'b.txt').moved, true, `${id}: the owning run's commit`);
+    const sub = `${taskBranch(id)}-review`;
+    git(d, 'switch', '-q', '-c', sub);
+    const r = commit(d, `${id} review`, 'c.txt');
+    assert.equal(r.moved, true, `${sub} carries ${id}, whose row is held: ${r.stderr}`);
+    git(d, 'switch', '-q', taskBranch(id));
+    const m = git(d, 'merge', '--no-ff', '-q', '-m', `merge ${sub}`, sub);
+    assert.equal(m.status, 0, `the owning run's merge of ${sub} was refused: ${m.stderr}`);
+  }
+});

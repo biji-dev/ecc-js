@@ -5,7 +5,8 @@
 # from an existing husky/lefthook pre-commit. Install the same file as
 # .githooks/pre-merge-commit too: a non-conflicting merge runs that hook, not
 # pre-commit. Test THIS file, never a copy. A merge, by either hook, is refused while the
-# branch it merges still holds a row: release the row first, then merge (the land order).
+# branch it merges still holds a row: release the row first, then merge (the land order). The
+# owning run's own row never refuses: it may pull its branch and merge one carrying its id.
 
 REGISTRY=".claude/registry.md"             # [B] the lock file, relative to the repo root
 # ID_PATTERN binds per mode. Plan mode: the plan's id shape (every shape it uses). Change
@@ -59,7 +60,7 @@ task_id() {
 branch=$(git branch --show-current 2>/dev/null)
 id=$(task_id "$branch")
 
-# rows NAME ID: one line per held row, "<matched name>|<Worktree cell>|<Branch cell>", the
+# rows NAME ID: one line per held row, "<matched name>|<Worktree cell>|<Branch cell>|<row index>", the
 # match taken against branch NAME and its task id ID. Rows inside the active section
 # whose first cell is 1+ count as held; row 0 is reserved for the mainline. The header is the
 # row directly above a |---| separator row; with none inside the section, the table header
@@ -119,7 +120,7 @@ rows() {
         lw = tolower(wt)
         if (lw == "-" || lw == "—" || lw == "n/a" || lw == "none") wt = ""
       }
-      print tok "|" wt "|" br
+      print tok "|" wt "|" br "|" j
     }
   }' "$reg"
 }
@@ -141,12 +142,13 @@ is_here() { [ "$1" = "$curp" ]; }
 match_here=0
 match_other=""
 lock_here=0
+own=" "   # the row indexes of the rows this checkout owns: they match its branch and lock it
 if [ -n "$held" ]; then
-  while IFS='|' read -r tok wt br; do
+  while IFS='|' read -r tok wt br j; do
     if [ "$SCOPE" = "checkout" ]; then resolve "$wt"; else res=$curp; fi
     if is_here "$res"; then lock_here=1; fi
     if [ -n "$tok" ]; then
-      if is_here "$res"; then match_here=1; else match_other="row for $tok locks $res, not this checkout"; fi
+      if is_here "$res"; then match_here=1; own="$own$j "; else match_other="row for $tok locks $res, not this checkout"; fi
     fi
   done <<EOF
 $held
@@ -170,7 +172,8 @@ case "${GIT_REFLOG_ACTION:-}" in merge*|pull*) merging=1 ;; esac
 # those names, those lines, and MERGE_HEAD (one line per merged commit), which a conflicted
 # merge leaves for the commit that concludes it, with no reflog action. A held tip already in
 # MAINLINE (a branch claimed at its tip, no commits yet) is no held work; with no MAINLINE
-# branch every held tip counts as work.
+# branch every held tip counts as work. The rows this checkout owns never refuse: the owning
+# run pulls its own branch and merges branches that carry its task id.
 tab=$(printf '\t')
 branch_name() {
   case "$1" in
@@ -183,16 +186,22 @@ branch_name() {
   printf '%s\n' "$1"
 }
 has_work() { ! git merge-base --is-ancestor "$1" "refs/heads/$MAINLINE" 2>/dev/null; }
+is_own() { case "$own" in *" $1 "*) return 0 ;; esac; return 1; }
 held_name() {
   m=$(branch_name "$1")
-  if rows "$m" "$(task_id "$m")" | grep -q '^[^|]'; then
-    refuse "merging '$m', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
-  fi
+  hits=$(rows "$m" "$(task_id "$m")")
+  while IFS='|' read -r tok wt br j; do
+    if [ -n "$tok" ] && ! is_own "$j"; then
+      refuse "merging '$m', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
+    fi
+  done <<EOF
+$hits
+EOF
 }
 held_commit() {
   [ -n "$1" ] || return 0
-  while IFS='|' read -r tok wt br; do
-    if [ -n "$br" ] && [ "$(git rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$1" ] && has_work "$1"; then
+  while IFS='|' read -r tok wt br j; do
+    if [ -n "$br" ] && ! is_own "$j" && [ "$(git rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$1" ] && has_work "$1"; then
       refuse "merging '$br', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
     fi
   done <<EOF

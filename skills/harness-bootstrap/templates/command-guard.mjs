@@ -13,7 +13,10 @@
 // commands of its own shell, as an export does). The program is compared by basename
 // (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, env, nice, timeout, sudo
 // and xargs are stripped with their options (`command -p`, `exec -a name`, `time -p`,
-// `time -o file`, `time -f fmt`), as are `bash -c "<script>"` and `eval "<script>"` (re-parsed). A
+// `time -o file`, `time -f fmt`, `env -P dir`; a long option also by an unambiguous prefix, as GNU
+// tools take it: `env --u`), as are a shell's `-c "<script>"` (bash, sh, dash, zsh, ksh, csh,
+// fish and their kin; options may come before or after the -c: `bash -c -x "<script>"`),
+// `env -S "<string>"` and `eval "<script>"` (each re-parsed). A
 // command's environment is its inline VAR=value words (also those after env or sudo), any
 // `export VAR=value` earlier in the same shell (not past a `( ... )`, a backtick, a pipeline or a
 // backgrounded list: each runs in a subshell), and, inside a `bash -c` or `eval` script, the
@@ -87,7 +90,7 @@ const WRAPPER_SHORT_VALUE = new Map([
   ['exec', 'a'],
   ['time', 'of'],
   ['nohup', ''],
-  ['env', 'uCS'],
+  ['env', 'uCSaP'],
   ['nice', 'n'],
   ['timeout', 'sk'],
   ['sudo', 'ughpCDRrtTU'],
@@ -100,13 +103,13 @@ const WRAPPER_LONG_VALUE = new Map([
   ['exec', []],
   ['time', ['--output', '--format']],
   ['nohup', []],
-  ['env', ['--unset', '--chdir', '--split-string']],
+  ['env', ['--unset', '--chdir', '--split-string', '--argv0']],
   ['nice', ['--adjustment']],
   ['timeout', ['--signal', '--kill-after']],
   ['sudo', ['--user', '--group', '--host', '--prompt', '--close-from', '--chdir', '--chroot', '--role', '--type', '--command-timeout', '--other-user']],
   ['xargs', ['--max-args', '--max-lines', '--max-procs', '--max-chars', '--delimiter', '--arg-file']],
 ]);
-const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
+const SHELLS = new Set(['bash', 'rbash', 'sh', 'ash', 'dash', 'zsh', 'ksh', 'mksh', 'oksh', 'pdksh', 'yash', 'posh', 'csh', 'tcsh', 'fish']);
 const HOOK_SUBCOMMANDS = new Set(['commit', 'merge', 'pull', 'push', 'rebase', 'am']);
 const GIT_VALUE_OPTIONS = new Set(['--git-dir', '--work-tree', '--namespace', '--super-prefix']);
 const COMMIT_VALUE_LONG = new Set(['--message', '--file', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--template', '--author', '--date', '--cleanup', '--trailer', '--pathspec-from-file']);
@@ -223,15 +226,18 @@ function maskQuotes(src, quoted) {
 /**
  * If words[0] is a wrapper in WRAPPER_SHORT_VALUE (command, exec, time, env, sudo, ...), drop it
  * with its options (and, for env and sudo, VAR=value words, which are appended to `assignments`).
- * True when something was dropped.
+ * `env -S "<string>"` instead becomes an eval of `env <string> <the words after it>`, those words
+ * quoted as they were: env splits the string into words and runs them. True when something was
+ * dropped.
  */
-function unwrap(words, assignments) {
+function unwrap(words, assignments, unq) {
   const name = basename(words[0]);
   const shortValue = WRAPPER_SHORT_VALUE.get(name);
   if (shortValue === undefined) return false;
   const longValue = WRAPPER_LONG_VALUE.get(name);
   let i = 1;
-  for (; i < words.length; i++) {
+  let split = null; // env -S: [the string, the index of the first word after it]
+  for (; i < words.length && !split; i++) {
     const w = words[i];
     if (w === '--') {
       i++;
@@ -239,15 +245,27 @@ function unwrap(words, assignments) {
     }
     if (!w.startsWith('-')) break;
     if (w.startsWith('--')) {
-      if (longValue.includes(w)) i++;
+      const eq = w.indexOf('=');
+      const opt = eq === -1 ? w : w.slice(0, eq);
+      if (name === 'env' && opt.length > 2 && '--split-string'.startsWith(opt)) {
+        split = eq === -1 ? [words[i + 1], i + 2] : [w.slice(eq + 1), i + 1];
+      } else if (eq === -1 && opt.length > 2 && longValue.some((o) => o.startsWith(opt))) i++;
       continue;
     }
     for (let k = 1; k < w.length; k++) {
       if (shortValue.includes(w[k])) {
-        if (k === w.length - 1) i++; // otherwise the rest of the cluster is the value
+        const last = k === w.length - 1; // otherwise the rest of the cluster is the value
+        if (name === 'env' && w[k] === 'S') split = last ? [words[i + 1], i + 2] : [w.slice(k + 1), i + 1];
+        else if (last) i++;
         break;
       }
     }
+  }
+  if (split) {
+    const [string, after] = split;
+    const kept = words.slice(after).map((w) => (w.includes(SEP) ? `'${unq(w).replace(/'/g, "'\\''")}'` : w));
+    words.splice(0, words.length, 'eval', 'env', string ?? '', ...kept);
+    return true;
   }
   // `command -v` and `-V` only look a name up: nothing runs.
   if (name === 'command' && words.slice(1, i).some((w) => /^-[^-]*[vV]/.test(w))) {
@@ -337,6 +355,26 @@ function splitLists(text) {
   return segments;
 }
 
+/**
+ * The script a shell's -c runs: the first word after its options, which may follow the -c
+ * (`bash -c -x '<script>'`, `-c -- '<script>'`); an o or O in a cluster takes the next word
+ * (`-o pipefail`, `-co pipefail`), and fish also spells it `--command`. null when there is none.
+ */
+function shellScript(words, unq) {
+  const at = words.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w) || w === '--command' || w.startsWith('--command='));
+  if (at === -1) return null;
+  if (words[at].startsWith('--command=')) return unq(words[at].slice('--command='.length));
+  const takes = (w) => (/^[-+][A-Za-z]+$/.test(w) ? (w.match(/[oO]/g) ?? []).length : 0);
+  let j = at + 1 + takes(words[at]);
+  for (; j < words.length && /^[-+]/.test(words[j]); j += 1 + takes(words[j])) {
+    if (words[j] === '--' || words[j] === '-') {
+      j++;
+      break;
+    }
+  }
+  return words[j] ? unq(words[j]) : null;
+}
+
 function parse(command, cwd, quoted, depth, background) {
   const commands = [];
   // A `cd` or `export VAR=value` changes the shell it runs in: { dir, exported } per subshell node
@@ -371,7 +409,7 @@ function parse(command, cwd, quoted, depth, background) {
       if (!words.length) break;
       if (ASSIGNMENT.test(words[0])) env.push(words.shift());
       else if (WRAPPERS.has(words[0])) words.shift();
-      else if (!unwrap(words, env)) break;
+      else if (!unwrap(words, env, unq)) break;
     }
     if (!words.length) continue;
     const state = stateOf(segment.node);
@@ -397,8 +435,7 @@ function parse(command, cwd, quoted, depth, background) {
     // `bash -c "<script>"` and `eval "<script>"` run their quoted text as commands.
     let script = null;
     if (SHELLS.has(basename(words[0]))) {
-      const at = words.findIndex((w) => /^-[a-z]*c[a-z]*$/.test(w));
-      if (at !== -1 && words[at + 1]) script = unq(words[at + 1]);
+      script = shellScript(words, unq);
     } else if (words[0] === 'eval') {
       script = words.slice(1).map(unq).join(' ');
     }
@@ -446,8 +483,9 @@ function gitParts(cmd) {
 /**
  * True when a `git merge` or `git pull` argument list asks to skip pre-merge-commit. Only the exact
  * --no-verify: an abbreviation is ambiguous with --no-verify-signatures, and -n is --no-stat.
- * A `--` does not end the scan: a value-taking option can take it as its value (`-m --`), and git
- * still honours a --no-verify after it, so `git merge -- --no-verify` is refused too.
+ * A `--` does not end the scan: a value-taking option can take it as its value, and after
+ * `git merge -m -- --no-verify` the hook is skipped. After a real `--`, git reads --no-verify as a
+ * commit it cannot merge and stops, so refusing that form costs nothing.
  */
 function mergeSkipsHooks(rest) {
   for (const t of rest) {

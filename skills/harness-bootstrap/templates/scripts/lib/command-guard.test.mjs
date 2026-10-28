@@ -19,7 +19,7 @@ const TOPIC = 'harness/guard-probe';
 const rule = (command, currentBranch = TOPIC) => check(command, { currentBranch })?.rule ?? null;
 
 test('a hook bypass on commit, merge or pull is refused; a message that mentions one is text', () => {
-  for (const c of ['git commit --no-verify -m x', 'git commit -n -m x', 'HUSKY=0 git commit -m x', 'git merge --no-verify topic', 'git pull --no-verify']) {
+  for (const c of ['git commit --no-verify -m x', 'git commit -n -m x', 'HUSKY=0 git commit -m x', 'git merge --no-verify topic', 'git pull --no-verify', 'HUSKY=0 git pull']) {
     assert.equal(rule(c), 'no-verify', c);
   }
   for (const c of ['git commit -m "mentions --no-verify"', "git commit -F - <<'EOF'\nskip it with --no-verify\nEOF", 'git merge -n topic']) {
@@ -30,6 +30,15 @@ test('a hook bypass on commit, merge or pull is refused; a message that mentions
 test('wrappers, paths and chains do not hide a bypass', () => {
   for (const c of ['cd /tmp && git commit --no-verify -m x', 'env FOO=1 git commit --no-verify -m x', 'bash -c "git commit --no-verify -m x"', '/usr/bin/git commit --no-verify -m x', 'git status; git commit "--no-verify" -m x']) {
     assert.equal(rule(c), 'no-verify', c);
+  }
+});
+
+test('env -S, a shell\'s options after -c and the other shells do not hide a bypass', () => {
+  for (const c of ["env -S 'git commit --no-verify -m x'", 'env -P /usr/bin git commit -n -m x', "bash -c -x 'git commit -n -m x'", "bash -c -- 'git commit -n -m x'", "ksh -c 'git commit -n -m x'", "csh -c 'git commit -n -m x'"]) {
+    assert.equal(rule(c), 'no-verify', c);
+  }
+  for (const c of ["env -S 'git status'", "bash -c -x 'git commit -m x'", "ksh -c 'git log -n 5'"]) {
+    assert.equal(rule(c), null, c);
   }
 });
 

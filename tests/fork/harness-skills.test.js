@@ -669,7 +669,8 @@ test('upgrade.md step 1 names the template states and --base, with the clone --h
   for (const state of ['`current`', '`newer`', '`gone`', '`unrecorded`', '`invalid`']) {
     assert.ok(step1.includes(state), `step 1 does not name the template state ${state}`);
   }
-  assert.ok(step1.includes('`--base <path>` prints the template an entry was generated from'), 'step 1 does not name --base');
+  assert.ok(step1.includes('`--base <path>[#block]` prints the template an entry was generated from'), 'step 1 does not name --base');
+  assert.ok(step1.includes("the base of Step 2's merge (for a block, its whole template)"), 'step 1 does not say what --base prints for a block');
   const script = fs.readFileSync(path.join(BOOTSTRAP, 'scripts', 'harness-status.js'), 'utf8');
   const clone = /const FULL_CLONE = 'pass (--history <[^>]+>)';/.exec(script);
   assert.ok(clone, 'harness-status.js has no FULL_CLONE line');
@@ -688,6 +689,9 @@ test('upgrade.md step 2: a file generated from a template whose template is newe
   assert.ok(para.includes('folds in every fix the project made before the manifest was written'), 'the merge paragraph does not say why unchanged is not the template');
   assert.ok(para.includes('Format the base and the current template as the project formats the file first'), 'the merge paragraph does not format the base and the template first');
   assert.ok(para.includes('--base <path> > base') && para.includes('git merge-file -p <path> base theirs > merged'), 'the merge paragraph has no recipe');
+  assert.ok(para.includes('A block entry merges on the block alone. `--base AGENTS.md#rules` prints the whole template, so cut the block, its marker lines included, out of the file, the base and the current template, merge the three cuts, and put the merged block back in place of the file\'s.'), 'the merge paragraph does not say how a block merges');
+  assert.ok(para.includes("for f in AGENTS.md base theirs; do sed -n '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p' \"$f\" > \"$f.block\"; done") && para.includes('git merge-file -p AGENTS.md.block base.block theirs.block > merged.block'), 'the merge paragraph has no block recipe');
+  assert.ok(/\| `unchanged` \(generated from a reference, hash matches\) \| where a version row since the manifest's `skillVersion` names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project fix the hash folded in and stays; otherwise nothing, and say so \| \*\*replace\*\* where the reference change explains every hunk, else \*\*ask\*\* \|/.test(step2), 'an unchanged reference-generated block is replaced over the fixes its hash folded in');
   assert.ok(para.includes("where the template now carries the project's own fix, take the template's side"), 'the merge paragraph does not say how a conflict resolves');
   assert.ok(/`edited` \(generated from a reference, hash differs\) \| where a version row names the reference: the block regenerated, and its diff against the file, in which a hunk the reference change does not explain is a project edit and stays/.test(step2), 'an edited reference-generated block does not keep the hunks its reference change does not explain');
   assert.ok(step2.includes('Adopting it in place wraps the legacy text in `policy` markers where it stands, and the manifest records that block as `reviewed`; until it is wrapped, the status line is its only record'), 'step 2 does not say how a legacy policy adopted in place is recorded');
@@ -1003,6 +1007,8 @@ test("upgrade.md's v6 section states each new binding's template default, and ea
   const list = words => words.map(word => `\`${word}\``).join(', ');
   assert.match(source('harness-guard.sh'), /^MAINLINE="main" /m, "the commit guard's MAINLINE default is not main");
   assert.ok(v6.includes('`MAINLINE` in the commit guard (`main`)'), 'the v6 section does not state MAINLINE');
+  assert.ok(v6.includes("**New bindings, each defaulting to v5's behaviour but two.**") && v6.includes('The two: v5 ran `codex` from `PATH` (bind `CODEX_CANDIDATES` to `[]` to keep that), and v5 skipped the instruction files as docs, which v6 reviews'), 'the v6 section says every new binding keeps v5\'s behaviour');
+  assert.ok(v6.includes('The `rules` block comes from a template (`templates/agents-rules.md`, 8 bytes longer): where the manifest records that `template`, the block reads `template newer` and merges as Step 2 merges a block; where it records none, the block is regenerated and diffed with the rest.'), 'the v6 section regenerates a rules block its manifest records as template-backed');
   const { CODEX_CANDIDATES } = exported(lib('codex-run-core'), ['CODEX_CANDIDATES']);
   assert.ok(v6.includes(`\`CODEX_CANDIDATES\` in \`codex-run-core.mjs\` (${list(CODEX_CANDIDATES)} under the home directory`), 'the v6 section does not state CODEX_CANDIDATES as the core binds it');
   const { TIER_WORDS } = exported(lib('estimate-core'), ['TIER_WORDS']);
@@ -1029,6 +1035,11 @@ test("upgrade.md's v6 section states each new binding's template default, and ea
       assert.match(source(file), new RegExp(`^\\s*(?:export const |const )?${name}(?:=| = |: )`, 'm'), `${file} binds no ${name}`);
     }
   }
+});
+
+test("commit-guard.md's land order: the owning run's own row never refuses its pull or the merge of a branch with its task id", () => {
+  const land = squashed('reference/commit-guard.md').split('## Land order')[1] || '';
+  assert.ok(land.includes('A row this checkout owns, one that names its branch or task id and locks it, never refuses: the owning run may pull its own branch back, diverged, and merge a branch that carries its task id.'), "the land order does not say the owning run's own row never refuses");
 });
 
 test("upgrade.md's v6 section names what the owner reviews again and the machine's weekly job", () => {

@@ -788,6 +788,90 @@ if (!hasGit) {
     } finally { cleanup(dir); }
   });
 
+  // ---- The owning run's own merges: the rows it owns (they match its branch and lock its checkout) never refuse ----
+  const OWN_ROW = {
+    repo: '| 1 | P2-20 | 2 | task/p2-20 | 2026-10-09T10:00Z |',
+    checkout: '| 1 | P2-20 | 2 | task/p2-20 | `.worktrees/held` | 2026-10-09T10:00Z |',
+  };
+  /** `scope`, both hooks; task/p2-20 holds row 1 (its checkout: the main one under repo, .worktrees/held under checkout) and has a commit. */
+  function ownRunSetup(scope, more = '') {
+    const guard = guardText(scope);
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    // tracked, as an install keeps it: a linked worktree runs the hooks its own checkout holds
+    git(dir, ['add', '.githooks/pre-merge-commit']);
+    assertAllowed(git(dir, ['commit', '-qm', 'merge hook']));
+    let wt = dir;
+    if (scope === 'checkout') wt = addWorktree(dir, '.worktrees/held', 'task/p2-20');
+    else git(dir, ['switch', '-qc', 'task/p2-20']);
+    setRegistry(dir, [OWN_ROW[scope], more].filter(Boolean).join('\n'), scope === 'checkout' ? WT_HEADER : PLAIN_HEADER);
+    assertAllowed(tryCommit(wt));
+    return { dir, wt };
+  }
+  /** A commit of its own on a new `branch` from main, made past the guard (set-up), then back on task/p2-20. */
+  function sideBranch(wt, branch, file) {
+    assert.strictEqual(git(wt, ['switch', '-qc', branch, 'main']).status, 0, `switch -c ${branch}`);
+    fs.writeFileSync(path.join(wt, file), `${branch}\n`);
+    git(wt, ['add', file]);
+    assertAllowed(git(wt, ['commit', '-qm', `${branch} work`, '--no-verify']));
+    git(wt, ['switch', '-q', 'task/p2-20']);
+  }
+
+  for (const scope of ['repo', 'checkout']) {
+    test(`${scope} scope: the owning run pulls its own branch back, diverged; its own row does not refuse the merge`, () => {
+      const { dir, wt } = ownRunSetup(scope);
+      const bare = tmp('harness-scope-remote-');
+      try {
+        git(bare, ['init', '-q', '--bare']);
+        assert.strictEqual(git(dir, ['remote', 'add', 'origin', bare]).status, 0, 'remote add');
+        assertAllowed(git(wt, ['push', '-q', 'origin', 'task/p2-20']));
+        // the pushed branch moves on elsewhere: a copy, committed past the guard, pushed over it
+        assert.strictEqual(git(wt, ['switch', '-qc', 'elsewhere']).status, 0, 'switch -c elsewhere');
+        fs.writeFileSync(path.join(wt, 'remote.txt'), 'r\n');
+        git(wt, ['add', 'remote.txt']);
+        assertAllowed(git(wt, ['commit', '-qm', 'remote work', '--no-verify']));
+        assertAllowed(git(wt, ['push', '-q', 'origin', 'elsewhere:task/p2-20']));
+        git(wt, ['switch', '-q', 'task/p2-20']);
+        assertAllowed(tryCommit(wt)); // diverged
+        assertAllowed(git(wt, ['pull', '-q', '--no-rebase', '--no-edit', 'origin', 'task/p2-20']));
+        assert.ok(fs.existsSync(path.join(wt, 'remote.txt')), 'the pull merged');
+      } finally { cleanup(dir, bare); }
+    });
+
+    test(`${scope} scope: the owning run merges a sub-branch that carries its task id; its own row does not refuse`, () => {
+      const { dir, wt } = ownRunSetup(scope);
+      try {
+        assert.strictEqual(git(wt, ['switch', '-qc', 'task/p2-20-review']).status, 0, 'switch -c task/p2-20-review');
+        fs.writeFileSync(path.join(wt, 'review.txt'), 'v\n');
+        git(wt, ['add', 'review.txt']);
+        assertAllowed(git(wt, ['commit', '-qm', 'review'])); // it carries P2-20: the owning run commits there too
+        git(wt, ['switch', '-q', 'task/p2-20']);
+        assertAllowed(tryCommit(wt));
+        assertAllowed(git(wt, ['merge', '--no-ff', '-m', 'merge review', 'task/p2-20-review']));
+        assert.ok(fs.existsSync(path.join(wt, 'review.txt')), 'the merge landed');
+      } finally { cleanup(dir); }
+    });
+
+    test(`${scope} scope: the owning run merging another task's branch that still holds a row is refused`, () => {
+      const other = scope === 'checkout'
+        ? '| 2 | P2-21 | 2 | task/p2-21 | `.worktrees/other` | 2026-10-09T10:00Z |'
+        : '| 2 | P2-21 | 2 | task/p2-21 | 2026-10-09T10:00Z |';
+      const { dir, wt } = ownRunSetup(scope, other);
+      try {
+        sideBranch(wt, 'task/p2-21', 'other.txt');
+        assertRefused(git(wt, ['merge', '--no-ff', '-m', 'merge p2-21', 'task/p2-21']), /merging 'task\/p2-21', which still holds a row.*release its row first/);
+      } finally { cleanup(dir); }
+    });
+  }
+
+  test("checkout scope: a sub-branch with the run's task id whose own row locks another checkout is still refused", () => {
+    const { dir, wt } = ownRunSetup('checkout', '| 2 | P2-20 | 1 | task/p2-20-review | `.worktrees/review` | 2026-10-09T10:00Z |');
+    try {
+      sideBranch(wt, 'task/p2-20-review', 'review.txt');
+      assertRefused(git(wt, ['merge', '--no-ff', '-m', 'merge review', 'task/p2-20-review']), /merging 'task\/p2-20-review', which still holds a row.*release its row first/);
+    } finally { cleanup(dir); }
+  });
+
   /** Tracked registry; task/T-AB-12-x has no row left after merging `side`, which only releases it. */
   function releaseMergeSetup(install) {
     const guard = guardText('repo');

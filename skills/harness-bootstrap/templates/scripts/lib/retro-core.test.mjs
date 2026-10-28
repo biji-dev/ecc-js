@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BASELINE_WEEKS,
   EXTRA_COLUMNS,
+  FILED_AT,
   FOLLOW_UPS,
   LOG,
   MAX_BYTES,
@@ -57,7 +58,7 @@ import {
   windowFor,
 } from './retro-core.mjs';
 import { COLUMNS, TIER_WORDS, fmtMinutes } from './estimate-core.mjs';
-import { gather, readFollowUps } from './retro-gather.mjs';
+import { blameDates, gather, lastCommitTimes, readFollowUps } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { FINDINGS_HEADING } from './unit-record-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
@@ -206,6 +207,7 @@ const FU_OPTS = {
   statusColumns: ['status'],
   statusWords: { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] },
   severityColumns: ['sev', 'priority'],
+  filedAt: null, // the filing date binding is off here: a project that binds it must not change these tests
 };
 
 test('followUpsSummary counts rows by status, the open ones naming a P3, and the oldest open row\'s and open P3\'s age', () => {
@@ -278,6 +280,45 @@ test('followUpsSummary: oldestOpenP3Row is the first cell of the oldest dated op
   assert.equal(followUpsSummary(text, new Map(), NOW, FU_OPTS).oldestOpenP3Row, null, 'with no dates there is no oldest row');
 });
 
+test('followUpsSummary with filedAt: an open row is aged from the date in the first of its cells the RegExp matches, any other row from its line', () => {
+  const filedAt = /^(?:[A-Z]+-)?(\d{4}-\d{2}-\d{2})\b/; // anchored to its cell: a Filed cell, or an id that carries the date
+  const lineAge = { 3: 2, 4: 3, 5: 8, 6: 9, 7: 4, 8: 90 };
+  const lines = (calls, shift = 0) => ({ get: (line) => (calls.push(line), lineAge[line + shift] === undefined ? undefined : NOW - lineAge[line + shift] * DAY) });
+  const text = table(['#', 'Filed', 'Status', 'Updated'], [
+    ['FU-1', '2026-10-01', 'open', '2026-01-01'], // line 3: filed 25 days before NOW (UTC midnight); a later cell is not tried
+    ['FU-2', '', 'open', ''], // line 4: no filing date, the line's date
+    ['FU-3', '2026-13-45', 'open', '2026-01-01'], // line 5: the first match does not parse, the line's date; the Updated cell is not tried
+    ['FU-4', '2026-02-31', 'open', ''], // line 6: a day the month lacks does not roll over, the line's date
+    ['FU-5', '', 'open 2026-09-01', ''], // line 7: a status cell the RegExp does not match is not a filing date
+    ['FU-6', '2026-09-01', 'fixed', ''], // line 8: not open, not aged
+  ]);
+  const calls = [];
+  const s = followUpsSummary(text, lines(calls), NOW, { ...FU_OPTS, filedAt });
+  assert.equal(s.open, 5);
+  assert.equal(s.oldestOpenDays, 25, 'the oldest open row is FU-1, aged from the date in its Filed cell and not from its line');
+  assert.deepEqual(calls.sort(), [4, 5, 6, 7], 'a row whose first matching cell gave a date never asks for its line date, and a row that is not open is not aged');
+  // Without FU-1 the oldest is the line-dated FU-4 (9 days): no row with an empty, unparsable or unmatched cell took a date from another cell.
+  const rest = followUpsSummary(text.replace(/^\| FU-1.*\n/m, ''), lines([], 1), NOW, { ...FU_OPTS, filedAt });
+  assert.equal(rest.oldestOpenDays, 9, 'an empty cell, 2026-13-45, 2026-02-31 and "open 2026-09-01" keep the line date');
+  // An id that carries the date, with no Filed column, and a second RegExp for it.
+  const ids = table(['#', 'Status'], [['FU-2026-10-10 a', 'open 2026-09-01'], ['FU-x', 'open']]);
+  const byId = followUpsSummary(ids, lines([], 0), NOW, { ...FU_OPTS, filedAt: /^[A-Z]+-(\d{4}-\d{2}-\d{2})\b/ });
+  assert.equal(byId.oldestOpenDays, 16, 'an id that carries the date works; FU-x has no date and keeps its line (3 days)');
+  // A P3 row is aged from its filing date too.
+  const p3 = followUpsSummary(table(['#', 'Filed', 'Sev', 'Status'], [['FU-9', '2026-10-10', 'P3', 'open']]), { get: () => NOW }, NOW, { ...FU_OPTS, filedAt });
+  assert.deepEqual([p3.oldestOpenP3Days, p3.oldestOpenP3Row], [16, 'FU-9']);
+  // A global or sticky RegExp carries no state from one row to the next: after the first row's id matched,
+  // the second row's id is still read from its start.
+  const twoIds = table(['#', 'Status'], [['FU-2026-10-05 a', 'open'], ['FU-2026-10-01 b', 'open']]);
+  for (const flags of ['g', 'y']) {
+    const sticky = followUpsSummary(twoIds, { get: () => NOW }, NOW, { ...FU_OPTS, filedAt: new RegExp(filedAt.source, flags) });
+    assert.equal(sticky.oldestOpenDays, 25, `a RegExp with the ${flags} flag skipped the second row's date`);
+  }
+  // With filedAt null only line dates count, however the cells read.
+  const off = followUpsSummary(text, lines([]), NOW, { ...FU_OPTS, filedAt: null });
+  assert.equal(off.oldestOpenDays, 9, 'with filedAt null every open row is dated by its line');
+});
+
 test('the follow-up bindings keep their shape: lower-case column prefixes, the four kinds with words, a path or a list of paths', () => {
   for (const list of [STATUS_COLUMNS, SEVERITY_COLUMNS]) {
     assert.ok(Array.isArray(list) && list.length > 0 && list.every((n) => typeof n === 'string' && n !== '' && n === n.toLowerCase()), `not a non-empty list of lower-case names: ${JSON.stringify(list)}`);
@@ -285,6 +326,7 @@ test('the follow-up bindings keep their shape: lower-case column prefixes, the f
   assert.deepEqual(Object.keys(STATUS_WORDS).sort(), ['dropped', 'fixed', 'open', 'scheduled']);
   for (const [kind, words] of Object.entries(STATUS_WORDS)) assert.ok(Array.isArray(words) && words.length > 0 && words.every((w) => typeof w === 'string' && w !== ''), `${kind} has no words`);
   assert.ok([FOLLOW_UPS].flat().length > 0 && [FOLLOW_UPS].flat().every((p) => typeof p === 'string' && p !== ''), 'FOLLOW_UPS is not a path or a non-empty list of paths');
+  assert.ok(FILED_AT === null || FILED_AT instanceof RegExp, 'FILED_AT is neither null nor a RegExp');
 });
 
 test('stateSummary counts the decision log by Class and By, open questions apart, and the P3s still to do', () => {
@@ -491,6 +533,32 @@ test('unitOutliers flags a window unit at OUTLIER_X times its tier\'s median, on
   assert.deepEqual([o.unit, o.tier, o.x], ['C', null, OUTLIER_X + 2]);
   const d = { missed: [], stepOutliers: [], unitOutliers: [o], friction: [], kpis: { transcripts: null }, queue: { followUps: null } };
   assert.equal(candidates(d)[0].text, `C's work ${fmtMinutes(10 * (OUTLIER_X + 2))} is ${OUTLIER_X + 2}× the median (n=${MIN_COHORT})`);
+});
+
+test('dollar medians are rounded to cents and minutes to a tenth: logKpis, previousKpis, unitOutliers and the digest', () => {
+  const costs = [81.2, 81.26, 81.4];
+  const works = [60, 70.25, 80];
+  const text = table(LOG_HEAD, costs.map((c, i) => logRow(`EP-${i + 1}`, CELL_A, works[i], c)));
+  const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00', '22T10:00:00'));
+  const k = logKpis(recs, '2026-10-19T00:00:00Z', '2026-10-26T00:00:00Z');
+  assert.equal(k.cost, 81.26, 'a median of dollars keeps its cents');
+  assert.equal(k.work, 70.3, 'a median of minutes keeps one decimal');
+  assert.equal(k.ownerWait, 10);
+  const d = buildRetro(gatherOf({ log: { text, dates: datesFor('20T10:00:00', '21T10:00:00', '22T10:00:00') }, rows: [row({ ts: at('22T10:00:00') })], sessions: 1 }), { project: 'demo', now: NOW });
+  assert.match(formatDigest(d), /^\| Cost per unit \(median\) \| \$81\.26 \|/m, 'the digest prints the median as it is');
+  // Earlier weeks: the transcript dollars are cents, any other number a tenth.
+  const p = (week, claudeUsd, cacheHit) => ({ week, until: 'x', kpis: { transcripts: { claudeUsd, mainUsd: claudeUsd, subUsd: 0, rewriteUsd: claudeUsd, cacheHit } } });
+  const list = [p('2026-W41', 10.01, 10.14), p('2026-W42', 10.26, 10.16), p('2026-W43', 10.5, 10.18)];
+  const b = previousKpis(list, '2026-W44');
+  assert.deepEqual([b.claudeUsd, b.mainUsd, b.subUsd, b.rewriteUsd], [10.26, 10.26, 0, 10.26], 'every Usd median keeps its cents');
+  assert.equal(b.cacheHit, 10.2, 'a median that is not dollars keeps one decimal');
+  // An outlier's cohort median is dollars too, and its multiple stays at a tenth.
+  const filler = Math.max(MIN_COHORT, 4);
+  const hi = Math.round(10.26 * (OUTLIER_X + 2) * 100) / 100;
+  const rows = [...Array.from({ length: filler }, (_, i) => logRow(`EP-${i + 1}`, CELL_A, 60, 10.26)), logRow('EP-X', CELL_A, 60, hi)];
+  const win = windowFor({ since: '2026-10-19T00:00:00Z', until: '2026-10-26T00:00:00Z', now: NOW });
+  const outs = unitOutliers(logRecords(table(LOG_HEAD, rows), datesFor(...rows.map(() => '22T10:00:00'))), win);
+  assert.deepEqual(outs.map((o) => [o.unit, o.metric, o.median, o.x]), [['EP-X', 'cost', 10.26, OUTLIER_X + 2]], 'the cost median keeps its cents');
 });
 
 test('stepOutliers compares a step\'s share with the same kind of step data only, and never flags a step under MIN_SHARE', () => {
@@ -747,6 +815,31 @@ test('buildRetro warns of log rows no table took, with the count and the lines, 
   assert.equal(d.kpis.log.units, 1, 'the figures are as they were: the rows are still not read');
   const clean = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
   assert.deepEqual(clean.warnings, []);
+});
+
+test('buildRetro warns of log rows with no commit date: the digest, the first candidate, after the left-out rows and before the spend ones', () => {
+  const t = at('22T10:00:00');
+  const log = (rows, dates) => ({ text: table(LOG_HEAD, rows), dates });
+  const one = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: log([logRow('EP-1', CELL_A, 60, 10)], new Map()) }), { project: 'demo', now: NOW });
+  assert.equal(one.warnings.length, 1, `warnings: ${JSON.stringify(one.warnings)}`);
+  assert.match(one.warnings[0], /^1 log row has no commit date, so every figure leaves it out: /, 'the warning counts the row');
+  assert.match(one.warnings[0], /not committed yet, or one edited since its commit \(a Missed by harness filled after the land\)/, 'the warning names the causes');
+  assert.match(one.warnings[0], /commit the log, then run the retro again/, 'the warning says what to do');
+  assert.deepEqual(warnLines(one), [`Warn: ${one.warnings[0]}`], 'the digest carries it as a Warn line');
+  assert.equal(one.candidates[0].text, one.warnings[0], 'it is the first candidate');
+  assert.match(formatDigest(one), /^Read: 1 log rows \(1 undated, left out\)/m, 'the Read line keeps its count');
+  // Two rows, one dated: the count is of the undated one; with no session read, the spend warning comes second.
+  const two = buildRetro(gatherOf({ log: log([logRow('EP-1', CELL_A, 60, 10), logRow('EP-2', CELL_A, 30, 5)], new Map([[3, t]])) }), { project: 'demo', now: NOW });
+  assert.equal(two.warnings.length, 2, `warnings: ${JSON.stringify(two.warnings)}`);
+  assert.match(two.warnings[0], /^1 log row has no commit date/);
+  assert.match(two.warnings[1], /cost and session figures are missing/, 'the undated-rows warning comes before the spend ones');
+  // Several rows, after the rows no table took.
+  const text = `${table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10), logRow('EP-2', CELL_A, 30, 5), logRow('EP-3', CELL_A, 30, 5)])}\n\n| EP-8 · plan · Code · Full | 30m | 5m |\n`;
+  const many = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text, dates: new Map([[3, t]]) } }), { project: 'demo', now: NOW });
+  assert.equal(many.warnings.length, 2, `warnings: ${JSON.stringify(many.warnings)}`);
+  assert.match(many.warnings[0], /^1 log row\(s\) left out/, 'the left-out rows come first');
+  assert.match(many.warnings[1], /^2 log rows have no commit date, so every figure leaves them out: /, 'several rows: the plural wording');
+  assert.deepEqual(fixtureData().warnings, [], 'a log whose rows are all dated warns of nothing');
 });
 
 test('buildRetro warns of neither when the log has rows and sessions, nor of sessions when a Codex host ran the units', () => {
@@ -1020,4 +1113,121 @@ test('the wrapper puts each warning on stderr as `retro: warn:` and in the diges
   assert.match(fs.readFileSync(path.join(f.repo, REPORTS_DIR, 'retro-2026-W44.md'), 'utf8'), /^Warn: /m, 'the written digest carries it');
   const ok = fixture();
   assert.doesNotMatch(run(ok, [...WINDOW, '--projects-dir', ok.projects, '--dry-run']).stderr, /retro: warn:/, 'a repository with log rows and sessions warns of nothing');
+});
+
+test('the wrapper warns of a log row not committed yet: a Warn line on stdout and `retro: warn:` on stderr, exit 0', () => {
+  const f = fixture();
+  fs.appendFileSync(path.join(f.repo, LOG), `${`| ${logRow('EP-3', CELL_A, 30, 5).join(' | ')} |`}\n`);
+  const dry = run(f, [...WINDOW, '--projects-dir', f.projects, '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /^Read: 3 log rows \(1 undated, left out\)/m, 'the Read line keeps its count');
+  assert.match(dry.stdout, /^Warn: 1 log row has no commit date/m, 'dry run: the digest carries the warning');
+  assert.match(dry.stderr, /^retro: warn: 1 log row has no commit date/m, 'dry run: stderr carries it');
+  assert.doesNotMatch(run(fixture(), [...WINDOW, '--dry-run']).stderr, /no commit date/, 'a committed log warns of nothing');
+});
+
+// ---- dates from git: blame, and the commit time of a state or report file
+
+/** A temp repo and `git(args, date)`, which commits at `date` (`2026-<month>-<day>`'s midday UTC) and fails the test on a non-zero exit. */
+function miniRepo() {
+  const repo = tmpDir('retro-dates-');
+  const git = (args, day = '10-01', { allowFail = false } = {}) => {
+    const date = `2026-${day}T12:00:00Z`;
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', '-c', 'core.quotepath=true', ...args], {
+      cwd: repo,
+      env: cleanEnv({ GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }),
+      encoding: 'utf8',
+    });
+    if (!allowFail) assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  const write = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  };
+  git(['init', '-q', '-b', 'main']);
+  const mv = (from, to) => {
+    fs.mkdirSync(path.dirname(path.join(repo, to)), { recursive: true });
+    git(['mv', from, to]);
+  };
+  return { repo, git, write, mv, commit: (msg, day) => (git(['add', '-A'], day), git(['commit', '-q', '-m', msg], day), git(['rev-parse', 'HEAD'], day)) };
+}
+
+test('blameDates: a whitespace-only re-pad keeps a row\'s date, a commit listed in .git-blame-ignore-revs is looked past, a malformed line there costs no date', () => {
+  const day = (ms) => new Date(ms).toISOString().slice(5, 10);
+  const m = miniRepo();
+  m.write('log.md', '# Log\n| A | x |\n| B | y |\n');
+  m.commit('rows', '10-01');
+  m.write('log.md', '# Log\n|  A  |  x  |\n| B | y |\n');
+  m.commit('re-pad', '10-10');
+  m.write('log.md', '# Log\n|  A  |  x  |\n| B | y2 |\n');
+  const repair = m.commit('repair', '10-11');
+  const rows = (dates) => [dates.get(2), dates.get(3)].map((ms) => (Number.isFinite(ms) ? day(ms) : String(ms)));
+  assert.deepEqual(rows(blameDates(m.repo, 'log.md')), ['10-01', '10-11'], 'a re-pad is not a change: row A keeps 10-01, row B is the repaired line');
+  // The repair commit is listed: B is dated by the commit before it.
+  fs.writeFileSync(path.join(m.repo, '.git-blame-ignore-revs'), `# repairs\n${repair}\n`);
+  assert.deepEqual(rows(blameDates(m.repo, 'log.md')), ['10-01', '10-01'], 'a listed commit is looked past');
+  // One line that is no commit id makes git refuse the file: blame again without it, every row still dated.
+  fs.writeFileSync(path.join(m.repo, '.git-blame-ignore-revs'), `${repair}\nnot-a-sha\n`);
+  const bad = blameDates(m.repo, 'log.md');
+  assert.equal(bad.size, 3, 'every line is still dated');
+  assert.deepEqual(rows(bad), ['10-01', '10-11'], 'the fallback is the -w blame');
+  // A directory of that name is no ignore file.
+  fs.rmSync(path.join(m.repo, '.git-blame-ignore-revs'));
+  fs.mkdirSync(path.join(m.repo, '.git-blame-ignore-revs'));
+  assert.deepEqual(rows(blameDates(m.repo, 'log.md')), ['10-01', '10-11'], 'only a regular file is passed to git');
+});
+
+test('lastCommitTimes: a pure move keeps the old time, a move with edits takes its own, paths are keyed as themselves, a path moved two ways keeps its time at both', () => {
+  const m = miniRepo();
+  const e = String.fromCodePoint(0xe9);
+  const body = (name) => `${Array.from({ length: 12 }, (_, i) => `${name} line ${i}`).join('\n')}\n`;
+  for (const name of ['a', 'b', 'c', 'd', `caf${e} z`]) m.write(`plans/${name}.state.md`, body(name));
+  m.commit('plans', '10-01');
+  m.mv('plans/a.state.md', 'plans/archive/a.state.md');
+  m.mv(`plans/caf${e} z.state.md`, `plans/archive/caf${e} z.state.md`);
+  m.commit('archive', '10-20');
+  m.mv('plans/b.state.md', 'plans/archive/b.state.md');
+  fs.appendFileSync(path.join(m.repo, 'plans/archive/b.state.md'), 'b line 12\n');
+  m.commit('archive and edit', '10-21');
+  // c is moved to two places on two branches, then merged with both kept.
+  m.git(['checkout', '-q', '-b', 'left']);
+  m.mv('plans/c.state.md', 'plans/archive/c.state.md');
+  m.commit('left', '10-22');
+  m.git(['checkout', '-q', 'main']);
+  m.git(['checkout', '-q', '-b', 'right']);
+  m.mv('plans/c.state.md', 'plans/done/c.state.md');
+  m.commit('right', '10-22');
+  m.git(['checkout', '-q', 'main']);
+  m.git(['merge', '-q', '--no-ff', '-m', 'left', 'left'], '10-23');
+  m.git(['merge', '--no-commit', '--no-ff', 'right'], '10-23', { allowFail: true }); // the two moves conflict: keep both
+  m.write('plans/archive/c.state.md', body('c'));
+  m.write('plans/done/c.state.md', body('c'));
+  m.commit('merge', '10-23');
+  const times = lastCommitTimes(m.repo, ['plans']);
+  const day = (rel) => (times.has(rel) ? new Date(times.get(rel)).toISOString().slice(5, 10) : 'missing');
+  assert.equal(day('plans/archive/a.state.md'), '10-01', 'a pure move is not a change');
+  assert.equal(day('plans/a.state.md'), '10-01', 'the old path keeps its time');
+  assert.equal(day('plans/archive/b.state.md'), '10-21', 'a move with edits is a change at its own time');
+  assert.equal(day(`plans/archive/caf${e} z.state.md`), '10-01', 'a path with a space and a non-ASCII letter is keyed as itself');
+  assert.equal(day('plans/archive/c.state.md'), '10-01', 'a path moved two ways keeps its time at the first place');
+  assert.equal(day('plans/done/c.state.md'), '10-01', 'and at the second');
+});
+
+test('gather: a state file moved into archive/ inside the window does not count in the window\'s decisions', () => {
+  const m = miniRepo();
+  const state = (unit) => `Unit: ${unit}\n\n## Decisions\n| ID | Class | By |\n|---|---|---|\n| DEC-1 | T | agent |\n| DEC-2 | P | owner |\n`;
+  m.write(`${PLANS_DIR}/OLD-1.state.md`, state('OLD-1'));
+  m.write(`${PLANS_DIR}/NEW-1.state.md`, state('NEW-1'));
+  m.commit('states', '09-01');
+  m.mv(`${PLANS_DIR}/OLD-1.state.md`, `${PLANS_DIR}/archive/OLD-1.state.md`);
+  m.commit('archive', '10-22');
+  fs.appendFileSync(path.join(m.repo, PLANS_DIR, 'NEW-1.state.md'), '| DEC-3 | C | agent |\n');
+  m.commit('edit', '10-23');
+  const g = gather({ top: m.repo, log: null, plansDirs: [PLANS_DIR], projectsDir: path.join(m.repo, 'no-projects'), codexDir: path.join(m.repo, 'no-codex'), ledger: path.join(m.repo, 'no-ledger'), claudeLedger: path.join(m.repo, 'no-ledger') });
+  const d = buildRetro({ ...g, previous: [] }, { project: 'demo', now: NOW });
+  assert.equal(d.decisions.units, 1, 'only the state file edited in the window counts');
+  assert.equal(d.decisions.classes.T, 1);
+  assert.match(formatDigest(d), /^- Decisions in 1 state files changed this window: /m);
+  assert.deepEqual(g.states.map((s) => s.path).sort(), [`${PLANS_DIR}/NEW-1.state.md`, `${PLANS_DIR}/archive/OLD-1.state.md`]);
 });

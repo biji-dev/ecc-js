@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 44;
+const EXPECTED_TESTS = 51;
 
 let passed = 0;
 let failed = 0;
@@ -133,6 +133,7 @@ const INSTALL = [
     "export const STATUS_WORDS = { open: ['todo'], scheduled: ['planned'], fixed: ['done'], dropped: ['wontfix'] };",
   ],
   [RETRO_CORE, "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
+  [RETRO_CORE, 'export const FILED_AT = null;', 'export const FILED_AT = /(?:^|[^\\d])(\\d{4}-\\d{2}-\\d{2})-[a-z]/i;'],
   [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes' };"],
   [RETRO_CORE, 'export const OUTLIER_X = 2;', 'export const OUTLIER_X = 3;'],
   [RETRO_CORE, 'export const MIN_COHORT = 3;', 'export const MIN_COHORT = 4;'],
@@ -239,7 +240,7 @@ function checkDefaults(scriptsDir) {
   const code = `import * as c from ${JSON.stringify(url)};
 console.log(JSON.stringify({
   paths: [c.REPORTS_DIR, c.LOG, c.FOLLOW_UPS, c.PLANS_DIR],
-  follow: [c.STATUS_COLUMNS, c.STATUS_WORDS, c.SEVERITY_COLUMNS],
+  follow: [c.STATUS_COLUMNS, c.STATUS_WORDS, c.SEVERITY_COLUMNS, c.FILED_AT],
   extra: c.EXTRA_COLUMNS,
   levels: [c.OUTLIER_X, c.MIN_COHORT, c.MIN_SHARE, c.REWRITE_ALERT_PERCENT, c.QUEUE_ALERT_DAYS],
   steps: ['EP-1 8c claims audit', 'EP-1 lane A conformance', 'EP-1 live walk', 'EP-1 integration', 'EP-1 screenshots', 'EP-1 code review', 'EP-1 slice 2', 'EP-1 grounding', 'EP-1 8b record', 'EP-1 8a docs sweep'].map((d) => c.stepOfDescription(d, 'EP-1')),
@@ -248,7 +249,7 @@ console.log(JSON.stringify({
   assert.strictEqual(res.status, 0, res.stderr);
   const got = JSON.parse(res.stdout);
   assert.deepStrictEqual(got.paths, ['docs/harness/reports', 'docs/harness/log.md', 'docs/harness/follow-ups.md', 'docs/plans'], 'the template paths');
-  assert.deepStrictEqual(got.follow, [['status'], { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] }, ['sev', 'priority']], 'the template follow-ups shape');
+  assert.deepStrictEqual(got.follow, [['status'], { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] }, ['sev', 'priority'], null], 'the template follow-ups shape (the filing date binding is off)');
   assert.deepStrictEqual(got.extra, { defects: 'defects', missed: 'missed by harness', friction: 'friction' }, 'the template EXTRA_COLUMNS');
   assert.deepStrictEqual(got.levels, [2, 3, 5, 5, 14], `OUTLIER_X, MIN_COHORT, MIN_SHARE, REWRITE_ALERT_PERCENT and QUEUE_ALERT_DAYS: ${got.levels.join(', ')}`);
   assert.deepStrictEqual(got.steps, ['8c', '4', '5', '6', '7', '8', '2', '1', '8b', '8a'], 'the template STEP_WORDS');

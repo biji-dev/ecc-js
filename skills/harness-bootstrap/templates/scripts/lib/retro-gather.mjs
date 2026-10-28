@@ -47,11 +47,22 @@ export function repoTop(cwd) {
 /**
  * line -> the commit time (ms) of the commit that last changed it, or null for a line not committed
  * yet (git blames it on the zero commit, with the time of the blame); empty when git cannot blame the file.
+ * Whitespace-only changes are not changes (`-w`: a formatter's re-pad of a table keeps its rows' dates),
+ * and the commits in `.git-blame-ignore-revs`, when the repository has that file, are looked past (a
+ * commit that repairs the log's columns). A file git refuses (a line in it is no commit id) is not used.
  */
 export function blameDates(top, rel) {
+  const base = ['blame', '-w', '--line-porcelain'];
   let out;
   try {
-    out = gitRead(['blame', '--line-porcelain', '--', rel], top);
+    const ignore = path.join(top, '.git-blame-ignore-revs');
+    const listed = fs.existsSync(ignore) && fs.statSync(ignore).isFile();
+    try {
+      out = gitRead([...base, ...(listed ? ['--ignore-revs-file', '.git-blame-ignore-revs'] : []), '--', rel], top);
+    } catch (e) {
+      if (!listed) throw e;
+      out = gitRead([...base, '--', rel], top); // one bad line there must not undate the whole log
+    }
   } catch {
     return new Map();
   }
@@ -113,19 +124,51 @@ export function readFollowUps(top, specs, blame = blameDates) {
   return { text: files.map((f) => f.text).join('\n\n'), dates };
 }
 
-/** path (relative to top) -> the newest commit time (ms) that touched it, for every file under `dirs`. */
+/**
+ * path (relative to top) -> the newest commit time (ms) that changed it, for every file under `dirs`.
+ * A pure move (`git mv`, R100: same content, new path) is not a change: the new path takes the time of
+ * what the old path was last changed at, so a state file archived this week does not read as edited this
+ * week. A path moved to two places keeps its time at both. A rename with edits is a change at its own time.
+ */
 export function lastCommitTimes(top, dirs) {
   let out;
   try {
-    out = gitRead(['log', '--format=%x00%ct', '--name-only', '--', ...dirs], top);
+    out = gitRead(['log', '-z', '-M', '--format=%x01%ct', '--name-status', '--', ...dirs], top);
   } catch {
     return new Map();
   }
+  // Newest first. `-z` gives NUL-separated tokens: `\x01<ct>`, then per file a status (the first one
+  // after a commit time starts with a newline) and one path, or two (old, new) for an R or C status.
   const times = new Map();
+  const moved = new Map(); // old path -> the paths it was moved to by pure moves
+  const take = (file, t, seen = new Set()) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!times.has(file)) times.set(file, t);
+    for (const to of moved.get(file) ?? []) take(to, t, seen);
+  };
+  const tokens = out.split('\0');
   let t = null;
-  for (const line of out.split('\n')) {
-    if (line.startsWith('\0')) t = Number(line.slice(1)) * 1000;
-    else if (line && !times.has(line)) times.set(line, t);
+  for (let i = 0; i < tokens.length; i++) {
+    const status = tokens[i].replace(/^\n/, '');
+    if (status.startsWith('\x01')) {
+      t = Number(status.slice(1)) * 1000;
+      continue;
+    }
+    if (!status) continue;
+    if (status[0] === 'R' || status[0] === 'C') {
+      const [from, to] = [tokens[i + 1], tokens[i + 2]];
+      i += 2;
+      if (status === 'R100') {
+        if (!moved.has(from)) moved.set(from, []);
+        moved.get(from).push(to);
+      } else {
+        take(to, t);
+      }
+    } else {
+      take(tokens[i + 1], t);
+      i += 1;
+    }
   }
   return times;
 }

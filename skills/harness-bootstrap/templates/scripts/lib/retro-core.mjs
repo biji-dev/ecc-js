@@ -47,6 +47,15 @@ export const PLANS_DIR = 'docs/plans';
 export const STATUS_COLUMNS = ['status'];
 export const STATUS_WORDS = { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] };
 export const SEVERITY_COLUMNS = ['sev', 'priority'];
+// [B] The date a row was filed, when the project writes it into the row: a RegExp whose first group is a
+// `YYYY-MM-DD` date. An open row's cells are tried in order and the first one it matches decides: that
+// cell's date (UTC midnight) is the filing date and the row's age counts from it; if the date does not
+// parse, the row keeps the date of its line's last commit, and no later cell is tried. A row with no
+// matching cell keeps its line's date too. `null` dates every row by its line. Anchor the RegExp to its
+// cell, so that a date in a note or a status cell is not read as a filing date: `/^(\d{4}-\d{2}-\d{2})$/`
+// for a Filed column, `/^[A-Z]+-(\d{4}-\d{2}-\d{2})\b/` for an id that carries the date. The skill's weekly
+// job reads only the paths its registry names, so it always dates by line.
+export const FILED_AT = null;
 // [B] The log columns the retro reads beyond estimate-core's COLUMNS, matched the same way (prefix).
 export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };
 // [B] An outlier is at least OUTLIER_X times its cohort's median, in a cohort of at least MIN_COHORT.
@@ -216,18 +225,36 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
 const STATUS_KINDS = ['open', 'scheduled', 'fixed', 'dropped'];
 
 /**
+ * The filing date (UTC midnight, ms) the `filedAt` RegExp finds in a row: the first of `cells` it matches
+ * decides, and null when that date does not parse (a day the calendar lacks), or when there is no binding
+ * or no matching cell.
+ */
+function filedOn(cells, filedAt) {
+  if (!filedAt) return null;
+  let m = null;
+  for (const c of cells) if ((m = filedAt.exec(String(c ?? '').trim()))) break;
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(m?.[1] ?? '');
+  if (!ymd) return null;
+  const ms = Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+  return new Date(ms).toISOString().slice(0, 10) === ymd[0] ? ms : null; // 2026-02-31 would roll into March
+}
+
+/**
  * The follow-ups doc -> rows by status kind, the open ones that name a P3, the age in days of the
  * oldest open row and of the oldest open P3, and that P3's row (its first cell, marks stripped).
  * Rows in a table with no status column are counted in `noStatus` and in nothing else. `lineDates` is
  * anything with `get(line)` -> commit ms (a Map, or readFollowUps' lazy lookup); the options default
- * to the [B] bindings, and a test passes its own.
+ * to the [B] bindings, and a test passes its own. An open row is aged from the date in the first of its
+ * cells `filedAt` matches (its line is not looked up then); a row with no such cell, or whose date does
+ * not parse, from its line.
  */
 export function followUpsSummary(
   text,
   lineDates = new Map(),
   now = Date.now(),
-  { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS } = {},
+  { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS, filedAt = FILED_AT } = {},
 ) {
+  const filed = filedAt ? new RegExp(filedAt.source, filedAt.flags.replace(/[gy]/g, '')) : null; // a sticky or global flag would carry state between rows
   const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, noStatus: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null, oldestOpenP3Row: null };
   const words = STATUS_KINDS.filter((kind) => statusWords[kind]?.length).map((kind) => [kind, new RegExp(`^(?:${statusWords[kind].map(escapeRe).join('|')})(?![A-Za-z])`, 'i')]);
   const column = (names, prefixes) => names.findIndex((n) => prefixes.some((p) => n.startsWith(p.toLowerCase())));
@@ -248,7 +275,7 @@ export function followUpsSummary(
       if (kind !== 'open') continue;
       const p3 = sev === -1 ? cells.some((c) => /\bP3\b/.test(c)) : /\bP3\b/.test(cells[sev] ?? '');
       if (p3) out.openP3 += 1;
-      const at = lineDates.get(line);
+      const at = filedOn(cells, filed) ?? lineDates.get(line);
       if (!Number.isFinite(at)) continue;
       if (oldest === null || at < oldest) oldest = at;
       if (p3 && (oldestP3 === null || at < oldestP3)) [oldestP3, oldestRow] = [at, cells[0]];
@@ -433,15 +460,15 @@ export function unitSteps(unit, { markers = [], rows = [], agents = null } = {})
 export function logKpis(records, since, until) {
   const rows = records.filter((r) => inWindow(r.landed, since, until));
   const units = groupUnits(rows);
-  const med = (k) => {
+  const med = (k, round = round1) => {
     const m = median(units.map((u) => u[k]));
-    return m === null ? null : round1(m);
+    return m === null ? null : round(m);
   };
   return {
     units: units.length,
     work: med('work'),
     ownerWait: med('ownerWait'),
-    cost: med('cost'),
+    cost: med('cost', round2), // dollars to the cent, minutes to a tenth
     p0: rows.reduce((s, r) => s + (r.defects?.p0 ?? 0), 0),
     p1: rows.reduce((s, r) => s + (r.defects?.p1 ?? 0), 0),
     missed: rows.filter((r) => r.missed).length,
@@ -504,7 +531,7 @@ export function previousKpis(previous, week, key = 'transcripts') {
   const out = { weeks: list.length };
   for (const k of Object.keys(list[0].kpis[key])) {
     const m = median(list.map((p) => p.kpis[key][k]));
-    out[k] = m === null ? null : round1(m);
+    out[k] = m === null ? null : (k.endsWith('Usd') ? round2 : round1)(m);
   }
   return out;
 }
@@ -521,7 +548,7 @@ export function unitOutliers(records, win) {
       if (cohort.length < MIN_COHORT || !(med > 0)) continue;
       for (const u of cohort) {
         if (current.has(u.id) && u[metric] >= OUTLIER_X * med) {
-          out.push({ unit: u.id, tier: tier || null, metric, value: u[metric], median: round1(med), x: round1(u[metric] / med), n: cohort.length });
+          out.push({ unit: u.id, tier: tier || null, metric, value: u[metric], median: (metric === 'cost' ? round2 : round1)(med), x: round1(u[metric] / med), n: cohort.length });
         }
       }
     }
@@ -663,6 +690,10 @@ function readCounts(g, records) {
 function warningsFor(d, records, claudeRows, leftOut = []) {
   const out = [];
   if (leftOut.length) out.push(leftOutWarning(leftOut));
+  const undated = records.filter((r) => r.landed === null).length;
+  if (undated) {
+    out.push(`${undated} log row${undated === 1 ? ' has' : 's have'} no commit date, so every figure leaves ${undated === 1 ? 'it' : 'them'} out: a row not committed yet, or one edited since its commit (a Missed by harness filled after the land); commit the log, then run the retro again`);
+  }
   const t = d.kpis.transcripts;
   const h = d.kpis.codexHost;
   const spent = [t?.claudeUsd > 0 ? `${usd(t.claudeUsd)} of Claude spend` : null, h?.sessions > 0 ? `${h.sessions} Codex thread${h.sessions === 1 ? '' : 's'}` : null].filter(Boolean);

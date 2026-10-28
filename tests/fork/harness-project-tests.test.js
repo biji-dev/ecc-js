@@ -21,7 +21,7 @@ const SUITES = {
   'edit-guard': 9,
   'harness-guard': 10,
   'context-budget': 7,
-  'run-gates': 4,
+  'run-gates': 10,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).
@@ -322,6 +322,42 @@ mutantFails(
   'scripts/run-gates.sh',
   '! strip_csi <"$logfile" | grep -Eq -- "$rx"',
   '! grep -Eq -- "$rx" "$logfile"',
+);
+mutantFails(
+  'a counted gate bound to a regex that takes `COUNTED node 0 passed`',
+  'scripts/run-gates.sh',
+  "'^COUNTED node [1-9][0-9]* passed'",
+  "'^COUNTED node [0-9]+ passed'",
+);
+mutantFails(
+  'a runner whose try_reuse always misses, so nothing is ever reused',
+  'scripts/run-gates.sh',
+  '  local rec t diff bad\n',
+  '  local rec t diff bad\n  return 1\n',
+);
+mutantFails(
+  'a runner that ignores the docs-only pattern',
+  'scripts/run-gates.sh',
+  'DOCS_RX="${RUN_GATES_DOCS_ONLY-$DOCS_ONLY}"',
+  'DOCS_RX=""',
+);
+mutantFails(
+  'a runner whose cache variant leaves NODE_OPTIONS out',
+  'scripts/run-gates.sh',
+  '|$(hash_str "${NODE_OPTIONS:-}")',
+  '',
+);
+mutantFails(
+  'a runner that does not look at the cache again after a lock wait',
+  'scripts/run-gates.sh',
+  '      if [ "$CACHE_ON" -eq 1 ] && [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi',
+  '      :',
+);
+mutantFails(
+  'a --since run that no longer skips a full gate',
+  'scripts/run-gates.sh',
+  'if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then',
+  'if false; then',
 );
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

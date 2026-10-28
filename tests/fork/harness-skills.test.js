@@ -366,6 +366,14 @@ test('malformed input or a missing transcript never fails the turn', () => {
 
 console.log('\nharness skills: reference text (js.8)');
 
+test("runner.md's reuse paragraph names NODE_OPTIONS as part of the key", () => {
+  const runner = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'runner.md'), 'utf8').replace(/\s+/g, ' ');
+  const start = runner.indexOf('`run-gates.sh` reuses an all-PASS result');
+  assert.ok(start >= 0, 'runner.md has no run-gates reuse paragraph');
+  const para = runner.slice(start, runner.indexOf('share the cache', start));
+  assert.ok(/The key is [^.]*`RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`/.test(para), 'the reuse paragraph does not name NODE_OPTIONS as part of the key');
+});
+
 test('gate-design.md says the review gate reads tests and instruction files, skips docs alone, and reviews a critical test at Full', () => {
   const design = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'gate-design.md'), 'utf8').replace(/\s+/g, ' ');
   const start = design.indexOf('`[M]` **What the gate reviews.**');

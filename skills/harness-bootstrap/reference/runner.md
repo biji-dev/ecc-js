@@ -388,7 +388,7 @@ DOM snapshot; send screenshots to a model that reads images.
   no gate reads those paths; a second agent that starts the same run waits for the
   first. Quote the `REUSED` line as the evidence — never re-run to have a fresh
   one. The key is the working tree's tracked and untracked files plus what
-  `RUN_GATES_KEY_EXTRA` names; ignored inputs (`node_modules`, `.env`) and refs are
+  `RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`; ignored inputs (`node_modules`, `.env`) and refs are
   not in it unless named, and worktrees of one repository share the cache.
 
 **Step 8a — docs.** `[M]` Only when the diff changes a public behaviour, a named

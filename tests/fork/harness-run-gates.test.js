@@ -1013,6 +1013,44 @@ test('cache: RUN_GATES_KEY_EXTRA output joins the key, so changing it forces a r
   assert.strictEqual(count(c2), 2);
 });
 
+test('cache: NODE_OPTIONS joins the key (unset equals empty, hashed, never stored), so changing it forces a run', () => {
+  const { counter, repo } = counterRepo();
+  const runWith = value => {
+    const { cmd, env } = runnerEnv(repo, [], { cache: true });
+    if (value === undefined) delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = value;
+    const r = spawnSync(cmd[0], cmd[1], { cwd: repo, env, encoding: 'utf8' });
+    return { out: r.stdout + r.stderr, lines: r.stdout.split('\n').filter(l => l !== '') };
+  };
+  const probe = '--title=nodeopts-probe';
+  assert.ok(runWith(undefined).lines[0].startsWith('logs: '));
+  const empty = runWith('');
+  assert.ok(REUSED_RX.test(empty.lines[0]), 'an empty NODE_OPTIONS is the unset variant: ' + empty.lines[0]);
+  const other = runWith(probe);
+  assert.ok(other.lines[0].startsWith('logs: '), 'another NODE_OPTIONS runs the gates: ' + other.lines[0]);
+  assert.strictEqual(count(counter), 2);
+  const same = runWith(probe);
+  assert.ok(REUSED_RX.test(same.lines[0]), 'the same NODE_OPTIONS reuses: ' + same.lines[0]);
+  assert.strictEqual(count(counter), 2);
+  assert.ok(![other.out, same.out].some(o => o.includes('nodeopts-probe')), 'NODE_OPTIONS is printed');
+  const records = path.join(repo, '.git', 'run-gates-cache', 'records');
+  const files = fs.readdirSync(records).flatMap(v => fs.readdirSync(path.join(records, v)).map(f => path.join(records, v, f)));
+  assert.ok(files.length > 0 && !files.some(f => fs.readFileSync(f, 'utf8').includes('nodeopts-probe')), 'NODE_OPTIONS is stored in the cache');
+});
+
+test('header and gate block: KEY_EXTRA names runtime versions and its quoting; a runner\'s own cache only hides a stale result', () => {
+  const flat = text => text.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
+  const header = flat(SOURCE.slice(0, SOURCE.indexOf('set -u')));
+  for (const w of ['NODE_OPTIONS (hashed, never stored; unset = empty', 'node --version; pnpm --version',
+    'runs under `bash -c` with no stdin', 'single quotes (double quotes inside)', 'its output is hashed, never stored']) {
+    assert.ok(header.includes(w), `header does not say: ${w}`);
+  }
+  const block = flat(SOURCE.slice(SOURCE.indexOf(OPEN_MARKER), SOURCE.indexOf(CLOSE_MARKER)));
+  for (const w of ['(turbo, nx) only hides a stale result', 'already reuses by tree', 'turbo run <task> --force', '--skip-nx-cache']) {
+    assert.ok(block.includes(w), `the gate block does not say: ${w}`);
+  }
+});
+
 test('lock: release_lock removes only a lock whose pid is ours', () => {
   const scenario = source => {
     const repo = makeRepo(withGates(source, [`gate steal always 'for f in .git/run-gates-cache/locks/*/pid; do echo 999999 > "$f"; done'`]));

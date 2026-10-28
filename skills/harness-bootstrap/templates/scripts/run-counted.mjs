@@ -35,6 +35,8 @@
  * processes it started stop with it. Once the command has exited, a process it left holding its
  * pipes open is waited for at most STOP_GRACE_MS, and the run ends with what was read. A second
  * stop signal kills the command's group with SIGKILL (exit 137), and the verdict names the first.
+ * A SIGKILL to this process cannot be forwarded, and the command's own group does not receive it:
+ * the command runs on until a write to its closed pipes ends it, or to its end if it writes nothing.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';

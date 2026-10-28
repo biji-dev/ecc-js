@@ -1076,6 +1076,13 @@ test('an unknown flag is a usage error with exit 2, and no check runs', () => {
   assert.equal(r.out, '');
 });
 
+test('-h and --help after --rules-for are paths, not a request for the usage', () => {
+  const dir = fixture();
+  const r = run(dir, ['--json', '--rules-for', 'src/db/schema.js', '-h', '--help']);
+  assert.equal(r.status, 0, r.all);
+  assert.equal(r.out, '.claude/rules/db.md\n');
+});
+
 test('a bare word before --rules-for is a usage error; the paths after --rules-for are still paths', () => {
   const dir = fixture();
   const r = run(dir, ['stray']);

@@ -99,6 +99,14 @@ test('git behind a wrapper with options is still read: command -p, exec -a, time
   assert.equal(rule('command -v git'), null);
 });
 
+test('command -v and -V look a name up and run nothing; command -p and -- still run it', () => {
+  for (const c of ['command -v codex &', 'command -V codex &', 'command -pv codex &', 'command -v git commit -n -m x', 'command -v -- git push --no-verify origin topic']) {
+    assert.equal(rule(c), null, c);
+  }
+  for (const c of ['command -p git commit -n -m x', 'command -- git commit -n -m x']) assert.equal(rule(c), 'no-verify', c);
+  assert.equal(rule('command -p codex exec x &'), 'codex-background');
+});
+
 test('a merge --no-verify after a `--` that an option took as its value is refused', () => {
   for (const c of ['git merge -m -- --no-verify topic', 'git merge -- --no-verify topic']) assert.equal(rule(c), 'no-verify', c);
   for (const c of ['git merge --no-verify-signatures topic', 'git merge -n topic']) assert.equal(rule(c), null, c);

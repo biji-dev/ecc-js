@@ -17,7 +17,7 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
-  'command-guard': 15,
+  'command-guard': 16,
   'edit-guard': 9,
   'harness-guard': 10,
   'context-budget': 7,

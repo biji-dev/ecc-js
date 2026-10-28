@@ -293,12 +293,14 @@ const COMMENT_MARKER = /^\s*(?:\/\*+|\*+\/?|\/\/+|#+|<!--)?\s?/;
 const args = process.argv.slice(2);
 
 const USAGE = 'usage: node scripts/check-agent-docs.mjs [--json] [--base] | --rules-for <file...>';
-if (args.some((arg) => arg === '--help' || arg === '-h')) {
+// Only what precedes `--rules-for` is ours: the words after it are paths, even `-h`.
+const own = args.slice(0, args.includes('--rules-for') ? args.indexOf('--rules-for') : args.length);
+if (own.some((arg) => arg === '--help' || arg === '-h')) {
   process.stdout.write(`${USAGE}\n`);
   process.exit(0);
 }
 // Before `--rules-for` only `--json` and `--base` are ours; anything else is a usage error, never a lint run.
-for (const arg of args.slice(0, args.includes('--rules-for') ? args.indexOf('--rules-for') : args.length)) {
+for (const arg of own) {
   if (arg === '--json' || arg === '--base') continue;
   process.stderr.write(`check-agent-docs: ${arg.startsWith('-') ? 'unknown option' : 'unexpected argument'} ${arg}\n${USAGE}\n`);
   process.exit(2);

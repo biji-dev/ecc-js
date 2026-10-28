@@ -249,6 +249,11 @@ function unwrap(words, assignments) {
       }
     }
   }
+  // `command -v` and `-V` only look a name up: nothing runs.
+  if (name === 'command' && words.slice(1, i).some((w) => /^-[^-]*[vV]/.test(w))) {
+    words.length = 0;
+    return true;
+  }
   if (name === 'timeout') i++; // the duration
   if (name === 'env' || name === 'sudo') {
     for (; i < words.length && ASSIGNMENT.test(words[i]); i++) assignments.push(words[i]);

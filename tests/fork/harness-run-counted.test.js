@@ -144,6 +144,12 @@ test("a project's own kind and flag in its core do not fail the shipped suite", 
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
 
+test('the header says what a SIGKILL to the wrapper leaves running', () => {
+  const header = fs.readFileSync(path.join(SCRIPTS, CLI_REL), 'utf8').split('*/')[0];
+  assert.match(header, /A SIGKILL to this process cannot be forwarded/);
+  assert.match(header, /the command runs on until a write to its closed pipes ends it/);
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

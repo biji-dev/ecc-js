@@ -724,6 +724,70 @@ if (!hasGit) {
     } finally { cleanup(dir); }
   });
 
+  // ---- Names as typed, pulls and commit matches: refused while held work is merged ----
+  /** Checkout scope, both hooks; task/held in .worktrees/held with a commit of its own to `file`, its row held. */
+  function heldWorkSetup({ idPattern, file = 'held.txt' } = {}) {
+    const guard = guardText('checkout', { idPattern });
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    const wt = addWorktree(dir, '.worktrees/held', 'task/held');
+    fs.writeFileSync(path.join(wt, file), 'held\n');
+    git(wt, ['add', file]);
+    assertAllowed(git(wt, ['commit', '-qm', 'held work', '--no-verify'])); // set-up: before its row is written
+    setRegistry(dir, '| 1 | held | 2 | task/held | `.worktrees/held` | 2026-10-09T10:00Z |', WT_HEADER);
+    return { dir, wt };
+  }
+  const HELD_WORK = /merging 'task\/held', which still holds a row.*release its row first/;
+  /** A bare remote `origin` with task/held pushed to it and fetched back. */
+  function pushedHeld(dir, wt) {
+    const bare = tmp('harness-scope-remote-');
+    git(bare, ['init', '-q', '--bare']);
+    assert.strictEqual(git(dir, ['remote', 'add', 'origin', bare]).status, 0, 'remote add');
+    assertAllowed(git(wt, ['push', '-q', 'origin', 'task/held']));
+    assertAllowed(git(dir, ['fetch', '-q', 'origin']));
+    return bare;
+  }
+
+  test('checkout scope, change mode: a clean --no-ff merge of refs/heads/task/held is refused', () => {
+    const { dir } = heldWorkSetup({ idPattern: '' });
+    try {
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge', 'refs/heads/task/held']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope, change mode: a clean --no-ff merge of origin/task/held, pushed to a bare remote, is refused', () => {
+    const { dir, wt } = heldWorkSetup({ idPattern: '' });
+    const bare = pushedHeld(dir, wt);
+    try {
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge', 'origin/task/held']), HELD_WORK);
+    } finally { cleanup(dir, bare); }
+  });
+
+  test('checkout scope: git pull --no-ff origin task/held is refused', () => {
+    const { dir, wt } = heldWorkSetup();
+    const bare = pushedHeld(dir, wt);
+    try {
+      assertRefused(git(dir, ['pull', '-q', '--no-ff', '--no-edit', 'origin', 'task/held']), HELD_WORK);
+    } finally { cleanup(dir, bare); }
+  });
+
+  test('checkout scope: a clean --no-ff merge of an unheld copy branch at the held tip (held work of its own) is refused', () => {
+    const { dir } = heldWorkSetup();
+    try {
+      assert.strictEqual(git(dir, ['branch', 'copy', 'task/held']).status, 0, 'branch copy');
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge copy', 'copy']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: a conflicted merge of that copy branch, concluded with git commit, is refused', () => {
+    const { dir } = heldWorkSetup({ file: 'work.txt' });
+    try {
+      assert.strictEqual(git(dir, ['branch', 'copy', 'task/held']).status, 0, 'branch copy');
+      conflictedMerge(dir, 'copy');
+      assertRefused(git(dir, ['commit', '-qm', 'conclude merge']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
   /** Tracked registry; task/T-AB-12-x has no row left after merging `side`, which only releases it. */
   function releaseMergeSetup(install) {
     const guard = guardText('repo');
@@ -789,9 +853,9 @@ if (!hasGit) {
   test('the header comment lists exactly the [B] lines the file has', () => {
     const lines = fs.readFileSync(GUARD, 'utf8').split('\n');
     const bound = lines.filter((l) => /^[A-Z_]+=.*#\s*\[B\]/.test(l)).map((l) => l.split('=')[0]);
-    assert.deepStrictEqual(bound, ['REGISTRY', 'ID_PATTERN', 'SCOPE']);
+    assert.deepStrictEqual(bound, ['REGISTRY', 'ID_PATTERN', 'SCOPE', 'MAINLINE']);
     const header = lines.slice(0, 6).join('\n');
-    assert.match(header, /\[B\] REGISTRY, ID_PATTERN and SCOPE/);
+    assert.match(header, /\[B\] REGISTRY, ID_PATTERN, SCOPE and MAINLINE/);
     assert.ok(!/four settings|three settings/.test(header), 'no stale count');
     const stray = lines.slice(6).filter((l) => /\[B\]/.test(l) && !/^[A-Z_]+=/.test(l));
     assert.deepStrictEqual(stray, [], '[B] appears only on binding lines after the header');

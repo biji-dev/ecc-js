@@ -1,6 +1,6 @@
 #!/bin/sh
 # harness-bootstrap commit guard (generated YYYY-MM-DD). Refuses, never merely checks.
-# [M] the logic below. [B] REGISTRY, ID_PATTERN and SCOPE: re-derive them from this project.
+# [M] the logic below. [B] REGISTRY, ID_PATTERN, SCOPE and MAINLINE: re-derive them from this project.
 # Install: .githooks/pre-commit (git config core.hooksPath .githooks), or call it
 # from an existing husky/lefthook pre-commit. Install the same file as
 # .githooks/pre-merge-commit too: a non-conflicting merge runs that hook, not
@@ -15,6 +15,7 @@ REGISTRY=".claude/registry.md"             # [B] the lock file, relative to the 
 # may be either case).
 ID_PATTERN='[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]+[A-Za-z]?'  # [B] the task-id shape; '' = no id matching
 SCOPE="repo"                               # [B] repo = one lock for the whole clone; checkout = one lock per checkout (worktree)
+MAINLINE="main"                            # [B] the branch lands merge into
 LABEL="harness guard"
 
 refuse() {
@@ -153,51 +154,76 @@ EOF
 fi
 
 # Is this a merge? A clean merge runs this hook as pre-merge-commit before MERGE_HEAD exists,
-# so also check the hook name and the reflog action git sets ("merge <branch>...", "pull ...").
+# so also check the hook name and the reflog action git sets ("merge <name>...", "pull ...").
 merging=0
-mh=$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null) && merging=1
+mhf=$(git rev-parse --git-path MERGE_HEAD)
+if [ -f "$mhf" ]; then merging=1; fi
 case "$(basename "$0")" in pre-merge-commit) merging=1 ;; esac
 case "${GIT_REFLOG_ACTION:-}" in merge*|pull*) merging=1 ;; esac
 
-# A merge refuses while the branch it merges still holds a row, in either scope: under checkout
-# that row locks only its own checkout, so nothing else stops the main checkout merging it. A
-# clean merge names the branch in its reflog action; a conflicted one is concluded by a commit
-# with MERGE_HEAD set and no action, so that commit is compared with each held row's Branch tip,
-# unless a branch that holds no row also points at it (a held branch claimed at main's tip, with
-# no commits yet, is main's tip: no held work is in it). A pull names no branch.
-unheld_at() {
-  git for-each-ref --points-at "$1" --format='%(refname)' refs/heads refs/remotes | {
-    while read -r ref; do
-      case "$ref" in
-        refs/heads/*) n=${ref#refs/heads/} ;;
-        refs/remotes/*) n=${ref#refs/remotes/*/} ;;
-        *) continue ;;
-      esac
-      if ! rows "$n" "$(task_id "$n")" | grep -q '^[^|]'; then exit 0; fi
-    done
-    exit 1
-  }
-}
-if [ "$merging" = 1 ] && [ -n "$held" ]; then
-  case "${GIT_REFLOG_ACTION:-}" in
-    merge\ *)
-      set -f
-      for n in ${GIT_REFLOG_ACTION#merge }; do
-        if rows "$n" "$(task_id "$n")" | grep -q '^[^|]'; then
-          refuse "merging '$n', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
-        fi
-      done
-      set +f
-      ;;
+# A merge refuses while what it merges is still held, in either scope: under checkout a row
+# locks only its own checkout, so nothing else stops the main checkout merging it. A merged
+# name refuses when it matches a held row by name or task id; a merged commit refuses when it
+# is a held row's Branch tip with work of its own. Names come from a clean merge's reflog
+# action ("merge <name>...", as typed: refs/heads/x, refs/remotes/<remote>/x and <remote>/x
+# read as x) and a pull's FETCH_HEAD lines for merge ("branch '<name>' of ..."); commits from
+# those names, those lines, and MERGE_HEAD (one line per merged commit), which a conflicted
+# merge leaves for the commit that concludes it, with no reflog action. A held tip already in
+# MAINLINE (a branch claimed at its tip, no commits yet) is no held work; with no MAINLINE
+# branch every held tip counts as work.
+tab=$(printf '\t')
+branch_name() {
+  case "$1" in
+    refs/heads/*) printf '%s\n' "${1#refs/heads/}"; return ;;
+    refs/remotes/*/*) printf '%s\n' "${1#refs/remotes/*/}"; return ;;
   esac
-  if [ -n "$mh" ]; then
-    while IFS='|' read -r tok wt br; do
-      if [ -n "$br" ] && [ "$(git rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$mh" ] && ! unheld_at "$mh"; then
-        refuse "merging '$br', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
-      fi
-    done <<EOF
+  for r in $(git remote 2>/dev/null); do
+    case "$1" in "$r"/*) printf '%s\n' "${1#"$r"/}"; return ;; esac
+  done
+  printf '%s\n' "$1"
+}
+has_work() { ! git merge-base --is-ancestor "$1" "refs/heads/$MAINLINE" 2>/dev/null; }
+held_name() {
+  m=$(branch_name "$1")
+  if rows "$m" "$(task_id "$m")" | grep -q '^[^|]'; then
+    refuse "merging '$m', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
+  fi
+}
+held_commit() {
+  [ -n "$1" ] || return 0
+  while IFS='|' read -r tok wt br; do
+    if [ -n "$br" ] && [ "$(git rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$1" ] && has_work "$1"; then
+      refuse "merging '$br', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
+    fi
+  done <<EOF
 $held
 EOF
+}
+if [ "$merging" = 1 ] && [ -n "$held" ]; then
+  set -f
+  case "${GIT_REFLOG_ACTION:-}" in
+    merge\ *)
+      for n in ${GIT_REFLOG_ACTION#merge }; do
+        held_name "$n"
+        held_commit "$(git rev-parse -q --verify "$n^{commit}" 2>/dev/null)"
+      done
+      ;;
+    pull*)
+      fhf=$(git rev-parse --git-path FETCH_HEAD)
+      if [ -f "$fhf" ]; then
+        while IFS= read -r line; do
+          case "$line" in *"${tab}not-for-merge${tab}"*) continue ;; esac
+          held_commit "${line%%"$tab"*}"
+          case "$line" in
+            *"branch '"*"' of "*) n=${line#*"branch '"}; n=${n%%"' of "*}; held_name "$n" ;;
+          esac
+        done <"$fhf"
+      fi
+      ;;
+  esac
+  set +f
+  if [ -f "$mhf" ]; then
+    while IFS= read -r c; do held_commit "$c"; done <"$mhf"
   fi
 fi
 

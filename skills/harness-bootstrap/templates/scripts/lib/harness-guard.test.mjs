@@ -1,11 +1,12 @@
 // harness-bootstrap commit-guard tests (generated YYYY-MM-DD). Run: node --test scripts/lib/harness-guard.test.mjs
 // [M] mechanism (ships as-is): every test. They test the INSTALLED guard, never a copy: each case
 // is a throwaway repo whose pre-commit and pre-merge-commit exec it, the way git runs it, with
-// this project's REGISTRY, ID_PATTERN and SCOPE read from the guard itself. No other hook of the
-// project runs there, and no GIT_* variable or global config reaches it.
+// this project's REGISTRY, ID_PATTERN, SCOPE and MAINLINE read from the guard itself. No other hook
+// of the project runs there, and no GIT_* variable or global config reaches it.
 // [B] binding: GUARD and MERGE_GUARD (the guard scripts the two hooks run, relative to the repo root),
-// HOOK_FILES (the hook files git runs for them) and IDS (the plan's ids; empty in change mode, where
-// branches carry none).
+// HOOK_FILES (the hook files git runs for them), MAINLINE (the guard's expected MAINLINE: a binding
+// that is itself a control has its expected literal here) and IDS (the plan's ids; empty in change
+// mode, where branches carry none).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,6 +23,8 @@ const MERGE_GUARD = '.githooks/pre-merge-commit';
 // as its first command: GUARD and MERGE_GUARD with no hook manager; with husky,
 // ['.husky/pre-commit', '.husky/pre-merge-commit'].
 const HOOK_FILES = ['.githooks/pre-commit', '.githooks/pre-merge-commit'];
+// [B] The branch lands merge into, as the guard's MAINLINE must read; the throwaway repos use it too.
+const MAINLINE = 'main';
 // [B] Every id shape the plan uses: ID_PATTERN must take each one whole (commit-guard.md).
 const IDS = [];
 
@@ -54,7 +57,7 @@ function repo() {
   for (const [name, target] of [['pre-commit', GUARD], ['pre-merge-commit', MERGE_GUARD]]) {
     fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\nexec "${path.join(ROOT, target)}" "$@"\n`, { mode: 0o755 });
   }
-  git(d, 'init', '-q', '-b', 'main');
+  git(d, 'init', '-q', '-b', MAINLINE);
   git(d, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(d, 'a.txt'), '0\n');
   git(d, 'add', 'a.txt');
@@ -99,10 +102,12 @@ test('the guard is installed as git runs it: executable, and the merge hook is t
 });
 
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// GUARD run so that its refusal fails the hook: [exec] [sh] [./]GUARD ["$@"] [|| exit [n]], nothing else.
-const CALLS_GUARD = new RegExp(`^(?:exec\\s+)?(?:(?:/bin/)?sh\\s+)?(["']?)(?:\\./)?${escape(GUARD)}\\1(?:\\s+"\\$@")?(?:\\s*\\|\\|\\s*exit(?:\\s+\\S+)?)?$`);
+// GUARD run so that its refusal fails the hook, nothing else on the line: `exec [sh] GUARD ["$@"]`, or
+// `[sh] GUARD ["$@"] || exit` with no argument, `$?` or a non-zero literal.
+const call = (n) => `(?:(?:/bin/)?sh\\s+)?(["']?)(?:\\./)?${escape(GUARD)}\\${n}(?:\\s+"\\$@")?`;
+const CALLS_GUARD = new RegExp(`^(?:exec\\s+${call(1)}|${call(2)}\\s*\\|\\|\\s*exit(?:\\s+(?:\\$\\?|[1-9][0-9]*))?)$`);
 
-test('each hook file git runs exists and is the guard, or runs it as its first command', () => {
+test('each hook file git runs exists and is the guard, or runs it first and passes its refusal on', () => {
   assert.equal(HOOK_FILES.length, 2, 'HOOK_FILES lists the pre-commit and the pre-merge-commit hook file');
   for (const f of HOOK_FILES) {
     const file = path.join(ROOT, f);
@@ -111,14 +116,23 @@ test('each hook file git runs exists and is the guard, or runs it as its first c
     if (!f.startsWith('.husky/')) assert.ok((fs.statSync(file).mode & 0o111) !== 0, `${f} is not executable`);
     const text = fs.readFileSync(file, 'utf8');
     if (text === SOURCE) continue;
+    // by behaviour: GUARD stubbed to refuse, the hook run by plain sh (no -e) must fail
+    const box = tmp('harness-guard-hookfile-');
+    for (const [rel, body, mode] of [[f, text, 0o644], [GUARD, '#!/bin/sh\nexit 1\n', 0o755]]) {
+      fs.mkdirSync(path.dirname(path.join(box, rel)), { recursive: true });
+      fs.writeFileSync(path.join(box, rel), body, { mode });
+    }
+    const run = spawnSync('sh', [f], { cwd: box, encoding: 'utf8', env: ENV });
+    assert.notEqual(run.status, 0, `${f} exits 0 when ${GUARD} refuses: it does not pass the refusal on`);
     const first = text.split('\n').map((l) => l.trim()).find((l) => l !== '' && !l.startsWith('#'));
     assert.match(first ?? '', CALLS_GUARD, `${f} does not run ${GUARD} as its first command (it runs: ${first ?? 'nothing'})`);
   }
 });
 
-test('the bindings: REGISTRY is set, SCOPE is repo or checkout, and ID_PATTERN takes every id whole', () => {
+test('the bindings: REGISTRY is set, SCOPE is repo or checkout, MAINLINE is the expected one, and ID_PATTERN takes every id whole', () => {
   assert.ok(REGISTRY, `no REGISTRY= line in ${GUARD}`);
   assert.ok(['repo', 'checkout'].includes(SCOPE), `SCOPE is ${SCOPE}`);
+  assert.equal(binding('MAINLINE'), MAINLINE, `${GUARD} binds MAINLINE to ${binding('MAINLINE')}, not ${MAINLINE}`);
   if (ID_PATTERN === '') assert.deepEqual(IDS, [], 'IDS lists ids but ID_PATTERN is empty');
   else assert.ok(IDS.length > 0, 'ID_PATTERN is set but IDS lists no id to hold it to');
   // the guard's own extraction: uppercase the branch, first grep -oE match
@@ -133,7 +147,7 @@ test('no registry, or row 0 alone: every branch commits', () => {
   const d = repo();
   assert.equal(commit(d, 'free').moved, true, 'no registry');
   registry(d, []);
-  for (const branch of ['main', OWNER]) {
+  for (const branch of [MAINLINE, OWNER]) {
     git(d, 'switch', '-q', '-C', branch);
     const r = commit(d, branch);
     assert.equal(r.moved, true, `${branch} with row 0 alone: ${r.stderr}`);
@@ -154,7 +168,7 @@ test('the run that holds a row commits on its branch; the mainline and any other
   assert.equal(git(d, 'switch', '-q', '-c', OWNER).status, 0);
   const own = commit(d, 'owner');
   assert.equal(own.moved, true, own.stderr);
-  for (const branch of ['main', 'other/branch']) {
+  for (const branch of [MAINLINE, 'other/branch']) {
     git(d, 'switch', '-q', '-C', branch);
     const r = commit(d, branch);
     assert.equal(r.moved, false, `${branch} committed while ${OWNER} holds the row`);
@@ -166,7 +180,7 @@ test('a clean merge onto the mainline while a row is held is refused by the merg
   const d = repo();
   git(d, 'switch', '-q', '-c', OWNER);
   commit(d, 'owner work', 'b.txt');
-  git(d, 'switch', '-q', 'main');
+  git(d, 'switch', '-q', MAINLINE);
   commit(d, 'mainline moved');
   registry(d, [['probe', OWNER]]);
   const before = head(d);

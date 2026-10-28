@@ -84,6 +84,8 @@ const TEST_COPY = 'scripts/lib/harness-guard.test.mjs';
 // needed). core.hooksPath stays unset: the suite runs GUARD itself in its throwaway repos and reads the
 // two .husky files it is bound to, so nothing here commits through them.
 const HUSKY_CALL = 'sh .githooks/harness-guard.sh || exit 1\n';
+// The hook's next command succeeds anywhere, so a refusal the hook does not pass on ends it with 0.
+const HUSKY_REST = 'echo "pre-commit checks passed"\n';
 const GUARD_LINES = "const GUARD = '.githooks/pre-commit';\nconst MERGE_GUARD = '.githooks/pre-merge-commit';";
 const HOOK_FILES_LINE = "const HOOK_FILES = ['.githooks/pre-commit', '.githooks/pre-merge-commit'];";
 
@@ -104,7 +106,7 @@ function install({ bind = true, variant = 'default' } = {}) {
     fs.renameSync(path.join(dir, GUARD_COPIES[0]), path.join(dir, '.githooks/harness-guard.sh'));
     fs.rmSync(path.join(dir, GUARD_COPIES[1]));
     fs.mkdirSync(path.join(dir, '.husky'));
-    for (const hook of ['pre-commit', 'pre-merge-commit']) fs.writeFileSync(path.join(dir, '.husky', hook), `${HUSKY_CALL}npm test\n`, { mode: 0o644 });
+    for (const hook of ['pre-commit', 'pre-merge-commit']) fs.writeFileSync(path.join(dir, '.husky', hook), `${HUSKY_CALL}${HUSKY_REST}`, { mode: 0o644 });
     edit(dir, TEST_COPY, GUARD_LINES, "const GUARD = '.githooks/harness-guard.sh';\nconst MERGE_GUARD = '.githooks/harness-guard.sh';");
     edit(dir, TEST_COPY, HOOK_FILES_LINE, "const HOOK_FILES = ['.husky/pre-commit', '.husky/pre-merge-commit'];");
   }
@@ -264,6 +266,20 @@ mutantFails(
   { variant: 'husky' },
 );
 mutantFails(
+  'a husky hook whose guard call is followed by another command, which ends the hook with 0 after a refusal',
+  '.husky/pre-merge-commit',
+  HUSKY_CALL,
+  'sh .githooks/harness-guard.sh\n',
+  { variant: 'husky' },
+);
+mutantFails(
+  'a husky hook whose guard call ends `|| exit 0`, which turns a refusal into a pass',
+  '.husky/pre-merge-commit',
+  HUSKY_CALL,
+  'sh .githooks/harness-guard.sh || exit 0\n',
+  { variant: 'husky' },
+);
+mutantFails(
   'a checkout-scope guard that resolves no Worktree cell, so every row locks the main checkout',
   GUARD_COPIES,
   'if [ "$SCOPE" = "checkout" ]; then resolve "$wt"; else res=$curp; fi',
@@ -276,6 +292,12 @@ mutantFails(
   'if [ "$merging" = 1 ] && [ -n "$held" ]; then',
   'if false; then',
   { variant: 'checkout' },
+);
+mutantFails(
+  'a commit guard whose MAINLINE was rebound, which its own suite would read back',
+  GUARD_COPIES,
+  'MAINLINE="main"',
+  'MAINLINE="trunk"',
 );
 mutantFails(
   'a context budget that reads past a compaction',

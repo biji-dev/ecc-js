@@ -50,8 +50,9 @@ holds a row.
 `templates/harness-guard.sh` — POSIX `sh`, so it runs under Git for Windows too.
 Copy it; set its `[B]` lines; **test the shipped file**.
 
-`[B]` `REGISTRY` path · `ID_PATTERN` · `SCOPE` · nothing else. An invalid `SCOPE`
-refuses every commit, so a typo cannot disable the guard.
+`[B]` `REGISTRY` path · `ID_PATTERN` · `SCOPE` · `MAINLINE` (the branch lands merge
+into, default `main`) · nothing else. An invalid `SCOPE` refuses every commit, so a
+typo cannot disable the guard.
 
 ## Installing
 
@@ -61,10 +62,13 @@ refuses every commit, so a typo cannot disable the guard.
   it in the project's setup script or `prepare` step so a fresh clone is guarded,
   and say in the harness file that a clone is unguarded until it has run.
 - **husky:** keep the script at `.githooks/harness-guard.sh` (executable) and call
-  it first in `.husky/pre-commit` and `.husky/pre-merge-commit`:
-  `sh .githooks/harness-guard.sh || exit 1`. husky v9 runs those files from
-  `.husky/_`: its own `prepare` step sets `core.hooksPath` to `.husky/_`, whose stubs
-  run `.husky/<hook>` with `sh`.
+  it first in `.husky/pre-commit` and `.husky/pre-merge-commit`, as the first line
+  `sh .githooks/harness-guard.sh "$@" || exit 1`, or
+  `exec sh .githooks/harness-guard.sh "$@"` when it is the only command. A guard
+  line followed by another command, or ending `|| exit 0`, loses the refusal: with
+  no `set -e` the hook exits with its last command's status. husky v9 runs those
+  files from `.husky/_`: its own `prepare` step sets `core.hooksPath` to `.husky/_`,
+  whose stubs run `.husky/<hook>` with `sh`.
 - **lefthook:** `pre-commit` and `pre-merge-commit` commands running
   `sh .githooks/harness-guard.sh`.
 
@@ -124,7 +128,8 @@ the status script reports a cut id as `id-pattern-truncates`.
 
 `[M]` **Its test ships with it:** `templates/scripts/lib/harness-guard.test.mjs`,
 installed to `scripts/lib/`. It checks that each hook file git runs (its `[B]`
-`HOOK_FILES`) is the guard or runs it as its first command, then runs the installed
+`HOOK_FILES`) is the guard, or runs it as its first command and fails when it
+refuses (the guard stubbed to exit 1, the hook run by plain `sh`), then runs the installed
 guard as git runs it, in throwaway repos: no registry, row 0 alone, a registry
 without its markers, the owning branch against the mainline and another branch, a
 clean `--no-ff` merge onto the mainline, a row that locks a linked worktree (the
@@ -198,7 +203,12 @@ owner's word. Releasing after the merge cannot work under either scope. Under
 `SCOPE=repo` the guard refuses a mainline commit while any row is held. Under
 `SCOPE=checkout` a held row locks only its own checkout, so the merge hook refuses
 instead: a merge, clean or concluded with `git commit`, is refused while the branch
-it merges still holds a row, and the refusal names that branch. Logged three times in
-one project and twice in another before it was written down.
+it merges still holds a row, and the refusal names that branch. The merged commit
+counts too, whatever name it is merged by (`refs/heads/…`, `origin/…`, a copy
+branch, a pull): it is refused when it is a held branch's tip with work of its own.
+A held branch with no work of its own, its tip already in `MAINLINE` (claimed at the
+mainline's tip, no commits yet), adds nothing held, so merging that commit goes
+through; with no `MAINLINE` branch every held tip counts as work. Logged three times
+in one project and twice in another before it was written down.
 
 `[M]` Write the merge message to a file. `git merge` does not read stdin.

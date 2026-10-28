@@ -252,8 +252,9 @@ test('lock: a second run waits for the first, looks at the cache again and reuse
   const c = counter();
   const dir = tmp('run-gates-lock-');
   const [started, go, out1, out2, err2] = ['started', 'go', 'out1', 'out2', 'err2'].map((f) => path.join(dir, f));
-  // The gate holds the lock until the test writes `go` (3 s at most), then counts.
-  const lines = [c.gate('slow', 'always', `touch ${started}; i=0; while [ ! -f ${go} ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done; `)];
+  // The gate holds the lock until the test writes `go`, then counts. Its cap (60 s) is well above
+  // waitFor's 15 s, so on a loaded machine the lock is still held when the second run reaches it.
+  const lines = [c.gate('slow', 'always', `touch ${started}; i=0; while [ ! -f ${go} ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; `)];
   const first = runCopy(lines, [], { out: [out1, out1] });
   let second;
   try {
@@ -268,6 +269,7 @@ test('lock: a second run waits for the first, looks at the cache again and reuse
     assert.match(lines2[0] ?? '', REUSED_RX, `after the wait the second run did not reuse the first's result: ${lines2.join('\n')}`);
     assert.equal(c.n(), 1, 'the gate ran twice: the second run did not look at the cache after its wait');
   } finally {
+    fs.writeFileSync(go, ''); // first, so no gate shell lingers for the cap after a failure
     first.child.kill();
     if (second) second.child.kill();
   }

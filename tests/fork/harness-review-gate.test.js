@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 52;
+const EXPECTED_TESTS = 53;
 
 let passed = 0;
 let failed = 0;
@@ -167,7 +167,11 @@ test('mutant: the skip back to "no production file", so a tests-only diff owes n
 });
 
 test('mutant: isProduction ignoring INSTRUCTIONS, so AGENTS.md and .claude/ are docs again', () => {
-  mutantRun('isInstruction(path) || !isExempt(path)', '!isExempt(path)');
+  mutantRun('(isInstruction(path) ? !isTest(path) : !isExempt(path))', '!isExempt(path)');
+});
+
+test('mutant: a test in an instruction directory counted as production again, so its lines make a fix large', () => {
+  mutantRun('(isInstruction(path) ? !isTest(path) : !isExempt(path))', 'isInstruction(path) || !isExempt(path)');
 });
 
 test('mutant: critical code at --tier small no longer escalates to the full lineup', () => {

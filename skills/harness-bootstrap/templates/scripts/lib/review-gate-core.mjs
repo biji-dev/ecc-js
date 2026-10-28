@@ -89,7 +89,8 @@ export function writerRole(writer, host) {
 
 const isExempt = (path) => NON_PRODUCTION.some((re) => re.test(path));
 export const isInstruction = (path) => INSTRUCTIONS.some((re) => re.test(path));
-export const isProduction = (path) => isInstruction(path) || !isExempt(path);
+// a test in an instruction directory stays a test: reviewed and critical, but its lines and count are a test's
+export const isProduction = (path) => (isInstruction(path) ? !isTest(path) : !isExempt(path));
 export const isCritical = (path) => CRITICAL.some((re) => re.test(path));
 export const isTest = (path) => TESTS.some((re) => re.test(path));
 

@@ -1,6 +1,7 @@
 // harness-bootstrap review-gate tests (generated YYYY-MM-DD). Run: node --test scripts/lib/review-gate-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: INSTRUCTION_PATHS and DOCS_PATHS below --
-// the paths the core's INSTRUCTIONS must name and must not; keep them matching INSTRUCTIONS. The
+// [M] mechanism (ships as-is): every test. [B] binding: INSTRUCTION_PATHS, INSTRUCTION_TEST_PATHS
+// and DOCS_PATHS below -- the paths the core's INSTRUCTIONS must name and must not; keep them
+// matching INSTRUCTIONS (and the test paths matching TESTS). The
 // tests inject their own CRITICAL set (and restore it) and read FIX_LINES / TRIGGERS, never a
 // project path or number.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
@@ -26,6 +27,7 @@ import {
   isCritical,
   isInstruction,
   isProduction,
+  isTest,
   parseArgs,
   parseNumstat,
   writerRole,
@@ -63,6 +65,8 @@ const INSTRUCTION_PATHS = [
   '.codex/config.toml',
   '.zcode/skills/x/SKILL.md',
 ];
+// tests in an instruction directory: tests, not production
+const INSTRUCTION_TEST_PATHS = ['.agents/skills/checker/tests/checker.test.js', '.claude/hooks/x.test.mjs'];
 // prose INSTRUCTIONS must not name: the first three stay docs
 const DOCS_PATHS = ['README.md', 'docs/a.md', 'packages/a/README.md', 'notes/AGENTS.md.bak'];
 // ---- end [B]
@@ -100,6 +104,11 @@ test('[B] the instruction files are production, whatever NON_PRODUCTION says; pr
   for (const p of INSTRUCTION_PATHS) {
     assert.ok(isInstruction(p), `${p} is not an instruction file`);
     assert.ok(isProduction(p), `${p} is not production`);
+  }
+  for (const p of INSTRUCTION_TEST_PATHS) {
+    assert.ok(isInstruction(p), `${p} is not in an instruction directory`);
+    assert.ok(isTest(p), `${p} is not a test`);
+    assert.ok(!isProduction(p), `${p} is a test, not production`);
   }
   for (const p of DOCS_PATHS) assert.ok(!isInstruction(p), `${p} is an instruction file`);
   for (const p of DOCS_PATHS.slice(0, 3)) assert.ok(!isProduction(p), `${p} is production`);
@@ -491,6 +500,19 @@ test('reviewed 6: a fix round of tests is routed like code: critical is re-revie
   const cold2 = decide({ files: [f('tests/a.test.js', 60)], kind: 'fix', maxFixed: 'P1', round: 2 });
   assert.equal(cold2.decision, 'skip');
   assert.match(cold2.reason, /^cold fix round: its regression tests prove it/);
+});
+
+test('reviewed 7: a test in an instruction directory is a test: its lines never make a fix large, and it counts as one', () => {
+  const hotA = (files) => withCritical([/^src\/a\.ts$/], () => decide({ files, kind: 'fix', maxFixed: 'P1' }));
+  const alone = hotA([f('src/a.ts', 5)]);
+  const withTest = hotA([f('src/a.ts', 5), f(INSTRUCTION_TEST_PATHS[0], 100)]);
+  assert.deepEqual([withTest.prodLines, withTest.prodFiles, withTest.testFiles], [5, 1, 1]);
+  assert.equal(withTest.decision, alone.decision);
+  assert.deepEqual(withTest.reviewers, alone.reviewers);
+  const hook = decide({ files: [f(INSTRUCTION_TEST_PATHS[1], 12)], kind: 'unit', tier: 'small' });
+  assert.equal(hook.decision, 'review');
+  assert.deepEqual([hook.prodFiles, hook.testFiles], [0, 1]);
+  assert.match(hook.reason, /; tests only, no production code$/);
 });
 
 // ---- result shape and notChecked

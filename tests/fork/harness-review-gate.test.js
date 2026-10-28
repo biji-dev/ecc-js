@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 45;
+const EXPECTED_TESTS = 52;
 
 let passed = 0;
 let failed = 0;
@@ -156,6 +156,26 @@ test('mutant: the small-unit reason prints the routing value again, naming the w
 
 test('mutant: the FIX_LINES boundary moved by one makes the suite fail', () => {
   mutantRun('prodLines <= FIX_LINES', 'prodLines < FIX_LINES');
+});
+
+test('mutant: critical computed over production files only, so a test under a critical path is cold again', () => {
+  mutantRun('const critical = reviewed.filter(', 'const critical = prod.filter(');
+});
+
+test('mutant: the skip back to "no production file", so a tests-only diff owes no reviewer', () => {
+  mutantRun('const docsOnly = reviewed.length === 0;', 'const docsOnly = prod.length === 0;');
+});
+
+test('mutant: isProduction ignoring INSTRUCTIONS, so AGENTS.md and .claude/ are docs again', () => {
+  mutantRun('isInstruction(path) || !isExempt(path)', '!isExempt(path)');
+});
+
+test('mutant: critical code at --tier small no longer escalates to the full lineup', () => {
+  mutantRun("const escalate = tier === 'small' && critical.length > 0;", 'const escalate = false;');
+});
+
+test('mutant: the specialists matching an instruction file\'s prose makes the suite fail', () => {
+  mutantRun('files.some((f) => !isExempt(f.path) && TRIGGERS', 'files.some((f) => isProduction(f.path) && TRIGGERS');
 });
 
 test('shipped files carry no machine paths', () => {

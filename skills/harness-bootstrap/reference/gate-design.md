@@ -148,6 +148,12 @@ model with the adversarial brief (the round-3 pass over a fix the second family
 wrote); every other name → the agent of that name (`pr-test-analyzer` on the
 bounded model). Each dispatch passes `model` and `effort: "high"`.
 
+`[M]` **What the gate reviews.** Production files, tests, and the harness's
+instruction files (`INSTRUCTIONS` in the core's `[B]` block); only a diff of docs
+alone is skipped. A test or an instruction file under a critical path is critical,
+so a unit that changes one is reviewed at Full whatever `--tier` says: a weakened
+test is a weakened control.
+
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
 cold code and an Opus one on critical code; the adversarial pass becomes the Opus

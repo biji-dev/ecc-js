@@ -1,6 +1,8 @@
 // harness-bootstrap review-gate tests (generated YYYY-MM-DD). Run: node --test scripts/lib/review-gate-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: none -- the tests inject their own
-// CRITICAL set (and restore it) and read FIX_LINES / TRIGGERS, never a project path or number.
+// [M] mechanism (ships as-is): every test. [B] binding: INSTRUCTION_PATHS and DOCS_PATHS below --
+// the paths the core's INSTRUCTIONS must name and must not; keep them matching INSTRUCTIONS. The
+// tests inject their own CRITICAL set (and restore it) and read FIX_LINES / TRIGGERS, never a
+// project path or number.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
 // global git config; no network, no real repository.
 import assert from 'node:assert/strict';
@@ -13,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CRITICAL,
   FIX_LINES,
+  INSTRUCTIONS,
   NON_PRODUCTION,
   ROLES,
   TESTS,
@@ -21,6 +24,7 @@ import {
   decide as decideCore,
   formatLine,
   isCritical,
+  isInstruction,
   isProduction,
   parseArgs,
   parseNumstat,
@@ -46,6 +50,23 @@ function withCritical(patterns, fn) {
   }
 }
 const bound = (fn) => withCritical([/^src\/core\//], fn);
+
+// ---- [B] the harness's own instruction files and host config: keep these matching INSTRUCTIONS
+const INSTRUCTION_PATHS = [
+  'AGENTS.md',
+  'CLAUDE.md',
+  'packages/a/AGENTS.md',
+  '.claude/agents/x.md',
+  '.claude/skills/x/SKILL.md',
+  '.claude/rules/x.md',
+  '.agents/skills/x/SKILL.md',
+  '.codex/config.toml',
+  '.zcode/skills/x/SKILL.md',
+];
+// prose INSTRUCTIONS must not name: the first three stay docs
+const DOCS_PATHS = ['README.md', 'docs/a.md', 'packages/a/README.md', 'notes/AGENTS.md.bak'];
+// ---- end [B]
+const DOCS_ONLY = /^no production code and no tests: docs only$/;
 
 // ---- the shipped bindings
 
@@ -74,6 +95,16 @@ test('the shipped bindings: CRITICAL is empty, and production / test shapes are 
   assert.ok(Number.isInteger(FIX_LINES) && FIX_LINES > 0);
 });
 
+test('[B] the instruction files are production, whatever NON_PRODUCTION says; prose elsewhere stays docs', () => {
+  assert.ok(INSTRUCTIONS.length > 0);
+  for (const p of INSTRUCTION_PATHS) {
+    assert.ok(isInstruction(p), `${p} is not an instruction file`);
+    assert.ok(isProduction(p), `${p} is not production`);
+  }
+  for (const p of DOCS_PATHS) assert.ok(!isInstruction(p), `${p} is an instruction file`);
+  for (const p of DOCS_PATHS.slice(0, 3)) assert.ok(!isProduction(p), `${p} is production`);
+});
+
 test('parseNumstat sums added and deleted, binary files count 0, tabs in a path survive', () => {
   assert.deepEqual(parseNumstat('3\t4\ta.ts\n-\t-\timg.png\n0\t2\tdir/we\tird.ts\n'), [
     f('a.ts', 7),
@@ -97,15 +128,17 @@ test('parseNumstat reads the -z form, where git never quotes a path', () => {
 
 // ---- kind slice
 
-test('slice 1: no production file is skipped', () => {
-  for (const files of [[], [f('docs/x.md', 90), f(TEST_FILE, 40)]]) {
+test('slice 1: an empty or docs-only slice is skipped; a test in it is reviewed', () => {
+  for (const files of [[], [f('docs/x.md', 90)]]) {
     const r = bound(() => decide({ files, kind: 'slice' }));
     assert.equal(r.decision, 'skip');
     assert.deepEqual(r.reviewers, []);
-    assert.match(r.reason, /no production code/);
+    assert.match(r.reason, DOCS_ONLY);
   }
-  // The codex writer does not change that.
-  assert.equal(decide({ files: [f(TEST_FILE, 9)], kind: 'slice', writer: 'codex' }).decision, 'skip');
+  // docs plus a test is not docs only; a cold test slice by the second family waits for the unit
+  const withTest = bound(() => decide({ files: [f('docs/x.md', 90), f(TEST_FILE, 40)], kind: 'slice' }));
+  assert.equal(withTest.decision, 'second-family');
+  assert.equal(decide({ files: [f(TEST_FILE, 9)], kind: 'slice', writer: 'codex' }).decision, 'defer');
 });
 
 test('slice 2: a cold slice written by the second family is deferred to the unit review', () => {
@@ -137,9 +170,12 @@ test('slice 4: otherwise the slice review goes to the second family, cold or cri
 
 // ---- kind unit
 
-test('unit 1: no production file is skipped, at either tier', () => {
-  for (const tier of ['small', 'full'])
-    assert.equal(decide({ files: [f('docs/a.md', 50)], kind: 'unit', tier }).decision, 'skip');
+test('unit 1: a docs-only unit is skipped, at either tier', () => {
+  for (const tier of ['small', 'full']) {
+    const r = decide({ files: [f('docs/a.md', 50)], kind: 'unit', tier });
+    assert.equal(r.decision, 'skip');
+    assert.match(r.reason, DOCS_ONLY);
+  }
 });
 
 test('a binary or mode-only production file (0 lines) is still a change to review', () => {
@@ -200,8 +236,7 @@ test('unit 3: a full unit is Opus + adversarial, then specialists in TRIGGERS or
   assert.ok(
     decide({ files: [f('src/db/schema.ts', 3)], kind: 'unit' }).reviewers.includes('database-reviewer'),
   );
-  // A non-production path never calls a specialist; a test file alone calls the analyzer only
-  // when production code is also in the diff.
+  // A non-production path never calls a specialist: a test under a trigger calls the analyzer only.
   const testOnlyTrigger = decide({ files: [f(COLD, 5), f('src/auth/login.test.ts', 5)], kind: 'unit' });
   assert.deepEqual(testOnlyTrigger.reviewers, [
     'opus-code-reviewer',
@@ -232,10 +267,11 @@ test('fix 1: a round that fixed only P3s is the P3 batch with no re-review, what
   }
 });
 
-test('fix 2: a fix round with no production lines is skipped', () => {
-  const r = bound(() => decide({ files: [f(TEST_FILE, 200)], kind: 'fix', maxFixed: 'P1' }));
+test('fix 2: a fix round of docs alone is skipped', () => {
+  const r = bound(() => decide({ files: [f('docs/x.md', 200)], kind: 'fix', maxFixed: 'P1' }));
   assert.equal(r.decision, 'skip');
   assert.deepEqual(r.reviewers, []);
+  assert.match(r.reason, DOCS_ONLY);
 });
 
 test('fix 3: a cold fix round is reviewed by the second family once, never again', () => {
@@ -377,6 +413,86 @@ test('unit codex: a full unit written by the second family keeps Opus first and 
   assert.doesNotMatch(decide({ files: [f(COLD, 20)], kind: 'unit' }).reason, /second family/);
 });
 
+// ---- tests and the harness's instruction files are reviewed; docs alone skip
+
+const FULL_WITH_TESTS = ['opus-code-reviewer', 'second-family-adversarial', 'pr-test-analyzer'];
+const RE_TIER = /; critical path at --tier small \((.+)\): reviewed as full, re-tier the row$/;
+
+test('reviewed 1: a test under a critical path is critical, and its unit is reviewed as full at either tier', () => {
+  for (const tier of ['small', 'full']) {
+    const r = bound(() => decide({ files: [f(TEST_FILE, 30)], kind: 'unit', tier }));
+    assert.equal(r.decision, 'review', tier);
+    assert.deepEqual(r.reviewers, FULL_WITH_TESTS, tier);
+    assert.deepEqual(r.critical, [TEST_FILE], tier);
+    assert.match(r.reason, /; tests only, no production code/, tier);
+    assert.equal(r.testFiles, 1, tier);
+    assert.equal(r.prodLines, 0, tier);
+  }
+  const small = bound(() => decide({ files: [f(TEST_FILE, 30)], kind: 'unit', tier: 'small' }));
+  assert.equal(small.reason.match(RE_TIER)?.[1], TEST_FILE, small.reason);
+  const full = bound(() => decide({ files: [f(TEST_FILE, 30)], kind: 'unit', tier: 'full' }));
+  assert.doesNotMatch(full.reason, /re-tier/);
+  // the same test as a slice written by Sonnet is critical code not written by Opus
+  const slice = bound(() => decide({ files: [f(TEST_FILE, 30)], kind: 'slice', writer: 'sonnet' }));
+  assert.equal(slice.decision, 'required');
+  assert.deepEqual(slice.reviewers, ['opus-code-reviewer']);
+});
+
+test('reviewed 2: an instruction file alone is reviewed, never skipped', () => {
+  for (const p of INSTRUCTION_PATHS)
+    for (const tier of ['small', 'full']) {
+      const r = decide({ files: [f(p, 4)], kind: 'unit', tier });
+      assert.equal(r.decision, 'review', `${p} ${tier}`);
+      assert.equal(r.prodFiles, 1, `${p} ${tier}`);
+      assert.match(r.reason, /; instruction files, no other production code/, `${p} ${tier}`);
+    }
+});
+
+test('reviewed 3: a cold test alone at --tier small gets the small lineup; docs alone skip at every kind', () => {
+  const r = decide({ files: [f('tests/a.test.js', 12)], kind: 'unit', tier: 'small' });
+  assert.equal(r.decision, 'review');
+  assert.deepEqual(r.reviewers, ['second-family-review']);
+  assert.match(r.reason, /^small unit written by Opus: the other model family reviews the whole unit diff; tests only, no production code$/);
+  for (const p of ['docs/a.md', 'README.md'])
+    for (const [kind, tier] of [['slice', 'full'], ['unit', 'small'], ['unit', 'full'], ['fix', 'full']]) {
+      const d = decide({ files: [f(p, 9)], kind, tier, maxFixed: 'P1' });
+      assert.equal(d.decision, 'skip', `${p} ${kind} ${tier}`);
+      assert.match(d.reason, DOCS_ONLY, `${p} ${kind} ${tier}`);
+    }
+});
+
+test('reviewed 4: a specialist reads code, never an instruction file\'s prose', () => {
+  const prose = decide({ files: [f('.claude/skills/session-notes/SKILL.md', 20)], kind: 'unit' });
+  assert.equal(prose.decision, 'review');
+  assert.deepEqual(prose.reviewers, ['opus-code-reviewer', 'second-family-adversarial']);
+  const hook = decide({ files: [f('.claude/hooks/auth-check.mjs', 20)], kind: 'unit' });
+  assert.deepEqual(hook.reviewers, ['opus-code-reviewer', 'second-family-adversarial', 'security-reviewer']);
+});
+
+test('reviewed 5: critical production code at --tier small is reviewed as full and says to re-tier', () => {
+  const one = bound(() => decide({ files: [f(HOT, 9), f(COLD, 3)], kind: 'unit', tier: 'small' }));
+  assert.equal(one.decision, 'review');
+  assert.deepEqual(one.reviewers, ['opus-code-reviewer', 'second-family-adversarial']);
+  assert.equal(one.reason.match(RE_TIER)?.[1], HOT, one.reason);
+  assert.doesNotMatch(one.reason, /tests only|instruction files/);
+  const two = bound(() =>
+    decide({ files: [f(HOT, 9), f('src/core/b.ts', 3)], kind: 'unit', tier: 'small', writer: 'codex' }),
+  );
+  assert.deepEqual(two.reviewers, ['opus-code-reviewer', 'second-family-adversarial']);
+  assert.equal(two.reason.match(RE_TIER)?.[1], `${HOT} +1`, two.reason);
+});
+
+test('reviewed 6: a fix round of tests is routed like code: critical is re-reviewed, cold round 2 is proven by its tests', () => {
+  const hot = bound(() => decide({ files: [f(TEST_FILE, 60)], kind: 'fix', maxFixed: 'P2', round: 2 }));
+  assert.equal(hot.decision, 'second-family');
+  assert.deepEqual(hot.critical, [TEST_FILE]);
+  const cold1 = decide({ files: [f('tests/a.test.js', 60)], kind: 'fix', maxFixed: 'P1', round: 1 });
+  assert.equal(cold1.decision, 'second-family');
+  const cold2 = decide({ files: [f('tests/a.test.js', 60)], kind: 'fix', maxFixed: 'P1', round: 2 });
+  assert.equal(cold2.decision, 'skip');
+  assert.match(cold2.reason, /^cold fix round: its regression tests prove it/);
+});
+
 // ---- result shape and notChecked
 
 test('an unbound CRITICAL says so in every result; a bound one does not', () => {
@@ -401,7 +517,7 @@ test('an unbound CRITICAL says so in every result; a bound one does not', () => 
 test('the result carries every fact the decision used', () => {
   const r = bound(() =>
     decide({
-      files: [f(HOT, 7), f(COLD, 3), f('docs/a.md', 99)],
+      files: [f(HOT, 7), f(COLD, 3), f('docs/a.md', 99), f('tests/a.test.js', 40)],
       kind: 'fix',
       tier: 'small',
       writer: 'codex',
@@ -420,11 +536,13 @@ test('the result carries every fact the decision used', () => {
     'reason',
     'reviewers',
     'round',
+    'testFiles',
     'tier',
     'writer',
   ]);
   assert.equal(r.prodFiles, 2);
   assert.equal(r.prodLines, 10);
+  assert.equal(r.testFiles, 1);
   assert.deepEqual(r.critical, [HOT]);
   assert.deepEqual([r.kind, r.tier, r.writer, r.maxFixed, r.round], ['fix', 'small', 'codex', 'P2', 2]);
 });
@@ -516,7 +634,7 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   // A clean tree has nothing to review: exit 0, one line.
   let res = gate('--base', base, '--kind', 'slice');
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /^review-gate: skip — no production code: tests or docs only → none \[0 production files, 0 lines; not checked: .*\]\n$/);
+  assert.match(res.stdout, /^review-gate: skip — no production code and no tests: docs only → none \[0 production files, 0 lines; not checked: .*\]\n$/);
 
   // An untracked production file is seen (3 lines), and --kind unit names the full-tier reviewers.
   fs.mkdirSync(path.join(repo, 'src'));

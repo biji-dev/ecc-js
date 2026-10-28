@@ -366,6 +366,18 @@ test('malformed input or a missing transcript never fails the turn', () => {
 
 console.log('\nharness skills: reference text (js.8)');
 
+test('gate-design.md says the review gate reads tests and instruction files, skips docs alone, and reviews a critical test at Full', () => {
+  const design = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'gate-design.md'), 'utf8').replace(/\s+/g, ' ');
+  const start = design.indexOf('`[M]` **What the gate reviews.**');
+  assert.ok(start >= 0, 'gate-design.md has no "What the gate reviews" paragraph');
+  const para = design.slice(start, design.indexOf('`[M]`', start + 1));
+  for (const need of ['tests', "harness's instruction files", '`INSTRUCTIONS`', 'docs alone', 'a weakened test is a weakened control']) {
+    assert.ok(para.includes(need), `the "What the gate reviews" paragraph does not name ${need}`);
+  }
+  assert.ok(/test or an instruction file under a critical path is critical/.test(para), 'the paragraph does not say a test under a critical path is critical');
+  assert.ok(/reviewed at Full whatever `--tier` says/.test(para), 'the paragraph does not say such a unit is reviewed at Full whatever --tier says');
+});
+
 test('a background run uses the host\'s own background option, never a shell `&`; the guard bullet names codex-background', () => {
   for (const rel of [
     path.join(BOOTSTRAP, 'reference', 'cross-model.md'),

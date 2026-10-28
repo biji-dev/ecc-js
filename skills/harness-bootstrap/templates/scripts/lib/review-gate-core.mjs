@@ -15,6 +15,8 @@
 //
 // Decides from FACTS about a diff (paths, production lines, what a fix round fixed) which review
 // it is owed, so the main thread does not guess. No I/O here, so the test can pin each rule.
+// It reviews production files, tests and the harness's instruction files, and skips only docs
+// alone: a weakened test is a weakened control, and a test under a critical path is critical.
 //
 // THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
 // model, a bounded model and a second family (gate-design.md › Model and effort). Read as Claude
@@ -28,6 +30,8 @@ import { HOSTS } from './harness-host-core.mjs';
 export const CRITICAL = []; // path regexes of critical code (risk map › critical); empty until bound
 export const NON_PRODUCTION = [/\.md$/, /^docs\//, /(^|\/)(__tests__|tests?|e2e|fixtures)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that are not production code (docs, tests, fixtures)
 export const TESTS = [/(^|\/)(__tests__|tests?|e2e)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that count as tests (calls the test analyzer at the unit review)
+// the harness's own instruction files and host config: Code, never docs (runner.md › Task type first)
+export const INSTRUCTIONS = [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//];
 export const TRIGGERS = {
   // specialist reviewer → path regexes that call it at the unit review (the project's risk map)
   'security-reviewer': [/auth|session|token|crypto|permission|rbac|tenant|webhook|public/i],
@@ -83,7 +87,9 @@ export function writerRole(writer, host) {
   throw new Error(`--writer is required and names the role that wrote the diff: main | bounded | second | mixed${also}`);
 }
 
-export const isProduction = (path) => !NON_PRODUCTION.some((re) => re.test(path));
+const isExempt = (path) => NON_PRODUCTION.some((re) => re.test(path));
+export const isInstruction = (path) => INSTRUCTIONS.some((re) => re.test(path));
+export const isProduction = (path) => isInstruction(path) || !isExempt(path);
 export const isCritical = (path) => CRITICAL.some((re) => re.test(path));
 export const isTest = (path) => TESTS.some((re) => re.test(path));
 
@@ -156,6 +162,7 @@ export function parseArgs(argv) {
  * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'p3-batch' |
  *           'second-family+opus' | 'escalate-adversarial'.
  * `files` is [{ path, lines }]; `reviewers` is the ordered list of reviewers to run (maybe empty).
+ * `critical` covers production files and tests; `testFiles` counts the tests that are not production.
  */
 export function decide({ files, kind, tier = 'full', writer, maxFixed = null, round = 1 }) {
   if (!KINDS.includes(kind)) throw new Error(`--kind must be one of ${KINDS.join('|')}`);
@@ -166,7 +173,11 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     throw new Error(`--max-fixed must be one of ${SEVERITIES.join('|')} for --kind fix`);
 
   const prod = files.filter((f) => isProduction(f.path));
-  const critical = prod.filter((f) => isCritical(f.path)).map((f) => f.path);
+  // what the gate reviews: production files plus tests; test lines never make a fix "large"
+  const reviewed = files.filter((f) => isProduction(f.path) || isTest(f.path));
+  const docsOnly = reviewed.length === 0;
+  const critical = reviewed.filter((f) => isCritical(f.path)).map((f) => f.path);
+  const named = `${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}`;
   const prodLines = prod.reduce((n, f) => n + f.lines, 0);
   const notChecked = [
     'importers>=10',
@@ -181,16 +192,19 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     maxFixed,
     prodFiles: prod.length,
     prodLines,
+    testFiles: reviewed.length - prod.length,
     critical,
     notChecked,
   };
   const out = (decision, reviewers, reason) => ({ decision, reviewers, reason, ...facts });
+  const DOCS_ONLY = 'no production code and no tests: docs only';
+  // a specialist reads code: an instruction file's prose names auth or sessions without being either
   const specialists = Object.keys(TRIGGERS).filter((name) =>
-    prod.some((f) => TRIGGERS[name].some((re) => re.test(f.path))),
+    files.some((f) => !isExempt(f.path) && TRIGGERS[name].some((re) => re.test(f.path))),
   );
 
   if (kind === 'slice') {
-    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
+    if (docsOnly) return out('skip', [], DOCS_ONLY);
     if (secondFamilyWrote(writer) && critical.length === 0)
       return out(
         'defer',
@@ -200,7 +214,6 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
           : 'cold slice written partly by the second family: the unit review covers it',
       );
     if (writer !== 'claude' && critical.length > 0) {
-      const named = `${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}`;
       const by =
         writer === 'codex'
           ? 'the second family (an owner override, executor: codex)'
@@ -221,14 +234,22 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   }
 
   if (kind === 'unit') {
-    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
-    if (tier === 'small') {
+    if (docsOnly) return out('skip', [], DOCS_ONLY);
+    const what =
+      prod.length === 0
+        ? '; tests only, no production code'
+        : prod.every((f) => isInstruction(f.path))
+          ? '; instruction files, no other production code'
+          : '';
+    // critical code is Full (gate-design.md › tiers): a mis-tiered unit gets the full lineup anyway
+    const escalate = tier === 'small' && critical.length > 0;
+    if (tier === 'small' && !escalate) {
       // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Sonnet
       const base = secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review';
       return out(
         'review',
         [base, ...specialists],
-        `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff`,
+        `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff${what}`,
       );
     }
     const reviewers = [
@@ -240,7 +261,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     return out(
       'review',
       reviewers,
-      `full unit: one review pass over the whole unit diff${secondFamilyWrote(writer) ? '; the unit was written by the second family, so the Opus code-reviewer is the cross-family review' : ''}`,
+      `full unit: one review pass over the whole unit diff${what}${secondFamilyWrote(writer) ? '; the unit was written by the second family, so the Opus code-reviewer is the cross-family review' : ''}${escalate ? `; critical path at --tier small (${named}): reviewed as full, re-tier the row` : ''}`,
     );
   }
 
@@ -251,7 +272,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
       [],
       'P3s never open a fix round: they wait for the P3 batch, one per slice set, no re-review',
     );
-  if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
+  if (docsOnly) return out('skip', [], DOCS_ONLY);
   const r = fixRound({ critical, maxFixed, round, prodLines, writer });
   // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)
   if (specialists.length === 0) return out(r.decision, r.reviewers, r.reason);

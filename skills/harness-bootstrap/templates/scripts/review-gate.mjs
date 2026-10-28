@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap review-gate (generated YYYY-MM-DD). Which review is this diff owed?
 // [M] mechanism (ships as-is): this whole file; the bindings [B] live at the top of
-// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, TRIGGERS, FIX_LINES).
+// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS, TRIGGERS, FIX_LINES).
 /**
  * Decides from facts (paths, production lines, what a fix round fixed) which reviewers a diff is
  * owed, so the main thread does not guess: nothing, the second model family, one Opus

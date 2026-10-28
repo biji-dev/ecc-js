@@ -11,7 +11,8 @@
 //   Codex        apply_patch (the Edit and Write matchers alias it; tool_name stays apply_patch):
 //                tool_input.command holds the patch, whose `*** Add File:`, `*** Update File:`,
 //                `*** Delete File:` and `*** Move to:` lines name the paths, relative to `cwd`
-//                (apply_patch takes them indented too)
+//                (indented, one counts where a file section may start; inside an Update hunk a
+//                space-led line is context)
 // A refusal exits 2 with `BLOCKED (protected-path): <path> ...` on stderr, which both hosts read
 // as a block. Input that does not parse, or names no path, exits 0: the hook never blocks on its
 // own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted.
@@ -85,9 +86,17 @@ export function editedPaths(input, root = ROOT) {
   // The patch as one string; an argv-style array is read the same way.
   const patch = Array.isArray(toolInput.command) ? toolInput.command.join('\n') : toolInput.command;
   if (typeof patch === 'string' && patch.includes('*** Begin Patch')) {
+    // Inside an Update File hunk, up to the next header or column-0 `***` line, a space-led line is
+    // context: a doc that holds a patch example names paths the patch never writes.
+    let inUpdate = false;
     for (const line of patch.split(/\r?\n/)) {
       const m = /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
-      if (m) raw.push(m[1].trim());
+      const head = line.trimStart();
+      const move = head.startsWith('*** Move to: ');
+      const context = inUpdate && line.startsWith(' ');
+      // `*** Move to:` counts at any indent and keeps its Update section: refuse more than Codex applies, never less.
+      if (m && (!context || move)) raw.push(m[1].trim());
+      if (!move && !context && head.startsWith('***')) inUpdate = m !== null && head.startsWith('*** Update File: ');
     }
   }
   let realRoot = root;

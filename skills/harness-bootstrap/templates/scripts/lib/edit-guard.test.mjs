@@ -70,6 +70,13 @@ test('Codex: an indented patch header, spaces or a tab, is read as one', () => {
         const r = pipe(codex(indented));
         assert.equal(r.status, 2, `the indented header ${JSON.stringify(indented.find((l) => l.includes(rel)))} is not refused`);
       }
+      // Inside an Update hunk a space-led line is context: a doc that holds a patch example writes only the doc.
+      const context = ['*** Update File: README.md', '@@', '-a', '+b', ` *** Add File: ${rel}`, `  *** Delete File: ${rel}`, ` *** Update File: ${rel}`];
+      assert.equal(pipe(codex(context)).status, 0, `the context line naming ${rel} in an Update hunk is refused as a header`);
+      assert.deepEqual(editedPaths(codex(context)).map((p) => p.rel), ['README.md'], `an Update hunk's context lines are read as headers (${rel})`);
+      // A column-0 `***` line ends the hunk: an indented header after it is a header again.
+      const after = ['*** Update File: README.md', '@@', '-a', '+b', '*** Add File: docs/x.md', '+x', `${indent}*** Add File: ${rel}`, '+y'];
+      assert.equal(pipe(codex(after)).status, 2, `the indented header after an ended Update hunk is not refused (${rel})`);
     }
   }
 });

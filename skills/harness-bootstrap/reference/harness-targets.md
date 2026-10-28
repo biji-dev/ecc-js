@@ -194,8 +194,9 @@ call it; never maintain the same sequence in three skill files.
   trusted. Its stdin carries `tool_name`, `tool_input` and `cwd`; "`Bash` and
   `apply_patch` use `tool_input.command`". Every file edit reports as `apply_patch`
   (the `Edit` and `Write` matchers alias it), and the edit guard reads the patch's
-  `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines,
-  indented or not, against `cwd`. Exit 2 blocks, as on Claude Code. Set `timeout`:
+  `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines
+  against `cwd`, indented too where a file section may start (inside an Update hunk
+  a space-led line is context). Exit 2 blocks, as on Claude Code. Set `timeout`:
   Codex's default is 600 seconds.
 
   ```json

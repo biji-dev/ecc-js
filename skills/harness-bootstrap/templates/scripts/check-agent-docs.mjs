@@ -295,8 +295,9 @@ let checks = 0;
 
 // Credential-shaped strings. Any value that matches is masked in every message, whichever check quotes it.
 const SECRET_PATTERNS = [
-  // `\\?['"]?`: the value may open with a quote, or with a JSON-escaped one (\") when the text was stringified.
-  ['credential assignment', /(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*\\?['"]?[A-Za-z0-9_\-/+]{12,}/i],
+  // `\\?['"]?` on both sides of the separator: a JSON key ("password":), a JSON-escaped key and value (\"password\": \"...\")
+  // when the text was stringified. Keep the same source as SECRET_PATTERNS in harness-status.js.
+  ['credential assignment', /(api[_-]?key|secret|token|password|passwd)\\?['"]?\s*[:=]\s*\\?['"]?[A-Za-z0-9_\-/+]{12,}/i],
   ['AWS access key id', /AKIA[0-9A-Z]{16}/],
   ['API key (sk-)', /(?<![A-Za-z0-9])sk-[A-Za-z0-9]{20,}/], // not inside a word: `task-<20 letters>` is a name
   ['private key block', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],

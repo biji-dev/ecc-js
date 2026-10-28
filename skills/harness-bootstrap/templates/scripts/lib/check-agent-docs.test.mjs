@@ -501,16 +501,23 @@ test('frontmatter values are not link- or path-checked', () => {
 
 // 8. secrets
 test('secrets: credential-shaped strings fail and are never printed', () => {
+  // Every value is built at run time, so this file never holds a literal a secret scanner flags.
+  const aws = 'AKIA' + 'ABCDEFGHIJKLMNOP';
+  const val = ['abcdefghij', 'klmnop1234'].join('');
+  const sk = 'sk-' + 'abcdefghijklmnopqrstuvwxyz';
+  const pw = ['hunter2', 'hunter2', 'hunter2'].join('');
   const cases = [
-    ['api_key = abcdefghijklmnop1234', 'abcdefghijklmnop1234'],
-    ['AWS AKIAABCDEFGHIJKLMNOP here', 'AKIAABCDEFGHIJKLMNOP'],
-    ['key sk-abcdefghijklmnopqrstuvwxyz', 'sk-abcdefghijklmnopqrstuvwxyz'],
-    ['-----BEGIN RSA PRIVATE KEY-----', 'BEGIN RSA PRIVATE KEY'],
-    ['Password: "hunter2hunter2hunter2"', 'hunter2hunter2hunter2'],
+    [`api_key = ${val}`, val],
+    [`AWS ${aws} here`, aws],
+    [`key ${sk}`, sk],
+    ['-----BEGIN RSA ' + 'PRIVATE KEY-----', 'BEGIN RSA PRIVATE KEY'],
+    [`Password: "${pw}"`, pw],
+    [`"password": "${val}"`, val], // a JSON key
+    [`\\"api_key\\": \\"${val}\\"`, val], // a JSON-escaped key and value, as in a stringified settings file
   ];
   for (const [line, secret] of cases) {
     const r = expectFail({ 'CLAUDE.md': `@AGENTS.md\n${line}\n` }, 'secrets', 'CLAUDE\\.md:2 ');
-    assert.ok(!r.all.includes(secret), `output leaked ${secret}`);
+    assert.ok(!r.all.includes(secret), `output leaked a ${secret.length}-character value`);
   }
 });
 

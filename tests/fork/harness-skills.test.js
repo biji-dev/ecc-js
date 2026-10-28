@@ -393,6 +393,37 @@ test('a run with no ledger row or output file did not finish: check what it left
   assert.ok(other.includes('never appears did not finish'), 'other-harnesses.md does not say a launch without an output file did not finish');
 });
 
+test('policy-derivation.md holds the one list of the harness\'s own critical paths; SKILL.md cites it', () => {
+  const policy = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'policy-derivation.md'), 'utf8').replace(/\s+/g, ' ');
+  const start = policy.indexOf("The harness's own paths");
+  assert.ok(start >= 0, "policy-derivation.md has no \"The harness's own paths\" passage");
+  const end = policy.indexOf('## ', start);
+  const list = policy.slice(start, end < 0 ? undefined : end);
+  for (const need of ['commit guard', 'command guard', 'edit guard', '.claude/settings.json', '.codex/hooks.json', 'run-gates.sh', 'run-counted', 'review-gate', 'critical', 'never-auto']) {
+    assert.ok(list.includes(need), `the list of the harness's own paths does not name ${need}`);
+  }
+  const skill = fs.readFileSync(path.join(BOOTSTRAP, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(/policy-derivation\.md`? [›>] The harness's own paths/.test(skill), "SKILL.md does not cite policy-derivation.md › The harness's own paths");
+  assert.ok(!skill.includes('the guard, the command and edit guards and `run-gates.sh`'), 'SKILL.md still repeats its own shorter list');
+});
+
+test('no test source under tests/fork or the templates holds an AWS-key-shaped literal', () => {
+  const hits = [];
+  const walk = dir => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(test\.)?(js|mjs)$/.test(entry.name) || entry.name.includes('.test.')) {
+        if (/AKIA[0-9A-Z]{16}/.test(fs.readFileSync(full, 'utf8'))) hits.push(path.relative(ROOT, full));
+      }
+    }
+  };
+  walk(path.join(ROOT, 'tests', 'fork'));
+  walk(path.join(BOOTSTRAP, 'templates'));
+  assert.deepStrictEqual(hits, [], `AWS-key-shaped literal in ${hits.join(', ')}`);
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

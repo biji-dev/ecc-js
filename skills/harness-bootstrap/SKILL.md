@@ -340,10 +340,10 @@ another agent, every merge by a human, the owner's review of one kind of change
 stricter rule, Trivial included. Units that are not plan items (harness work,
 vendor-trap skills, follow-ups no unit owns) run on `harness/<slug>` branches matched
 by the registry's `Branch` cell; write paths with `<unit>`, never the plan's id
-shape alone. The harness's own paths go on the risk map (the guard, the command and
-edit guards and `run-gates.sh` are critical: a broken one silently allows everything)
-and on the coverage map, covered by the tests that ship with them in `scripts/lib/`,
-which the counted `harness` gate runs.
+shape alone. The harness's own paths go on the risk map as critical
+(`policy-derivation.md` › The harness's own paths: the one list) and on the
+coverage map, covered by the tests that ship with them in `scripts/lib/`, which the
+counted `harness` gate runs.
 
 **Review the install before committing it.** A fresh agent that did not write it
 (the judgment model, read-only) checks that every path, command, flag, agent and section reference

@@ -252,7 +252,7 @@ test('core.hooksPath is honoured for the guard check', () => {
   assert.ok(!ids(report(repo)).includes('guard-missing'));
 });
 
-const SECRET = 'abcd1234efgh5678ijkl';
+const SECRET = ['abcd1234', 'efgh5678', 'ijkl'].join(''); // built at run time: no credential-shaped literal in this file
 
 function legacyChange() {
   return mk({
@@ -343,13 +343,46 @@ test('the secret value never appears in stdout (json or text)', () => {
 });
 
 test('other secret shapes are found', () => {
+  const aws = 'AKIA' + 'ABCDEFGHIJKLMNOP'; // built at run time: no credential-shaped literal in this file
+  const sk = 'sk-' + 'abcdefghijklmnopqrstuv';
   const repo = mk({
-    '.claude/rules/a.md': 'key AKIAABCDEFGHIJKLMNOP\n',
-    '.agents/skills/s/SKILL.md': '-----BEGIN RSA PRIVATE KEY-----\n',
-    '.claude/agents/a.md': 'token sk-abcdefghijklmnopqrstuv\n',
+    '.claude/rules/a.md': `key ${aws}\n`,
+    '.agents/skills/s/SKILL.md': '-----BEGIN RSA ' + 'PRIVATE KEY-----\n',
+    '.claude/agents/a.md': `token ${sk}\n`,
   });
   const found = report(repo).hazards.filter(h => h.id === 'secret-in-agent-files').map(h => h.path).sort();
   assert.deepStrictEqual(found, ['.agents/skills/s/SKILL.md', '.claude/agents/a.md', '.claude/rules/a.md']);
+  assert.ok(!run(repo).stdout.includes(aws) && !run(repo, ['--text']).stdout.includes(aws));
+});
+
+test('a JSON-escaped credential in a settings file is found and never printed', () => {
+  const v = ['Zx9Qw7', 'Lm3Np5Rt8'].join('');
+  // JSON.stringify escapes the quotes inside the strings, so the file holds password=\"<v>\" and \"api_key\": \"<v>\"
+  const settings = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: `curl -d password="${v}" https://example.invalid` }] }] },
+    note: `{"api_key": "${v}"}`,
+  }, null, 2);
+  assert.ok(settings.includes('password=\\"' + v + '\\"'), 'the fixture does not hold the escaped value');
+  assert.ok(settings.includes('\\"api_key\\": \\"' + v), 'the fixture does not hold the escaped key');
+  const repo = mk({ '.claude/settings.json': settings + '\n' });
+  const lines = report(repo).hazards.filter(h => h.id === 'secret-in-agent-files').map(h => h.line).sort();
+  assert.strictEqual(lines.length, 2, `expected both escaped credentials flagged, got lines ${JSON.stringify(lines)}`);
+  assert.ok(!run(repo).stdout.includes(v));
+  assert.ok(!run(repo, ['--text']).stdout.includes(v));
+});
+
+test('harness-status and check-agent-docs scan with the same credential pattern', () => {
+  // The two files cannot share a module, so read each as text and take the first regex literal that starts
+  // with the credential key alternation, up to its `/i` flag (followed by `,` or `]`).
+  const extract = rel => {
+    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const m = text.match(/\/(\(api\[_-\]\?key\|secret\|token\|password\|passwd\).*?)\/i(?=[,\]])/);
+    assert.ok(m, `${rel} holds no credential pattern`);
+    return m[1];
+  };
+  const status = extract('skills/harness-bootstrap/scripts/harness-status.js');
+  const lint = extract('skills/harness-bootstrap/templates/scripts/check-agent-docs.mjs');
+  assert.strictEqual(status, lint, 'the two credential patterns differ');
 });
 
 test('secrets in the settings files and the instruction files are found', () => {

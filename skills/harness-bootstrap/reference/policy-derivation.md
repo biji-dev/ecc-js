@@ -85,10 +85,23 @@ draft: re-derive the map when a planned path first has code, and at the first
 checkpoint after that — the owner reviews the re-derived map like the first one.
 A path the map cannot place yet is **critical**, never cold.
 
-**The harness's own paths are on the map too.** The commit guard, the command guard
-and the gate runner are critical — a broken one silently allows everything; the
-runner skill, the auditors and the harness docs are standard. Leaving them off is how
-a later session finds them unplaced and has to file it.
+**The harness's own paths are on the map too.** These are **critical** — the risk
+map's tier, which some projects also call never-auto (a project whose own word differs
+maps it). A broken one silently allows everything:
+
+- the commit guard (`harness-guard.sh`) and the hook files that run it — it decides
+  what may be committed;
+- the command guard and the edit guard (`.claude/hooks/`) and the files that wire them
+  in: `.claude/settings.json`, and `.codex/hooks.json` where Codex runs — an edit there
+  unhooks a guard as surely as editing the guard (the risk map lists paths, so the
+  whole file is critical);
+- `run-gates.sh` — it runs the gates;
+- `scripts/run-counted.mjs` and its core — they decide whether a counted gate passed;
+- `scripts/review-gate.mjs` and `scripts/lib/review-gate-core.mjs` — they decide who
+  reviews.
+
+The runner skill, the auditors and the harness docs are standard. Leaving the
+critical ones off is how a later session finds them unplaced and has to file it.
 
 ## The merge policy
 

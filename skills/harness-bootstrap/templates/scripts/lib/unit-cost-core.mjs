@@ -344,7 +344,7 @@ export function isOwnerPrompt(d) {
   const origin = d.origin !== null && typeof d.origin === 'object' ? d.origin.kind : d.origin;
   if (origin !== undefined && origin !== null) return origin === 'human';
   const c = d.message?.content;
-  let text = '';
+  let text;
   if (typeof c === 'string') text = c;
   else if (Array.isArray(c)) {
     if (c.some((x) => x?.type === 'tool_result')) return false;

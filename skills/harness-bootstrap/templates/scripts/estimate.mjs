@@ -45,7 +45,7 @@ function main() {
   }
   let args;
   let est;
-  let leftOut = '';
+  let leftOut;
   try {
     args = parseArgs(process.argv.slice(2));
     let text;

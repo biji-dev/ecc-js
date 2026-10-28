@@ -909,7 +909,7 @@ test('readFollowUps joins a path list and a dir/*.md entry in order, each line d
 test('readFollowUps skips a missing entry, gives null when none exists, and reads a single string as before', () => {
   const top = tmpDir('retro-fu-');
   fs.writeFileSync(path.join(top, 'fu.md'), 'X1\nX2\n');
-  const blame = (_top, rel) => new Map([[1, 10], [2, 20]]);
+  const blame = () => new Map([[1, 10], [2, 20]]);
   assert.equal(readFollowUps(top, ['nope.md', 'dir/*.md'], blame), null, 'none exists');
   assert.equal(readFollowUps(top, [], blame), null, 'an empty list');
   const one = readFollowUps(top, 'fu.md', blame);

@@ -481,7 +481,7 @@ function main() {
         });
       const walk = (parts) => {
         const dir = parts.join('/');
-        let entries = [];
+        let entries;
         try {
           entries = readdirSync(abs(dir), { withFileTypes: true });
         } catch {

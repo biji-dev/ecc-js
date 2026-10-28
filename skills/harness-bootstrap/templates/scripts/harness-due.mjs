@@ -106,7 +106,7 @@ function readReports(top) {
   for (const [kind, template] of Object.entries(REPORTS)) {
     if (template === null) continue;
     const { dir } = reportShape(template);
-    let names = [];
+    let names;
     try {
       names = fs.readdirSync(path.join(top, dir));
     } catch {
@@ -168,7 +168,7 @@ function readWorktrees(top) {
 
 /** The machine sweep's approvals and its last run, from <home>/.agents/harness. */
 function readDisk(top, harness) {
-  let free = null;
+  let free;
   try {
     const s = fs.statfsSync(top);
     free = s.bavail * s.bsize;
@@ -199,7 +199,7 @@ function readDisk(top, harness) {
 
 function readProposals(harness) {
   const dir = path.join(harness, 'retro');
-  let names = [];
+  let names;
   try {
     names = fs.readdirSync(dir);
   } catch {

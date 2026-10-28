@@ -45,7 +45,7 @@ export function parseLsof(out) {
 
 /** The listeners and machine-wide processes to name, for the checkout at `root`. */
 export function leftovers(root) {
-  let main = false;
+  let main;
   try {
     main = statSync(join(root, '.git')).isDirectory();
   } catch {

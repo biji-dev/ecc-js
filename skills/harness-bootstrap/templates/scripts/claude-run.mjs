@@ -149,7 +149,7 @@ function planRun(a) {
   const inside = !rel.startsWith('..') && !path.isAbsolute(rel);
   const route = resolveRoute(a);
   const argv = claudeArgv(route, a, { addDirs: inside ? [] : [scratch] });
-  let given = '';
+  let given;
   try {
     given = a.prompt ? fs.readFileSync(a.prompt, 'utf8') : '';
   } catch (e) {

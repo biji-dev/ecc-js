@@ -1,5 +1,8 @@
 // harness-bootstrap retro tests (generated YYYY-MM-DD). Run: node --test scripts/lib/retro-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: none -- the tests read the bindings, never their values.
+// [M] mechanism (ships as-is): every test. [B] binding: none to edit -- the fixtures are built from the bound
+// values (the log header from estimate-core's COLUMNS and EXTRA_COLUMNS, tier cells from TIER_WORDS, rows and dates
+// from OUTLIER_X, MIN_COHORT, REWRITE_ALERT_PERCENT and QUEUE_ALERT_DAYS, the state file's headings), and the
+// follow-up tests pass their own options, so a project's bindings never change what they assert.
 // Hermetic: no network, no real transcripts. The wrapper tests run in a temp git repo with every GIT_*
 // variable stripped, GIT_CONFIG_GLOBAL=/dev/null and a fixed identity, and a temp projects dir.
 import assert from 'node:assert/strict';
@@ -11,6 +14,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   BASELINE_WEEKS,
+  EXTRA_COLUMNS,
   FOLLOW_UPS,
   LOG,
   MAX_BYTES,
@@ -19,7 +23,9 @@ import {
   MIN_SHARE,
   OUTLIER_X,
   PLANS_DIR,
+  QUEUE_ALERT_DAYS,
   REPORTS_DIR,
+  REWRITE_ALERT_PERCENT,
   SEVERITY_COLUMNS,
   STATUS_COLUMNS,
   STATUS_WORDS,
@@ -50,8 +56,10 @@ import {
   unitSteps,
   windowFor,
 } from './retro-core.mjs';
+import { COLUMNS, TIER_WORDS, fmtMinutes } from './estimate-core.mjs';
 import { gather, readFollowUps } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
+import { FINDINGS_HEADING } from './unit-record-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
 
 const RUNNER = fileURLToPath(new URL('../retro.mjs', import.meta.url));
@@ -72,7 +80,22 @@ process.on('exit', () => {
 
 const table = (head, rows) =>
   [`| ${head.join(' | ')} |`, `|${head.map(() => '---').join('|')}|`, ...rows.map((r) => `| ${r.join(' | ')} |`)].join('\n');
-const LOG_HEAD = ['Unit · Mode · Type · Tier', 'Elapsed (work)', 'Owner wait', 'Defects', 'Cost', '★ Missed by harness', 'Friction'];
+const DOT = String.fromCodePoint(0xb7);
+const STAR = String.fromCodePoint(0x2605);
+const cap = (word) => word.charAt(0).toUpperCase() + word.slice(1);
+// The log's header as the bound columns name it, the unit and tier in one cell, and two bound tier words (the cells
+// logRow writes and the lower-case tier a record reads back).
+const LOG_HEAD = [
+  `${cap(COLUMNS.unit)} ${DOT} Mode ${DOT} ${cap(COLUMNS.type)} ${DOT} ${cap(COLUMNS.tier)}`,
+  `${cap(COLUMNS.elapsed)} (work)`,
+  cap(COLUMNS.ownerWait),
+  cap(EXTRA_COLUMNS.defects),
+  cap(COLUMNS.cost),
+  `${STAR} ${cap(EXTRA_COLUMNS.missed)}`,
+  cap(EXTRA_COLUMNS.friction),
+];
+const [TIER_A, TIER_B] = TIER_WORDS;
+const [CELL_A, CELL_B] = [cap(TIER_A), cap(TIER_B)];
 const logRow = (id, tier, work, cost, missed = '—', friction = '—', defects = '0/1') => [
   `${id} · plan · Code · ${tier}`,
   `${work}m`,
@@ -165,15 +188,15 @@ test('parseDefects reads 0/2, P0 0 · P1 2 and the older 2C/6H; anything else is
 
 test('logRecords adds Defects, Missed by harness and Friction, empties every way of saying none, and dates rows by line', () => {
   const text = table(LOG_HEAD, [
-    logRow('EP-1', 'Full', 60, 10, 'a gate passed having run nothing', 'stale env file'),
-    logRow('EP-2', 'Small', 30, 5, 'none (owner, Gate 2)', '—'),
-    logRow('EP-3', 'Full', 90, 20, '— (none named at Gate 2)', 'none'),
+    logRow('EP-1', CELL_A, 60, 10, 'a gate passed having run nothing', 'stale env file'),
+    logRow('EP-2', CELL_B, 30, 5, 'none (owner, Gate 2)', '—'),
+    logRow('EP-3', CELL_A, 90, 20, '— (none named at Gate 2)', 'none'),
   ]);
   const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00'));
   assert.deepEqual(recs.map((r) => [r.id, r.tier, r.work, r.cost, r.missed, r.friction, r.landed]), [
-    ['EP-1', 'full', 60, 10, 'a gate passed having run nothing', 'stale env file', at('20T10:00:00')],
-    ['EP-2', 'small', 30, 5, '', '', at('21T10:00:00')],
-    ['EP-3', 'full', 90, 20, '', '', null],
+    ['EP-1', TIER_A, 60, 10, 'a gate passed having run nothing', 'stale env file', at('20T10:00:00')],
+    ['EP-2', TIER_B, 30, 5, '', '', at('21T10:00:00')],
+    ['EP-3', TIER_A, 90, 20, '', '', null],
   ]);
   assert.deepEqual(recs[0].defects, { p0: 0, p1: 1 });
 });
@@ -277,7 +300,7 @@ test('stateSummary counts the decision log by Class and By, open questions apart
       ['DEC-4', 'd', '?', 'x', 'someone'],
     ]),
     '',
-    '## Findings',
+    `## ${FINDINGS_HEADING}`,
     table(['ID', 'Sev', 'Source', 'Also', 'Status', 'Note'], [
       ['F-1', 'P3', 'codex-review', '', 'follow-up', 'a'],
       ['F-2', 'P3', 'codex-review', '', 'fixed abc1234', 'b'],
@@ -397,10 +420,10 @@ test('claimRows: a dispatch to the unit it names, an overlapping turn to the uni
 
 test('logKpis: units landed in the window, medians per unit, P0/P1 sums and rows with Missed by harness', () => {
   const text = table(LOG_HEAD, [
-    logRow('EP-1', 'Full', 60, 10, 'caught x', '—', '1/2'),
-    logRow('EP-1', 'Full', 30, 5, '—', '—', '0/1'),
-    logRow('EP-2', 'Full', 90, 30, '—', '—', '0/0'),
-    logRow('EP-3', 'Full', 10, 1, '—', '—', '0/9'),
+    logRow('EP-1', CELL_A, 60, 10, 'caught x', '—', '1/2'),
+    logRow('EP-1', CELL_A, 30, 5, '—', '—', '0/1'),
+    logRow('EP-2', CELL_A, 90, 30, '—', '—', '0/0'),
+    logRow('EP-3', CELL_A, 10, 1, '—', '—', '0/9'),
   ]);
   const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00', '22T10:00:00', '01T10:00:00'));
   assert.deepEqual(logKpis(recs, '2026-10-19T00:00:00Z', '2026-10-26T00:00:00Z'), { units: 2, work: 90, ownerWait: 15, cost: 22.5, p0: 1, p1: 3, missed: 1 });
@@ -449,49 +472,51 @@ test('previousKpis: each transcript KPI\'s median over the newest four earlier w
 });
 
 test('unitOutliers flags a window unit at OUTLIER_X times its tier\'s median, only in a cohort of MIN_COHORT', () => {
-  assert.equal(OUTLIER_X, 2);
-  assert.equal(MIN_COHORT, 3);
-  const text = table(LOG_HEAD, [
-    logRow('EP-1', 'Full', 60, 10),
-    logRow('EP-2', 'Full', 60, 10),
-    logRow('EP-3', 'Full', 60, 40),
-    logRow('EP-4', 'Full', 200, 10),
-    logRow('EP-5', 'Small', 900, 900),
-    logRow('EP-6', 'Small', 10, 1),
-  ]);
-  const recs = logRecords(text, datesFor('10T10:00:00', '11T10:00:00', '22T10:00:00', '23T10:00:00', '22T10:00:00', '22T10:00:00'));
+  // The big tier has one unit more than MIN_COHORT needs (4 under the template's 3): all but two cost 10 and work 60,
+  // one costs OUTLIER_X + 2 times that and one works OUTLIER_X + 1.3 times that. The small tier is one unit short
+  // of MIN_COHORT, with a huge unit in it.
+  const big = Math.max(MIN_COHORT, 4);
+  const hiCost = 10 * (OUTLIER_X + 2);
+  const hiWork = Math.round(60 * (OUTLIER_X + 1.3));
+  const baseline = Array.from({ length: big - 2 }, (_, i) => logRow(`EP-${i + 1}`, CELL_A, 60, 10));
+  const small = Array.from({ length: MIN_COHORT - 1 }, (_, i) => (i === 0 ? logRow('EP-S1', CELL_B, 900, 900) : logRow(`EP-S${i + 1}`, CELL_B, 10, 1)));
+  const text = table(LOG_HEAD, [...baseline, logRow(`EP-${big - 1}`, CELL_A, 60, hiCost), logRow(`EP-${big}`, CELL_A, hiWork, 10), ...small]);
+  const recs = logRecords(text, datesFor(...baseline.map(() => '10T10:00:00'), '22T10:00:00', '23T10:00:00', ...small.map(() => '22T10:00:00')));
   const win = windowFor({ since: '2026-10-19T00:00:00Z', until: '2026-10-26T00:00:00Z', now: NOW });
-  assert.deepEqual(unitOutliers(recs, win).map((o) => [o.unit, o.metric, o.x, o.n]), [['EP-3', 'cost', 4, 4], ['EP-4', 'work', 3.3, 4]]);
+  assert.deepEqual(unitOutliers(recs, win).map((o) => [o.unit, o.metric, o.x, o.n]), [[`EP-${big - 1}`, 'cost', OUTLIER_X + 2, big], [`EP-${big}`, 'work', Math.round((hiWork / 60) * 10) / 10, big]]);
   // A log with no tier column is one cohort, and says so.
-  const flat = logRecords(table(['Unit', 'Elapsed'], [['A', '10m'], ['B', '10m'], ['C', '40m']]), datesFor('22T10:00:00', '22T10:00:00', '22T10:00:00'));
+  const flatRows = [...Array.from({ length: MIN_COHORT - 1 }, (_, i) => [`U${i + 1}`, '10m']), ['C', `${10 * (OUTLIER_X + 2)}m`]];
+  const flat = logRecords(table([COLUMNS.unit, COLUMNS.elapsed], flatRows), datesFor(...flatRows.map(() => '22T10:00:00')));
   const [o] = unitOutliers(flat, win);
-  assert.deepEqual([o.unit, o.tier, o.x], ['C', null, 4]);
+  assert.deepEqual([o.unit, o.tier, o.x], ['C', null, OUTLIER_X + 2]);
   const d = { missed: [], stepOutliers: [], unitOutliers: [o], friction: [], kpis: { transcripts: null }, queue: { followUps: null } };
-  assert.match(candidates(d)[0].text, /^C's work 40m is 4× the median \(n=3\)$/);
+  assert.equal(candidates(d)[0].text, `C's work ${fmtMinutes(10 * (OUTLIER_X + 2))} is ${OUTLIER_X + 2}× the median (n=${MIN_COHORT})`);
 });
 
 test('stepOutliers compares a step\'s share with the same kind of step data only, and never flags a step under MIN_SHARE', () => {
-  assert.equal(MIN_SHARE, 5);
+  // C's 8b is OUTLIER_X + 1 times the median and well over MIN_SHARE; its 8a is just under MIN_SHARE and several times the
+  // median, so only MIN_SHARE keeps it from being flagged. The cohort is MIN_COHORT units (C and the rest).
   const u = (unit, source, steps) => ({ unit, source, total: 100, steps: Object.entries(steps).map(([step, usd]) => ({ step, usd })) });
+  const rest = Array.from({ length: Math.max(MIN_COHORT, 3) - 1 }, (_, i) => u(`R${i + 1}`, 'descriptions', { 8: 50, '8b': 10, '8a': 1 }));
   const all = [
-    u('A', 'descriptions', { 8: 50, '8b': 10, '8a': 1 }),
-    u('B', 'descriptions', { 8: 50, '8b': 10, '8a': 1 }),
-    u('C', 'descriptions', { 8: 50, '8b': 30, '8a': 4 }),
+    ...rest,
+    u('C', 'descriptions', { 8: 50, '8b': 10 * (OUTLIER_X + 1), '8a': MIN_SHARE - 1 }),
     u('D', 'markers', { '8b': 1 }),
     u('E', 'markers', { '8b': 1 }),
   ];
   const out = stepOutliers(all, new Set(['C', 'D']));
-  assert.deepEqual(out.map((o) => [o.unit, o.step, o.share, o.median, o.x]), [['C', '8b', 30, 10, 3]]);
-  assert.deepEqual(stepShares(all, 'descriptions').map((x) => [x.step, x.median, x.n]), [['8', 50, 3], ['8b', 10, 3], ['8a', 1, 3]]);
+  assert.deepEqual(out.map((o) => [o.unit, o.step, o.share, o.median, o.x]), [['C', '8b', 10 * (OUTLIER_X + 1), 10, OUTLIER_X + 1]]);
+  const n = rest.length + 1;
+  assert.deepEqual(stepShares(all, 'descriptions').map((x) => [x.step, x.median, x.n]), [['8', 50, n], ['8b', 10, n], ['8a', 1, n]]);
 });
 
 test('frictionThemes: two-word phrases in the Friction of two or more units, one of them in the window', () => {
   const text = table(LOG_HEAD, [
-    logRow('EP-1', 'Full', 1, 1, '—', 'the state file grew past its budget; a stale env file'),
-    logRow('EP-2', 'Full', 1, 1, '—', 'The state file over budget again'),
-    logRow('EP-3', 'Full', 1, 1, '—', 'stale env file and a wrong port'),
-    logRow('EP-4', 'Full', 1, 1, '—', 'wrong port and the stale env'),
-    logRow('EP-5', 'Full', 1, 1, '—', 'wrong port'),
+    logRow('EP-1', CELL_A, 1, 1, '—', 'the state file grew past its budget; a stale env file'),
+    logRow('EP-2', CELL_A, 1, 1, '—', 'The state file over budget again'),
+    logRow('EP-3', CELL_A, 1, 1, '—', 'stale env file and a wrong port'),
+    logRow('EP-4', CELL_A, 1, 1, '—', 'wrong port and the stale env'),
+    logRow('EP-5', CELL_A, 1, 1, '—', 'wrong port'),
   ]);
   const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00', '01T10:00:00', '01T10:00:00', '02T10:00:00'));
   const win = windowFor({ since: '2026-10-19T00:00:00Z', until: '2026-10-26T00:00:00Z', now: NOW });
@@ -510,8 +535,8 @@ test('candidates take one of each source in turn, capped at MAX_CANDIDATES', () 
     stepOutliers: [{ step: '8b', unit: 'EP-1', share: 30, x: 3, median: 10, n: 3, source: 'markers' }],
     unitOutliers: [],
     friction: [{ word: 'stale env', units: ['EP-1', 'EP-3'] }, { word: 'wrong port', units: ['EP-2', 'EP-4'] }],
-    kpis: { transcripts: { rewriteShare: 11.3, rewriteUsd: 32.27, rewrites: 25 } },
-    queue: { followUps: { oldestOpenDays: 30, open: 4, openP3: 2 } },
+    kpis: { transcripts: { rewriteShare: REWRITE_ALERT_PERCENT + 6.3, rewriteUsd: 32.27, rewrites: 25 } },
+    queue: { followUps: { oldestOpenDays: QUEUE_ALERT_DAYS + 16, open: 4, openP3: 2 } },
   };
   assert.deepEqual(candidates(d).map((c) => [c.kind, c.text.slice(0, 22)]), [
     ['rule', 'EP-1: the owner caught'],
@@ -520,14 +545,18 @@ test('candidates take one of each source in turn, capped at MAX_CANDIDATES', () 
     ['machinery', '"stale env" recurs in '],
     ['machinery', 'the oldest open follow'],
   ]);
-  assert.equal(candidates({ ...d, kpis: { transcripts: { rewriteShare: 1 } }, queue: { followUps: null }, missed: [], stepOutliers: [], friction: [] }).length, 0);
+  assert.equal(candidates({ ...d, kpis: { transcripts: { rewriteShare: REWRITE_ALERT_PERCENT - 1 } }, queue: { followUps: null }, missed: [], stepOutliers: [], friction: [] }).length, 0);
+  // Both alerts fire at their level and not below it.
+  const count = (share, days) => candidates({ missed: [], stepOutliers: [], unitOutliers: [], friction: [], kpis: { transcripts: { rewriteShare: share, rewriteUsd: 1, rewrites: 1 } }, queue: { followUps: { oldestOpenDays: days, open: 1, openP3: 0 } } }).length;
+  assert.equal(count(REWRITE_ALERT_PERCENT, QUEUE_ALERT_DAYS), 2);
+  assert.equal(count(REWRITE_ALERT_PERCENT - 0.1, QUEUE_ALERT_DAYS - 1), 0);
 });
 
 function fixtureData() {
   const text = table(LOG_HEAD, [
-    logRow('EP-1', 'Full', 60, 10, 'a gate passed having run nothing', 'the stale env file'),
-    logRow('EP-2', 'Full', 120, 20, '—', 'stale env file again'),
-    logRow('EP-3', 'Full', 60, 10),
+    logRow('EP-1', CELL_A, 60, 10, 'a gate passed having run nothing', 'the stale env file'),
+    logRow('EP-2', CELL_A, 120, 20, '—', 'stale env file again'),
+    logRow('EP-3', CELL_A, 60, 10),
   ]);
   const t = at('22T10:00:00');
   const g = {
@@ -569,7 +598,7 @@ test("buildRetro: a dispatch tagged for a unit counts whole, its turns after the
   const t = at('22T10:00:00');
   const sub = (mins, session) => row({ ts: t + mins * 60_000, kind: 'sub', agentId: 'x', desc: '[EP-2 s8b r1] record writer', session, cost: 5 });
   const g = {
-    log: { text: table(LOG_HEAD, [logRow('EP-2', 'Full', 120, 20)]), dates: datesFor('22T10:00:00') },
+    log: { text: table(LOG_HEAD, [logRow('EP-2', CELL_A, 120, 20)]), dates: datesFor('22T10:00:00') },
     followUps: null,
     states: [],
     steps: new Map([['EP-2', [marker(t, '2', 'start'), marker(t + 30 * 60_000, '8b', 'start'), marker(t + 40 * 60_000, '8b', 'done')]]]),
@@ -605,7 +634,7 @@ test('buildRetro on a Codex host: its threads and claude-run\'s ledger become KP
     cxLine(min(4), 'event_msg', { type: 'task_complete' }),
   ]);
   const g = {
-    log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') },
+    log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') },
     followUps: null,
     states: [],
     steps: new Map(),
@@ -681,7 +710,7 @@ test('buildRetro warns when the window has Claude spend and the log has no rows:
 });
 
 test('buildRetro warns when units landed in the window and no Claude session or Codex thread was read', () => {
-  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10), logRow('EP-2', 'Full', 30, 5)]), dates: datesFor('22T10:00:00', '23T10:00:00') } });
+  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10), logRow('EP-2', CELL_A, 30, 5)]), dates: datesFor('22T10:00:00', '23T10:00:00') } });
   const d = buildRetro(g, { project: 'demo', now: NOW });
   assert.ok(Array.isArray(d.warnings), 'buildRetro returns a warnings list');
   assert.equal(d.warnings.length, 1, `warnings: ${JSON.stringify(d.warnings)}`);
@@ -697,7 +726,7 @@ test('buildRetro warns when units landed in the window and no Claude session or 
 test('buildRetro does not warn of a missing session when a subagent of an earlier main thread worked in the window', () => {
   // The main turn is before the window, so the figure counts no session in it; the subagent's spend is read.
   const g = gatherOf({
-    log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') },
+    log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') },
     rows: [row({ ts: at('10T10:00:00'), cost: 1 }), row({ ts: at('22T10:00:00'), kind: 'sub', agentId: 'z', desc: 'EP-1 8b record writer', cost: 2 })],
     sessions: 1,
   });
@@ -709,14 +738,14 @@ test('buildRetro does not warn of a missing session when a subagent of an earlie
 
 test('buildRetro warns of log rows no table took, with the count and the lines, in the digest\'s Warn lines', () => {
   // Rows written below the table for an older, narrower header: no table above has as many columns.
-  const text = `${table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)])}\n\n| EP-8 · plan · Code · Full | 30m | 5m |\n| EP-9 · plan · Code · Full | 40m | 5m |\n`;
+  const text = `${table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)])}\n\n| EP-8 · plan · Code · Full | 30m | 5m |\n| EP-9 · plan · Code · Full | 40m | 5m |\n`;
   const t = at('22T10:00:00');
   const d = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text, dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
   const left = '2 log row(s) left out: no table above has as many columns (line 5, 6)';
   assert.deepEqual(d.warnings, [left]);
   assert.deepEqual(warnLines(d), [`Warn: ${left}`]);
   assert.equal(d.kpis.log.units, 1, 'the figures are as they were: the rows are still not read');
-  const clean = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
+  const clean = buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') } }), { project: 'demo', now: NOW });
   assert.deepEqual(clean.warnings, []);
 });
 
@@ -729,7 +758,7 @@ test('buildRetro warns of neither when the log has rows and sessions, nor of ses
     cxTokens(t + 60_000, 4000, 10, 2000),
     cxLine(t + 120_000, 'event_msg', { type: 'task_complete' }),
   ]);
-  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') }, codex: [thread] });
+  const g = gatherOf({ log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') }, codex: [thread] });
   const d = buildRetro(g, { project: 'demo', now: NOW });
   assert.deepEqual([d.kpis.log.units, d.kpis.codexHost.sessions], [1, 1]);
   assert.deepEqual(d.warnings, [], 'units landed and a Codex host thread read: no sessions warning');
@@ -740,7 +769,7 @@ test('buildRetro warns of neither when the log has rows and sessions, nor of ses
 
 test('buildRetro: a follow-ups doc whose every table lacks a status column warns, and the Queue line says how many rows were left out', () => {
   const t = at('22T10:00:00');
-  const fu = (text, dates = new Map()) => buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10)]), dates: datesFor('22T10:00:00') }, followUps: { text, dates } }), { project: 'demo', now: NOW });
+  const fu = (text, dates = new Map()) => buildRetro(gatherOf({ rows: [row({ ts: t })], sessions: 1, log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') }, followUps: { text, dates } }), { project: 'demo', now: NOW });
   const bare = fu(table(['#', 'Area', 'Why it waits'], [['1', 'a.ts', 'later'], ['2', 'b.ts', 'later'], ['3', 'c.ts', 'later']]));
   assert.ok(Array.isArray(bare.warnings), 'buildRetro returns a warnings list');
   assert.equal(bare.warnings.length, 1, `warnings: ${JSON.stringify(bare.warnings)}`);
@@ -849,14 +878,14 @@ function fixture() {
     fs.writeFileSync(path.join(repo, rel), text);
   };
   git(['init', '-q', '-b', 'main']);
-  const head = table(LOG_HEAD, [logRow('EP-1', 'Full', 60, 10, 'caught it', 'stale env file')]);
+  const head = table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10, 'caught it', 'stale env file')]);
   write(LOG, `# Log\n\n${head}\n`);
   write(FU_FILE, `${fuTable(['1'])}\n`);
   write(`${PLANS_DIR}/EP-2.state.md`, 'Unit: EP-2\n');
   write(`${PLANS_DIR}/EP-2.steps.jsonl`, `${stepLine({ t: '2026-10-23T10:00:00Z', unit: 'EP-2', step: '2', event: 'start', round: 1 })}\n${stepLine({ t: '2026-10-23T10:30:00Z', unit: 'EP-2', step: '2', event: 'done', round: 1 })}\n`);
   git(['add', '.']);
   git(['commit', '-q', '-m', 'one']);
-  fs.appendFileSync(path.join(repo, LOG), `${`| ${logRow('EP-2', 'Full', 90, 20).join(' | ')} |`}\n`);
+  fs.appendFileSync(path.join(repo, LOG), `${`| ${logRow('EP-2', CELL_A, 90, 20).join(' | ')} |`}\n`);
   git(['commit', '-q', '-a', '-m', 'two'], '2026-10-23T11:00:00Z');
   const projects = tmpDir('retro-projects-');
   const dir = path.join(projects, repo.replace(/[^A-Za-z0-9]/g, '-'));

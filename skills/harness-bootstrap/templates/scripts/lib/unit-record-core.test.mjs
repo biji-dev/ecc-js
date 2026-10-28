@@ -1,5 +1,8 @@
 // harness-bootstrap unit-record tests (generated YYYY-MM-DD). Run: node --test scripts/lib/unit-record-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: none -- the tests read MAX_COMMITS, never its value.
+// [M] mechanism (ships as-is): every test. [B] binding: the block below -- two gate-runner summary lines the core's
+// SUMMARY_LINE must match, and the auditor and product sources its AUDITOR_SOURCE must tell apart; keep them matching the
+// core. Fixtures are built from the core's bound values (LEDGER_HEADING, FINDINGS_HEADING, MAX_COMMITS), and every
+// draft-row test passes its own columns, so a project's other bindings never change what the tests assert.
 // Hermetic: no network and no real repository. The wrapper runs in a temp git repo with every GIT_*
 // variable stripped, GIT_CONFIG_GLOBAL=/dev/null and a fixed identity, so a suite run from a git hook
 // can never write into the caller's repository.
@@ -11,6 +14,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  AUDITOR_SOURCE,
+  FINDINGS_HEADING,
+  LEDGER_HEADING,
   LOG_COLUMNS,
   MAX_COMMITS,
   buildRecord,
@@ -29,6 +35,34 @@ import {
 import { parseSteps, stepLine } from './unit-step-core.mjs';
 
 const RUNNER = fileURLToPath(new URL('../unit-record.mjs', import.meta.url));
+const DOT = String.fromCodePoint(0xb7);
+const STAR = String.fromCodePoint(0x2605);
+
+// ---- [B] project bindings
+// Two lines the core's SUMMARY_LINE matches (the run's summary is the last), a source its AUDITOR_SOURCE takes for an
+// auditor lane and one it does not. A project that rebinds the core rebinds these in the same edit; the [B] tests name a mismatch.
+const SUMMARY_EXAMPLES = ['SUMMARY 3 passed, 1 failed, 0 skipped', 'SUMMARY 4 passed, 0 failed, 1 skipped (retry)'];
+const AUDITOR_EXAMPLE = 'claim-check';
+const PRODUCT_SOURCE = 'codex-review';
+// ---- end [B]
+
+// The log columns every draft-row test passes to buildRecord: the template's, this suite's own fixture (a project's differ).
+const DRAFT_COLUMNS = [
+  `Unit ${DOT} Mode ${DOT} Type ${DOT} Tier`,
+  'Deliverable',
+  'Elapsed (work)',
+  'Owner wait',
+  'Defects',
+  'Scope',
+  `Gate 1 ${DOT} Gate 2`,
+  'Verdicts',
+  'Retries',
+  'Model',
+  'Cost',
+  `${STAR} Missed by harness`,
+  'Yield by source',
+  'Friction',
+];
 
 const tempDirs = [];
 function tmpDir(prefix) {
@@ -62,16 +96,16 @@ const STATE = [
   'Claimed: 2026-10-24T03:10:00Z',
   'Owner wait: 1h20m',
   '',
-  '## Ledger',
+  `## ${LEDGER_HEADING}`,
   '| Step | Status | Evidence |',
   '|---|---|---|',
   '| 8 review — code-reviewer | ran | 3 findings |',
   '',
-  '## Findings',
+  `## ${FINDINGS_HEADING}`,
   '| ID | Sev | Source | Also | Status | Note |',
   '|---|---|---|---|---|---|',
-  '| F-1 | P1 | codex-review | | fixed abc1234 | a |',
-  '| F-2 | P2 | opus-code-reviewer | codex-review | follow-up | b |',
+  `| F-1 | P1 | ${PRODUCT_SOURCE} | | fixed abc1234 | a |`,
+  `| F-2 | P2 | opus-code-reviewer | ${PRODUCT_SOURCE} | follow-up | b |`,
   '| F-3 | P3 | silent-failure-hunter | | retracted | c |',
   '',
 ].join('\n');
@@ -112,8 +146,8 @@ test('parseState reads the header, the ledger and the findings', () => {
   assert.deepEqual(
     s.findings.map((f) => [f.id, f.sev, f.source, f.also, f.status]),
     [
-      ['F-1', 'P1', 'codex-review', [], 'fixed'],
-      ['F-2', 'P2', 'opus-code-reviewer', ['codex-review'], 'follow-up'],
+      ['F-1', 'P1', PRODUCT_SOURCE, [], 'fixed'],
+      ['F-2', 'P2', 'opus-code-reviewer', [PRODUCT_SOURCE], 'follow-up'],
       ['F-3', 'P3', 'silent-failure-hunter', [], 'retracted'],
     ],
   );
@@ -122,19 +156,19 @@ test('parseState reads the header, the ledger and the findings', () => {
 test('parseState finds columns by name: other order, an extra column, no Also column, an escaped pipe', () => {
   const s = parseState(
     [
-      '## findings',
+      `## ${FINDINGS_HEADING.toLowerCase()}`,
       '| Status | Note | Source | Extra | Sev | ID |',
       '|:--|---|:-:|---|---|---|',
-      '| open | a \\| b, with a comma | codex-review | x | HIGH | F-9 |',
+      `| open | a \\| b, with a comma | ${PRODUCT_SOURCE} | x | HIGH | F-9 |`,
       '',
-      '## LEDGER',
+      `## ${LEDGER_HEADING.toUpperCase()}`,
       '| Evidence | Step |',
       '|---|---|',
       '| 2 findings | 8 review \\| round 2 |',
     ].join('\n'),
   );
   assert.deepEqual(s.findings, [
-    { id: 'F-9', sev: 'P1', source: 'codex-review', also: [], status: 'open' },
+    { id: 'F-9', sev: 'P1', source: PRODUCT_SOURCE, also: [], status: 'open' },
   ]);
   assert.deepEqual(s.ledger, [{ step: '8 review | round 2', status: '', evidence: '2 findings' }]);
 });
@@ -149,7 +183,7 @@ test('parseState ignores other sections and a missing header; every field is opt
       '|---|---|---|',
       '| N-1 | P0 | not-a-finding |',
       '',
-      '### Findings',
+      `### ${FINDINGS_HEADING}`,
       '| ID | Sev | Source |',
       '| F-1 | P0 | not under a ## heading |',
     ].join('\n'),
@@ -174,7 +208,7 @@ const TABLE_STATE = [
   '| Owner-wait | Gate 1 asked \\| answered |',
   '| Tier | Full |',
   '',
-  '## Ledger',
+  `## ${LEDGER_HEADING}`,
   '| Step | Status | Evidence |',
   '|---|---|---|',
   '| 1 | ran | x |',
@@ -319,7 +353,7 @@ test('Elapsed is work time: wall minus owner wait, with the draft row carrying t
 test('the draft row has the 14 log columns in order, with Deliverable, owner wait and the --cost line', () => {
   const state = parseState(`${STATE}`.replace('Tier: Full', 'Type · tier: Code · Full\nDeliverable: docs/x.md').replace('Type: Code\n', ''));
   const row = (cost) => {
-    const rec = buildRecord({ state, commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, cost });
+    const rec = buildRecord({ state, commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, cost, columns: DRAFT_COLUMNS });
     return splitRow(rec.split('\n').find((l) => l.startsWith('| EP-27.04 ')));
   };
   const cells = row('Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)');
@@ -332,7 +366,7 @@ test('the draft row has the 14 log columns in order, with Deliverable, owner wai
   assert.match(cells[9], /models/);
   assert.equal(cells[10], 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)');
   assert.match(cells[11], /missed by harness/);
-  assert.equal(cells[12], 'codex-review 0/1/0');
+  assert.equal(cells[12], `${PRODUCT_SOURCE} 0/1/0`);
   assert.match(cells[13], /friction/);
   const bare = row(undefined);
   assert.equal(bare.length, 14);
@@ -341,7 +375,7 @@ test('the draft row has the 14 log columns in order, with Deliverable, owner wai
   assert.equal(row('a | b').length, 14);
 });
 
-test('the draft row follows a bound LOG_COLUMNS: the default is today\'s row, a reordered list reorders the cells, an unknown name is a fill', () => {
+test('the draft row follows the columns it is given, and the bound LOG_COLUMNS by default: a reordered list reorders the cells, an unknown name is a fill', () => {
   const state = parseState(STATE.replace('Tier: Full', 'Tier: Full\nDeliverable: docs/x.md'));
   const COST = 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)';
   const draft = (columns) => {
@@ -351,13 +385,12 @@ test('the draft row follows a bound LOG_COLUMNS: the default is today\'s row, a 
   };
   const today =
     '| EP-27.04 · plan · Code · Full | docs/x.md | 1h52m | 1h20m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | ' +
-    `${COST} | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |`;
-  assert.equal(draft(), today);
-  assert.equal(draft(LOG_COLUMNS), today);
-  assert.equal(LOG_COLUMNS.length, 14);
+    `${COST} | <fill: missed by harness> | ${PRODUCT_SOURCE} 0/1/0 | <fill: friction> |`;
+  assert.equal(draft(DRAFT_COLUMNS), today);
+  assert.equal(draft(LOG_COLUMNS), draft(), 'passing the bound LOG_COLUMNS is the default');
   // Names are matched by prefix, case, a leading ★ or * and hyphens ignored; the row is built in the given order.
   assert.equal(draft(['COST', 'Friction', 'Unit · Mode · Type · Tier', '*Owner-wait']), `| ${COST} | <fill: friction> | EP-27.04 · plan · Code · Full | 1h20m |`);
-  assert.equal(draft([`${String.fromCodePoint(0x2605)} Missed by harness`, 'Defects', 'Yield by source']), '| <fill: missed by harness> | 0/1 | codex-review 0/1/0 |');
+  assert.equal(draft([`${String.fromCodePoint(0x2605)} Missed by harness`, 'Defects', 'Yield by source']), `| <fill: missed by harness> | 0/1 | ${PRODUCT_SOURCE} 0/1/0 |`);
   // A name with no known cell is the session's to fill, under its own name.
   assert.equal(draft(['Deliverable', 'Reviewer', 'Elapsed (work)']), '| docs/x.md | <fill: Reviewer> | 1h52m |');
 });
@@ -427,14 +460,14 @@ test('status is normalised to fixed | follow-up | retracted | open; anything els
 
 test('defects counts P0/P1 not raised by an auditor lane, and never a retracted finding', () => {
   const sum = summarizeFindings([
-    finding({ id: 'a', sev: 'P1', source: 'codex-review' }),
-    finding({ id: 'b', sev: 'P0', source: 'opus-code-reviewer' }),
-    finding({ id: 'c', sev: 'P1', source: 'plan-conformance-auditor' }),
-    finding({ id: 'd', sev: 'P1', source: 'claim-auditor' }),
-    finding({ id: 'e', sev: 'P0', source: 'Lane-A' }),
-    finding({ id: 'f', sev: 'P1', source: 'lane-c' }),
-    finding({ id: 'g', sev: 'P1', source: 'codex-review', status: 'retracted' }),
-    finding({ id: 'h', sev: 'P2', source: 'codex-review' }),
+    finding({ id: 'a', sev: 'P1', source: PRODUCT_SOURCE }),
+    finding({ id: 'b', sev: 'P0', source: PRODUCT_SOURCE }),
+    finding({ id: 'c', sev: 'P1', source: AUDITOR_EXAMPLE }),
+    finding({ id: 'd', sev: 'P1', source: AUDITOR_EXAMPLE }),
+    finding({ id: 'e', sev: 'P0', source: AUDITOR_EXAMPLE }),
+    finding({ id: 'f', sev: 'P1', source: AUDITOR_EXAMPLE }),
+    finding({ id: 'g', sev: 'P1', source: PRODUCT_SOURCE, status: 'retracted' }),
+    finding({ id: 'h', sev: 'P2', source: PRODUCT_SOURCE }),
   ]);
   assert.equal(sum.defects, '1/1');
   assert.equal(summarizeFindings([]).defects, '0/0');
@@ -458,7 +491,7 @@ test('yield counts only unique valid P0-P2 findings per source', () => {
   // `also` cells of '', '-' and '—' are empty; a real co-reporter is not.
   const s = parseState(
     [
-      '## Findings',
+      `## ${FINDINGS_HEADING}`,
       '| ID | Sev | Source | Also | Status |',
       '|---|---|---|---|---|',
       '| a | P1 | s1 | - | fixed |',
@@ -479,7 +512,7 @@ test('retracted findings are out of bySev but still counted in byStatus', () => 
   assert.deepEqual(sum.byStatus, { open: 0, fixed: 1, 'follow-up': 1, retracted: 1 });
   assert.equal(sum.defects, '0/1');
   assert.deepEqual(sum.yield, {
-    'codex-review': { P0: 0, P1: 1, P2: 0 },
+    [PRODUCT_SOURCE]: { P0: 0, P1: 1, P2: 0 },
   });
 });
 
@@ -495,18 +528,24 @@ test('formatElapsed: hours and minutes, minutes alone under an hour, unknown for
   assert.equal(formatElapsed('2026-10-24T05:00:00Z', '2026-10-24T03:00:00Z'), 'unknown');
 });
 
-test('lastSummary picks the last of two SUMMARY lines, and null when there is none', () => {
-  const log = [
-    'running gates',
-    'SUMMARY 3 passed, 1 failed, 0 skipped',
-    'retry',
-    'SUMMARY 4 passed, 0 failed, 1 skipped (retry)',
-    'done',
-  ].join('\n');
-  assert.equal(lastSummary(log), 'SUMMARY 4 passed, 0 failed, 1 skipped (retry)');
-  assert.equal(lastSummary('SUMMARY 1 passed, 0 failed, 0 skipped\r\nbye'), 'SUMMARY 1 passed, 0 failed, 0 skipped');
-  assert.equal(lastSummary('no summary here\n  SUMMARY 1 passed, 0 failed, 0 skipped'), null);
+test('lastSummary picks the last of two summary lines, and null when there is none', () => {
+  const [first, last] = SUMMARY_EXAMPLES;
+  const log = ['running gates', first, 'retry', last, 'done'].join('\n');
+  assert.equal(lastSummary(log), last);
+  assert.equal(lastSummary(`${first}\r\nbye`), first);
+  assert.equal(lastSummary('no summary here\nbye'), null);
   assert.equal(lastSummary(''), null);
+});
+
+test('[B] the core\'s SUMMARY_LINE matches SUMMARY_EXAMPLES, line for line', () => {
+  for (const line of SUMMARY_EXAMPLES) {
+    assert.equal(lastSummary(line), line, `the core's SUMMARY_LINE does not match the test's SUMMARY_EXAMPLES line "${line}": keep both on the gate runner's line`);
+  }
+});
+
+test('[B] the core\'s AUDITOR_SOURCE takes AUDITOR_EXAMPLE and not PRODUCT_SOURCE', () => {
+  assert.ok(AUDITOR_SOURCE.test(AUDITOR_EXAMPLE), `the core's AUDITOR_SOURCE ${AUDITOR_SOURCE} does not take the test's AUDITOR_EXAMPLE "${AUDITOR_EXAMPLE}": keep both on the auditor lanes`);
+  assert.ok(!AUDITOR_SOURCE.test(PRODUCT_SOURCE), `the core's AUDITOR_SOURCE ${AUDITOR_SOURCE} takes the test's PRODUCT_SOURCE "${PRODUCT_SOURCE}": it is a product source`);
 });
 
 const NOW = '2026-10-24T06:22:00Z';
@@ -520,8 +559,9 @@ test('buildRecord prints every field with its exact label, in order', () => {
     state: parseState(STATE),
     commits: COMMITS,
     diffstat: ' 3 files changed, 10 insertions(+)\n',
-    gatesSummary: 'SUMMARY 4 passed, 0 failed, 0 skipped',
+    gatesSummary: SUMMARY_EXAMPLES[1],
     now: NOW,
+    columns: DRAFT_COLUMNS,
   });
   const lines = rec.split('\n');
   assert.equal(
@@ -534,9 +574,9 @@ test('buildRecord prints every field with its exact label, in order', () => {
     '  - aaaaaaa feat: one',
     '  - bbbbbbb fix: two',
     '- Diffstat: 3 files changed, 10 insertions(+)',
-    '- Gates: SUMMARY 4 passed, 0 failed, 0 skipped',
+    `- Gates: ${SUMMARY_EXAMPLES[1]}`,
     '- Findings: P0 0 · P1 1 · P2 1 · P3 0 (open 0 · fixed 1 · follow-up 1 · retracted 1)',
-    '- Yield by source: codex-review P0/P1/P2 0/1/0',
+    `- Yield by source: ${PRODUCT_SOURCE} P0/P1/P2 0/1/0`,
     '- Elapsed: 1h52m work · 3h12m wall · owner wait 1h20m',
     '- Ledger:',
   ]);
@@ -547,7 +587,7 @@ test('buildRecord prints every field with its exact label, in order', () => {
     '| 8 review — code-reviewer | ran | 3 findings |',
     '',
     'Draft log row:',
-    '| EP-27.04 · plan · Code · Full | — | 1h52m | 1h20m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: node scripts/unit-cost.mjs --session …> | <fill: missed by harness> | codex-review 0/1/0 | <fill: friction> |',
+    `| EP-27.04 · plan · Code · Full | — | 1h52m | 1h20m | 0/1 | <fill: scope counts> | <fill: gates as decided> | <fill: verdicts> | <fill: retries> | <fill: models as dispatched> | <fill: node scripts/unit-cost.mjs --session …> | <fill: missed by harness> | ${PRODUCT_SOURCE} 0/1/0 | <fill: friction> |`,
     '',
   ]);
   // An explicit base and head win over the state file and the newest commit.
@@ -571,6 +611,7 @@ test('buildRecord degrades loudly: no gates, no Claimed, no ledger, no findings,
     diffstat: '',
     gatesSummary: null,
     now: NOW,
+    columns: DRAFT_COLUMNS,
   });
   assert.match(rec, /^- Base: unknown · Head: unknown$/m);
   assert.match(rec, /^- Commits: 0$/m);
@@ -620,17 +661,17 @@ test('buildRecord escapes a pipe inside a ledger cell, a source name and the uni
   const state = parseState(
     [
       'Unit: A | B',
-      '## Ledger',
+      `## ${LEDGER_HEADING}`,
       '| Step | Status | Evidence |',
       '|---|---|---|',
       '| a \\| b | ran | c \\| d |',
-      '## Findings',
+      `## ${FINDINGS_HEADING}`,
       '| ID | Sev | Source | Status |',
       '|---|---|---|---|',
       '| F-1 | P1 | x \\| y | fixed |',
     ].join('\n'),
   );
-  const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW });
+  const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW, columns: DRAFT_COLUMNS });
   assert.match(rec, /^\| a \\\| b \| ran \| c \\\| d \|$/m);
   assert.match(rec, /^\| A \\\| B · \? · \? · \? \|/m);
   assert.match(rec, /\| x \\\| y 0\/1\/0 \| <fill: friction> \|$/m);
@@ -682,7 +723,7 @@ function fixture({ state = true } = {}) {
   const gates = path.join(repo, 'docs/plans/u.gates.out');
   fs.writeFileSync(
     gates,
-    'SUMMARY 3 passed, 1 failed, 0 skipped\nfixed it\nSUMMARY 4 passed, 0 failed, 0 skipped\n',
+    `${SUMMARY_EXAMPLES[0]}\nfixed it\n${SUMMARY_EXAMPLES[1]}\n`,
   );
   return { repo, env, git, base, head, stateFile, gates };
 }
@@ -697,7 +738,7 @@ test('the wrapper prints the record from git, the gate log and the state file', 
   assert.equal(res.status, 0, res.stderr);
   const lines = res.stdout.split('\n');
   assert.ok(lines.includes('- Commits: 2'), res.stdout);
-  assert.ok(lines.includes('- Gates: SUMMARY 4 passed, 0 failed, 0 skipped'), res.stdout);
+  assert.ok(lines.includes(`- Gates: ${SUMMARY_EXAMPLES[1]}`), res.stdout);
   assert.ok(lines.includes(`- Base: ${f.base} · Head: ${f.head}`), res.stdout);
   const i = lines.indexOf('- Commits: 2');
   assert.match(lines[i + 1], /^ {2}- [0-9a-f]+ feat: one$/);
@@ -731,7 +772,7 @@ test('the wrapper: --json prints header, summary, commits, diffstat, gates and t
   assert.equal(out.summary.defects, '0/1');
   assert.equal(out.commits.length, 2);
   assert.deepEqual(out.commits[1], { sha: f.head, subject: 'fix: two | with a pipe' });
-  assert.equal(out.gates, 'SUMMARY 4 passed, 0 failed, 0 skipped');
+  assert.equal(out.gates, SUMMARY_EXAMPLES[1]);
   assert.match(out.record, /^## Record — EP-27\.04 /);
   assert.equal(JSON.parse(run(f, ['--state', f.stateFile, '--json']).stdout).gates, null);
 });
@@ -786,7 +827,7 @@ test('the wrapper is read-only: the repository is byte-identical after a run', (
 
 test('a multi-line --cost stays one table cell: CR/LF runs become a single space and the row keeps its 14 cells', () => {
   const state = parseState('Unit: U-1\nClaimed: 2026-10-24T03:10:00Z\nOwner wait: 20m\n');
-  const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW, cost: 'Cost $1.00 · Claude 0.1%\n\nClaude: $1.00\r\n  by model: opus | x\n' });
+  const rec = buildRecord({ state, commits: [], diffstat: '', gatesSummary: null, now: NOW, cost: 'Cost $1.00 · Claude 0.1%\n\nClaude: $1.00\r\n  by model: opus | x\n', columns: DRAFT_COLUMNS });
   const rowLines = rec.split('\n').filter((l) => l.startsWith('| U-1 '));
   assert.equal(rowLines.length, 1);
   const cells = splitRow(rowLines[0]);

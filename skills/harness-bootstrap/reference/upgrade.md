@@ -327,8 +327,10 @@ stand), the `scope` block (`scope-guard.md`), the blocks Phase C writes from
 `gate-design.md`, the runner skill and the implementer agent (`runner.md`), the
 claim auditor (`claim-auditor.md`), `CLAUDE.md` (`harness-targets.md`), and a
 preflight, sweep or hygiene skill the project generated (`preflight.md`,
-`sweep.md`, `hygiene.md`). The lane A and lane B auditors and the Codex agent files
-stand. The risk map is `reviewed`, so the one list of the harness's own critical
+`sweep.md`, `hygiene.md`). Where Codex is a target, each regenerated agent's
+`.codex/agents/<name>.toml` takes the new brief as `developer_instructions`, with
+`model` and `model_reasoning_effort` still from the models file (`harness-targets.md` ›
+Codex). The lane A and lane B auditors stand, and their Codex files with them. The risk map is `reviewed`, so the one list of the harness's own critical
 paths (`policy-derivation.md`) reaches the owner as a proposal. On a ZCode host the
 command and edit guards wire into `.zcode/config.json`, with `hooks.enabled: true`
 (`harness-targets.md` › ZCode): a `missing` row where the project has not wired

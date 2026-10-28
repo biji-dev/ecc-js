@@ -1043,6 +1043,14 @@ test("upgrade.md's v6 section names what the owner reviews again and the machine
   ]) assert.ok(v6.includes(part), `the v6 section lacks: ${part}`);
 });
 
+test("upgrade.md's v6 section regenerates the Codex file of each agent it regenerates", () => {
+  const v6 = upgradeMd().split('### Upgrading to v6')[1] ?? '';
+  assert.ok(!/Codex agent files\s+stand/.test(v6), 'the v6 section keeps every Codex agent file, though each embeds its agent\'s brief');
+  assert.match(v6, /each regenerated agent's\s+`\.codex\/agents\/<name>\.toml` takes the new brief as `developer_instructions`/);
+  const targets = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'harness-targets.md'), 'utf8');
+  assert.match(targets, /the agent file's brief as\s+`developer_instructions`/, 'harness-targets.md no longer embeds the brief');
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

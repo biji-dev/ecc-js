@@ -31,10 +31,15 @@
  *   and is a marker that fails the run: node registers no children for a skipped suite, so
  *   `describe.skip` reports `# skipped 0` and its result line is the only trace. A console line
  *   a test prints is a TAP comment written before the plan line, so it is never read as a
- *   counter; a second top-level plan or `# tests <n>` line anywhere is a second summary (a
- *   suite's own plan is indented). `--test-name-pattern`, `--test-skip-pattern`, `--test-only`
- *   and `--test-shard` in a node command are a usage error, and the same flags in `NODE_OPTIONS`
- *   stop the run: each drops tests without counting them.
+ *   counter; a second top-level plan, or a `# tests <n>` line anywhere with `# suites <n>` on
+ *   the next line (a console `# tests 5` alone has none), is a second summary (a suite's own plan
+ *   is indented). A file that registers no tests is reported as one passing top-level test named
+ *   by its path, so a top-level `ok` named like a file (no whitespace, a `.js`, `.mjs`, `.cjs`,
+ *   `.ts`, `.mts`, `.cts`, `.jsx` or `.tsx` ending, no directive, not `type: 'suite'`) fails the
+ *   run; a test whose whole title is a bare file name reads the same, and the fix is to retitle
+ *   it. `--test-name-pattern`, `--test-skip-pattern`, `--test-only` and `--test-shard` in a node
+ *   command are a usage error, and the same flags in `NODE_OPTIONS` stop the run: each drops
+ *   tests without counting them.
  * - pytest: the whole line `<n> <word>, … in <t>s`, bare or between `=` rules.
  * - bun: the block of ` <n> pass`, ` <n> skip`, ` <n> todo`, ` <n> filtered out`, ` <n> fail`
  *   lines (with its `expect() calls` and `snapshots` lines) that ends at `Ran <n> tests across
@@ -183,6 +188,8 @@ const NODE_SUMMED = ['pass', 'fail', 'cancelled', 'skipped', 'todo'];
 const NODE_WORDS = { pass: 'passed', fail: 'failed', cancelled: 'cancelled', skipped: 'skipped', todo: 'todo' };
 const NODE_RESULT = /^\s*(?:not )?ok \d+(.*)$/;
 const NODE_PLAN = /^1\.\.\d+$/;
+// A top-level pass named like a file: node's report of a file that registered no tests.
+const NODE_FILE_RESULT = /^ok \d+ - (\S+\.(?:[cm]?[jt]s|[jt]sx))$/;
 // The spec reporter's info glyph (U+2139), built so no pictograph is in the file.
 const NODE_SPEC = new RegExp(`^${String.fromCodePoint(0x2139)} (tests|pass) \\d+$`);
 
@@ -201,6 +208,19 @@ export function nodeDirectiveMarkers(text) {
   for (const l of rawLines(text)) {
     const m = NODE_RESULT.exec(l);
     if (m && tapDirective(m[1]) !== null && !out.includes(l.trim())) out.push(l.trim());
+  }
+  return out;
+}
+
+/** Top-level passes named like a file whose YAML block is not a suite's: files that registered no tests, each once. */
+function nodeEmptyFiles(ls) {
+  const out = [];
+  for (let i = 0; i < ls.length; i++) {
+    const m = NODE_FILE_RESULT.exec(ls[i]);
+    if (!m || tapDirective(m[1]) !== null || out.includes(m[1])) continue;
+    let suite = false;
+    if (ls[i + 1] === '  ---') for (let j = i + 2; j < ls.length && ls[j] !== '  ...'; j++) if (ls[j] === "  type: 'suite'") suite = true;
+    if (!suite) out.push(m[1]);
   }
   return out;
 }
@@ -225,10 +245,12 @@ function parseNode(text) {
   const problems = [];
   // Two runs in one command print two summaries, and the counters after the last plan are the last
   // run's alone: a red first run would pass. A repeat after the last plan is the twice check's.
-  const isTests = (l) => NODE_COUNTER.exec(l)?.[1] === 'tests';
+  // A summary's `# tests` line has `# suites` next; a console line's has not.
+  const isRun = (l, i) => NODE_COUNTER.exec(l)?.[1] === 'tests' && NODE_COUNTER.exec(ls[i + 1] ?? '')?.[1] === 'suites';
   const plans = ls.filter((l) => NODE_PLAN.test(l)).length;
-  const runs = Math.max(plans, ls.filter(isTests).length);
-  if (plans > 1 || ls.slice(0, plan).some(isTests)) problems.push(`${runs} node summaries in the output (one expected)`);
+  const runs = Math.max(plans, ls.filter(isRun).length);
+  if (plans > 1 || ls.slice(0, plan).some(isRun)) problems.push(`${runs} node summaries in the output (one expected)`);
+  for (const f of nodeEmptyFiles(ls)) problems.push(`${f} registered no tests: node counted the file itself as one passing test`);
   const twice = NODE_KNOWN.filter((w) => seen[w]?.length > 1);
   if (twice.length) problems.push(`more than one node summary in the output (# ${twice.join(', # ')} repeated)`);
   const missing = ['tests', ...NODE_SUMMED].filter((w) => !seen[w]);
@@ -323,13 +345,16 @@ export function parseSummary(kind, text) {
 /**
  * The run's verdict: `{ ok, lines }`, printed in order. On success the last line is exactly
  * `COUNTED <kind> <passed> passed (min <n>)`; a count above the floor adds the raise hint above it.
- * On failure every reason gets its own line, and no line starts with `COUNTED`.
+ * On failure every reason gets its own line, and no line starts with `COUNTED`. `interrupted` is
+ * the signal this process received and forwarded to the command: the run fails whatever it printed.
  */
-export function verdict({ kind, min, exitCode, signal = null, spawnError = null, summary }) {
+export function verdict({ kind, min, exitCode, signal = null, spawnError = null, interrupted, summary }) {
   const reasons = [];
+  if (interrupted) reasons.push(`interrupted by ${interrupted} (forwarded to the command)`);
   if (spawnError) reasons.push(`the command did not start: ${spawnError}`);
-  else if (signal) reasons.push(`the command was killed by ${signal}`);
-  else if (exitCode !== 0) reasons.push(`the command exited ${exitCode}`);
+  else if (signal) {
+    if (signal !== interrupted) reasons.push(`the command was killed by ${signal}`);
+  } else if (exitCode !== 0) reasons.push(`the command exited ${exitCode}`);
   if (!summary) reasons.push(`no ${kind} summary line in the output: nothing ran, or it ran somewhere this gate does not read`);
   else {
     for (const p of summary.problems ?? []) reasons.push(p);

@@ -24,10 +24,14 @@
  * marker, no unknown counter, its totals add up, and passed >= --min; the last line is then exactly
  * `COUNTED <kind> <passed> passed (min <n>)`. 1 otherwise, one `run-counted: FAIL` line per reason.
  * 2 usage (`--min` missing, 0 or not an integer, an unknown kind, no command, a node command with
- * `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or `--test-shard`).
+ * `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or `--test-shard`). A SIGINT, SIGTERM
+ * or SIGHUP sent to this process is forwarded to the command, which is still waited for; the run
+ * then fails (`run-counted: FAIL interrupted by <SIG>`) and exits as a shell would report the
+ * command: its own code when non-zero, else 128 + the signal's number, never 0.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { EXIT, SUMMARY_STREAM, nodeOptionsProblem, parseArgs, parseSummary, verdict } from './lib/run-counted-core.mjs';
 
@@ -38,13 +42,29 @@ function usage(msg) {
   return EXIT.usage;
 }
 
-/** Spawn without a shell, stream both outputs through, keep both for the parser. */
+/** The signals a gate runner stops a run with: each goes on to the command, and the run fails. */
+const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/** Spawn without a shell, stream both outputs through, keep both for the parser, forward a stop signal. */
 function run(cmd, args) {
   return new Promise((resolve) => {
     const out = [];
     const err = [];
     let settled = false;
+    let interrupted = null;
     const child = spawn(cmd, args, { stdio: ['inherit', 'pipe', 'pipe'] });
+    // Without a handler the signal ends this process at once and leaves the command running with
+    // no reader. The first signal is the one reported; a second is forwarded too.
+    const forward = (sig) => {
+      interrupted ??= sig;
+      child.kill(sig);
+    };
+    for (const sig of FORWARDED) process.on(sig, forward);
+    const settle = (res) => {
+      settled = true;
+      for (const sig of FORWARDED) process.off(sig, forward);
+      resolve({ ...res, interrupted });
+    };
     child.stdout.on('data', (b) => {
       out.push(b);
       process.stdout.write(b);
@@ -55,13 +75,11 @@ function run(cmd, args) {
     });
     child.on('error', (e) => {
       if (settled) return;
-      settled = true;
-      resolve({ exitCode: null, signal: null, spawnError: e.message, stdout: '', stderr: '' });
+      settle({ exitCode: null, signal: null, spawnError: e.message, stdout: '', stderr: '' });
     });
     child.on('close', (code, signal) => {
       if (settled) return;
-      settled = true;
-      resolve({ exitCode: code, signal, spawnError: null, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
+      settle({ exitCode: code, signal, spawnError: null, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() });
     });
   });
 }
@@ -85,12 +103,14 @@ async function main() {
     exitCode: res.exitCode,
     signal: res.signal,
     spawnError: res.spawnError,
+    interrupted: res.interrupted,
     summary: res.spawnError ? null : parseSummary(a.kind, res[SUMMARY_STREAM[a.kind]]),
   });
   // The verdict starts a line of its own: the child's output (both land in the gate's one log)
   // may have ended without a newline.
   process.stdout.write('\n');
   for (const l of v.lines) console.log(l);
+  if (res.interrupted) return res.exitCode || 128 + os.constants.signals[res.signal ?? res.interrupted];
   return v.ok ? EXIT.ok : EXIT.failed;
 }
 

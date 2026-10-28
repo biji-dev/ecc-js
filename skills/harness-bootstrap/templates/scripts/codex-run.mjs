@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap codex-run (generated YYYY-MM-DD). The one entry point for every Codex call.
 // [M] mechanism (ships as-is): everything below except the two [B] constants (LEDGER_DIR, RULES_FOR);
-// the model catalog [B] lives at the top of scripts/lib/codex-run-core.mjs.
+// the model catalog and the CLI's install paths [B] live at the top of scripts/lib/codex-run-core.mjs.
 /**
  * Picks model + effort per task, attaches the area rules Codex never loads itself, runs it,
  * and reports an HONEST exit code with one result line.
@@ -20,7 +20,8 @@
  *   --critical             the diff touches critical code (adversarial -> xhigh)
  *   --route                ask the router model even for a table kind
  *   --model <m> --effort <e>  explicit override (still clamped)
- *   --allow-ultra --allow-frontier  lift the clamp
+ *   --allow-ultra --allow-max --allow-frontier  lift the clamp (`max` is lowered to xhigh
+ *                          without --allow-max; --allow-ultra implies it)
  *   --network              workspace-write kinds: allow network (local services for tests)
  *   --image <files...>     attach screenshots (ui-review; any exec kind)
  *   --threshold <pct>      budget guard (default CODEX_RUN_THRESHOLD, else 85)
@@ -33,7 +34,9 @@
  *
  * env: CODEX_RUN=on|essential|off -- `essential` runs only the essential kinds (review,
  * adversarial, adversarial-frontier); `off` reserves every kind. CODEX_RUN_THRESHOLD=<pct>
- * moves the budget guard. CODEX_BIN overrides the codex binary (default `codex` on PATH).
+ * moves the budget guard. The codex binary is CODEX_BIN, else the CLI installed under the
+ * home directory (CODEX_CANDIDATES in the core), else `codex` on PATH: a terminal's own
+ * `codex` shim can come first on PATH, and the installed CLI is the one to run.
  * CODEX_HOME is where session rollouts are read for the weekly reading (default ~/.codex).
  *
  * Write kinds report what they left: `commits=<a>..<b>`, `uncommitted=<n>` and
@@ -55,6 +58,7 @@ import {
   buildRouterPrompt,
   classify,
   codexArgv,
+  codexBinary,
   formatDuration,
   formatTokens,
   freshestLimits,
@@ -75,8 +79,19 @@ const LEDGER_DIR = '.codex-runs';
 // Run as `node <script> <flag> <changed files...>`; it prints one rule-file path per line.
 const RULES_FOR = ['scripts/check-agent-docs.mjs', '--rules-for'];
 
-// Resolved on PATH; a missing binary classifies as `unavailable` (exit 3), never a crash.
-const CODEX = process.env.CODEX_BIN || 'codex';
+/** True for a regular file the current user can execute; any error reads as no. */
+function isExecutable(file) {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A missing binary classifies as `unavailable` (exit 3), never a crash.
+const CODEX = codexBinary(process.env, os.homedir(), isExecutable);
 const SESSIONS = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
 const SCRIPT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RULES_RESOLVER = path.join(SCRIPT_REPO, RULES_FOR[0]);

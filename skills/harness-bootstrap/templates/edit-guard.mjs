@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap edit-guard hook (generated YYYY-MM-DD). Claude Code PreToolUse
-// (Edit|Write|MultiEdit|NotebookEdit) and Codex PreToolUse (apply_patch|Edit|Write).
+// (Edit|Write|MultiEdit|NotebookEdit), Codex PreToolUse (apply_patch|Edit|Write) and ZCode
+// PreToolUse (Edit|Write).
 // [M] mechanism (ship as-is): reading the edited paths from the hook's stdin JSON, the refusal
 //   and the entry check. [B] binding (re-derived per project): the PROTECTED line below.
 // WHY. A hook that reads the paths from an environment variable never runs: one project's .env
@@ -13,9 +14,11 @@
 //                `*** Delete File:` and `*** Move to:` lines name the paths, relative to `cwd`
 //                (indented, one counts where a file section may start; inside an Update hunk a
 //                space-led line is context)
+//   ZCode        Edit, Write: tool_input.file_path, as on Claude Code
 // A refusal exits 2 with `BLOCKED (protected-path): <path> ...` on stderr, which both hosts read
 // as a block. Input that does not parse, or names no path, exits 0: the hook never blocks on its
-// own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted.
+// own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted;
+// ZCode runs the hooks in .zcode/config.json only with hooks.enabled: true.
 // A PostToolUse formatter reads the same paths: import { editedPaths } from this file.
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';

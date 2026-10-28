@@ -11,7 +11,12 @@ ledger findings, every transcript priced). None was reasoned into existence. Tha
 
 When generating a harness, **ship §1 with its origin named.** A rule without its
 incident reads as pedantry and gets deleted by the first team that has not lived
-it — usually just before they live it.
+it — usually just before they live it. §1 cites this skill's reference files
+(`gate-design.md`, `context.md`, `runner.md`, `cross-model.md`, `commit-guard.md`,
+`claim-auditor.md`) and the generated `docs/harness/rule-origins.md` carries those
+citations into the project, so that file opens with one line saying that a bare
+`<name>.md` it cites is a reference file of the harness-bootstrap skill, not a
+project file.
 
 ---
 

@@ -467,8 +467,12 @@ version or release step · where artifacts live.
 `[M]` Generated to `.claude/agents/implementer.md`: `model: opus`, `effort: high`,
 `tools: Read, Edit, Write, Grep, Glob, Bash`, `autoCompactWindow: 250000` — a
 backstop; the slice keeps it small (`context.md` › The window, the gate wait and
-the base). Dispatched with `model` and `effort` passed explicitly — `"sonnet"` for
-a cold slice. Its file carries the **Tool discipline** section verbatim
+the base). The frontmatter window only lowers: it applies when 250000 is below the
+window the subagent inherits, so a session whose window is at or under 250K makes
+it a no-op; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` disables it; it needs Claude Code
+v2.1.296 or later and a plain integer (`250000`, not `250k`). Dispatched with
+`model` and `effort` passed explicitly — `"sonnet"` for a cold slice. Its file
+carries the **Tool discipline** section verbatim
 (`context.md`) and says:
 
 - work only in the worktree the brief names, by absolute path;

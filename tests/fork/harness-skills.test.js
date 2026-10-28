@@ -467,7 +467,7 @@ test('policy-derivation.md holds the one list of the harness\'s own critical pat
   assert.ok(start >= 0, "policy-derivation.md has no \"The harness's own paths\" passage");
   const end = policy.indexOf('## ', start);
   const list = policy.slice(start, end < 0 ? undefined : end);
-  for (const need of ['commit guard', 'command guard', 'edit guard', '.claude/settings.json', '.codex/hooks.json', 'run-gates.sh', 'run-counted', 'review-gate', 'critical', 'never-auto']) {
+  for (const need of ['commit guard', 'command guard', 'edit guard', '.claude/settings.json', '.codex/hooks.json', '.zcode/config.json', 'run-gates.sh', 'run-counted', 'review-gate', 'critical', 'never-auto']) {
     assert.ok(list.includes(need), `the list of the harness's own paths does not name ${need}`);
   }
   const skill = fs.readFileSync(path.join(BOOTSTRAP, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
@@ -593,6 +593,68 @@ test("SKILL.md's \"Fit the project's tooling\" paragraph names every other CI ch
   const para = text.slice(start, text.indexOf('**Project rules tighten', start));
   assert.ok(para.includes('`run-gates.sh`'), "the tooling paragraph does not name `run-gates.sh` (the gates bind every other check the project's CI runs)");
   assert.ok(para.includes('`tseslint.configs.disableTypeChecked`'), 'the tooling paragraph does not name `tseslint.configs.disableTypeChecked` for a type-aware lint');
+});
+
+test("harness-targets.md: ZCode's shells name the host, and its guards run from .zcode/config.json with hooks.enabled", () => {
+  const raw = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'harness-targets.md'), 'utf8');
+  const text = raw.replace(/\s+/g, ' ');
+  assert.ok(!text.includes('No ZCode variable is verified'), 'harness-targets.md still says no ZCode variable is verified');
+  assert.ok(!/ZCode needs `HARNESS_HOST=zcode`/.test(text), 'harness-targets.md still says ZCode needs HARNESS_HOST=zcode');
+  assert.ok(!text.includes('a ZCode session reads as `claude`'), 'harness-targets.md still says a ZCode session reads as claude');
+  assert.ok(text.includes('`ZCODE_APP_VERSION`'), 'harness-targets.md does not name ZCODE_APP_VERSION');
+  const start = raw.indexOf('\n## ZCode');
+  assert.ok(start >= 0, 'harness-targets.md has no ZCode section');
+  const section = raw.slice(start, raw.indexOf('\n## Kimi', start));
+  const squash = section.replace(/\s+/g, ' ');
+  for (const need of ['.zcode/config.json', 'hooks.enabled', 'ZCODE_PROJECT_DIR', 'UserPromptSubmit']) {
+    assert.ok(squash.includes(need), `the ZCode section does not name ${need}`);
+  }
+  assert.ok(/context-budget hook stays Claude Code's/.test(squash), "the ZCode section does not say the context budget stays Claude Code's");
+  const block = section.match(/```json\n([\s\S]*?)```/);
+  assert.ok(block, 'the ZCode section has no JSON block');
+  const config = JSON.parse(block[1]);
+  assert.strictEqual(config.hooks.enabled, true);
+  const pre = config.hooks.events.PreToolUse;
+  const guards = Object.fromEntries(pre.map(e => [e.matcher, e.hooks[0]]));
+  assert.deepStrictEqual(Object.keys(guards).sort(), ['Bash', 'Edit|Write']);
+  assert.ok(guards['Edit|Write'].command.includes('${ZCODE_PROJECT_DIR}/.claude/hooks/edit-guard.mjs'), 'the edit guard is not wired');
+  assert.ok(guards.Bash.command.includes('${ZCODE_PROJECT_DIR}/.claude/hooks/command-guard.mjs'), 'the command guard is not wired');
+  assert.ok(pre.every(e => e.hooks.every(h => h.type === 'command' && h.timeout === 10)), 'a ZCode guard has no timeout of 10');
+});
+
+test("edit-guard.mjs's header names ZCode and its hooks.enabled switch", () => {
+  const head = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'edit-guard.mjs'), 'utf8').split('\n').slice(0, 24).join('\n');
+  assert.ok(head.includes('ZCode'), "edit-guard.mjs's header does not name ZCode");
+  assert.ok(/hooks\.enabled: true/.test(head), "edit-guard.mjs's header does not say ZCode needs hooks.enabled: true");
+});
+
+test('autoCompactWindow only lowers: context.md names the order and what the hook cannot see; runner.md and harness-targets.md say so', () => {
+  const context = squashed('reference/context.md');
+  for (const need of ['--autocompact', 'modelSettings', 'managed settings', '--settings', 'CONTEXT_BUDGET_LIMIT']) {
+    assert.ok(context.includes(need), `context.md does not name ${need}`);
+  }
+  assert.ok(/is not seen: set `CONTEXT_BUDGET_LIMIT`/.test(context), 'context.md does not say the hook does not read a window set that way');
+  const runner = squashed('reference/runner.md');
+  const para = runner.slice(runner.indexOf('## The implementer agent'));
+  assert.ok(/only lowers: it applies when 250000 is below the window the subagent inherits/.test(para), "runner.md's implementer paragraph does not say the frontmatter window only lowers");
+  assert.ok(para.includes('v2.1.296'), "runner.md's implementer paragraph does not name v2.1.296");
+  const targets = squashed('reference/harness-targets.md');
+  const agents = targets.slice(targets.indexOf('- **Agents:** `.claude/agents/*.md`'));
+  assert.ok(agents.slice(0, 400).includes('`effort:` and `autoCompactWindow:`'), "harness-targets.md's Claude Code agents bullet does not name effort: and autoCompactWindow:");
+  assert.ok(/`autoCompactWindow` only lowers/.test(agents.slice(0, 500)), "harness-targets.md's agents bullet does not say autoCompactWindow only lowers");
+});
+
+test('rules.md tells the generated rule-origins to open with a line saying a bare <name>.md is a harness-bootstrap reference file', () => {
+  const rules = squashed('reference/rules.md');
+  const preamble = rules.slice(0, rules.indexOf('## 1 · Ship these'));
+  assert.ok(preamble.includes('rule-origins') && preamble.includes('harness-bootstrap'), 'the rules.md preamble does not name rule-origins and harness-bootstrap');
+  assert.ok(/bare `<name>\.md` it cites is a reference file of the harness-bootstrap skill, not a project file/.test(preamble), 'the rules.md preamble does not say a bare <name>.md is a reference file, not a project file');
+});
+
+test('cross-model.md names CODEX_CANDIDATES before codex on PATH, and says codex-run lowers max without --allow-max', () => {
+  const text = squashed('reference/cross-model.md');
+  assert.ok(/`CODEX_CANDIDATES` in the core .{0,160}tried before `codex` on `PATH`.{0,120}`CODEX_BIN` overrides both/.test(text), 'cross-model.md does not place CODEX_CANDIDATES before codex on PATH, with CODEX_BIN over both');
+  assert.ok(/codex-run lowers `max` to `xhigh` without `--allow-max`/.test(text), 'cross-model.md does not say codex-run lowers max without --allow-max');
 });
 
 console.log(`\nPassed: ${passed}`);

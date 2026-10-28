@@ -113,7 +113,9 @@ What it does that a bare call does not:
 - the `CATALOG` block at the top of the core — the models this machine's CLI
   offers, by role (`default`, `frontier`, `router`, `previous`);
 - `LEDGER_DIR` and `RULES_FOR` in the wrapper;
-- `CODEX_BIN` if the CLI is not on `PATH`;
+- `CODEX_CANDIDATES` in the core — where this machine's CLI is installed, tried before
+  `codex` on `PATH`, because a terminal's own `codex` shim can come first there;
+  `CODEX_BIN` overrides both;
 - the route table's efforts only when the log has shown a reason.
 
 **Install:** copy the three files to `scripts/` and `scripts/lib/`, set the bindings,
@@ -227,4 +229,5 @@ scripts/lib/claude-run-core.test.mjs` once, and `.claude-runs/` in `.gitignore`.
    naming why.
 
 `[M]` Effort floor `high`; `xhigh` only at rung 2 or with the reason in the brief;
-`max` only on the owner's word (`gate-design.md`).
+`max` only on the owner's word (`gate-design.md`): codex-run lowers `max` to `xhigh`
+without `--allow-max`.

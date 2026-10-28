@@ -102,10 +102,12 @@ call it; never maintain the same sequence in three skill files.
   per-slice review, Small review, fix re-reviews and the adversarial pass. Pass
   `model` and `effort` on every Agent dispatch, and pin `effort: high` in every
   agent file.
-- **Agents:** `.claude/agents/*.md` with `model:` and `tools:` frontmatter —
-  `tools` is enforced, so the conformance and blast-radius auditors' read-only
-  bound is real. Generated: `plan-conformance-auditor.md`, `blast-radius-auditor.md`,
-  `claim-auditor.md`, `implementer.md`.
+- **Agents:** `.claude/agents/*.md` with `model:`, `tools:`, `effort:` and
+  `autoCompactWindow:` frontmatter — `tools` is enforced, so the conformance and
+  blast-radius auditors' read-only bound is real; `autoCompactWindow` only lowers
+  the window (`runner.md` › The implementer agent). Generated:
+  `plan-conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`,
+  `implementer.md`.
 - **Hooks:** the commit guard is a git hook, not a Claude hook, so every agent
   and every human is guarded. The context-budget hook is Claude-only
   (`context.md`).
@@ -218,17 +220,44 @@ call it; never maintain the same sequence in three skill files.
   work into a workflow (the `delegate-tasks` skill describes one).
 - **The second family** is Codex, through `codex-run.mjs`; Claude, through
   `claude-run.mjs`, when Codex is out. ZCode sets `CLAUDE_*` variables too, so
-  `harness-host.mjs` reads any `ZCODE_*` variable first. No ZCode variable is
-  verified yet (none was found in its app or its logs), so until one is, a ZCode
-  session reads as `claude`: set `HARNESS_HOST=zcode` in the environment ZCode gives
-  its shells, never in a shell profile the other hosts read too.
+  `harness-host.mjs` reads any `ZCODE_*` variable first. ZCode's shells carry its
+  own (`ZCODE_APP_VERSION`, `ZCODE_ENV`), so the script names it without help;
+  `HARNESS_HOST` stays the owner's override, set in the environment ZCode gives its
+  shells, never in a shell profile the other hosts read too.
 - Check whether the session model reads images before planning a visual step.
-- **When ZCode is the main runtime,** the Claude Code hooks (command and edit
-  guards, context budget) do not protect it, and "pass `model` and `effort` on every
-  dispatch" cannot hold outside a workflow. The git hooks still do — the commit
-  guard is the one protection every agent shares. Say in the harness file which
-  protections apply to which runtime, and which roles fall back to the session
-  model.
+- **Hooks:** the command and edit guards run under ZCode unchanged, from the
+  workspace's `.zcode/config.json` (the user's own is `~/.zcode/cli/config.json`)
+  under its top-level `hooks` key. They are off by default: set `hooks.enabled:
+  true` (the runner also starts when a plugin brings a hook of its own; a harness
+  does not rely on that). Workspace hooks have no trust step. A hook gets
+  `ZCODE_SESSION_ID` and `ZCODE_PROJECT_DIR`, plus `CLAUDE_PROJECT_DIR` and
+  `CLAUDE_SESSION_ID`, never `CLAUDECODE`. Its stdin carries Claude Code's keys:
+  `hook_event_name`, `session_id`, `tool_name`, `tool_input` and the event's own
+  fields (a `cwd` where the session has one; both guards fall back when it is
+  absent). `Bash`'s input is `{ command, ... }`; `Edit` and `Write` send
+  `file_path`. The matcher is a case-sensitive regex on the tool name, and ZCode
+  maps `ApplyPatch` onto `Write` and `Edit` (no ApplyPatch tool ships, so the
+  guard sees `Edit` and `Write`). Exit 2 blocks, with stderr as the reason.
+  `timeout` is in seconds (default 60). ZCode expands `${ZCODE_PROJECT_DIR}` in
+  the command itself.
+
+  ```json
+  { "hooks": { "enabled": true, "events": { "PreToolUse": [
+    { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "node \"${ZCODE_PROJECT_DIR}/.claude/hooks/edit-guard.mjs\"", "timeout": 10 }] },
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"${ZCODE_PROJECT_DIR}/.claude/hooks/command-guard.mjs\"", "timeout": 10 }] }
+  ] } } }
+  ```
+
+  Hook stdout is JSON: `hookSpecificOutput.additionalContext` reaches the model on
+  `UserPromptSubmit`; a top-level `systemMessage` is used only when a `Stop` hook
+  blocks. So the leftover-processes hook is wired on `UserPromptSubmit` only (its
+  `Stop` notice is dropped there). The context-budget hook stays Claude Code's: the
+  transcript file ZCode hands a hook holds at most the last message (none on
+  `PreToolUse`), so it cannot measure there.
+- **When ZCode is the main runtime,** "pass `model` and `effort` on every
+  dispatch" cannot hold outside a workflow. The commit guard, a git hook, protects
+  every runtime. Say in the harness file which protections and which model pins
+  apply to which runtime, and which roles fall back to the session model.
 
 ## Kimi
 
@@ -246,5 +275,5 @@ then any `ZCODE_*` variable, then `CODEX_THREAD_ID` or `CODEX_SANDBOX`, then
 `CLAUDECODE`. A host started from another inherits its variables — a Codex run
 started from a Claude Code shell carries `CLAUDECODE` — so the inner host's own
 variables go first; `HARNESS_HOST` settles anything else. Kimi sets none: it needs
-`HARNESS_HOST=kimi`. ZCode needs `HARNESS_HOST=zcode` until a `ZCODE_*` variable is
-verified in its shells (ZCode, above).
+`HARNESS_HOST=kimi`. ZCode's shells carry `ZCODE_APP_VERSION`, so it needs no help
+(ZCode, above).

@@ -92,9 +92,9 @@ maps it). A broken one silently allows everything:
 - the commit guard (`harness-guard.sh`) and the hook files that run it — it decides
   what may be committed;
 - the command guard and the edit guard (`.claude/hooks/`) and the files that wire them
-  in: `.claude/settings.json`, and `.codex/hooks.json` where Codex runs — an edit there
-  unhooks a guard as surely as editing the guard (the risk map lists paths, so the
-  whole file is critical);
+  in: `.claude/settings.json`, `.codex/hooks.json` where Codex runs and
+  `.zcode/config.json` where ZCode runs — an edit there unhooks a guard as surely as
+  editing the guard (the risk map lists paths, so the whole file is critical);
 - `run-gates.sh` — it runs the gates;
 - `scripts/run-counted.mjs` and its core — they decide whether a counted gate passed;
 - `scripts/review-gate.mjs` and `scripts/lib/review-gate-core.mjs` — they decide who

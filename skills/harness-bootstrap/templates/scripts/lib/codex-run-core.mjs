@@ -26,6 +26,27 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 const DEFAULT_MODEL = CATALOG.default;
 
+// [B] Where the codex CLI's installer puts it, relative to the home directory, tried in order
+// before `codex` on PATH: a terminal can put its own `codex` shim first on PATH, and the shim
+// adds flags and a hook-trust warning to every run. CODEX_BIN overrides both.
+export const CODEX_CANDIDATES = ['.local/bin/codex'];
+
+/**
+ * The codex binary a run spawns: a non-empty `env.CODEX_BIN`, else the first
+ * CODEX_CANDIDATES path under `home` that `isExecutable` accepts, else `codex` (resolved on
+ * PATH; a missing binary classifies as `unavailable`). The caller owns the file system probe.
+ */
+export function codexBinary(env, home, isExecutable) {
+  if (env.CODEX_BIN) return env.CODEX_BIN;
+  if (home) {
+    for (const c of CODEX_CANDIDATES) {
+      const file = `${home.replace(/[\\/]+$/, '')}/${c}`;
+      if (isExecutable(file)) return file;
+    }
+  }
+  return 'codex';
+}
+
 /**
  * kind -> { model, effort, sandbox, mode, essential }.
  * `essential` kinds are the decorrelated checks: they run even when the weekly
@@ -166,6 +187,7 @@ export function parseArgs(argv, env = {}) {
         '--critical',
         '--route',
         '--allow-ultra',
+        '--allow-max',
         '--allow-frontier',
         '--network',
         '--dry-run',
@@ -190,9 +212,9 @@ export function parseArgs(argv, env = {}) {
 /**
  * The route a run uses: the table row, then a router answer or an explicit
  * override, then the clamp. The clamp is what keeps a cheap router from buying an
- * expensive run: `ultra` needs `allowUltra`, the frontier model needs its own kind or
- * `allowFrontier`, only write kinds get a writable sandbox, and a write kind never
- * runs below `high`.
+ * expensive run: `ultra` needs `allowUltra`, `max` needs `allowMax` (or `allowUltra`, which
+ * implies it), the frontier model needs its own kind or `allowFrontier`, only write kinds get
+ * a writable sandbox, and a write kind never runs below `high`.
  */
 export function resolveRoute(kind, opts = {}) {
   const row = ROUTES[kind];
@@ -218,6 +240,10 @@ export function resolveRoute(kind, opts = {}) {
   }
   if (effort === 'ultra' && !opts.allowUltra) {
     notes.push('ultra needs --allow-ultra -> xhigh');
+    effort = 'xhigh';
+  }
+  if (effort === 'max' && !opts.allowMax && !opts.allowUltra) {
+    notes.push('max needs --allow-max -> xhigh');
     effort = 'xhigh';
   }
   // A kind that writes never runs below high -- the router and an override included.
@@ -499,6 +525,7 @@ export async function planRun(a, limitsBefore, router) {
     override,
     critical: a.flags.has('critical'),
     allowUltra: a.flags.has('allow-ultra'),
+    allowMax: a.flags.has('allow-max'),
     allowFrontier: a.flags.has('allow-frontier'),
   };
   let route = resolveRoute(a.kind, opts);

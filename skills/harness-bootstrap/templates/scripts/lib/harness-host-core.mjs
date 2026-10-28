@@ -15,8 +15,8 @@
  */
 
 // ---- [B] project bindings
-// [B] The models file Phase C generates for the hosts the project runs (gate-design.md › Model
-// and effort).
+// [B] The models file Phase C generates for the hosts the project runs (harness-bootstrap's
+// reference/gate-design.md › Model and effort).
 export const MODELS_FILE = '.agents/harness-models.json';
 // [B] Each family's login check. `codex login status` exits 0 when logged in; `claude auth
 // status` prints JSON with `loggedIn`.
@@ -136,10 +136,10 @@ export function effortHazards(host, { env, codexConfigs = [] }) {
   if (host === 'claude') {
     const level = env.CLAUDE_CODE_EFFORT_LEVEL;
     if (typeof level === 'string' && ABOVE_HIGH.test(level))
-      add(`CLAUDE_CODE_EFFORT_LEVEL=${level}: it overrides every dispatch's effort and every agent file's (gate-design.md › Model and effort)`);
+      add(`CLAUDE_CODE_EFFORT_LEVEL=${level}: it overrides every dispatch's effort and every agent file's (harness-bootstrap's reference/gate-design.md › Model and effort)`);
     const effort = env.CLAUDE_EFFORT;
     if (typeof effort === 'string' && ABOVE_HIGH.test(effort))
-      add(`CLAUDE_EFFORT=${effort}: this session runs at ${effort}; lower it with /effort high unless the switch line gives the reason (context.md)`);
+      add(`CLAUDE_EFFORT=${effort}: this session runs at ${effort}; lower it with /effort high unless the switch line gives the reason (harness-bootstrap's reference/context.md)`);
   }
   return out;
 }
@@ -168,14 +168,14 @@ export function familyState(fam, { wrapper, login }) {
 export function familyHazards(host, entry, states) {
   const haz = (detail) => [{ id: 'second-family-absent', detail }];
   if (!entry.second)
-    return haz(`${host} names no second family in ${MODELS_FILE}: every cross-family pass is degraded by design (cross-model.md)`);
+    return haz(`${host} names no second family in ${MODELS_FILE}: every cross-family pass is degraded by design (harness-bootstrap's reference/cross-model.md)`);
   const second = states[entry.second];
   if (second?.ok) return [];
   const why = `${entry.second}: ${second?.why ?? 'not checked'}`;
   if (entry.fallback && states[entry.fallback]?.ok)
     return haz(`${why}; the fallback, ${entry.fallback}, takes the second-family passes`);
   const fb = entry.fallback ? `; ${entry.fallback}: ${states[entry.fallback]?.why ?? 'not checked'}` : '';
-  return haz(`${why}${fb}: every cross-family pass is degraded until one is back (cross-model.md)`);
+  return haz(`${why}${fb}: every cross-family pass is degraded until one is back (harness-bootstrap's reference/cross-model.md)`);
 }
 
 const show = (r) => (r.effort ? `${r.model} ${r.effort}` : r.model);
@@ -196,7 +196,7 @@ export function hostReport({ host, by, models, modelsError = null, hazards = [] 
   const own = [];
   if (!entry) {
     const where = !models ? `${MODELS_FILE} ${modelsError === 'missing' ? 'is missing' : `is unreadable (${modelsError})`}` : `${MODELS_FILE} has no ${host} entry`;
-    own.push({ id: 'host-models-missing', detail: `${where}: the roles have no models on this host (gate-design.md › Model and effort)` });
+    own.push({ id: 'host-models-missing', detail: `${where}: the roles have no models on this host (harness-bootstrap's reference/gate-design.md › Model and effort)` });
   }
   const line = entry
     ? `host ${host} · main ${show(entry.main)} · second family ${entry.second ?? 'none'}`

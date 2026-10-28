@@ -50,9 +50,12 @@ export function repoTop(cwd) {
  * Whitespace-only changes are not changes (`-w`: a formatter's re-pad of a table keeps its rows' dates),
  * and the commits in `.git-blame-ignore-revs`, when the repository has that file, are looked past (a
  * commit that repairs the log's columns). A file git refuses (a line in it is no commit id) is not used.
+ * The retro reads only the repository's own `.git-blame-ignore-revs`, whatever `blame.ignoreRevsFile` a
+ * machine's git config names (a named file that is missing would stop blame): `--no-ignore-revs-file` clears
+ * the list the config built, and the repository's file is added after it.
  */
 export function blameDates(top, rel) {
-  const base = ['blame', '-w', '--line-porcelain'];
+  const base = ['blame', '-w', '--line-porcelain', '--no-ignore-revs-file'];
   let out;
   try {
     const ignore = path.join(top, '.git-blame-ignore-revs');

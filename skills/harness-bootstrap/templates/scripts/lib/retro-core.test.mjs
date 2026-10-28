@@ -1178,6 +1178,33 @@ test('blameDates: a whitespace-only re-pad keeps a row\'s date, a commit listed 
   assert.deepEqual(rows(blameDates(m.repo, 'log.md')), ['10-01', '10-11'], 'only a regular file is passed to git');
 });
 
+test('blameDates: a git config naming an ignore file the repository lacks costs no date, and the repository\'s own file is still read', () => {
+  const m = miniRepo();
+  m.write('log.md', '# Log\n| A | x |\n| B | y |\n');
+  m.commit('rows', '10-01');
+  m.write('log.md', '# Log\n| A | x |\n| B | y2 |\n');
+  const repair = m.commit('repair', '10-11');
+  // A machine's config names an ignore file; blameDates runs in a child process under that home.
+  const home = tmpDir('retro-home-cfg-');
+  const dates = (named) => {
+    fs.writeFileSync(path.join(home, '.gitconfig'), `[blame]\n\tignoreRevsFile = ${named}\n`);
+    const url = new URL('./retro-gather.mjs', import.meta.url).href;
+    const script = `import { blameDates } from ${JSON.stringify(url)};\nprocess.stdout.write(JSON.stringify([...blameDates(process.argv[1], 'log.md')]));`;
+    const res = spawnSync(process.execPath, ['--input-type=module', '-e', script, m.repo], { env: { ...cleanEnv(), HOME: home, XDG_CONFIG_HOME: home }, encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    return new Map(JSON.parse(res.stdout));
+  };
+  const day = (ms) => new Date(ms).toISOString().slice(5, 10);
+  const first = dates('.git-blame-ignore-revs');
+  assert.equal(first.size, 3, 'every line is still dated when the config names a file the repository lacks');
+  assert.deepEqual([first.get(2), first.get(3)].map(day), ['10-01', '10-11']);
+  // The repository's own file is read after the reset, whatever name the config points at.
+  fs.writeFileSync(path.join(m.repo, '.git-blame-ignore-revs'), `${repair}\n`);
+  const second = dates('.blame-ignore-missing');
+  assert.equal(second.size, 3, 'every line is dated');
+  assert.deepEqual([second.get(2), second.get(3)].map(day), ['10-01', '10-01'], 'the listed commit is still looked past');
+});
+
 test('lastCommitTimes: a pure move keeps the old time, a move with edits takes its own, paths are keyed as themselves, a path moved two ways keeps its time at both', () => {
   const m = miniRepo();
   const e = String.fromCodePoint(0xe9);

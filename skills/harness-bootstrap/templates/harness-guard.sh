@@ -4,7 +4,8 @@
 # Install: .githooks/pre-commit (git config core.hooksPath .githooks), or call it
 # from an existing husky/lefthook pre-commit. Install the same file as
 # .githooks/pre-merge-commit too: a non-conflicting merge runs that hook, not
-# pre-commit. Test THIS file, never a copy.
+# pre-commit. Test THIS file, never a copy. A merge, by either hook, is refused while the
+# branch it merges still holds a row: release the row first, then merge (the land order).
 
 REGISTRY=".claude/registry.md"             # [B] the lock file, relative to the repo root
 # ID_PATTERN binds per mode. Plan mode: the plan's id shape (every shape it uses). Change
@@ -47,13 +48,18 @@ if ! grep -q '<!-- harness:active -->' "$reg" || ! grep -q '<!-- /harness:active
   refuse "$REGISTRY has no '<!-- harness:active -->' ... '<!-- /harness:active -->' section"
 fi
 
-branch=$(git branch --show-current 2>/dev/null)
-id=""
-if [ -n "$ID_PATTERN" ]; then
-  id=$(printf '%s\n' "$branch" | tr '[:lower:]' '[:upper:]' | grep -oE "$ID_PATTERN" | head -n 1)
-fi
+# The task id a branch name carries: the first ID_PATTERN match in the UPPERCASED name.
+task_id() {
+  if [ -n "$ID_PATTERN" ]; then
+    printf '%s\n' "$1" | tr '[:lower:]' '[:upper:]' | grep -oE "$ID_PATTERN" | head -n 1
+  fi
+}
 
-# One line per held row: "<matched name>|<Worktree cell>". Rows inside the active section
+branch=$(git branch --show-current 2>/dev/null)
+id=$(task_id "$branch")
+
+# rows NAME ID: one line per held row, "<matched name>|<Worktree cell>|<Branch cell>", the
+# match taken against branch NAME and its task id ID. Rows inside the active section
 # whose first cell is 1+ count as held; row 0 is reserved for the mainline. The header is the
 # row directly above a |---| separator row; with none inside the section, the table header
 # right above the begin marker (markers around data rows only). No header at all: every
@@ -61,7 +67,8 @@ fi
 # equals the branch name (no Branch column: any cell but Worktree does) or any cell but
 # Worktree equals the branch's task id, ignoring case (the id is uppercased). A Worktree cell holds a path, never a match; a
 # placeholder (-, n/a, none) is the same as empty.
-held=$(awk -v b="$branch" -v id="$id" '
+rows() {
+  awk -v b="$1" -v id="$2" '
   function cells(s) {
     sub(/[ \t\r]+$/, "", s)
     if (s !~ /\|$/) s = s "|"
@@ -102,6 +109,7 @@ held=$(awk -v b="$branch" -v id="$id" '
         if (b != "" && v == b && (!bc || i == bc)) tok = b
         else if (id != "" && toupper(v) == id && tok == "") tok = id
       }
+      br = bc ? trim(c[bc]) : ""
       wt = ""
       if (w) {
         wt = c[w]; gsub(/`/, "", wt); gsub(/^[ \t]+/, "", wt)
@@ -110,9 +118,11 @@ held=$(awk -v b="$branch" -v id="$id" '
         lw = tolower(wt)
         if (lw == "-" || lw == "—" || lw == "n/a" || lw == "none") wt = ""
       }
-      print tok "|" wt
+      print tok "|" wt "|" br
     }
-  }' "$reg")
+  }' "$reg"
+}
+held=$(rows "$branch" "$id")
 
 # Which checkout does a Worktree cell lock? Empty, main and . mean the main checkout;
 # anything else is a path relative to it (or absolute). Sets $res.
@@ -131,7 +141,7 @@ match_here=0
 match_other=""
 lock_here=0
 if [ -n "$held" ]; then
-  while IFS='|' read -r tok wt; do
+  while IFS='|' read -r tok wt br; do
     if [ "$SCOPE" = "checkout" ]; then resolve "$wt"; else res=$curp; fi
     if is_here "$res"; then lock_here=1; fi
     if [ -n "$tok" ]; then
@@ -140,6 +150,55 @@ if [ -n "$held" ]; then
   done <<EOF
 $held
 EOF
+fi
+
+# Is this a merge? A clean merge runs this hook as pre-merge-commit before MERGE_HEAD exists,
+# so also check the hook name and the reflog action git sets ("merge <branch>...", "pull ...").
+merging=0
+mh=$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null) && merging=1
+case "$(basename "$0")" in pre-merge-commit) merging=1 ;; esac
+case "${GIT_REFLOG_ACTION:-}" in merge*|pull*) merging=1 ;; esac
+
+# A merge refuses while the branch it merges still holds a row, in either scope: under checkout
+# that row locks only its own checkout, so nothing else stops the main checkout merging it. A
+# clean merge names the branch in its reflog action; a conflicted one is concluded by a commit
+# with MERGE_HEAD set and no action, so that commit is compared with each held row's Branch tip,
+# unless a branch that holds no row also points at it (a held branch claimed at main's tip, with
+# no commits yet, is main's tip: no held work is in it). A pull names no branch.
+unheld_at() {
+  git for-each-ref --points-at "$1" --format='%(refname)' refs/heads refs/remotes | {
+    while read -r ref; do
+      case "$ref" in
+        refs/heads/*) n=${ref#refs/heads/} ;;
+        refs/remotes/*) n=${ref#refs/remotes/*/} ;;
+        *) continue ;;
+      esac
+      if ! rows "$n" "$(task_id "$n")" | grep -q '^[^|]'; then exit 0; fi
+    done
+    exit 1
+  }
+}
+if [ "$merging" = 1 ] && [ -n "$held" ]; then
+  case "${GIT_REFLOG_ACTION:-}" in
+    merge\ *)
+      set -f
+      for n in ${GIT_REFLOG_ACTION#merge }; do
+        if rows "$n" "$(task_id "$n")" | grep -q '^[^|]'; then
+          refuse "merging '$n', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
+        fi
+      done
+      set +f
+      ;;
+  esac
+  if [ -n "$mh" ]; then
+    while IFS='|' read -r tok wt br; do
+      if [ -n "$br" ] && [ "$(git rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$mh" ] && ! unheld_at "$mh"; then
+        refuse "merging '$br', which still holds a row in $REGISTRY. The land order: release its row first, then merge."
+      fi
+    done <<EOF
+$held
+EOF
+  fi
 fi
 
 # A row for this branch (or its task id) that locks this checkout: the owning run.
@@ -154,13 +213,7 @@ if [ -n "$id" ]; then
   # A task branch may commit only while its own row is held.
   # A tracked registry only: the land step's release commit touches nothing but the
   # registry and removes this task's row. Never a merge: its staged diff is everything
-  # merged in, and a registry among it is not a release. A clean merge runs this hook as
-  # pre-merge-commit before MERGE_HEAD exists, so also check the hook name and the
-  # reflog action git sets ("merge <branch>", "pull ...").
-  merging=0
-  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then merging=1; fi
-  case "$(basename "$0")" in pre-merge-commit) merging=1 ;; esac
-  case "${GIT_REFLOG_ACTION:-}" in merge*|pull*) merging=1 ;; esac
+  # merged in, and a registry among it is not a release ($merging, above).
   staged=$(git diff --cached --name-only)
   if [ "$merging" = 0 ] && [ "$staged" = "$REGISTRY" ] && git diff --cached -- "$REGISTRY" | grep -E '^-[ \t]*\|' | grep -iqF "$id"; then
     exit 0

@@ -60,9 +60,11 @@ refuses every commit, so a typo cannot disable the guard.
   `git config core.hooksPath .githooks`. Each clone runs that config once — put
   it in the project's setup script or `prepare` step so a fresh clone is guarded,
   and say in the harness file that a clone is unguarded until it has run.
-- **husky:** keep the script at `.githooks/harness-guard.sh` and call it first
-  in `.husky/pre-commit` and `.husky/pre-merge-commit`:
-  `sh .githooks/harness-guard.sh || exit 1`.
+- **husky:** keep the script at `.githooks/harness-guard.sh` (executable) and call
+  it first in `.husky/pre-commit` and `.husky/pre-merge-commit`:
+  `sh .githooks/harness-guard.sh || exit 1`. husky v9 runs those files from
+  `.husky/_`: its own `prepare` step sets `core.hooksPath` to `.husky/_`, whose stubs
+  run `.husky/<hook>` with `sh`.
 - **lefthook:** `pre-commit` and `pre-merge-commit` commands running
   `sh .githooks/harness-guard.sh`.
 
@@ -82,6 +84,8 @@ install the project's command guard (`templates/command-guard.mjs`,
 override — from an agent by parsing the command. Setting `core.hooksPath` to the
 project's own hooks directory (its `[B]` `HOOKS_DIR`, default `.githooks`) stays
 allowed, so an agent can still run the install step in a fresh clone or worktree.
+With husky v9, bind `HOOKS_DIR` to `.husky/_`, the path husky's install step sets,
+so that step stays allowed.
 Never rely on a plugin's hook for it: a machine may run with every plugin hook
 disabled.
 
@@ -101,12 +105,14 @@ plan's ids before installing. Ids match **case-insensitively**: plans write
 
 `[M]` **Self-test the bound pattern before installing.** It must take each id
 **whole**: for every plan id and every existing branch, the match must not stop
-in the middle of the id. Run it over the plan's ids (the extract command is `[B]`):
+in the middle of the id. Run it over the plan's ids, upper-cased, since the guard
+matches the upper-cased branch name (the extract command is `[B]`):
 
 ```sh
 ID_PATTERN='EP-[0-9]+\.[0-9]+'   # the value about to be bound
 for id in $(grep -oE 'EP-[0-9]+\.[0-9]+' docs/plan.md | sort -u); do
-  [ "$(printf '%s' "$id" | grep -oE "$ID_PATTERN" | head -n 1)" = "$id" ] || echo "CUT $id"
+  up=$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]')
+  [ "$(printf '%s\n' "$up" | grep -oE "$ID_PATTERN" | head -n 1)" = "$up" ] || echo "CUT $id"
 done
 ```
 
@@ -117,12 +123,17 @@ cut id is a prefix of. The default pattern cuts `EP-27.01` to `EP-27`. After ins
 the status script reports a cut id as `id-pattern-truncates`.
 
 `[M]` **Its test ships with it:** `templates/scripts/lib/harness-guard.test.mjs`,
-installed to `scripts/lib/`. It runs the installed guard as git runs it, in throwaway
-repos: no registry, row 0 alone, a registry without its markers, the owning branch
-against the mainline and another branch, a clean `--no-ff` merge onto the mainline,
-and every id in its `[B]` `IDS` (the self-test above, end to end). Bind `IDS` to the
-plan's ids and `GUARD` to where the guard is installed; a plan-mode guard with no ids
-bound fails the test.
+installed to `scripts/lib/`. It checks that each hook file git runs (its `[B]`
+`HOOK_FILES`) is the guard or runs it as its first command, then runs the installed
+guard as git runs it, in throwaway repos: no registry, row 0 alone, a registry
+without its markers, the owning branch against the mainline and another branch, a
+clean `--no-ff` merge onto the mainline, a row that locks a linked worktree (the
+main checkout commits under `checkout` and is refused under `repo`), merging a
+branch that still holds a row (refused, then merged once the row is released), and
+every id in its `[B]` `IDS` (the self-test above, end to end). Bind `IDS` to the
+plan's ids, `GUARD` and `MERGE_GUARD` to where the guard is installed and
+`HOOK_FILES` to the files git runs; a plan-mode guard with no ids bound fails the
+test.
 
 `[B]` **Change mode leaves `ID_PATTERN` empty** unless its changes carry ids. The
 plan default also matches tokens such as `UTF-8` or `ISO-8601`, and refused a
@@ -152,7 +163,7 @@ no circularity at land.
 
 ```markdown
 <!-- harness:active -->
-| # | Task | Step | Branch | Worktree | Resources | Claimed (UTC) |
+| # | Unit | Step | Branch | Worktree | Resources | Claimed (UTC) |
 |---|---|---|---|---|---|---|
 | 0 | mainline — never claimed | | | main | | |
 <!-- /harness:active -->
@@ -181,10 +192,13 @@ deleting any guard snippet from the harness file.
 
 ## Land order
 
-`[M]` Guard → land commit **on the task branch** (status, evidence, log row) →
-release the row → merge with `--no-ff` → push on the owner's word. Releasing after
-the merge cannot work under `SCOPE=repo`: the guard refuses a mainline commit while
-any row is held. Logged three times in one project and twice in another before it
-was written down.
+`[M]` One order for both scopes: guard → land commit **on the task branch**
+(status, evidence, log row) → release the row → merge with `--no-ff` → push on the
+owner's word. Releasing after the merge cannot work under either scope. Under
+`SCOPE=repo` the guard refuses a mainline commit while any row is held. Under
+`SCOPE=checkout` a held row locks only its own checkout, so the merge hook refuses
+instead: a merge, clean or concluded with `git commit`, is refused while the branch
+it merges still holds a row, and the refusal names that branch. Logged three times in
+one project and twice in another before it was written down.
 
 `[M]` Write the merge message to a file. `git merge` does not read stdin.

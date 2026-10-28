@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 77;
+const EXPECTED_PASS = 80;
 
 let passed = 0;
 let failed = 0;

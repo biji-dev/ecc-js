@@ -15,6 +15,7 @@ import {
   copyFileSync,
   unlinkSync,
   symlinkSync,
+  chmodSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir, devNull } from 'node:os';
@@ -145,6 +146,19 @@ function withConfig(from, to) {
   return file;
 }
 
+/** Like withConfig, with several [B] CONFIG lines replaced. */
+function withConfigs(pairs) {
+  let text = readFileSync(SCRIPT, 'utf8');
+  for (const [from, to] of pairs) {
+    assert.ok(text.includes(from), `CONFIG line not found: ${from}`);
+    text = text.replace(from, to);
+  }
+  const dir = track(realpathSync(mkdtempSync(join(tmpdir(), 'check-agent-docs-copy-'))));
+  const file = join(dir, 'check-agent-docs.mjs');
+  writeFileSync(file, text);
+  return file;
+}
+
 test('baseline project passes and reports a check count', () => {
   const r = expectOk();
   assert.ok(Number(r.out.match(/\((\d+) checks\)/)[1]) > 5);
@@ -210,6 +224,52 @@ test('budget: a state file that git ignores is still read, from the pattern\'s s
   const shown = run(fixture(big), [], anywhere);
   assert.equal(shown.status, 1, `the control (not ignored) did not fail: ${shown.all}`);
   assert.match(shown.err, /^FAIL budget: notes\/b\.state\.md 9216 bytes/m, shown.all);
+});
+
+test('budget: a state pattern with a leading ./ still finds an ignored state file', () => {
+  const dotted = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: './docs/plans/**/*.state.md'");
+  const dir = fixture({ 'docs/plans/.gitignore': '*.state.md\n', 'docs/plans/a.state.md': 'x'.repeat(9216) });
+  const r = run(dir, [], dotted);
+  assert.equal(r.status, 1, `the ignored state file was not read through a ./ pattern: ${r.all}`);
+  assert.match(r.err, /^FAIL budget: docs\/plans\/a\.state\.md 9216 bytes/m, r.all);
+});
+
+test('budget: the state walk follows the pattern\'s own segments - a workspace glob and braces still find ignored files', () => {
+  const big = 'x'.repeat(9216);
+  const ignore = { '.gitignore': 'apps/*/docs/plans/\n' };
+  const star = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/*/docs/plans/**/*.state.md'");
+  const files = { ...ignore, 'apps/web/docs/plans/a.state.md': big, 'apps/api/docs/plans/sub/deep/b.state.md': big };
+  const found = run(fixture(files), [], star);
+  assert.equal(found.status, 1, found.all);
+  assert.match(found.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `the workspace glob missed a state file: ${found.all}`);
+  assert.match(found.err, /^FAIL budget: apps\/api\/docs\/plans\/sub\/deep\/b\.state\.md /m, `a file under ** was pruned: ${found.all}`);
+  const braces = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/{web,api}/docs/plans/*.state.md'");
+  const both = run(fixture(files), [], braces);
+  assert.match(both.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `a brace alternative missed its file: ${both.all}`);
+  assert.doesNotMatch(both.err, /deep\/b\.state\.md/, `a file below a single-segment pattern was read: ${both.all}`);
+});
+
+test('budget: the state walk stays out of directories the pattern cannot match, and does not run for --rules-for or a null stateFile', () => {
+  const STAR = "statePattern: 'apps/*/docs/plans/**/*.state.md'";
+  const WALK = "statePattern: 'docs/plans/**/*.state.md'";
+  const star = withConfigs([[WALK, STAR]]);
+  const starNoState = withConfigs([[WALK, STAR], [BUDGETS_LINE, budgetsLine({ stateFile: 'null' })]]);
+  const files = { 'apps/web/docs/plans/a.state.md': '# State\n', 'apps/web/node_modules/locked/x.txt': 'x\n' };
+  const locked = (d) => join(d, 'apps/web/node_modules/locked');
+  const dir = fixture(files, (d) => chmodSync(locked(d), 0o000)); // under root a read still works: the test then passes anyway
+  try {
+    const r = run(dir, [], star);
+    assert.equal(r.status, 0, `the walk went into node_modules: ${r.all}`);
+    assert.match(r.out, /^check-agent-docs: OK/m, r.all);
+    // A `--rules-for` run returns before the state files are read; so does a run with the budget off.
+    const rules = run(dir, ['--rules-for', 'src/db/schema.js'], star);
+    assert.equal(rules.status, 0, `--rules-for walked the state directories: ${rules.all}`);
+    assert.equal(rules.out, '.claude/rules/db.md\n', rules.all);
+    const off = run(dir, [], starNoState);
+    assert.equal(off.status, 0, `a null stateFile budget still walked the state directories: ${off.all}`);
+  } finally {
+    chmodSync(locked(dir), 0o755); // so the temp dir can be removed
+  }
 });
 
 test('budget: a SKILL.md over its line budget fails and exactly the budget passes', () => {

@@ -25,7 +25,7 @@
 // `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text (with --base: the files).
 import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join, dirname, normalize, relative, isAbsolute, sep } from 'node:path';
+import { join, dirname, normalize, relative, isAbsolute, sep, posix } from 'node:path';
 
 // ---- [B] binding: re-derive per project -------------------------------------------------------
 export const CONFIG = {
@@ -448,24 +448,43 @@ function main() {
   const agentFiles = CONFIG.agentDirs.flatMap((dir) => listMd(dir, (f) => f.endsWith('.md')));
   // State files are the pattern's matches in the git list plus every match on disk under the pattern's static
   // prefix (its segments before the first one holding a wildcard), so a gitignored state file is seen too. Real
-  // directories only. With no static prefix the git list stays the only source: a walk from the root would read
-  // node_modules.
-  const statePrefix = (() => {
-    const segs = CONFIG.statePattern.split('/');
-    const at = segs.findIndex((s) => /[*?[{]/.test(s));
-    return (at === -1 ? segs.slice(0, -1) : segs.slice(0, at)).join('/');
-  })();
-  const walkFiles = (dir) => {
-    if (!existsSync(abs(dir))) return [];
-    return readdirSync(abs(dir), { withFileTypes: true }).flatMap((entry) => {
-      const p = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) return walkFiles(p);
-      return isFile(p) ? [p] : [];
-    });
+  // directories only, and a directory is entered only while its path can still match the pattern's leading
+  // segments (below a `**` nothing is pruned), so `apps/*/docs/plans/**` never reads a workspace's node_modules.
+  // With no static prefix the git list stays the only source: a walk from the root would read node_modules.
+  // Built where the stateFile budget is read, so `--rules-for` and a null budget never walk.
+  const listStateFiles = () => {
+    const pattern = String(CONFIG.statePattern).replace(/\\/g, '/').replace(/^\.\//, ''); // as globToRegExp reads it
+    const found = new Set(files.filter((f) => matchGlob(f, pattern)));
+    for (const alt of expandBraces(pattern)) {
+      const segs = alt.split('/');
+      const at = segs.findIndex((x) => /[*?[{]/.test(x));
+      const prefix = at === -1 ? segs.slice(0, -1) : segs.slice(0, at);
+      if (prefix.length === 0) continue;
+      const segRes = segs.map((x) => (x.includes('**') ? null : globToRegExp(x)));
+      const canEnter = (parts) =>
+        parts.every((part, i) => {
+          if (segRes.slice(0, i + 1).includes(null)) return true; // at or below a `**`
+          return i < segs.length - 1 && segRes[i].test(part);
+        });
+      const walk = (parts) => {
+        const dir = parts.join('/');
+        let entries = [];
+        try {
+          entries = readdirSync(abs(dir), { withFileTypes: true });
+        } catch {
+          return; // absent or unreadable: nothing to see
+        }
+        for (const entry of entries) {
+          const p = `${dir}/${entry.name}`;
+          if (entry.isDirectory()) {
+            if (canEnter([...parts, entry.name])) walk([...parts, entry.name]);
+          } else if (matchGlob(p, pattern) && isFile(p)) found.add(p);
+        }
+      };
+      walk(prefix);
+    }
+    return [...found].sort();
   };
-  const stateFiles = [
-    ...new Set([...files, ...(statePrefix ? walkFiles(statePrefix) : [])].filter((f) => matchGlob(f, CONFIG.statePattern))),
-  ].sort();
   const topFiles = ['AGENTS.md', 'CLAUDE.md'].filter(isFile);
   const docFiles = [...topFiles, ...ruleFiles, ...skillFiles, ...agentFiles];
 
@@ -580,7 +599,7 @@ function main() {
     verify(n <= ruleLimit, 'budget', f, 0, `${n} bytes, budget ${ruleLimit} - split or trim it`);
   }
   const stateLimit = budgetOf('stateFile');
-  for (const f of stateLimit === null ? [] : stateFiles) {
+  for (const f of stateLimit === null ? [] : listStateFiles()) {
     const n = size(f);
     verify(n <= stateLimit, 'budget', f, 0, `${n} bytes, budget ${stateLimit} - archive finished entries`);
   }
@@ -679,7 +698,8 @@ function main() {
         }
         // A relative link is read against the citing file's directory and, where that fails, against the
         // repository root: a nested file (a rule, a skill) often links `docs/x.md` meaning the repository's.
-        const rootRel = normalize(decoded.startsWith('/') ? decoded.slice(1) : decoded);
+        // A link is a URL path: its root-relative form is built with `/` whatever the platform.
+        const rootRel = posix.normalize(decoded.startsWith('/') ? decoded.slice(1) : decoded);
         const escapes = rootRel === '..' || rootRel.startsWith('../');
         const cands = decoded.startsWith('/')
           ? [rootRel]

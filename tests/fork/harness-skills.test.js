@@ -688,7 +688,9 @@ test('upgrade.md step 2: a file generated from a template whose template is newe
   const para = step2.slice(at, step2.indexOf('`[M]`', at));
   assert.ok(para.includes('folds in every fix the project made before the manifest was written'), 'the merge paragraph does not say why unchanged is not the template');
   assert.ok(para.includes('Format the base and the current template as the project formats the file first'), 'the merge paragraph does not format the base and the template first');
-  assert.ok(para.includes("Format only where the project does: where the file passes the formatter's check (`npx prettier --check <path>`, which passes a path its ignore file lists too, and `--stdin-filepath` leaves that path as it is). Where the file fails the check, the project does not format it, so leave the base and the template as the template wrote them: formatted, every line the formatter reflows would read as a project edit."), 'the merge paragraph formats the base and the template where the project does not format the file');
+  assert.ok(para.includes("Format only where the project does. Run the formatter over the base (prettier: `npx prettier --stdin-filepath <path>`, which leaves a path its ignore file lists as it is) and keep the formatted base only where it differs from the file in fewer lines than the raw one (`git diff --no-index --numstat`); the template follows the base, formatted or raw."), 'the merge paragraph does not choose between the formatted and the raw base by the file');
+  assert.ok(para.includes('A file the project formats stays nearer the formatted base after an unformatted edit, and one it never formats stays nearer the raw base'), 'the merge paragraph does not say why the nearer base decides');
+  assert.ok(!para.includes("where the file passes the formatter's check"), "the merge paragraph still decides by the formatter's check of the file");
   assert.ok(para.includes('--base <path> > base') && para.includes('git merge-file -p <path> base theirs > merged'), 'the merge paragraph has no recipe');
   assert.ok(para.includes('A block entry merges on the block alone. `--base AGENTS.md#rules` prints the whole template, so cut the block, its marker lines included, out of the file, the base and the current template, merge the three cuts, and put the merged block back in place of the file\'s.'), 'the merge paragraph does not say how a block merges');
   assert.ok(para.includes("for f in AGENTS.md base theirs; do sed -n '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p' \"$f\" > \"$f.block\"; done") && para.includes('git merge-file -p AGENTS.md.block base.block theirs.block > merged.block'), 'the merge paragraph has no block recipe');
@@ -945,6 +947,29 @@ test("Step 2's merge gives the base and the template the file's own date, and a 
   const merged = git(dir, ['merge-file', '-p', 'file', 'base', 'theirs'], cleanGit);
   assert.strictEqual(merged.status, 0, 'a stamped base and template still conflict');
   assert.strictEqual(merged.stdout, '// tool (generated 2026-10-27).\n// says another.\nbody\n');
+});
+
+test("Step 2's formatter choice: after one unformatted edit a formatted file stays nearer the formatted base, which merges clean where the raw base conflicts", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('keep the formatted base only where it differs from the file in fewer lines than the raw one'), 'step 2 does not choose the base nearer the file');
+  if (!hasGit) return;
+  // why, in git: a formatter that turns double quotes single; the project formatted the file, then edited one line by hand
+  const dir = tmp('hb-nearer-');
+  const write = (name, lines) => fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
+  const fmt = lines => lines.map(l => l.replace(/"/g, "'"));
+  const base = ['const a = "1";', 'const b = "2";', 'const c = "3";', 'const d = "4";', 'const e = "5";', 'const f = "6";'];
+  const theirs = [...base.slice(0, 5), 'const f = "7";'];
+  write('base.raw', base);
+  write('base.fmt', fmt(base));
+  write('theirs.raw', theirs);
+  write('theirs.fmt', fmt(theirs));
+  write('file', ['const a = "edited";', ...fmt(base).slice(1)]);
+  const changed = b => git(dir, ['diff', '--no-index', '--numstat', b, 'file'], cleanGit).stdout.trim().split(/\s+/).slice(0, 2).reduce((n, x) => n + Number(x), 0);
+  assert.ok(changed('base.fmt') < changed('base.raw'), `the formatted base is not nearer: ${changed('base.fmt')} lines against ${changed('base.raw')}`);
+  const nearer = git(dir, ['merge-file', '-p', 'file', 'base.fmt', 'theirs.fmt'], cleanGit);
+  assert.strictEqual(nearer.status, 0, 'the nearer base conflicts');
+  assert.strictEqual(nearer.stdout, `${['const a = "edited";', ...fmt(theirs).slice(1)].join('\n')}\n`, 'the merge over the nearer base lost the edit or the template change');
+  assert.notStrictEqual(git(dir, ['merge-file', '-p', 'file', 'base.raw', 'theirs.raw'], cleanGit).status, 0, 'the raw base merged clean: the choice would not matter');
 });
 
 test('Step 3 runs a merged script: a function both sides added in different places merges clean twice, and node --check refuses the file', () => {

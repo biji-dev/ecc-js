@@ -90,12 +90,14 @@ cp <skill dir>/<template> theirs   # then format both as <path> is, and give bot
 git merge-file -p <path> base theirs > merged
 ```
 
-Format only where the project does: where the file passes the formatter's check
-(`npx prettier --check <path>`, which passes a path its ignore file lists too, and
-`--stdin-filepath` leaves that path as it is). Where the file fails the check, the
-project does not format it, so leave the base and the template as the template
-wrote them: formatted, every line the formatter reflows would read as a project
-edit.
+Format only where the project does. Run the formatter over the base (prettier:
+`npx prettier --stdin-filepath <path>`, which leaves a path its ignore file lists as
+it is) and keep the formatted base only where it differs from the file in fewer
+lines than the raw one (`git diff --no-index --numstat`); the template follows the
+base, formatted or raw. A file the project formats stays nearer the formatted base
+after an unformatted edit, and one it never formats stays nearer the raw base; a
+formatter run where the project runs none makes every line it reflows read as a
+project edit.
 
 Exit 0 is a clean merge. A conflict marks both sides: where the template now carries
 the project's own fix, take the template's side, and keep behaviour only this

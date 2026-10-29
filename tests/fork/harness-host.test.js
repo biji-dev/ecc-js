@@ -18,7 +18,7 @@ const CORE_REL = path.join('lib', 'harness-host-core.mjs');
 const CLI_REL = 'harness-host.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 9;
+const EXPECTED_TESTS = 10;
 
 let passed = 0;
 let failed = 0;
@@ -104,6 +104,7 @@ mutantFails('missing an effort of max', 'const ABOVE_HIGH = /^(xhigh|max|ultra)$
 mutantFails('trusting a codex login that exited non-zero', 'return login?.status === 0 ?', 'return login?.status !== undefined ?');
 mutantFails('reporting the fallback while the second family runs', 'if (second?.ok) return [];', 'if (false) return [];');
 mutantFails('counting a host with no models as known', 'known: Boolean(entry)', 'known: true');
+mutantFails('citing a skill file bare, as a project file', "by design (harness-bootstrap's reference/cross-model.md)", 'by design (cross-model.md)');
 mutantFails('skipping the wrapper check', 'const wrapper = fs.existsSync(path.join(repo, WRAPPERS[fam]));', 'const wrapper = true;', CLI_REL);
 mutantFails('exiting 0 when the models are missing', 'return report.known ? 0 : 1;', 'return 0;', CLI_REL);
 

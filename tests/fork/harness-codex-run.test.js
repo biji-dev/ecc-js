@@ -1,6 +1,6 @@
 /**
  * Tests for the harness-bootstrap codex-run template (skills/harness-bootstrap/templates/scripts):
- * runs the shipped node:test suite hermetically, then proves it can fail by mutating the clamp.
+ * runs the shipped node:test suite hermetically, then proves it can fail by mutating the clamp and the wrapper.
  */
 
 const assert = require('assert');
@@ -13,9 +13,10 @@ const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
 const TEST_REL = path.join('lib', 'codex-run-core.test.mjs');
 const CORE_REL = path.join('lib', 'codex-run-core.mjs');
+const WRAPPER_REL = 'codex-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 48;
+const EXPECTED_TESTS = 54;
 
 let passed = 0;
 let failed = 0;
@@ -120,6 +121,49 @@ test('mutant: dropping the frontier model gate makes the suite fail', () => {
   const mutated = before.replace(needle, 'false');
   assert.notStrictEqual(mutated, before, 'the mutation did not apply');
   fs.writeFileSync(corePath, mutated);
+  const res = runSuite(copy, cleanup);
+  assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('mutant: dropping the max clamp makes the suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const corePath = path.join(copy, CORE_REL);
+  const before = fs.readFileSync(corePath, 'utf8');
+  // The clamp: a `max` effort without --allow-max (or --allow-ultra) is lowered to xhigh.
+  const needle = "if (effort === 'max' && !opts.allowMax && !opts.allowUltra) {";
+  const mutated = before.replace(needle, "if (effort === 'max' && false) {");
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(corePath, mutated);
+  const res = runSuite(copy, cleanup);
+  assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('mutant: the wrapper ignoring the installed CLI (always `codex` on PATH) makes the suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const wrapperPath = path.join(copy, WRAPPER_REL);
+  const before = fs.readFileSync(wrapperPath, 'utf8');
+  const needle = 'codexBinary(process.env, os.homedir(), isExecutable)';
+  const mutated = before.replace(needle, "'codex'");
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(wrapperPath, mutated);
+  const res = runSuite(copy, cleanup);
+  assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('mutant: the rule resolver run on the PATH node instead of the wrapper\'s own makes the suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const wrapperPath = path.join(copy, WRAPPER_REL);
+  const before = fs.readFileSync(wrapperPath, 'utf8');
+  const needle = 'execFileSync(process.execPath, [RULES_RESOLVER';
+  const mutated = before.replace(needle, "execFileSync('node', [RULES_RESOLVER");
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(wrapperPath, mutated);
   const res = runSuite(copy, cleanup);
   assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
 });

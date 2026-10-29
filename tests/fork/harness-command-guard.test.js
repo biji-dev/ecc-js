@@ -115,6 +115,47 @@ async function main() {
     ['env bash -c "git commit -n"', 'no-verify'],
     ['eval "git commit -n -m x"', 'no-verify'],
     ['eval git commit -n -m x', 'no-verify'],
+    // env -S splits its string into a command line; a value-taking option of env (GNU -a, BSD -P)
+    // and a long option's unambiguous prefix are skipped with their value
+    ["env -S 'git commit --no-verify -m x'", 'no-verify'],
+    ["env -S'git commit -n -m x'", 'no-verify'],
+    ["env -iS 'git commit -n -m x'", 'no-verify'],
+    ["env --split-string 'git commit -n -m x'", 'no-verify'],
+    ["env --split-string='git commit -n -m x'", 'no-verify'],
+    ["env --s 'git commit -n -m x'", 'no-verify'],
+    ["env -S 'git commit -m x' -n", 'no-verify'],
+    ["env -S 'HUSKY=0 git commit -m x'", 'no-verify'],
+    ["env -S 'codex exec x' &", 'codex-background'],
+    // env, not a shell, splits the string: a word that starts with # and a \c end the string, not
+    // the words after it; \_ separates words; options inside the string are env's own; a quoted
+    // value with a blank leaves its VAR= prefix and the option cluster before it readable
+    ["env -S '# note' git commit -n -m x", 'no-verify'],
+    ["env -S '#x' git commit --no-verify -m x", 'no-verify'],
+    ["env -S '\\c' git commit -n -m x", 'no-verify'],
+    ["env -S 'git\\_commit\\_-n\\_-m\\_x'", 'no-verify'],
+    ["env -S '-u HOME -S \"git commit -n -m x\"'", 'no-verify'],
+    ["env -S 'FOO=\"a b\" git commit -n -m x'", 'no-verify'],
+    ["env -S 'git commit -nm\"hello world\"'", 'no-verify'],
+    ['env -P /usr/bin git commit -n -m x', 'no-verify'],
+    ['env -a g0 git commit -n -m x', 'no-verify'],
+    ['env --u HOME git commit -n -m x', 'no-verify'],
+    ['timeout --sig KILL 5 git commit -n -m x', 'no-verify'],
+    // a shell's options may follow its -c, and every common shell takes -c
+    ["bash -c -- 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -x 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -o pipefail 'git commit -n -m x'", 'no-verify'],
+    ["bash -co pipefail 'git commit -n -m x'", 'no-verify'],
+    ["bash -c -O extglob 'git commit -n -m x'", 'no-verify'],
+    ["bash -Ec 'git commit -n -m x'", 'no-verify'],
+    ["sh -c - 'git commit -n -m x'", 'no-verify'],
+    ["ksh -c 'git commit -n -m x'", 'no-verify'],
+    ["/bin/ksh -c 'git commit --no-verify -m x'", 'no-verify'],
+    ["mksh -c 'git commit -n -m x'", 'no-verify'],
+    ["csh -c 'git commit -n -m x'", 'no-verify'],
+    ["tcsh -c 'git commit -n -m x'", 'no-verify'],
+    ["fish -c 'git commit -n -m x'", 'no-verify'],
+    ["fish --command 'git commit -n -m x'", 'no-verify'],
+    ["fish --command='git commit -n -m x'", 'no-verify'],
     ['git commit -n -m x 2>&1 | tail -3', 'no-verify'],
     ['git commit --no-verif -m x', 'no-verify'],
     ['git commit --no-v -m x', 'no-verify'],
@@ -199,6 +240,84 @@ async function main() {
     ['git checkout main && git merge --no-ff --no-verify feature/x', 'no-verify'],
     ['git pull --no-verify origin main', 'no-verify'],
     ['HUSKY=0 git merge feature/x', 'no-verify'],
+    ['HUSKY=0 git pull origin main', 'no-verify'],
+    // push skips pre-push with --no-verify (git takes --no-veri and --no-verif as abbreviations)
+    ['git push --no-verify origin feature/x', 'no-verify'],
+    ['git push --no-veri origin feature/x', 'no-verify'],
+    ['git push --no-verif origin feature/x', 'no-verify'],
+    ['git push origin feature/x --no-verify', 'no-verify'],
+    ['git push -o ci.skip --no-verify origin feature/x', 'no-verify'],
+    ['HUSKY=0 git push origin feature/x', 'no-verify'],
+    // an inline GIT_CONFIG_* override of core.hooksPath on a hook-running subcommand
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hookspath GIT_CONFIG_VALUE_0=/dev/null git commit -m x', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=CORE.HOOKSPATH GIT_CONFIG_VALUE_0=/dev/null git push origin feature/x', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=p GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null git merge topic', 'hooks-path-override'],
+    ["GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/dev/null'\" git commit -m x", 'hooks-path-override'],
+    ['GIT_CONFIG_PARAMETERS=x git pull', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$K" GIT_CONFIG_VALUE_0=/dev/null git commit -m x', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$(echo k)" GIT_CONFIG_VALUE_0=/dev/null git commit -m x', 'hooks-path-override'],
+    ['env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x', 'hooks-path-override'],
+    ['git -c core.hooksPath=/dev/null pull', 'hooks-path-override'],
+    // an export earlier on the line, and the environment a bash -c or eval script inherits
+    ['export HUSKY=0; git commit -m x', 'no-verify'],
+    ['export HUSKY=0 && cd sub && git commit -m x', 'no-verify'],
+    ['export GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=/dev/null && git commit -m x', 'hooks-path-override'],
+    ['HUSKY=0 bash -c "git commit -m x"', 'no-verify'],
+    ['HUSKY=0 eval "git commit -m x"', 'no-verify'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null bash -c "git commit -m x"', 'hooks-path-override'],
+    // wrappers with options
+    ['command -p git commit -n -m x', 'no-verify'],
+    ['command git commit -n -m x', 'no-verify'],
+    ['builtin git commit --no-verify -m x', 'no-verify'],
+    ['exec -a x git commit -n -m x', 'no-verify'],
+    ['exec -cl git commit -n -m x', 'no-verify'],
+    ['time -p git commit -n -m x', 'no-verify'],
+    ['time -o /tmp/t git commit -n -m x', 'no-verify'],
+    ['time -f %e git commit -n -m x', 'no-verify'],
+    ['time --output /tmp/t git commit -n -m x', 'no-verify'],
+    ['nohup git push --no-verify origin feature/x', 'no-verify'],
+    // a value-taking option can take `--` as its value; git still honours a later --no-verify
+    ['git merge -m -- --no-verify feature/x', 'no-verify'],
+    ['git merge -- --no-verify feature/x', 'no-verify'],
+    // a Codex or run-wrapper launch sent to the background with a shell `&`
+    ['codex exec x &', 'codex-background'],
+    ['codex exec x&', 'codex-background'],
+    ['(codex exec x) &', 'codex-background'],
+    ['nohup codex exec - < b.md > o.md 2>&1 &', 'codex-background'],
+    ['node scripts/codex-run.mjs review &', 'codex-background'],
+    ['node --no-warnings scripts/codex-run.mjs review &', 'codex-background'],
+    ['bun ./scripts/claude-run.mjs build &', 'codex-background'],
+    ['scripts/codex-run.mjs review &', 'codex-background'],
+    ['/opt/bin/codex exec x &', 'codex-background'],
+    ['codex exec x && echo ok &', 'codex-background'],
+    ['echo start && codex exec x | tee log &', 'codex-background'],
+    ['codex exec x & echo started', 'codex-background'],
+    ['(echo start; codex exec x &)', 'codex-background'],
+    ['(cd sub && (codex exec x)) &', 'codex-background'],
+    ['{ codex exec x; } &', 'codex-background'],
+    ['bash -c "codex exec x" &', 'codex-background'],
+    ['bash -c "codex exec x &"', 'codex-background'],
+    ['eval "codex exec x" &', 'codex-background'],
+    ['codex exec x >/dev/null 2>&1 &', 'codex-background'],
+    ['codex exec x &> log &', 'codex-background'],
+    // a newline after &&, || or | continues the and-or list, so its `&` still backgrounds the launch
+    ['codex exec x &&\n echo ok &', 'codex-background'],
+    ['codex exec x |\n tee out &', 'codex-background'],
+    ['codex exec x &&\n\n echo ok &', 'codex-background'],
+    ['codex exec x ||\n echo failed &', 'codex-background'],
+    // an option's value does not hide the wrapper script from node or bun
+    ['node --title harness scripts/codex-run.mjs review --base HEAD --out v.md &', 'codex-background'],
+    ['node -r ./x.cjs scripts/codex-run.mjs review &', 'codex-background'],
+    ['node --import ./x.mjs scripts/codex-run.mjs review &', 'codex-background'],
+    ['bun --cwd . scripts/codex-run.mjs review &', 'codex-background'],
+    // controls (blocked before the shell model too): an export reaches the rest of its own shell,
+    // a backgrounded list's commands, a { } group's followers and a later ( ) subshell, and an
+    // inline value after it wins
+    ['export HUSKY=0 && git commit -m x &', 'no-verify'],
+    ['{ export HUSKY=0; }; git commit -m x', 'no-verify'],
+    ['export HUSKY=0; (git commit -m x)', 'no-verify'],
+    ['export HUSKY=1; HUSKY=0 git commit -m x', 'no-verify'],
   ];
   for (const [command, rule] of blocked) {
     test(`blocks: ${command.replace(/\n/g, '\\n')}`, () => {
@@ -321,6 +440,22 @@ async function main() {
     '/bin/bash -c "git commit -m x"',
     'eval "git commit -m x"',
     'eval "echo git commit -n"',
+    // env -S, a shell's options after -c and the other shells run what they are given, nothing more
+    "env -S 'git status'",
+    "env -S 'git commit -m x' -m 'say -n here'",
+    'env -S',
+    // env hands `;` and `|` to the program as words, and its quotes keep a word whole
+    "env -S 'echo x; git commit -n -m y'",
+    "env -S 'echo x | git commit -n -m y'",
+    "env -S 'git commit -m \"say -n here\"'",
+    "env -S 'git commit -m\"say -n here\"'",
+    'env -P /usr/bin git status',
+    'env --unset=HOME git status',
+    "bash -c -x 'git commit -m x'",
+    "bash --norc -c 'git status'",
+    "ksh -c 'git log -n 5'",
+    'bash script.sh -x',
+    'sh -c',
     // quoted values stay values
     'git commit -m "--no-verify"',
     'git commit --message="--no-verify"',
@@ -396,6 +531,55 @@ async function main() {
     'git merge --no-ff -m "never use --no-verify" feature/x',
     'git merge --no-ff -F .review-work/u/merge-msg.txt feature/x',
     'git pull --rebase origin main',
+    // push: -n is --dry-run (pre-push still runs); --no-ver is ambiguous with --no-verbose (git refuses it)
+    'git push -n origin feature/x',
+    'git push --no-ver origin feature/x',
+    'git push -o --no-verify origin feature/x',
+    'git push --push-option --no-verify origin feature/x',
+    // GIT_CONFIG_* that cannot touch the hooks, or on a subcommand that runs none
+    'GIT_CONFIG_PARAMETERS=x git status',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=p git commit -m x',
+    'GIT_AUTHOR_DATE="2026-01-01 00:00" git commit -m x',
+    'git commit -m "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null"',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git log -n 1',
+    'git -c core.hooksPath=x fetch',
+    'export FOO=1; git commit -m x',
+    'export HUSKY=1; git commit -m x',
+    'HUSKY=0 bash -c "npm test"',
+    'command -v git',
+    'time git commit -m x',
+    'exec -a name git status',
+    // merge: --no-verify-signatures and -n (--no-stat) are not hook bypasses
+    'git merge -- feature/x',
+    'git merge -m -- feature/x',
+    // a foreground Codex run, and `&` operators that do not background
+    'codex exec x',
+    'codex exec x && echo ok',
+    'codex exec x; echo done',
+    'node scripts/codex-run.mjs review',
+    'node scripts/codex-run.mjs review 2>&1 | tail -3',
+    'codex exec x &> log',
+    'codex exec x &>> log',
+    'codex exec x &>log',
+    'codex exec x |& tee log',
+    'codex exec x 2>&1 >&2',
+    'codex exec x && echo ok &> log',
+    'sleep 1 & codex exec x',
+    '(sleep 1 &) ; codex exec x',
+    'echo codex exec x &',
+    'node scripts/other.mjs &',
+    'node -e "1" &',
+    'bash -c "codex exec x"',
+    'git commit -m "run codex exec x &"',
+    // an export in a subshell (( ), a pipeline, a backgrounded list, a backtick) stays in it
+    '(export HUSKY=0); git commit -m x',
+    'export HUSKY=0 | true; git commit -m x',
+    'export HUSKY=0 & git commit -m x',
+    '`export HUSKY=0`; git commit -m x',
+    // the value git gets is the last one assigned
+    'export HUSKY=0; HUSKY=1 git commit -m x',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m x',
+    'export GIT_CONFIG_KEY_0=core.hooksPath; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m x',
   ];
   for (const command of allowed) {
     test(`allows: ${command.replace(/\n/g, '\\n') || '(empty)'}`, () => {
@@ -539,6 +723,47 @@ async function main() {
     assert.strictEqual(runHook(file, bash('echo frobnicate', dir)).status, 0, 'a mention is not a run');
     assert.strictEqual(runHook(GUARD, bash('frobnicate --now', dir)).status, 0, 'the shipped file is unchanged');
   });
+  test('EXTRA_RULES: a substituted rule sees the command\'s env and whether it runs in the background', () => {
+    const line = 'export const EXTRA_RULES = [];';
+    const rule = "{ name: 'bg-frobnicate', test: ({ argv, env, background }) => argv[0] === 'frobnicate' && background === true && env.ALLOW !== '1', reason: 'frobnicate runs in the foreground here' }";
+    const patched = original.replace(line, `export const EXTRA_RULES = [${rule}];`);
+    assert.notStrictEqual(patched, original, 'substitution applied');
+    const file = path.join(work, 'extra-env.mjs');
+    fs.writeFileSync(file, patched);
+    for (const command of [
+      'frobnicate --now &', '(frobnicate --now) &', 'echo a && frobnicate &', 'ALLOW=0 frobnicate &', 'bash -c "frobnicate" &',
+      // an export in a ( ), a pipeline or a backgrounded list does not reach the shell after it
+      '(export ALLOW=1); frobnicate &', 'export ALLOW=1 | true; frobnicate &', 'export ALLOW=1 & frobnicate &',
+    ]) {
+      const r = runHook(file, bash(command, dir));
+      assert.strictEqual(r.status, 2, `${command}: ${r.stderr}`);
+      assert.ok(r.stderr.includes('BLOCKED (bg-frobnicate): frobnicate runs in the foreground here'), r.stderr);
+    }
+    for (const command of [
+      'frobnicate --now', 'ALLOW=1 frobnicate &', 'export ALLOW=1; frobnicate &', 'env ALLOW=1 frobnicate &', 'ALLOW="1" frobnicate &', 'frobnicate &> log', 'frobnicate |& tee log',
+      // the backgrounded list carries its own export; a { } group is the current shell
+      'export ALLOW=1 && frobnicate &', '{ export ALLOW=1; }; frobnicate &',
+    ]) {
+      assert.strictEqual(runHook(file, bash(command, dir)).status, 0, command);
+    }
+  });
+  test('EXTRA_RULES: a substituted rule sees the directory a `cd` in the same shell moved it to', () => {
+    const line = 'export const EXTRA_RULES = [];';
+    const rule = "{ name: 'sub-frobnicate', test: ({ argv, cwd }) => argv[0] === 'frobnicate' && cwd.endsWith('/sub'), reason: 'frobnicate runs from the root here' }";
+    const patched = original.replace(line, `export const EXTRA_RULES = [${rule}];`);
+    assert.notStrictEqual(patched, original, 'substitution applied');
+    const file = path.join(work, 'extra-cd.mjs');
+    fs.writeFileSync(file, patched);
+    for (const command of ['cd sub && frobnicate', '{ cd sub; }; frobnicate', 'cd sub; (frobnicate)']) {
+      const r = runHook(file, bash(command, dir));
+      assert.strictEqual(r.status, 2, `${command}: ${r.stderr}`);
+      assert.ok(r.stderr.includes('BLOCKED (sub-frobnicate): frobnicate runs from the root here'), r.stderr);
+    }
+    // a cd in a ( ), a pipeline, a backgrounded list or a backtick stays in that subshell
+    for (const command of ['(cd sub); frobnicate', 'cd sub | true; frobnicate', 'cd sub & frobnicate', '`cd sub`; frobnicate']) {
+      assert.strictEqual(runHook(file, bash(command, dir)).status, 0, command);
+    }
+  });
   test('MAINLINE: substituting the [B] line changes which branches are protected', () => {
     const line = "export const MAINLINE = ['main', 'master'];";
     assert.ok(original.includes(line), 'MAINLINE line present');
@@ -565,13 +790,17 @@ async function main() {
       loaded[label] = new Error(`mutant ${label}: needle not found in the shipped file: ${needle}`);
       return;
     }
+    if (original.split(needle).length !== 2) {
+      loaded[label] = new Error(`mutant ${label}: needle occurs more than once in the shipped file: ${needle}`);
+      return;
+    }
     const file = path.join(work, `mutant-${label}.mjs`);
     fs.writeFileSync(file, text);
     loaded[label] = await load(file);
   };
   const specs = [
     ['short-n', "if (ch === 'n') return true;", ''],
-    ['abbrev', "'--no-verify'.startsWith(name)", "false"],
+    ['abbrev', "if (name.length >= 6 && '--no-verify'.startsWith(name)) return true;", ''],
     ['mirror', "else if (name === '--mirror') force = everything = true;", ''],
     ['all', "else if (name === '--all') everything = true;", ''],
     ['hooks-subcommands', ' && HOOK_SUBCOMMANDS.has(parts.sub)', ''],
@@ -584,10 +813,10 @@ async function main() {
     ['unquote', 'return c && !/\\s/.test(c) && !c.includes(SEP) ? c : m;', 'return m;'],
     ['at-head', "name === 'HEAD' || name === '@'", "name === 'HEAD'"],
     ['dollar', "name.includes('$')", 'false'],
-    ['husky', "/^HUSKY=0$/.test(", '/^HUSKY-never$/.test('],
+    ['husky', "env.HUSKY === '0'", "env.HUSKY === 'never'"],
     ['config-unset', 'if (unset) return true;', ''],
     ['delete', "const dropped = del ? refs : refs.filter((r) => r.startsWith(':'));", 'const dropped = [];'],
-    ['wrapper-env', "['env', 'uCS']", "['env-x', 'uCS']"],
+    ['wrapper-env', "['env', 'uCSaP']", "['env-x', 'uCSaP']"],
     ['wrapper-timeout', "['timeout', 'sk']", "['timeout-x', 'sk']"],
     ['wrapper-nice', "['nice', 'n']", "['nice-x', 'n']"],
     ['wrapper-sudo', "['sudo', 'ughpCDRrtTU']", "['sudo-x', 'ughpCDRrtTU']"],
@@ -612,6 +841,40 @@ async function main() {
     ['heredoc-trim', 'l.trim() === delimiter', 'l === delimiter'],
     ['tags-only', 'if (tags && !everything && !refs.length) return null;', ''],
     ['nested-subst', "else if (src[j] === '$' && src[j + 1] === '(') j = skipSubstitution(src, j);", 'else if (false) j = skipSubstitution(src, j);'],
+    ['push-no-verify', "if (parts.sub === 'push' && (pushSkipsHooks(parts.rest) || huskyOff)) {", "if (parts.sub === 'push' && huskyOff) {"],
+    ['push-husky', "if (parts.sub === 'push' && (pushSkipsHooks(parts.rest) || huskyOff)) {", "if (parts.sub === 'push' && pushSkipsHooks(parts.rest)) {"],
+    ['push-abbrev', "if (name.length >= 9 && '--no-verify'.startsWith(name)) return true;", "if (name === '--no-verify') return true;"],
+    ['push-nv-o', 'j++; // -o <push-option>: the value is the next word', ''],
+    ['env-override', 'HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks(env) : null', 'null'],
+    ['env-subcommand', 'HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks', 'true ? envOverridesHooks'],
+    ['env-key-case', '/^core\\.hookspath$/i.test(value)', '/^core\\.hookspath$/.test(value)'],
+    ['env-key-dynamic', ' || /[$`]/.test(value)', ''],
+    ['env-parameters', "if (name === 'GIT_CONFIG_PARAMETERS') return name;", ''],
+    ['export', 'state.exported.push(...words', '[].push(...words'],
+    ['script-env', 'inner.env.unshift(...env);', ''],
+    ['wrapper-command', "['command', '']", "['command-x', '']"],
+    ['wrapper-exec-a', "['exec', 'a']", "['exec', '']"],
+    ['wrapper-time-o', "['time', 'of']", "['time', '']"],
+    ['wrapper-time-long', "['time', ['--output', '--format']]", "['time', []]"],
+    ['pull-hooks', "'merge', 'pull', 'push'", "'merge', 'push'"],
+    ['merge-dashdash', "for (const t of rest) {\n    if (t === '--no-verify') return true;", "for (const t of rest) {\n    if (t === '--') break;\n    if (t === '--no-verify') return true;"],
+    ['background', "if (t === '&') endList(true);", "if (t === '&') endList(false);"],
+    ['background-list', 'if (background) for (const seg of top().list) seg.background = true;', 'if (background && top().list.length) top().list[top().list.length - 1].background = true;'],
+    ['background-group', 'top().list.push(...group.all);', ''],
+    ['background-brace', "else if (first === '{') open('}');", ''],
+    ['background-script', 'parse(script, dir, quoted, depth + 1, bg)', 'parse(script, dir, quoted, depth + 1)'],
+    ['amp-redirect', ".replace(/(?<!&)&>>?\\s*[^\\s;&|()<>]*/g, ' ')", ''],
+    ['pipe-amp', ".replace(/\\|&/g, '|')", ''],
+    ['runner-names', "new Set(['codex', 'codex-run.mjs', 'claude-run.mjs'])", 'new Set([])'],
+    ['runner-node', "if (name !== 'node' && name !== 'bun') return false;", 'return false;'],
+    ['runner-basename', 'SCRIPT_RUNNERS.has(basename(w))', 'SCRIPT_RUNNERS.has(w)'],
+    ['flat-state', 'while (!n.subshell) n = n.parent;', 'while (n.parent) n = n.parent;'],
+    ['newline-continue', "if (t === '\\n' && continued) continue;", ''],
+    ['runner-first-word', 'argv.slice(1).some((w) => SCRIPT_RUNNERS.has(basename(w)))', "SCRIPT_RUNNERS.has(basename(argv.slice(1).find((w) => !w.startsWith('-')) ?? ''))"],
+    ['resolved-env', "const huskyOff = env.HUSKY === '0';", 'const huskyOff = cmd.env.some((e) => /^HUSKY=0$/.test(parts.unq(e)));'],
+    ['pull-husky', '(mergeSkipsHooks(parts.rest) || huskyOff)', "(mergeSkipsHooks(parts.rest) || (huskyOff && parts.sub === 'merge'))"],
+    ['env-split', "if (name === 'env' && w[k] === 'S') split", "if (false) split"],
+    ['shell-after-c', 'let j = at + 1 + takes(words[at]);', 'let j = at + 1; if (false)'],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
@@ -642,6 +905,34 @@ async function main() {
     ['wrapper-sudo', 'not stripping sudo', 'sudo git commit -n'],
     ['wrapper-xargs', 'not stripping xargs', 'xargs git commit -n'],
     ['shell-basename', 'comparing the shell name literally lets /bin/bash -c through', '/bin/bash -c "git commit -n -m x"'],
+    ['push-no-verify', 'ignoring push --no-verify lets it skip pre-push', 'git push --no-verify origin feature/x'],
+    ['push-husky', 'ignoring HUSKY=0 on a push lets it through', 'HUSKY=0 git push origin feature/x'],
+    ['push-abbrev', 'not expanding push --no-veri lets the abbreviation through', 'git push --no-veri origin feature/x'],
+    ['env-override', 'ignoring inline GIT_CONFIG_* lets a hooksPath override through', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'],
+    ['env-key-case', 'a case-sensitive key match lets core.hooksPath through', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x'],
+    ['env-key-dynamic', 'trusting a non-literal key lets "$K" through', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$K" GIT_CONFIG_VALUE_0=/dev/null git commit -m x'],
+    ['env-parameters', 'ignoring GIT_CONFIG_PARAMETERS lets it through', 'GIT_CONFIG_PARAMETERS=x git pull'],
+    ['export', 'not tracking export lets `export HUSKY=0; git commit` through', 'export HUSKY=0; git commit -m x'],
+    ['script-env', 'not inheriting the shell env lets `HUSKY=0 bash -c` through', 'HUSKY=0 bash -c "git commit -m x"'],
+    ['wrapper-command', 'not stripping command (with -p)', 'command -p git commit -n -m x'],
+    ['wrapper-exec-a', 'not skipping the exec -a value', 'exec -a x git commit -n -m x'],
+    ['wrapper-time-o', 'not skipping the time -o value', 'time -o /tmp/t git commit -n -m x'],
+    ['wrapper-time-long', 'not skipping the time --output value', 'time --output /tmp/t git commit -n -m x'],
+    ['pull-hooks', 'leaving pull out of the hook subcommands lets -c core.hooksPath on pull through', 'git -c core.hooksPath=/dev/null pull'],
+    ['merge-dashdash', 'stopping at `--` lets `git merge -m -- --no-verify` through', 'git merge -m -- --no-verify feature/x'],
+    ['background', 'ignoring `&` lets a backgrounded codex run through', 'codex exec x &'],
+    ['background-list', 'backgrounding only the last pipeline lets `codex exec x && echo ok &` through', 'codex exec x && echo ok &'],
+    ['background-group', 'not propagating a group lets `(codex exec x) &` through', '(codex exec x) &'],
+    ['background-brace', 'not reading a brace group lets `{ codex exec x; } &` through', '{ codex exec x; } &'],
+    ['background-script', 'not passing background into a script lets `bash -c "codex exec x" &` through', 'bash -c "codex exec x" &'],
+    ['runner-names', 'an empty runner list lets `codex exec x &` through', 'codex exec x &'],
+    ['runner-node', 'not reading node scripts lets `node scripts/codex-run.mjs &` through', 'node scripts/codex-run.mjs review &'],
+    ['runner-basename', 'comparing the script path literally lets scripts/codex-run.mjs through', 'node scripts/codex-run.mjs review &'],
+    ['newline-continue', 'ending the list at a newline after && lets `codex exec x &&\\n echo ok &` through', 'codex exec x &&\n echo ok &'],
+    ['runner-first-word', 'taking the first non-option word as the script lets `node --title harness ...` through', 'node --title harness scripts/codex-run.mjs review &'],
+    ['pull-husky', 'ignoring HUSKY=0 on a pull lets it through', 'HUSKY=0 git pull origin main'],
+    ['env-split', 'skipping env -S as a plain option value lets its string through', "env -S 'git commit -n -m x'"],
+    ['shell-after-c', 'taking the word after -c as the script lets `bash -c -x` through', "bash -c -x 'git commit -n -m x'"],
   ];
   for (const [label, title, command, o] of kills) {
     test(`mutation (${label}): ${title}`, () => {
@@ -668,6 +959,12 @@ async function main() {
     ['heredoc-backslash', 'a <<\\EOF body is not parsed', 'git commit -F - <<\\EOF\ngit commit -n\nEOF'],
     ['tags-only', 'a force push of only tags is allowed', 'git push -f --tags', main],
     ['nested-subst', 'nested quotes in "$(...)" do not flip the masking', 'git commit -m "$(echo "retry -ing")"'],
+    ['push-nv-o', 'a push option value that looks like --no-verify is not a flag', 'git push -o --no-verify origin feature/x'],
+    ['env-subcommand', 'an inline GIT_CONFIG_* on a subcommand that runs no hook is allowed', 'GIT_CONFIG_PARAMETERS=x git status'],
+    ['amp-redirect', '`&>` is a redirection, not a background launch', 'codex exec x &> log'],
+    ['pipe-amp', '`|&` is a pipe, not a background launch', 'codex exec x |& tee log'],
+    ['flat-state', 'an export in a ( ) subshell does not reach the command after it', '(export HUSKY=0); git commit -m x'],
+    ['resolved-env', 'an inline HUSKY=1 after an exported HUSKY=0 is the value git gets', 'export HUSKY=0; HUSKY=1 git commit -m x'],
   ];
   for (const [label, title, command, o = opts] of allowedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => {

@@ -39,6 +39,7 @@ import {
   deletable,
   devOrphans,
   dockerBytes,
+  etimeMs,
   fmtBytes,
   formatReport,
   heldRows,
@@ -508,7 +509,8 @@ function alive(pid) {
  * The sweep's lock: { release }, or { holder } when another sweep holds it. Each run writes its own
  * entry in machine-sweep.locks/, then lists the directory (lockDecision decides): it removes only
  * the entries of runs that are gone and, beside a live one, its own, so no run ever removes a live
- * run's entry and two runs never free at once.
+ * run's entry and two runs never free at once. A live pid whose process started after its entry was
+ * written is an earlier run's (the system reuses pids): `started` reads the start from ps's elapsed time.
  */
 function lock(dir) {
   const locks = path.join(dir, 'machine-sweep.locks');
@@ -528,7 +530,13 @@ function lock(dir) {
     fs.rmSync(own, { force: true });
     return { holder: 'unknown' };
   }
-  const { remove, holder } = lockDecision({ mine, entries, alive, now: Date.now() });
+  // null when ps fails or prints nothing readable
+  const started = (pid) => {
+    const r = run('ps', ['-o', 'etime=', '-p', String(pid)]);
+    const elapsed = r.ok ? etimeMs(r.out) : null;
+    return elapsed === null ? null : Date.now() - elapsed;
+  };
+  const { remove, holder } = lockDecision({ mine, entries, alive, started, now: Date.now() });
   for (const name of remove) fs.rmSync(path.join(locks, name), { force: true });
   if (holder !== null) {
     fs.rmSync(own, { force: true });

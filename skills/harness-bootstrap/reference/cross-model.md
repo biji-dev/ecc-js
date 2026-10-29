@@ -17,7 +17,8 @@ the unit review covers it (a Sonnet `code-reviewer` for a Small unit or a cold f
 as `review-gate.mjs --writer second` says. `--writer` is the role that wrote the
 diff under review — the slice, the unit, or the fix: `main | bounded | second |
 mixed` (on Claude Code also `claude | sonnet | codex`), each role's model per host
-in `gate-design.md` › Model and effort.
+in `gate-design.md` › Model and effort. `mixed` is a diff the second family wrote
+part of; Opus and Sonnet together are `bounded`, which Codex still reviews.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
@@ -98,13 +99,23 @@ What it does that a bare call does not:
 - **A JSONL ledger** of every real run (`--dry-run` writes none), and a **leftovers** report after write kinds
   (`commits=`, `uncommitted=`) — look at them before a fallback starts.
 - **The prompt goes on stdin.** A quoted-argument prompt hung.
+- **A background run uses the host's own background option** (Claude Code: the
+  Bash tool's `run_in_background`), never a shell `&` or a `( … ) &` subshell: one
+  launched that way died with its shell before Codex started, and the command
+  guard refuses it (`codex-background`). The wrapper writes its ledger row when
+  the run ends, so when the host reports the command finished, the run counts only
+  if its row exists. No row means the run did not finish, not that it did nothing:
+  a write kind may have edited or committed first. Before a relaunch, check that it
+  stopped, read its log and look at the worktree (`git status`, its new commits).
 
 `[B]` Bindings, re-derived per machine and project:
 
 - the `CATALOG` block at the top of the core — the models this machine's CLI
   offers, by role (`default`, `frontier`, `router`, `previous`);
 - `LEDGER_DIR` and `RULES_FOR` in the wrapper;
-- `CODEX_BIN` if the CLI is not on `PATH`;
+- `CODEX_CANDIDATES` in the core — where this machine's CLI is installed, tried before
+  `codex` on `PATH`, because a terminal's own `codex` shim can come first there;
+  `CODEX_BIN` overrides both;
 - the route table's efforts only when the log has shown a reason.
 
 **Install:** copy the three files to `scripts/` and `scripts/lib/`, set the bindings,
@@ -218,4 +229,5 @@ scripts/lib/claude-run-core.test.mjs` once, and `.claude-runs/` in `.gitignore`.
    naming why.
 
 `[M]` Effort floor `high`; `xhigh` only at rung 2 or with the reason in the brief;
-`max` only on the owner's word (`gate-design.md`).
+`max` only on the owner's word (`gate-design.md`): codex-run lowers `max` to `xhigh`
+without `--allow-max`.

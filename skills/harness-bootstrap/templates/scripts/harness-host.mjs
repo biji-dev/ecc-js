@@ -3,7 +3,8 @@
 // [M] mechanism (ships as-is): everything. The [B] bindings (the models file, the login checks, the
 // wrappers) live at the top of scripts/lib/harness-host-core.mjs.
 /**
- * The runner runs it once a session, before the first switch line (runner.md › The sequence):
+ * The runner runs it once a session, before the first switch line (harness-bootstrap's
+ * reference/runner.md › The sequence):
  *
  *   node scripts/harness-host.mjs [--json] [--repo <dir>]
  *
@@ -60,6 +61,10 @@ function login(fam) {
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let a;
   let found;
   try {

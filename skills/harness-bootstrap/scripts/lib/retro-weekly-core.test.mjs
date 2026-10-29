@@ -108,6 +108,33 @@ test('resolveRepo: the registry entry, then the manifest role, then a tracked ca
   assert.deepEqual([bare.log, bare.followUps, bare.plans, bare.from], [null, null, [], { log: 'none', followUps: 'none', plans: 'none' }]);
 });
 
+test('--follow-ups repeats like --plans: each value is kept, in order, and each stays inside the repository', () => {
+  const a = parseArgs(['--register', 'r', '--follow-ups', 'a.md', '--follow-ups', 'b/*.md']);
+  assert.deepEqual(a.followUps, ['a.md', 'b/*.md'], 'a second --follow-ups adds to the first');
+  assert.deepEqual(parseArgs(['--register', 'r']).followUps, [], 'no --follow-ups is an empty list');
+  assert.throws(() => parseArgs(['--register', 'r', '--follow-ups', 'a.md', '--follow-ups', '../x']), /relative and inside the repository/);
+  assert.throws(() => parseArgs(['--register', 'r', '--follow-ups', '/abs/*.md']), /relative and inside the repository/);
+  assert.throws(() => parseArgs(['--run', '--follow-ups', 'a.md']), /go with --register/, 'a list counts as a register-only option');
+  assert.deepEqual(addRepo(emptyRegistry(), { path: '/r/a', project: 'a', followUps: [] }).repos, [{ path: '/r/a', project: 'a' }], 'an empty list is not stored');
+  assert.deepEqual(addRepo(emptyRegistry(), { path: '/r/a', project: 'a', followUps: ['a.md', 'b/*.md'] }).repos[0].followUps, ['a.md', 'b/*.md']);
+});
+
+test('resolveRepo takes follow-ups as a list from the entry or a manifest role, an older registry\'s string as it is, and drops a role with an unsafe entry', () => {
+  const tracked = ['docs/follow-ups.md'];
+  const list = resolveRepo({ path: '/r', project: 'r', followUps: ['a.md', 'b/*.md'] }, { tracked });
+  assert.deepEqual([list.followUps, list.from.followUps], [['a.md', 'b/*.md'], 'registry'], 'a list in the registry entry is returned as given');
+  const old = resolveRepo({ path: '/r', project: 'r', followUps: 'old.md' }, { tracked });
+  assert.deepEqual([old.followUps, old.from.followUps], ['old.md', 'registry'], "an older registry's string still works");
+  const role = resolveRepo({ path: '/r', project: 'r' }, { manifest: { roles: { 'follow-ups': ['docs/fu/drops.md', 'docs/fu/batches/*.md'] } }, tracked });
+  assert.deepEqual([role.followUps, role.from.followUps], [['docs/fu/drops.md', 'docs/fu/batches/*.md'], 'manifest'], 'a list role is returned as given');
+  const unsafe = resolveRepo({ path: '/r', project: 'r' }, { manifest: { roles: { 'follow-ups': ['docs/fu/drops.md', '../../etc/passwd'] } }, tracked });
+  assert.deepEqual([unsafe.followUps, unsafe.from.followUps], ['docs/follow-ups.md', 'found'], 'one unsafe entry drops the whole role');
+  const mixed = resolveRepo({ path: '/r', project: 'r' }, { manifest: { roles: { 'follow-ups': ['docs/fu/drops.md', 7] } }, tracked });
+  assert.equal(mixed.from.followUps, 'found', 'a role entry that is not a string drops the role');
+  const empty = resolveRepo({ path: '/r', project: 'r', followUps: [] }, { tracked });
+  assert.deepEqual([empty.followUps, empty.from.followUps], ['docs/follow-ups.md', 'found'], 'an empty list is no value');
+});
+
 test('logColumns reads a log that says Task and never Unit by its Task column, and leaves every other log alone', () => {
   const head = (cols) => `| ${cols.join(' | ')} |\n|${cols.map(() => '---').join('|')}|\n| x |`;
   assert.equal(logColumns(head(['Task', 'Sz', 'Elapsed'])).unit, 'task');
@@ -224,6 +251,32 @@ test('a set CLAUDE_CONFIG_DIR goes into the LaunchAgent\'s environment and in fr
   assert.doesNotMatch(scheduleLines(args).schtasks, /--config-dir/);
 });
 
+test('a set CODEX_HOME goes into the LaunchAgent\'s environment after CLAUDE_CONFIG_DIR, in front of the cron command and into the schtasks line as --codex-home; unset, none carries it', () => {
+  const args = { programArguments: ['/n/node', '/h/retro-weekly.mjs', '--run'], logFile: '/h/out.log' };
+  const plist = launchdPlist({ ...args, pathEnv: '/n:/usr/bin', configDir: '/c/my config', codexHome: '/x/my codex' });
+  assert.match(plist, /<key>EnvironmentVariables<\/key><dict><key>PATH<\/key><string>\/n:\/usr\/bin<\/string><key>CLAUDE_CONFIG_DIR<\/key><string>\/c\/my config<\/string><key>CODEX_HOME<\/key><string>\/x\/my codex<\/string><\/dict>/);
+  assert.match(launchdPlist({ ...args, pathEnv: '/n:/usr/bin', codexHome: '/x/a&b' }), /<key>PATH<\/key><string>\/n:\/usr\/bin<\/string><key>CODEX_HOME<\/key><string>\/x\/a&amp;b<\/string><\/dict>/);
+  assert.equal(
+    scheduleLines({ ...args, configDir: '/c/my config', codexHome: '/x/my codex' }).cron,
+    "0 9 * * 1 mkdir -p /h && CLAUDE_CONFIG_DIR='/c/my config' CODEX_HOME='/x/my codex' /n/node /h/retro-weekly.mjs --run >> /h/out.log 2>&1",
+  );
+  assert.equal(scheduleLines({ ...args, codexHome: '/x/codex' }).cron, '0 9 * * 1 mkdir -p /h && CODEX_HOME=/x/codex /n/node /h/retro-weekly.mjs --run >> /h/out.log 2>&1');
+  // schtasks sets no environment: the task passes the directory as --codex-home, after --config-dir
+  assert.equal(
+    scheduleLines({ ...args, configDir: '/c/my config', codexHome: '/x/my codex' }).schtasks,
+    'schtasks /Create /F /SC WEEKLY /D MON /ST 09:00 /TN harness-retro-weekly /TR "/n/node /h/retro-weekly.mjs --run --config-dir \\"/c/my config\\" --codex-home \\"/x/my codex\\""',
+  );
+  assert.doesNotMatch(launchdPlist({ ...args, pathEnv: '/n' }), /CODEX_HOME/);
+  assert.doesNotMatch(scheduleLines(args).cron, /CODEX_HOME/);
+  assert.doesNotMatch(scheduleLines(args).schtasks, /--codex-home/);
+});
+
+test('parseArgs reads --codex-home like --config-dir: a value is needed, and the default is none', () => {
+  assert.equal(parseArgs(['--print-schedule']).codexHome, null);
+  assert.equal(parseArgs(['--run', '--codex-home', '/x/codex']).codexHome, '/x/codex');
+  assert.throws(() => parseArgs(['--run', '--codex-home']), /--codex-home needs a value/);
+});
+
 test('importsOf lists the relative modules a file imports or re-exports, across lines, and nothing else', () => {
   const text = [
     "import fs from 'node:fs';",
@@ -241,6 +294,7 @@ function cleanEnv(extra = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
   delete env.CLAUDE_CONFIG_DIR; // the owner's, not the test's: a test that wants one passes it in `extra`
+  delete env.CODEX_HOME; // likewise
   return { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', HOME: tmpDir('retro-weekly-home-'), ...extra };
 }
 
@@ -299,6 +353,18 @@ test('the CLI registers a repository, lists it resolved, and its dry run prints 
   assert.match(dry.stdout, /^ {2}- demo\/retro-\d{4}-W\d{2}\.md \(demo\)$/m);
   assert.deepEqual(fs.readdirSync(f.home), before);
   assert.equal(fs.existsSync(f.calls), false, 'the dry run never calls claude');
+});
+
+test('the CLI registers a list of follow-ups and describes it joined; the registry keeps the list', () => {
+  const f = fixture();
+  const reg = cli(f, ['--register', f.repo, '--follow-ups', 'a.md', '--follow-ups', 'b/*.md']);
+  assert.equal(reg.status, 0, reg.stderr);
+  assert.match(reg.stdout, /follow-ups a\.md, b\/\*\.md \(registry\)/, 'describe prints the list joined by ", "');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.home, 'repos.json'), 'utf8')).repos[0].followUps, ['a.md', 'b/*.md']);
+  assert.match(cli(f, ['--list']).stdout, /follow-ups a\.md, b\/\*\.md \(registry\)/);
+  const bad = cli(f, ['--register', f.repo, '--follow-ups', '../x']);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /relative and inside the repository/);
 });
 
 test('a run exports the digest and data, runs the review read-only in retro/, writes the proposals and logs the run', posixOnly, () => {
@@ -387,4 +453,37 @@ test('CLAUDE_CONFIG_DIR is where the transcripts are read and what the schedule 
   const sched = cli(f, ['--print-schedule', '--claude', f.claude], { CLAUDE_CONFIG_DIR: config });
   assert.match(sched.stdout, new RegExp(`^cron .*: 0 9 \\* \\* 1 mkdir -p \\S+ && CLAUDE_CONFIG_DIR=${config.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm'));
   assert.doesNotMatch(cli(f, ['--print-schedule', '--claude', f.claude]).stdout, /CLAUDE_CONFIG_DIR/);
+});
+
+test('CODEX_HOME is where the Codex host\'s threads are read and what the schedule carries; with neither it and --codex-home, they are not', posixOnly, () => {
+  const f = fixture();
+  assert.equal(cli(f, ['--register', f.repo]).status, 0);
+  const codex = tmpDir('retro-weekly-codex-');
+  const day = path.join(codex, 'sessions', '2026', '10', '23');
+  fs.mkdirSync(day, { recursive: true });
+  const at = new Date().toISOString();
+  const line = (type, payload) => JSON.stringify({ timestamp: at, type, payload });
+  fs.writeFileSync(
+    path.join(day, 'rollout-2026-10-23T17-00-00-th-1.jsonl'),
+    `${[line('session_meta', { id: 'th-1', session_id: 'th-1', cwd: f.repo, originator: 'Codex Desktop', source: 'vscode' }), line('event_msg', { type: 'task_started' })].join('\n')}\n`,
+  );
+  // what the export wrote: the Codex threads it read
+  const counted = (args, extra) => {
+    const res = cli(f, ['--run', '--no-review', '--no-notify', ...args], extra);
+    assert.equal(res.status, 0, res.stderr);
+    const file = fs.readdirSync(path.join(f.home, 'retro', 'demo')).find((n) => /^retro-.*\.json$/.test(n));
+    return JSON.parse(fs.readFileSync(path.join(f.home, 'retro', 'demo', file), 'utf8')).sources.codexSessions;
+  };
+  assert.equal(counted([], { CODEX_HOME: codex }), 1);
+  assert.equal(counted(['--codex-home', codex], { CODEX_HOME: '' }), 1, 'the Windows task passes it as an option');
+  assert.equal(counted([], { CODEX_HOME: '' }), 0);
+  assert.equal(counted([], {}), 0);
+  // the schedule carries what the installing shell had, and nothing when it had none
+  const sched = cli(f, ['--print-schedule', '--claude', f.claude], { CODEX_HOME: codex });
+  assert.match(sched.stdout, new RegExp(`^cron .*: 0 9 \\* \\* 1 mkdir -p \\S+ && CODEX_HOME=${codex.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm'));
+  assert.match(sched.stdout, /^Task Scheduler \(Windows\): .* --run .* --codex-home \S+"$/m);
+  assert.doesNotMatch(cli(f, ['--print-schedule', '--claude', f.claude], { CODEX_HOME: '' }).stdout, /CODEX_HOME|--codex-home/);
+  assert.doesNotMatch(cli(f, ['--print-schedule', '--claude', f.claude]).stdout, /CODEX_HOME|--codex-home/);
+  const flagged = cli(f, ['--print-schedule', '--claude', f.claude, '--codex-home', codex]);
+  assert.match(flagged.stdout, /^cron .*: .* && CODEX_HOME=\S+ /m);
 });

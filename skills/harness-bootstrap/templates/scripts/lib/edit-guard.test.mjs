@@ -11,8 +11,15 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // [B] Repo-relative paths PROTECTED must refuse, and look-alikes it must allow.
-const REFUSED = ['.env', 'apps/web/.env.local', 'node_modules/left-pad/index.js'];
-const ALLOWED = ['.env.example', 'src/env.ts', 'docs/environment.md', 'scripts/node_modules-audit.md'];
+const REFUSED = [
+  '.env', 'apps/web/.env.local', 'node_modules/left-pad/index.js',
+  '.envrc', '.envrc.local', '.env~', '.env-local', '.env_local', 'prod.env', 'secrets.env', 'docker.env',
+];
+const ALLOWED = [
+  '.env.example', 'src/env.ts', 'docs/environment.md', 'scripts/node_modules-audit.md',
+  '.env.production.example', 'apps/.env.local.sample', '.env-example', '.env_template', 'foo.env.example',
+  'src/config.env.ts', '.environment', '.envoy',
+];
 
 const HOOK = fileURLToPath(new URL('../../.claude/hooks/edit-guard.mjs', import.meta.url));
 const ROOT = path.resolve(path.dirname(HOOK), '..', '..');
@@ -53,6 +60,25 @@ test('Codex: a patch that adds, updates, deletes or moves onto a protected path 
   const mixed = ['*** Update File: README.md', '@@', '-a', '+b', `*** Add File: ${REFUSED[0]}`, '+x'];
   assert.equal(pipe(codex(mixed)).status, 2);
   assert.equal(pipe({ tool_name: 'apply_patch', tool_input: { command: ['apply_patch', patchOf(mixed)] }, cwd: ROOT }).status, 2);
+});
+
+test('Codex: an indented patch header, spaces or a tab, is read as one', () => {
+  for (const rel of REFUSED) {
+    for (const indent of ['  ', '\t']) {
+      for (const lines of PATCHES(rel)) {
+        const indented = lines.map((l) => (l.startsWith('*** ') ? `${indent}${l}` : l));
+        const r = pipe(codex(indented));
+        assert.equal(r.status, 2, `the indented header ${JSON.stringify(indented.find((l) => l.includes(rel)))} is not refused`);
+      }
+      // Inside an Update hunk a space-led line is context: a doc that holds a patch example writes only the doc.
+      const context = ['*** Update File: README.md', '@@', '-a', '+b', ` *** Add File: ${rel}`, `  *** Delete File: ${rel}`, ` *** Update File: ${rel}`];
+      assert.equal(pipe(codex(context)).status, 0, `the context line naming ${rel} in an Update hunk is refused as a header`);
+      assert.deepEqual(editedPaths(codex(context)).map((p) => p.rel), ['README.md'], `an Update hunk's context lines are read as headers (${rel})`);
+      // A column-0 `***` line ends the hunk: an indented header after it is a header again.
+      const after = ['*** Update File: README.md', '@@', '-a', '+b', '*** Add File: docs/x.md', '+x', `${indent}*** Add File: ${rel}`, '+y'];
+      assert.equal(pipe(codex(after)).status, 2, `the indented header after an ended Update hunk is not refused (${rel})`);
+    }
+  }
 });
 
 test("Codex: a patch path is read against the call's cwd", () => {

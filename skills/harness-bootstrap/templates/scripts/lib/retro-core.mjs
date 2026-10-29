@@ -14,7 +14,7 @@
  * history, the outliers, the repeated friction and at most five candidates -- is what a reviewer, or
  * the next round, can read in one pass.
  */
-import { fmtMinutes, groupUnits, parseLog, percentile, tables } from './estimate-core.mjs';
+import { fmtMinutes, groupUnits, leftOutRows, leftOutWarning, parseLog, percentile, tables } from './estimate-core.mjs';
 import {
   dedupeRows,
   fmtTokens,
@@ -29,15 +29,33 @@ import {
   summarizeSteps,
 } from './unit-cost-core.mjs';
 import { parseState } from './unit-record-core.mjs';
-import { stepIntervals } from './unit-step-core.mjs';
+import { UNIT_ID_SOURCE, stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] Where the digests go (committed), and where the log, the follow-ups doc and the unit plans
-// (state and steps files) live.
+// (state and steps files) live. FOLLOW_UPS may also be a list of paths; an entry ending in `/*.md`
+// is every markdown file in that directory, sorted by name.
 export const REPORTS_DIR = 'docs/harness/reports';
 export const LOG = 'docs/harness/log.md';
 export const FOLLOW_UPS = 'docs/harness/follow-ups.md';
 export const PLANS_DIR = 'docs/plans';
+// [B] The follow-ups doc's shape. The status column is the leftmost one whose name starts with any of
+// STATUS_COLUMNS (lowercase); a cell is of a kind when it starts with one of that kind's words, case
+// ignored and leading `*`, `_` and backticks skipped, followed by a non-letter or the cell's end
+// (kinds in this order; anything else is `other`). A table with a column starting with one of
+// SEVERITY_COLUMNS makes a row a P3 only by that cell; one without any cell may.
+export const STATUS_COLUMNS = ['status'];
+export const STATUS_WORDS = { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] };
+export const SEVERITY_COLUMNS = ['sev', 'priority'];
+// [B] The date a row was filed, when the project writes it into the row: a RegExp whose first group is a
+// `YYYY-MM-DD` date. An open row's cells are tried in order and the first one it matches decides: that
+// cell's date (UTC midnight) is the filing date and the row's age counts from it; if the date does not
+// parse, the row keeps the date of its line's last commit, and no later cell is tried. A row with no
+// matching cell keeps its line's date too. `null` dates every row by its line. Anchor the RegExp to its
+// cell, so that a date in a note or a status cell is not read as a filing date: `/^(\d{4}-\d{2}-\d{2})$/`
+// for a Filed column, `/^[A-Z]+-(\d{4}-\d{2}-\d{2})\b/` for an id that carries the date. The skill's weekly
+// job reads only the paths its registry names, so it always dates by line.
+export const FILED_AT = null;
 // [B] The log columns the retro reads beyond estimate-core's COLUMNS, matched the same way (prefix).
 export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };
 // [B] An outlier is at least OUTLIER_X times its cohort's median, in a cohort of at least MIN_COHORT.
@@ -70,7 +88,7 @@ export const MAX_BYTES = 8192;
 export const MAX_CANDIDATES = 5;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
-// The runner's steps in sequence order (`runner.md` › The sequence), for listing.
+// The runner's steps in sequence order (harness-bootstrap's reference/runner.md › The sequence), for listing.
 const STEP_ORDER = ['0a', '0', '1', 'g1', '2', '3', '4', '5', '6', '7', '8', '8a', '8b', '8c', 'g2', '9', '10'];
 // An empty cell, however it says so: ``, `—`, `none`, `none (owner, Gate 2)`, `— (none named)`.
 const EMPTY = /^(?:|none|nothing|n\/a|-|—|–)(?:[\s.,;:]*\(.*\))?[\s.]*$/i;
@@ -84,7 +102,7 @@ const VALUE_FLAGS = {
 // The digest's machine-readable tail, read back as the next retro's baseline.
 const DATA_BLOCK = /<!-- retro-data (\{.*\}) -->/;
 // A main thread's step-marker command names the unit it ran: `unit-step.mjs <unit> <step> start`.
-const MARKER_CMD = /unit-step\.mjs\s+([A-Za-z0-9][A-Za-z0-9._-]*)(?=[\s"\\]|$)/g;
+const MARKER_CMD = new RegExp(`unit-step\\.mjs\\s+(${UNIT_ID_SOURCE})(?=[\\s"\\\\]|$)`, 'g');
 // Words too common to start or end a friction theme.
 const STOP = new Set(
   'about above after again also because been before being between both could does doing done during each from have having here into just like made make many more most much must need never only other over same should since some such than that their them then there these they this those through under until very were what when where which while with would your unit units step steps time times owner the and for was but not its one two all any can did had has how out own see set per via new off are'.split(
@@ -204,28 +222,68 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
   });
 }
 
-/** The follow-ups doc -> rows by Status, the open ones that name a P3, and the age in days of the oldest open row and the oldest open P3. */
-export function followUpsSummary(text, lineDates = new Map(), now = Date.now()) {
-  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null };
+const STATUS_KINDS = ['open', 'scheduled', 'fixed', 'dropped'];
+
+/**
+ * The filing date (UTC midnight, ms) the `filedAt` RegExp finds in a row: the first of `cells` it matches
+ * decides, and null when that date does not parse (a day the calendar lacks), or when there is no binding
+ * or no matching cell.
+ */
+function filedOn(cells, filedAt) {
+  if (!filedAt) return null;
+  let m = null;
+  for (const c of cells) if ((m = filedAt.exec(String(c ?? '').trim()))) break;
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(m?.[1] ?? '');
+  if (!ymd) return null;
+  const ms = Date.UTC(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+  return new Date(ms).toISOString().slice(0, 10) === ymd[0] ? ms : null; // 2026-02-31 would roll into March
+}
+
+/**
+ * The follow-ups doc -> rows by status kind, the open ones that name a P3, the age in days of the
+ * oldest open row and of the oldest open P3, and that P3's row (its first cell, marks stripped).
+ * Rows in a table with no status column are counted in `noStatus` and in nothing else. `lineDates` is
+ * anything with `get(line)` -> commit ms (a Map, or readFollowUps' lazy lookup); the options default
+ * to the [B] bindings, and a test passes its own. An open row is aged from the date in the first of its
+ * cells `filedAt` matches (its line is not looked up then); a row with no such cell, or whose date does
+ * not parse, from its line.
+ */
+export function followUpsSummary(
+  text,
+  lineDates = new Map(),
+  now = Date.now(),
+  { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS, filedAt = FILED_AT } = {},
+) {
+  const filed = filedAt ? new RegExp(filedAt.source, filedAt.flags.replace(/[gy]/g, '')) : null; // a sticky or global flag would carry state between rows
+  const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, noStatus: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null, oldestOpenP3Row: null };
+  const words = STATUS_KINDS.filter((kind) => statusWords[kind]?.length).map((kind) => [kind, new RegExp(`^(?:${statusWords[kind].map(escapeRe).join('|')})(?![A-Za-z])`, 'i')]);
+  const column = (names, prefixes) => names.findIndex((n) => prefixes.some((p) => n.startsWith(p.toLowerCase())));
   let oldest = null;
   let oldestP3 = null;
+  let oldestRow = null;
   for (const { names, rows } of tables(text)) {
-    const st = names.findIndex((n) => n.startsWith('status'));
-    if (st === -1) continue;
+    const st = column(names, statusColumns);
+    if (st === -1) {
+      out.noStatus += rows.length;
+      continue;
+    }
+    const sev = column(names, severityColumns);
     for (const { cells, line } of rows) {
-      const kind = /^(open|scheduled|fixed|dropped)\b/i.exec(String(cells[st] ?? '').trim())?.[1].toLowerCase() ?? 'other';
+      const cell = String(cells[st] ?? '').trim().replace(/^[*_`]+/, '');
+      const kind = words.find(([, re]) => re.test(cell))?.[0] ?? 'other';
       out[kind] += 1;
       if (kind !== 'open') continue;
-      const p3 = cells.some((c) => /\bP3\b/.test(c));
+      const p3 = sev === -1 ? cells.some((c) => /\bP3\b/.test(c)) : /\bP3\b/.test(cells[sev] ?? '');
       if (p3) out.openP3 += 1;
-      const at = lineDates.get(line);
+      const at = filedOn(cells, filed) ?? lineDates.get(line);
       if (!Number.isFinite(at)) continue;
       if (oldest === null || at < oldest) oldest = at;
-      if (p3 && (oldestP3 === null || at < oldestP3)) oldestP3 = at;
+      if (p3 && (oldestP3 === null || at < oldestP3)) [oldestP3, oldestRow] = [at, cells[0]];
     }
   }
   if (oldest !== null) out.oldestOpenDays = Math.floor((now - oldest) / DAY);
   if (oldestP3 !== null) out.oldestOpenP3Days = Math.floor((now - oldestP3) / DAY);
+  if (oldestRow !== null) out.oldestOpenP3Row = oneLine(oldestRow).replace(/^[`*\s]+|[`*\s]+$/g, '') || null;
   return out;
 }
 
@@ -402,15 +460,15 @@ export function unitSteps(unit, { markers = [], rows = [], agents = null } = {})
 export function logKpis(records, since, until) {
   const rows = records.filter((r) => inWindow(r.landed, since, until));
   const units = groupUnits(rows);
-  const med = (k) => {
+  const med = (k, round = round1) => {
     const m = median(units.map((u) => u[k]));
-    return m === null ? null : round1(m);
+    return m === null ? null : round(m);
   };
   return {
     units: units.length,
     work: med('work'),
     ownerWait: med('ownerWait'),
-    cost: med('cost'),
+    cost: med('cost', round2), // dollars to the cent, minutes to a tenth
     p0: rows.reduce((s, r) => s + (r.defects?.p0 ?? 0), 0),
     p1: rows.reduce((s, r) => s + (r.defects?.p1 ?? 0), 0),
     missed: rows.filter((r) => r.missed).length,
@@ -473,7 +531,7 @@ export function previousKpis(previous, week, key = 'transcripts') {
   const out = { weeks: list.length };
   for (const k of Object.keys(list[0].kpis[key])) {
     const m = median(list.map((p) => p.kpis[key][k]));
-    out[k] = m === null ? null : round1(m);
+    out[k] = m === null ? null : (k.endsWith('Usd') ? round2 : round1)(m);
   }
   return out;
 }
@@ -490,7 +548,7 @@ export function unitOutliers(records, win) {
       if (cohort.length < MIN_COHORT || !(med > 0)) continue;
       for (const u of cohort) {
         if (current.has(u.id) && u[metric] >= OUTLIER_X * med) {
-          out.push({ unit: u.id, tier: tier || null, metric, value: u[metric], median: round1(med), x: round1(u[metric] / med), n: cohort.length });
+          out.push({ unit: u.id, tier: tier || null, metric, value: u[metric], median: (metric === 'cost' ? round2 : round1)(med), x: round1(u[metric] / med), n: cohort.length });
         }
       }
     }
@@ -573,8 +631,8 @@ export function frictionThemes(records, win, limit = 6) {
 
 /**
  * At most MAX_CANDIDATES things for the retro review, one of each source in turn so no source fills
- * every slot: what the owner caught, cache-expiry rewrites, step outliers, unit outliers, repeated
- * friction, an old queue -- then the second of each, and so on.
+ * every slot: what the Read line warns of, what the owner caught, cache-expiry rewrites, step outliers,
+ * unit outliers, repeated friction, an old queue -- then the second of each, and so on.
  */
 export function candidates(d) {
   const sources = [
@@ -593,7 +651,7 @@ export function candidates(d) {
   if (t && t.rewriteShare >= REWRITE_ALERT_PERCENT) {
     sources[1].push({
       kind: 'threshold',
-      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (context.md › The gate wait)`,
+      text: `cache-expiry rewrites cost ${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main-thread spend (${t.rewrites}): end the turn at owner gates (harness-bootstrap's reference/context.md › The gate wait)`,
       evidence: 'transcripts',
     });
   }
@@ -601,6 +659,7 @@ export function candidates(d) {
   if (q && q.oldestOpenDays !== null && q.oldestOpenDays >= QUEUE_ALERT_DAYS) {
     sources[5].push({ kind: 'machinery', text: `the oldest open follow-up is ${q.oldestOpenDays} days old (${q.open} open, ${q.openP3} naming a P3): a hygiene unit is due`, evidence: 'follow-ups doc' });
   }
+  sources.unshift((d.warnings ?? []).map((w) => ({ kind: 'machinery', text: w, evidence: 'Read line' })));
   const out = [];
   for (let i = 0; out.length < MAX_CANDIDATES && sources.some((s) => s.length > i); i++) {
     for (const s of sources) if (s[i] && out.length < MAX_CANDIDATES) out.push(s[i]);
@@ -620,6 +679,36 @@ function readCounts(g, records) {
     ledgerRows: g.ledger ? g.ledger.length : null,
     claudeRunRows: g.claudeRuns ? g.claudeRuns.length : null,
   };
+}
+
+/**
+ * What the Read line cannot say for itself: a figure that is missing or zero for a reason the
+ * project can fix. A list of strings, empty when all is well. `claudeRows` says whether the window
+ * holds a Claude transcript row, main or subagent: the sessions figure counts main-thread rows only.
+ * `leftOut` is the log's rows no table took (estimate-core's leftOutRows).
+ */
+function warningsFor(d, records, claudeRows, leftOut = []) {
+  const out = [];
+  if (leftOut.length) out.push(leftOutWarning(leftOut));
+  const undated = records.filter((r) => r.landed === null).length;
+  if (undated) {
+    out.push(`${undated} log row${undated === 1 ? ' has' : 's have'} no commit date, so every figure leaves ${undated === 1 ? 'it' : 'them'} out: a row not committed yet, or one edited since its commit (a Missed by harness filled after the land); commit the log, then run the retro again`);
+  }
+  const t = d.kpis.transcripts;
+  const h = d.kpis.codexHost;
+  const spent = [t?.claudeUsd > 0 ? `${usd(t.claudeUsd)} of Claude spend` : null, h?.sessions > 0 ? `${h.sessions} Codex thread${h.sessions === 1 ? '' : 's'}` : null].filter(Boolean);
+  if (records.length === 0 && spent.length) {
+    out.push(`${spent.join(' and ')} in the window against no log rows: the harness log is not being written, LOG names a file that is not the log, or its columns do not match`);
+  }
+  const units = d.kpis.log.units;
+  if (units > 0 && !claudeRows && !(h?.sessions > 0)) {
+    out.push(`${units} unit${units === 1 ? '' : 's'} landed in the window but no Claude Code session or Codex thread was read, so the cost and session figures are missing: the retro reads Claude Code and Codex sessions only (another host's are not read), and a wrong projects directory or CLAUDE_CONFIG_DIR gives the same`);
+  }
+  const q = d.queue.followUps;
+  if (q && q.noStatus > 0 && q.open + q.scheduled + q.fixed + q.dropped + q.other === 0) {
+    out.push(`the follow-ups doc has ${q.noStatus} rows, all in tables with no status column (looked for: ${STATUS_COLUMNS.join(', ')}): none is counted`);
+  }
+  return out;
 }
 
 /**
@@ -689,6 +778,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     },
     decisions: { units: recent.length, classes: sum(recent, (s) => s.classes), by: sum(recent, (s) => s.by), questions: recent.reduce((n, s) => n + s.questions, 0) },
   };
+  d.warnings = warningsFor(d, records, g.rows.some((r) => inWin(r.ts)), leftOutRows(g.log.text));
   d.candidates = candidates(d);
   return d;
 }
@@ -709,6 +799,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
     '',
     `Window ${d.since.slice(0, 16)}Z → ${d.until.slice(0, 16)}Z, baseline from ${d.baselineSince.slice(0, 10)} · generated by retro.mjs — regenerate, never edit by hand`,
     `Read: ${s.logRows ?? 0} log rows${s.undated ? ` (${s.undated} undated, left out)` : ''} · ${s.stepsFiles ?? 0} steps files · ${s.stateFiles ?? 0} state files · ${s.sessions ?? 0} sessions${s.codexSessions ? ` · ${s.codexSessions} Codex threads` : ''} · ${s.ledgerRows === null || s.ledgerRows === undefined ? 'no Codex ledger' : `${s.ledgerRows} Codex ledger rows`}${s.claudeRunRows === null || s.claudeRunRows === undefined ? '' : ` · ${s.claudeRunRows} claude-run ledger rows`}`,
+    ...(d.warnings ?? []).map((w) => `Warn: ${oneLine(w)}`),
     '',
     '## KPIs',
     '',
@@ -780,7 +871,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
   const q = d.queue.followUps;
   L.push(
     q
-      ? `- Follow-ups: ${q.open} open (${q.openP3} naming a P3; oldest ${q.oldestOpenDays === null ? '—' : `${q.oldestOpenDays} d`}) · ${q.scheduled} scheduled · ${q.fixed} fixed · ${q.dropped} dropped`
+      ? `- Follow-ups: ${q.open} open (${q.openP3} naming a P3${q.oldestOpenP3Row ? `, the oldest ${q.oldestOpenP3Row} at ${q.oldestOpenP3Days} d` : ''}; oldest ${q.oldestOpenDays === null ? '—' : `${q.oldestOpenDays} d`}) · ${q.scheduled} scheduled · ${q.fixed} fixed · ${q.dropped} dropped${q.noStatus ? ` · ${q.noStatus} rows in tables with no status column, left out` : ''}`
       : '- Follow-ups: no doc',
     `- P3 findings still to do in state files: ${d.queue.stateP3}`,
   );

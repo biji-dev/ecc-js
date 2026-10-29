@@ -30,8 +30,9 @@ file and `.claude/skills/` as the real store. Say what a second agent would then
 miss, and let the owner choose.
 
 `[M]` **Edit the real file, never through the link.** A new skill gets its link
-in the same commit. On Windows without symlink support, copy instead and add a
-check that the two copies match.
+in the same commit. On Windows without symlink support, or where the project
+refuses committed symlinks, copy instead: `harness-status.js` compares the copy
+with the real store file by file (`skill-link-drift`).
 
 `[M]` **A plain file read does not expand `@AGENTS.md`.** Any agent told to read
 the rules (the auditors especially) reads both files.
@@ -45,16 +46,16 @@ limit.
 
 | File | Holds | Budget `[B]` |
 |---|---|---|
-| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the tier and gate tables; the policy; commands; the area-rules index | its current size, rounded up — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
-| `CLAUDE.md` | `@AGENTS.md`, then Claude specifics only | its current size, rounded up |
+| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the tier and gate tables; the policy; commands; the area-rules index | its current size, rounded up to the next 1,024 bytes — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
+| `CLAUDE.md` | `@AGENTS.md`, then Claude specifics only | its current size, rounded up to the next 1,024 bytes |
 | `.claude/rules/<area>.md` | rules that apply to one area, with `paths:` frontmatter so Claude Code loads them on reading a matching file | per file |
 | `docs/harness/rule-origins.md` | the full origin of every shipped rule (`rules.md` §1), generated | none |
 | the state file | one unit's state (`scope-guard.md`) | 8 KB |
 | each `SKILL.md` | one skill | 500 lines |
 
 `[M]` **Budgets ratchet from the current size.** Generation sets each to the file's
-size today, rounded up, and the lint fails only above it. A 118 KB `CLAUDE.md` must
-not fail on day one; it must not grow either.
+size today, rounded up to the next 1,024 bytes, and the lint fails only above it. A
+118 KB `CLAUDE.md` must not fail on day one; it must not grow either.
 
 `[M]` **Area rules are indexed in `AGENTS.md`**, one line each:
 ``- `<file>.md` — <what it covers> (`<first path glob>` …)``; a rule in a
@@ -102,10 +103,12 @@ call it; never maintain the same sequence in three skill files.
   per-slice review, Small review, fix re-reviews and the adversarial pass. Pass
   `model` and `effort` on every Agent dispatch, and pin `effort: high` in every
   agent file.
-- **Agents:** `.claude/agents/*.md` with `model:` and `tools:` frontmatter —
-  `tools` is enforced, so the conformance and blast-radius auditors' read-only
-  bound is real. Generated: `plan-conformance-auditor.md`, `blast-radius-auditor.md`,
-  `claim-auditor.md`, `implementer.md`.
+- **Agents:** `.claude/agents/*.md` with `model:`, `tools:`, `effort:` and
+  `autoCompactWindow:` frontmatter — `tools` is enforced, so the conformance and
+  blast-radius auditors' read-only bound is real; `autoCompactWindow` only lowers
+  the window (`runner.md` › The implementer agent). Generated:
+  `plan-conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`,
+  `implementer.md`.
 - **Hooks:** the commit guard is a git hook, not a Claude hook, so every agent
   and every human is guarded. The context-budget hook is Claude-only
   (`context.md`).
@@ -116,11 +119,15 @@ call it; never maintain the same sequence in three skill files.
 - **The command guard** — `templates/command-guard.mjs`, a `PreToolUse` hook on
   `Bash`, installed to `.claude/hooks/command-guard.mjs`. It parses the command
   (heredocs and quoted text removed, split on shell operators, wrappers such as
-  `env`, `sudo`, `timeout`, `nice` and `xargs` stripped) and refuses
-  `git commit --no-verify` or `-n`, `git merge` or `git pull --no-verify`, `HUSKY=0`
-  on a commit or merge, a `core.hooksPath`
-  override or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
-  stays allowed), and a force-push or delete of the mainline; `EXTRA_RULES` is `[B]`. A commit message that *mentions* `--no-verify` passes. It
+  `env`, `sudo`, `timeout`, `nice`, `xargs`, `command`, `exec`, `time` and `nohup`
+  stripped with their options) and refuses
+  `git commit --no-verify` or `-n`, `git push`, `git merge` or `git pull --no-verify`,
+  `HUSKY=0` on a commit, merge or push, a `core.hooksPath`
+  override (`-c`, or an inline `GIT_CONFIG_*` such as `GIT_CONFIG_KEY_0=core.hooksPath`)
+  or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
+  stays allowed), a force-push or delete of the mainline, and (`codex-background`) a
+  Codex or run-wrapper launch sent to the background with a shell `&`; `EXTRA_RULES`
+  is `[B]`, and each rule gets the command's `env` and `background`. A commit message that *mentions* `--no-verify` passes. It
   exits 2 to block and 0 on any error. It stops an agent's own mistakes and the
   obvious retry, not a determined adversary — its header lists what it cannot see.
   It replaces a plugin's keyword hook: the harness depends on no plugin hook, since a
@@ -132,8 +139,10 @@ call it; never maintain the same sequence in three skill files.
 - **The edit guard** — `templates/edit-guard.mjs`, a `PreToolUse` hook on `Edit`,
   `Write`, `MultiEdit` and `NotebookEdit`, installed to `.claude/hooks/edit-guard.mjs`.
   It reads the paths from stdin (`tool_input.file_path`, `notebook_path`) and refuses,
-  with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets and
-  installed packages, while a committed `.env.example` stays editable. It tests the
+  with exit 2, an edit of a `[B]` `PROTECTED` path: env files that hold secrets
+  (`.env`, `.envrc`, `*.env` and their suffixed forms such as `.env.local`) and
+  installed packages, while a committed template such as `.env.example` or
+  `.env.production.sample` stays editable. It tests the
   path as written and the path the write lands on, through symlinks, and matches
   without case (macOS and Windows volumes ignore it): `.ENV`, or `deps/` linked to
   `node_modules/`, is refused too. It replaces
@@ -189,8 +198,9 @@ call it; never maintain the same sequence in three skill files.
   `apply_patch` use `tool_input.command`". Every file edit reports as `apply_patch`
   (the `Edit` and `Write` matchers alias it), and the edit guard reads the patch's
   `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines
-  against `cwd`. Exit 2 blocks, as on Claude Code. Set `timeout`: Codex's default is
-  600 seconds.
+  against `cwd`, indented too where a file section may start (inside an Update hunk
+  a space-led line is context). Exit 2 blocks, as on Claude Code. Set `timeout`:
+  Codex's default is 600 seconds.
 
   ```json
   { "hooks": { "PreToolUse": [
@@ -211,17 +221,44 @@ call it; never maintain the same sequence in three skill files.
   work into a workflow (the `delegate-tasks` skill describes one).
 - **The second family** is Codex, through `codex-run.mjs`; Claude, through
   `claude-run.mjs`, when Codex is out. ZCode sets `CLAUDE_*` variables too, so
-  `harness-host.mjs` reads any `ZCODE_*` variable first. No ZCode variable is
-  verified yet (none was found in its app or its logs), so until one is, a ZCode
-  session reads as `claude`: set `HARNESS_HOST=zcode` in the environment ZCode gives
-  its shells, never in a shell profile the other hosts read too.
+  `harness-host.mjs` reads any `ZCODE_*` variable first. ZCode's shells carry its
+  own (`ZCODE_APP_VERSION`, `ZCODE_ENV`), so the script names it without help;
+  `HARNESS_HOST` stays the owner's override, set in the environment ZCode gives its
+  shells, never in a shell profile the other hosts read too.
 - Check whether the session model reads images before planning a visual step.
-- **When ZCode is the main runtime,** the Claude Code hooks (command and edit
-  guards, context budget) do not protect it, and "pass `model` and `effort` on every
-  dispatch" cannot hold outside a workflow. The git hooks still do — the commit
-  guard is the one protection every agent shares. Say in the harness file which
-  protections apply to which runtime, and which roles fall back to the session
-  model.
+- **Hooks:** the command and edit guards run under ZCode unchanged, from the
+  workspace's `.zcode/config.json` (the user's own is `~/.zcode/cli/config.json`)
+  under its top-level `hooks` key. They are off by default: set `hooks.enabled:
+  true` (the runner also starts when a plugin brings a hook of its own; a harness
+  does not rely on that). Workspace hooks have no trust step. A hook gets
+  `ZCODE_SESSION_ID` and `ZCODE_PROJECT_DIR`, plus `CLAUDE_PROJECT_DIR` and
+  `CLAUDE_SESSION_ID`, never `CLAUDECODE`. Its stdin carries Claude Code's keys:
+  `hook_event_name`, `session_id`, `tool_name`, `tool_input` and the event's own
+  fields (a `cwd` where the session has one; both guards fall back when it is
+  absent). `Bash`'s input is `{ command, ... }`; `Edit` and `Write` send
+  `file_path`. The matcher is a case-sensitive regex on the tool name, and ZCode
+  maps `ApplyPatch` onto `Write` and `Edit` (no ApplyPatch tool ships, so the
+  guard sees `Edit` and `Write`). Exit 2 blocks, with stderr as the reason.
+  `timeout` is in seconds (default 60). ZCode expands `${ZCODE_PROJECT_DIR}` in
+  the command itself.
+
+  ```json
+  { "hooks": { "enabled": true, "events": { "PreToolUse": [
+    { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "node \"${ZCODE_PROJECT_DIR}/.claude/hooks/edit-guard.mjs\"", "timeout": 10 }] },
+    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"${ZCODE_PROJECT_DIR}/.claude/hooks/command-guard.mjs\"", "timeout": 10 }] }
+  ] } } }
+  ```
+
+  Hook stdout is JSON: `hookSpecificOutput.additionalContext` reaches the model on
+  `UserPromptSubmit`; a top-level `systemMessage` is used only when a `Stop` hook
+  blocks. So the leftover-processes hook is wired on `UserPromptSubmit` only (its
+  `Stop` notice is dropped there). The context-budget hook stays Claude Code's: the
+  transcript file ZCode hands a hook holds at most the last message (none on
+  `PreToolUse`), so it cannot measure there.
+- **When ZCode is the main runtime,** "pass `model` and `effort` on every
+  dispatch" cannot hold outside a workflow. The commit guard, a git hook, protects
+  every runtime. Say in the harness file which protections and which model pins
+  apply to which runtime, and which roles fall back to the session model.
 
 ## Kimi
 
@@ -239,5 +276,5 @@ then any `ZCODE_*` variable, then `CODEX_THREAD_ID` or `CODEX_SANDBOX`, then
 `CLAUDECODE`. A host started from another inherits its variables — a Codex run
 started from a Claude Code shell carries `CLAUDECODE` — so the inner host's own
 variables go first; `HARNESS_HOST` settles anything else. Kimi sets none: it needs
-`HARNESS_HOST=kimi`. ZCode needs `HARNESS_HOST=zcode` until a `ZCODE_*` variable is
-verified in its shells (ZCode, above).
+`HARNESS_HOST=kimi`. ZCode's shells carry `ZCODE_APP_VERSION`, so it needs no help
+(ZCode, above).

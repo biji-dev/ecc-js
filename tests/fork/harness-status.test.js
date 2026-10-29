@@ -140,7 +140,8 @@ function snapshot(dir) {
 /** Writes a copy of the shipped script with one named replacement applied; asserts it applied. */
 function mutantOf(from, to) {
   const src = fs.readFileSync(SCRIPT, 'utf8');
-  const mutated = src.replace(from, to);
+  assert.strictEqual(src.split(from).length - 1, 1, `the replaced text is not in the script exactly once: ${from}`);
+  const mutated = src.replace(from, () => to);
   assert.notStrictEqual(mutated, src, `replacement did not apply: ${from}`);
   const file = path.join(tmp('harness-status-mutant-'), 'harness-status.js');
   fs.writeFileSync(file, mutated);
@@ -252,7 +253,7 @@ test('core.hooksPath is honoured for the guard check', () => {
   assert.ok(!ids(report(repo)).includes('guard-missing'));
 });
 
-const SECRET = 'abcd1234efgh5678ijkl';
+const SECRET = ['abcd1234', 'efgh5678', 'ijkl'].join(''); // built at run time: no credential-shaped literal in this file
 
 function legacyChange() {
   return mk({
@@ -343,13 +344,46 @@ test('the secret value never appears in stdout (json or text)', () => {
 });
 
 test('other secret shapes are found', () => {
+  const aws = 'AKIA' + 'ABCDEFGHIJKLMNOP'; // built at run time: no credential-shaped literal in this file
+  const sk = 'sk-' + 'abcdefghijklmnopqrstuv';
   const repo = mk({
-    '.claude/rules/a.md': 'key AKIAABCDEFGHIJKLMNOP\n',
-    '.agents/skills/s/SKILL.md': '-----BEGIN RSA PRIVATE KEY-----\n',
-    '.claude/agents/a.md': 'token sk-abcdefghijklmnopqrstuv\n',
+    '.claude/rules/a.md': `key ${aws}\n`,
+    '.agents/skills/s/SKILL.md': '-----BEGIN RSA ' + 'PRIVATE KEY-----\n',
+    '.claude/agents/a.md': `token ${sk}\n`,
   });
   const found = report(repo).hazards.filter(h => h.id === 'secret-in-agent-files').map(h => h.path).sort();
   assert.deepStrictEqual(found, ['.agents/skills/s/SKILL.md', '.claude/agents/a.md', '.claude/rules/a.md']);
+  assert.ok(!run(repo).stdout.includes(aws) && !run(repo, ['--text']).stdout.includes(aws));
+});
+
+test('a JSON-escaped credential in a settings file is found and never printed', () => {
+  const v = ['Zx9Qw7', 'Lm3Np5Rt8'].join('');
+  // JSON.stringify escapes the quotes inside the strings, so the file holds password=\"<v>\" and \"api_key\": \"<v>\"
+  const settings = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: `curl -d password="${v}" https://example.invalid` }] }] },
+    note: `{"api_key": "${v}"}`,
+  }, null, 2);
+  assert.ok(settings.includes('password=\\"' + v + '\\"'), 'the fixture does not hold the escaped value');
+  assert.ok(settings.includes('\\"api_key\\": \\"' + v), 'the fixture does not hold the escaped key');
+  const repo = mk({ '.claude/settings.json': settings + '\n' });
+  const lines = report(repo).hazards.filter(h => h.id === 'secret-in-agent-files').map(h => h.line).sort();
+  assert.strictEqual(lines.length, 2, `expected both escaped credentials flagged, got lines ${JSON.stringify(lines)}`);
+  assert.ok(!run(repo).stdout.includes(v));
+  assert.ok(!run(repo, ['--text']).stdout.includes(v));
+});
+
+test('harness-status and check-agent-docs scan with the same credential pattern', () => {
+  // The two files cannot share a module, so read each as text and take the first regex literal that starts
+  // with the credential key alternation, up to its `/i` flag (followed by `,` or `]`).
+  const extract = rel => {
+    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const m = text.match(/\/(\(api\[_-\]\?key\|secret\|token\|password\|passwd\).*?)\/i(?=[,\]])/);
+    assert.ok(m, `${rel} holds no credential pattern`);
+    return m[1];
+  };
+  const status = extract('skills/harness-bootstrap/scripts/harness-status.js');
+  const lint = extract('skills/harness-bootstrap/templates/scripts/check-agent-docs.mjs');
+  assert.strictEqual(status, lint, 'the two credential patterns differ');
 });
 
 test('secrets in the settings files and the instruction files are found', () => {
@@ -991,7 +1025,7 @@ test('6. the Codex size limit is read from CODEX_HOME or ~/.codex config.toml', 
 });
 
 test('6. mutant: the hard-coded limit would flag a raised-limit install', () => {
-  const m = mutantOf('sizes.codexLimit.bytes', '32768');
+  const m = mutantOf('> sizes.codexLimit.bytes', '> 32768');
   const home = tmp('harness-status-codexhome-');
   write(home, '.codex/config.toml', 'project_doc_max_bytes = 65536\n');
   const repo = mk({ 'AGENTS.md': 'a'.repeat(40000) });
@@ -1322,6 +1356,51 @@ test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may
   assert.strictEqual((hazardsOf(report(named), 'p3-queue-aging')[0] || {}).path, 'docs/qa/known-issues.md');
 });
 
+test('p3-queue-aging: with a Severity column only that cell makes a P3; a P1 row that names P3 in its Area raises nothing', () => {
+  const rows = ['| # | Area | Severity | Status |', '|---|---|---|---|', '| 1 | the P3 cleanup of a.ts | P1 | open |', '| 2 | b.ts | P3 | fixed `abc1234` |'];
+  const repo = mk({ 'docs/harness/follow-ups.md': `${rows.join('\n')}\n` });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'p3-queue-aging'), [], 'a P1 row is not a P3 because its Area says so');
+  const p3 = mk({ 'docs/harness/follow-ups.md': `${rows.concat('| 3 | c.ts | P3 | open |').join('\n')}\n` });
+  assert.match(hazardsOf(report(p3), 'p3-queue-aging')[0].detail, /^1 open P3 row, and no hygiene report/, 'the P3 row is counted, the P1 row is not');
+  const priority = mk({ 'docs/harness/follow-ups.md': '| # | Priority | Note | Status |\n|---|---|---|---|\n| 1 | P2 | P3 later | open |\n' });
+  assert.deepStrictEqual(hazardsOf(report(priority), 'p3-queue-aging'), [], 'a Priority column is a severity column too');
+});
+
+test('p3-queue-aging: the follow-ups role may be a list of paths and <dir>/*.md entries; the hazard names the first file with an open P3', () => {
+  const head = '| # | Area | Severity | Status |\n|---|---|---|---|\n';
+  const roles = { 'follow-ups': ['docs/fu/drops.md', 'docs/fu/batches/*.md'] };
+  const manifest = JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles });
+  const files = {
+    'docs/fu/drops.md': `${head}| 1 | a.ts | P1 | open |\n`,
+    'docs/fu/batches/b-1.md': `${head}| 2 | b.ts | P2 | open |\n`,
+    'docs/fu/batches/b-2.md': `${head}| 3 | c.ts | P3 | open |\n| 4 | d.ts | P3 | open |\n`,
+    'docs/fu/batches/notes.txt': 'not markdown\n',
+    '.agents/harness-manifest.json': manifest,
+  };
+  const repo = mk(files);
+  const found = hazardsOf(report(repo), 'p3-queue-aging');
+  assert.strictEqual(found.length, 1, 'the role list is read: the open P3 sits in a batch file');
+  assert.strictEqual(found[0].path, 'docs/fu/batches/b-2.md');
+  assert.match(found[0].detail, /^2 open P3 rows, and no hygiene report/, 'the count is over every file the role names');
+  // an unsafe entry drops the whole role: the usual places are tried, and none exists here
+  const unsafe = mk({ ...files, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(manifest), roles: { 'follow-ups': ['docs/fu/drops.md', '../outside.md'] } }) });
+  assert.deepStrictEqual(hazardsOf(report(unsafe), 'p3-queue-aging'), [], 'one unsafe entry drops the role');
+  // a string role still works
+  const one = mk({ 'docs/fu/one.md': `${head}| 1 | a.ts | P3 | open |\n`, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(manifest), roles: { 'follow-ups': 'docs/fu/one.md' } }) });
+  assert.strictEqual(hazardsOf(report(one), 'p3-queue-aging')[0].path, 'docs/fu/one.md');
+});
+
+test('p3-queue-aging: the role `./*.md` is the root\'s markdown files, as the retro reads it; a bare `*.md` is a literal name and reads none', () => {
+  const doc = '| # | Area | Severity | Status |\n|---|---|---|---|\n| 1 | a.ts | P3 | open |\n';
+  const withRole = role => mk({ 'known.md': doc, '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), roles: { 'follow-ups': role } }) });
+  const root = hazardsOf(report(withRole(['./*.md'])), 'p3-queue-aging');
+  assert.strictEqual(root.length, 1, 'the root glob is read: the open P3 sits in a root file');
+  assert.strictEqual(root[0].path, 'known.md');
+  assert.strictEqual(hazardsOf(report(withRole('./*.md')), 'p3-queue-aging').length, 1, 'a string role may be the glob too');
+  assert.deepStrictEqual(hazardsOf(report(withRole(['*.md'])), 'p3-queue-aging'), [], 'a bare *.md is a literal file name');
+  assert.deepStrictEqual(hazardsOf(report(withRole(['../*.md'])), 'p3-queue-aging'), [], 'a glob outside the repository drops the role');
+});
+
 test('mutants: the older report places and the phase-under-way rule each matter', () => {
   const repo = mk({
     '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n',
@@ -1351,7 +1430,7 @@ const THREE = {
   zcode: { main: { model: 'GLM-5.3' }, bounded: { model: 'GLM-5.3-Flash' }, second: 'codex', fallback: 'claude' },
 };
 
-test('host-models-missing: harness-host with no models file, a file that is not one, a manifest target with no entry', () => {
+test('host-models-missing: harness-host with no models file or a file that is not one; a manifest target with no entry is not one', () => {
   const repo = mk({ 'scripts/harness-host.mjs': '// x\n' });
   const missing = hazardsOf(report(repo), 'host-models-missing');
   assert.strictEqual(missing.length, 1, JSON.stringify(missing));
@@ -1364,8 +1443,8 @@ test('host-models-missing: harness-host with no models file, a file that is not 
   write(repo, MODELS, models({ claude: THREE.claude }));
   write(repo, 'scripts/codex-run.mjs', '// x\n');
   write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['change'], targets: ['claude', 'codex'], entries: [] }));
-  const target = hazardsOf(report(repo), 'host-models-missing');
-  assert.deepStrictEqual(target.map(h => h.detail), ['the manifest targets codex and .agents/harness-models.json has no codex entry']);
+  // the models file lists the hosts the project runs, not every manifest target
+  assert.deepStrictEqual(hazardsOf(report(repo), 'host-models-missing'), [], 'a claude-only models file is complete for targets claude and codex');
   assert.deepStrictEqual(hazardsOf(report(mk({})), 'host-models-missing'), [], 'an install without harness-host owes no models file');
 });
 
@@ -1389,6 +1468,382 @@ test('mutant: the wrapper check skipped -> second-family-absent is never raised'
   const repo = mk({ [MODELS]: models(THREE) });
   assert.ok(hazardsOf(report(repo), 'second-family-absent').length > 0);
   assert.deepStrictEqual(hazardsOf(report(repo, mutant), 'second-family-absent'), []);
+});
+
+// ── js.8: bound reports and phases, archived state files, the registry from a worktree, legacy policy headings, copied skills ──
+
+console.log('\nharness-status: js.8 due-checks, registry and skills');
+
+// the installed core, as text: only the lines harness-status reads (it never imports a core)
+const DEFAULT_REPORT_LINES = [
+  "preflight: 'docs/harness/reports/preflight-<phase>.md',",
+  "sweep: 'docs/harness/reports/sweep-<date>.md',",
+  "retro: 'docs/harness/reports/retro-<week>.md',",
+  "hygiene: 'docs/harness/reports/hygiene-<date>.md',",
+];
+const DEFAULT_PHASE_LINE = 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;';
+function dueCore(over = {}, phaseLine = DEFAULT_PHASE_LINE) {
+  const lines = DEFAULT_REPORT_LINES.filter(l => !Object.keys(over).some(k => l.startsWith(`${k}:`)));
+  return ["export const MAIN = 'main';", 'export const REPORTS = {', ...lines.map(l => `  ${l}`), ...Object.values(over).map(l => `  ${l}`), '};', phaseLine, ''].join('\n');
+}
+const CORE = 'scripts/lib/harness-due-core.mjs';
+const PREFLIGHT_SKILL = { '.agents/skills/phase-preflight/SKILL.md': '# phase-preflight\n' };
+
+test('D1: a preflight report bound elsewhere in the installed core clears preflight-missing, and a missing one is named at the bound place', () => {
+  const base = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight-<phase>.md', // moved" }) };
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...base, 'docs/x/preflight-P2.md': '# P2\n' })), 'preflight-missing'), [], 'the report sits at the bound place');
+  const missing = hazardsOf(report(mk(base)), 'preflight-missing');
+  assert.strictEqual(missing.length, 1, JSON.stringify(missing));
+  assert.match(missing[0].detail, /has no preflight report at docs\/x\/preflight-P2\.md$/, 'the hazard names the bound place and no other');
+  // harness-due reads the bound path only: the older places do not count
+  const older = hazardsOf(report(mk({ ...base, 'docs/preflight/P2.md': '# P2\n', 'docs/harness/reports/preflight-P2.md': '# P2\n' })), 'preflight-missing');
+  assert.strictEqual(older.length, 1, 'a report at a default place is not at the bound one');
+  // a double-quoted path reads the same
+  const dq = mk({ ...base, [CORE]: dueCore({ preflight: 'preflight: "docs/x/preflight-<phase>.md"' }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(dq), 'preflight-missing'), []);
+});
+
+test('D1: the core is found by the manifest entry whose template is the due core, else at scripts/lib', () => {
+  const manifest = JSON.stringify({ schema: 1, skillVersion: 5, generated: daysAgo(1), modes: ['plan'], targets: ['claude'], entries: [{ path: 'tools/due-core.mjs', kind: 'generated', template: 'templates/scripts/lib/harness-due-core.mjs', sha256: 'x' }] });
+  const repo = mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), 'tools/due-core.mjs': dueCore({ preflight: "preflight: 'docs/y/pf-<phase>.md'," }), 'docs/y/pf-P2.md': '# P2\n', '.agents/harness-manifest.json': manifest });
+  assert.deepStrictEqual(hazardsOf(report(repo), 'preflight-missing'), [], 'the entry names where the core is installed');
+});
+
+test('D1: a kind bound to null is never due: no preflight-missing, no sweep-overdue', () => {
+  const log = { 'docs/harness/log.md': dueLog(['P2-01']) };
+  const withCore = (over, extra = {}) => mk({ ...PREFLIGHT_SKILL, ...log, ...extra, [CORE]: dueCore(over) });
+  assert.strictEqual(hazardsOf(report(withCore({})), 'preflight-missing').length, 1, 'control: bound to its default place the report is missing');
+  assert.deepStrictEqual(hazardsOf(report(withCore({ preflight: 'preflight: null,' })), 'preflight-missing'), [], 'preflight: null');
+  const sweepFiles = { '.claude/skills/workstream-sweep/SKILL.md': '# workstream-sweep\n', '.agents/harness-manifest.json': dueManifest(daysAgo(30)) };
+  assert.strictEqual(hazardsOf(report(mk({ ...sweepFiles, [CORE]: dueCore({}) })), 'sweep-overdue').length, 1, 'control: a 30-day-old install with no sweep');
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...sweepFiles, [CORE]: dueCore({ sweep: 'sweep: null // none here' }) })), 'sweep-overdue'), [], 'sweep: null');
+  // a bound sweep place counts, and the hazard that finds none names it
+  const bound = { ...sweepFiles, [CORE]: dueCore({ sweep: "sweep: 'ops/sweep-<date>.md'," }) };
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...bound, [`ops/sweep-${daysAgo(1)}.md`]: '# s\n' })), 'sweep-overdue'), []);
+  assert.match(hazardsOf(report(mk(bound)), 'sweep-overdue')[0].detail, /^no sweep report at ops\/sweep-<date>\.md$/);
+});
+
+test('D1: a kind written any other way keeps the usual places, as does a core with no REPORTS block', () => {
+  const log = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']) };
+  const literal = mk({ ...log, [CORE]: dueCore({ preflight: 'preflight: `docs/x/preflight-<phase>.md`,' }), 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(literal), 'preflight-missing'), [], 'a template literal is not read: the older place still counts');
+  const atX = mk({ ...log, [CORE]: dueCore({ preflight: 'preflight: `docs/x/preflight-<phase>.md`,' }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.strictEqual(hazardsOf(report(atX), 'preflight-missing').length, 1, 'and the template literal\'s own place does not');
+  const noBlock = mk({ ...log, [CORE]: "export const MAIN = 'main';\n", 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(noBlock), 'preflight-missing'), []);
+  // a path whose file name carries no placeholder is not one harness-due can read
+  const none = mk({ ...log, [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight.md'," }), 'docs/preflight/P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(none), 'preflight-missing'), []);
+});
+
+test('D2: the bound PHASE_OF decides the phase; a phase with no digit can have a report', () => {
+  const files = (phaseLine, extra = {}) => mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['DATA-12']), [CORE]: dueCore({}, phaseLine), ...extra });
+  const bound = 'export const PHASE_OF = /^([A-Z]+)-\\d/;';
+  const missing = hazardsOf(report(files(bound)), 'preflight-missing');
+  assert.strictEqual(missing.length, 1, 'the bound regex gives DATA-12 the phase DATA');
+  assert.match(missing[0].detail, /^phase DATA is under way \(1 log row\) and has no preflight report at docs\/harness\/reports\/preflight-DATA\.md$/);
+  assert.deepStrictEqual(hazardsOf(report(files(bound, { 'docs/harness/reports/preflight-DATA.md': '# DATA\n' })), 'preflight-missing'), [], 'a report named for a phase without a digit is found');
+  // flags are kept
+  assert.strictEqual(hazardsOf(report(files('export const PHASE_OF = /^([a-z]+)-\\d/i;')), 'preflight-missing').length, 1);
+  // the default regex when the core binds none
+  assert.deepStrictEqual(hazardsOf(report(files('')), 'preflight-missing'), [], 'DATA-12 has no phase under the default regex');
+  assert.strictEqual(hazardsOf(report(mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']) })), 'preflight-missing').length, 1, 'no core: the default regex');
+});
+
+test('D2: a PHASE_OF that is a function, an expression or a literal that does not compile skips preflight-missing', () => {
+  const log = { ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01', 'DATA-12']) };
+  assert.strictEqual(hazardsOf(report(mk({ ...log, [CORE]: dueCore({}) })), 'preflight-missing').length, 1, 'control: the default regex finds P2 under way');
+  for (const line of [
+    'export const PHASE_OF = (id) => /^T-([A-Z]+)-\\d/.exec(id)?.[1] ?? null;',
+    'export const PHASE_OF = new RegExp("^([A-Z]+)-\\\\d");',
+    'export const PHASE_OF = /^(P\\d+/;',
+  ]) {
+    assert.deepStrictEqual(hazardsOf(report(mk({ ...log, [CORE]: dueCore({}, line) })), 'preflight-missing'), [], line);
+  }
+});
+
+test('F37: a state file under an archive directory is neither budgeted nor listed; one elsewhere still is', () => {
+  const rep = report(mk({ 'docs/plans/archive/T-1.state.md': 'x'.repeat(9216), 'docs/plans/T-2.state.md': 'x'.repeat(9216) }));
+  assert.deepStrictEqual(rep.sizes.stateFiles.map(s => s.path), ['docs/plans/T-2.state.md']);
+  assert.deepStrictEqual(hazardsOf(rep, 'state-file-over-budget').map(h => h.path), ['docs/plans/T-2.state.md']);
+});
+
+/** A repository with an untracked, ignored registry holding one held row and a guard, plus a linked worktree of it. */
+function worktreeFixture() {
+  const repo = mk({
+    '.gitignore': '.claude/registry.md\n',
+    '.agents/harness-manifest.json': dueManifest(daysAgo(1)),
+    '.claude/registry.md': '# Registry\n<!-- harness:active -->\n| 1 | T-1 | task/t-1 |\n<!-- /harness:active -->\n',
+    '.git/hooks/pre-commit': '#!/bin/sh\n# harness-bootstrap commit guard\nexit 0\n',
+    '.git/hooks/pre-merge-commit': '#!/bin/sh\n# harness-bootstrap commit guard\nexit 0\n',
+  });
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'init']);
+  const wt = path.join(tmp('harness-status-wt-'), 'wt');
+  git(repo, ['worktree', 'add', '-q', '-b', 'wt', wt]);
+  return { repo, wt };
+}
+
+test('F54: a linked worktree reads the registry in the main checkout, as the guard does', () => {
+  const { repo, wt } = worktreeFixture();
+  assert.ok(!fs.existsSync(path.join(wt, '.claude', 'registry.md')), 'the registry is untracked: the worktree has none of its own');
+  const rep = report(wt);
+  assert.ok(!ids(rep).includes('lock-missing'), ids(rep).join());
+  assert.ok(!ids(rep).includes('guard-missing'), ids(rep).join());
+  assert.strictEqual(rep.registry.held, 1);
+  assert.strictEqual(rep.registry.path, path.relative(wt, path.join(repo, '.claude', 'registry.md')).split(path.sep).join('/'));
+  assert.match(rep.registry.path, /^\.\.\/.*\/\.claude\/registry\.md$/);
+  // the main checkout reads as before
+  const main = report(repo);
+  assert.strictEqual(main.registry.path, '.claude/registry.md');
+  assert.strictEqual(main.registry.held, 1);
+  assert.ok(!ids(main).includes('lock-missing'));
+  // a registry with no markers is named at the path it was read from
+  write(repo, '.claude/registry.md', '# Registry\n| 1 | T-1 |\n');
+  assert.strictEqual(hazardsOf(report(wt), 'registry-no-markers')[0].path, report(wt).registry.path);
+});
+
+test('F1: a hot-modules or critical-code heading is a legacy policy and needs a status line; prose is not', () => {
+  const hot = hazardsOf(report(mk({ 'AGENTS.md': '# Agents\n\nBody\n\n### Hot modules\n\n| Path | Why |\n|---|---|\n| src/pay.ts | money |\n' })), 'policy-no-status');
+  assert.strictEqual(hot.length, 1, JSON.stringify(hot));
+  assert.strictEqual(hot[0].path, 'AGENTS.md');
+  assert.strictEqual(hot[0].line, 5);
+  assert.match(hot[0].detail, /hot-modules or critical-code heading/);
+  const critical = hazardsOf(report(mk({ 'CLAUDE.md': '# P\n\n## Critical code\n\n- src/pay.ts\n' })), 'policy-no-status');
+  assert.deepStrictEqual(critical.map(h => h.line), [3]);
+  assert.deepStrictEqual(hazardsOf(report(mk({ 'AGENTS.md': '# A\n\nTouch the critical code and the hot modules with care.\n' })), 'policy-no-status'), [], 'prose without a heading');
+  assert.deepStrictEqual(hazardsOf(report(mk({ 'AGENTS.md': '# A\n\n## Hot modules\n\n- x\n\nNever-auto policy: REVIEWED because the owner read it\n' })), 'policy-no-status'), [], 'a status line settles it');
+  const both = hazardsOf(report(mk({ 'AGENTS.md': '# A\n\n## Hot modules\n\n- x\n\n## Never-auto\n\n- y\n' })), 'policy-no-status');
+  assert.strictEqual(both.length, 1, 'one hazard per doc');
+  assert.match(both[0].detail, /^has a never-auto section but no/);
+});
+
+test('I2: a copied skill is compared file by file, not by its SKILL.md alone', () => {
+  const same = { '.agents/skills/x/SKILL.md': 'one\n', '.claude/skills/x/SKILL.md': 'one\n' };
+  assert.deepStrictEqual(hazardsOf(report(mk(same)), 'skill-link-drift'), [], 'identical SKILL.md files');
+  assert.deepStrictEqual(hazardsOf(report(mk({ ...same, '.agents/skills/x/reference/a.md': 'a\r\nb\n', '.claude/skills/x/reference/a.md': 'a\nb\n' })), 'skill-link-drift'), [], 'identical copies, whatever the line ends');
+  const differ = hazardsOf(report(mk({ ...same, '.agents/skills/x/reference/a.md': 'a\n', '.claude/skills/x/reference/a.md': 'b\n', '.agents/skills/x/reference/b.md': 'c\n', '.claude/skills/x/reference/b.md': 'd\n' })), 'skill-link-drift');
+  assert.strictEqual(differ.length, 1, 'one hazard per skill');
+  assert.strictEqual(differ[0].path, '.claude/skills/x');
+  assert.match(differ[0].detail, /reference\/a\.md/, differ[0].detail);
+  assert.match(differ[0].detail, /2 files differ/, differ[0].detail);
+  assert.match(differ[0].detail, /not a symlink/);
+  const oneSide = hazardsOf(report(mk({ ...same, '.claude/skills/x/reference/extra.md': 'e\n' })), 'skill-link-drift');
+  assert.strictEqual(oneSide.length, 1);
+  assert.match(oneSide[0].detail, /reference\/extra\.md/);
+  const missing = hazardsOf(report(mk({ ...same, '.agents/skills/x/scripts/run.sh': '#!/bin/sh\n' })), 'skill-link-drift');
+  assert.strictEqual(missing.length, 1);
+  assert.match(missing[0].detail, /scripts\/run\.sh/);
+  assert.match(missing[0].detail, /1 file differs/);
+});
+
+test('mutants (js.8): the archive skip, the common-dir lookup, the whole-skill compare and the bound reports each matter', () => {
+  const archive = mk({ 'docs/plans/archive/T-1.state.md': 'x'.repeat(9216) });
+  assert.deepStrictEqual(hazardsOf(report(archive), 'state-file-over-budget'), []);
+  assert.strictEqual(hazardsOf(report(archive, mutantOf(' || inArchive(rel)', '')), 'state-file-over-budget').length, 1, 'the archive skip removed');
+
+  const { wt } = worktreeFixture();
+  assert.ok(!ids(report(wt)).includes('lock-missing'));
+  assert.ok(ids(report(wt, mutantOf("gitOut(['rev-parse', '--git-common-dir'])", "'.git'"))).includes('lock-missing'), 'the registry read from the worktree itself');
+
+  const copy = mk({ '.agents/skills/x/SKILL.md': 'one\n', '.claude/skills/x/SKILL.md': 'one\n', '.agents/skills/x/reference/a.md': 'a\n', '.claude/skills/x/reference/a.md': 'b\n' });
+  assert.ok(ids(report(copy)).includes('skill-link-drift'));
+  assert.ok(!ids(report(copy, mutantOf('const names = [...new Set([...left.keys(), ...right.keys()])].sort();', "const names = ['SKILL.md'];"))).includes('skill-link-drift'), 'the copy compared by its SKILL.md alone');
+
+  const moved = mk({ ...PREFLIGHT_SKILL, 'docs/harness/log.md': dueLog(['P2-01']), [CORE]: dueCore({ preflight: "preflight: 'docs/x/preflight-<phase>.md'," }), 'docs/x/preflight-P2.md': '# P2\n' });
+  assert.deepStrictEqual(hazardsOf(report(moved), 'preflight-missing'), []);
+  assert.strictEqual(hazardsOf(report(moved, mutantOf('if (block) for (const kind of Object.keys(DUE_REPORTS)) {', 'if (false) for (const kind of Object.keys(DUE_REPORTS)) {')), 'preflight-missing').length, 1, 'the bound REPORTS ignored');
+});
+
+// ── the upgrade path: template state and the merge base (js.8) ──────────────
+
+console.log('\nharness-status: template state and --base');
+
+// One template in two versions: the second changes a line the project's fix does not touch.
+const TEMPLATE_V1 = ['// demo template', 'export const A = 1;', '', 'export const B = 2;', '', 'export const C = 3;', ''].join('\n');
+const TEMPLATE_V2 = TEMPLATE_V1.replace('export const C = 3;', 'export const C = 30; // the template fix');
+const LOCAL_FIX = TEMPLATE_V1.replace('export const A = 1;', 'export const A = 1; // the project fix');
+
+/** A skill repository holding the script and two versions of one template (by default
+ *  templates/demo.mjs), one commit each. */
+function skillClone(template = 'templates/demo.mjs', v1 = TEMPLATE_V1, v2 = TEMPLATE_V2) {
+  const clone = mk({ [`skills/harness-bootstrap/${template}`]: v1 });
+  const script = path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.copyFileSync(SCRIPT, script);
+  git(clone, ['add', '-A']);
+  git(clone, ['commit', '-q', '-m', 'v1']);
+  write(clone, `skills/harness-bootstrap/${template}`, v2);
+  git(clone, ['commit', '-q', '-am', 'v2']);
+  return { clone, script };
+}
+
+/** An install of templates/demo.mjs whose manifest records `templateSha` and the file as it is now. */
+function installOf(text, templateSha) {
+  const repo = mk({ 'scripts/demo.mjs': text, 'docs/harness-log.md': '# Harness log\n' });
+  const h = hashes(repo, ['scripts/demo.mjs']);
+  const manifest = {
+    schema: 1, skill: 'harness-bootstrap', skillVersion: 5, generated: '2026-10-27', modes: ['change'], targets: ['claude'],
+    entries: [
+      { path: 'scripts/demo.mjs', kind: 'generated', template: 'templates/demo.mjs', templateSha256: templateSha, sha256: h['scripts/demo.mjs'] },
+      { path: 'scripts/old.mjs', kind: 'generated', template: 'templates/old.mjs', templateSha256: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      { path: 'scripts/bare.mjs', kind: 'generated', template: 'templates/demo.mjs', sha256: 'c'.repeat(64) },
+      { path: 'docs/harness-log.md', kind: 'scaffold' },
+    ],
+  };
+  write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest, null, 2));
+  return repo;
+}
+
+test('template state (js.8): an entry whose template changed since the install reads newer; current, gone and unrecorded too', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const rep = report(repo, script);
+  const row = (rel) => rep.entries.find(e => e.path === rel);
+  assert.strictEqual(row('scripts/demo.mjs').status, 'unchanged', 'the project fix predates the manifest, so it is folded into sha256');
+  assert.strictEqual(row('scripts/demo.mjs').template, 'newer');
+  assert.strictEqual(row('scripts/old.mjs').template, 'gone', 'the skill no longer ships templates/old.mjs');
+  assert.strictEqual(row('scripts/bare.mjs').template, 'unrecorded', 'no templateSha256');
+  assert.ok(!('template' in row('docs/harness-log.md')), 'an entry with no template has no template state');
+  assert.deepStrictEqual(rep.templates, { current: 0, newer: 1, gone: 1, unrecorded: 1, invalid: 0 });
+  const r = run(repo, ['--text'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('scripts/demo.mjs | generated | unchanged | template newer'), r.stdout);
+  assert.ok(r.stdout.includes('docs/harness-log.md | scaffold | scaffold\n'), 'a row with no template is unchanged');
+  assert.match(r.stdout, /^templates: 1 newer, 0 current, 1 gone, 1 unrecorded \(against the skill at .+\)$/m);
+  // recorded against the new template, the same install reads current
+  assert.strictEqual(report(installOf(LOCAL_FIX, sha(TEMPLATE_V2)), script).entries.find(e => e.path === 'scripts/demo.mjs').template, 'current');
+});
+
+test('template state (js.8): a template path outside templates/ is invalid and is never read', () => {
+  const { script } = skillClone();
+  const repo = mk({ 'scripts/x.mjs': 'x\n' });
+  const entries = ['../../../etc/hosts', 'scripts/harness-status.js', '/etc/hosts'].map((t, i) => ({ path: `scripts/x${i}.mjs`, kind: 'generated', template: t, templateSha256: 'd'.repeat(64), sha256: 'e'.repeat(64) }));
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 5, modes: ['change'], entries }));
+  const rep = report(repo, script);
+  assert.deepStrictEqual(rep.entries.map(e => e.template), ['invalid', 'invalid', 'invalid']);
+  assert.strictEqual(rep.templates.invalid, 3);
+});
+
+test('--base (js.8): prints the template an entry was installed from, found by its hash in the skill repository history', () => {
+  const { clone, script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const before = `${snapshot(repo)}\n${snapshot(clone)}`;
+  const r = run(repo, ['--base', 'scripts/demo.mjs'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, TEMPLATE_V1, 'stdout is the base text, byte for byte');
+  assert.match(r.stderr, /base of scripts\/demo\.mjs: templates\/demo\.mjs at [0-9a-f]{12} \(\d{4}-\d{2}-\d{2}\)/);
+  // the current template is found as well (the newest commit holds it)
+  const now = installOf(LOCAL_FIX, sha(TEMPLATE_V2));
+  assert.strictEqual(run(now, ['--base', 'scripts/demo.mjs'], script).stdout, TEMPLATE_V2);
+  assert.strictEqual(`${snapshot(repo)}\n${snapshot(clone)}`, before, 'nothing was written in the install or the skill repository');
+});
+
+test('--base (js.8): a skill copy outside any repository reads the clone --history names; a shallow clone or no history exits 1 and names --history', () => {
+  const { clone } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const copy = tmp('harness-status-skillcopy-');
+  fs.cpSync(path.join(clone, 'skills', 'harness-bootstrap'), path.join(copy, 'harness-bootstrap'), { recursive: true });
+  const copied = path.join(copy, 'harness-bootstrap', 'scripts', 'harness-status.js');
+  const withHistory = run(repo, ['--base', 'scripts/demo.mjs', '--history', clone], copied);
+  assert.strictEqual(withHistory.status, 0, withHistory.stderr);
+  assert.strictEqual(withHistory.stdout, TEMPLATE_V1);
+  const none = run(repo, ['--base', 'scripts/demo.mjs'], copied);
+  assert.strictEqual(none.status, 1, none.stderr);
+  assert.strictEqual(none.stdout, '');
+  assert.match(none.stderr, /--history <a full clone of the skill repository>/);
+  const shallow = tmp('harness-status-shallow-');
+  const c = spawnSync('git', ['clone', '-q', '--depth', '1', `file://${clone}`, shallow], { encoding: 'utf8', env: ENV });
+  assert.strictEqual(c.status, 0, c.stderr);
+  const thin = run(repo, ['--base', 'scripts/demo.mjs', '--history', shallow], copied);
+  assert.strictEqual(thin.status, 1, 'a shallow clone holds only the newest version');
+  assert.match(thin.stderr, /no commit in .+ holds templates\/demo\.mjs with sha256 [0-9a-f]{12}/);
+  assert.match(thin.stderr, /shallow clone/);
+});
+
+test('--base (js.8): bad arguments exit 2 with the usage', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  for (const args of [['--base'], ['--base', 'docs/harness-log.md'], ['--base', 'scripts/nothing.mjs'], ['--base', 'scripts/bare.mjs'], ['--history', '.'], ['--base', 'scripts/demo.mjs', '--text'], ['--base', 'scripts/demo.mjs', '--hash', 'x']]) {
+    const r = run(repo, args, script);
+    assert.strictEqual(r.status, 2, `${args.join(' ')}: exit ${r.status} ${r.stderr}`);
+    assert.strictEqual(r.stdout, '', args.join(' '));
+    assert.match(r.stderr, /usage: [\s\S]*--base <path\|path#block> \[--history <clone>\]/, args.join(' '));
+  }
+});
+
+test('upgrade merge (js.8): git merge-file over the file, its base and the new template keeps the project fix and takes the template fix; the same line conflicts', () => {
+  const { script } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const dir = tmp('harness-status-merge-');
+  const base = run(repo, ['--base', 'scripts/demo.mjs'], script);
+  assert.strictEqual(base.status, 0, base.stderr);
+  write(dir, 'base.mjs', base.stdout);
+  write(dir, 'new.mjs', TEMPLATE_V2);
+  write(dir, 'file.mjs', LOCAL_FIX);
+  const merge = (ours) => spawnSync('git', ['merge-file', '-p', ours, 'base.mjs', 'new.mjs'], { cwd: dir, encoding: 'utf8', env: ENV });
+  const clean = merge('file.mjs');
+  assert.strictEqual(clean.status, 0, clean.stdout);
+  assert.strictEqual(clean.stdout, LOCAL_FIX.replace('export const C = 3;', 'export const C = 30; // the template fix'));
+  write(dir, 'same.mjs', TEMPLATE_V1.replace('export const C = 3;', 'export const C = 4; // the project fix'));
+  const conflict = merge('same.mjs');
+  assert.ok(conflict.status > 0, `a fix on the line the template changed conflicts (exit ${conflict.status})`);
+  assert.match(conflict.stdout, /^<{7} /m);
+  assert.ok(conflict.stdout.includes('// the project fix') && conflict.stdout.includes('// the template fix'), 'both sides are shown');
+});
+
+// A block entry: a rules template in two versions, its block installed in a project's AGENTS.md
+// with a binding the project filled. The second version changes a rule and the comment above the
+// block, which the install deleted.
+const RULES_V1 = ['<!-- demo rules block (generated YYYY-MM-DD).', 'Delete this comment after copying. -->', '<!-- harness:begin rules -->', '## Rules', '', '- **Rule one.** See the runner.', '', '- **Rule two.** Why two.', '', '- **Rule three.** Why three.', '<!-- harness:end rules -->', ''].join('\n');
+const RULES_V2 = RULES_V1.replace('Why three.', 'Why three, at Full.').replace('Delete this comment', 'Bind the names, then delete this comment');
+const installedBlock = (rules) => rules.split('\n').slice(2).join('\n').replace('See the runner.', 'See `scripts/run-task.mjs`.');
+const agentsWith = (block) => `# Project\n\nProject text before.\n\n${block}\nProject text after.\n`;
+
+test('--base (js.8): a block entry prints its whole template; the block cut from the file, the base and the template merges three-way, keeping the project fix', () => {
+  const { script } = skillClone('templates/rules.md', RULES_V1, RULES_V2);
+  const agents = agentsWith(installedBlock(RULES_V1));
+  const repo = mk({ 'AGENTS.md': agents });
+  const h = hashes(repo, ['AGENTS.md#rules']);
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({
+    schema: 1, skillVersion: 5, modes: ['change'], entries: [
+      { path: 'AGENTS.md', block: 'other', kind: 'generated', template: 'templates/demo.mjs', templateSha256: sha(TEMPLATE_V1), sha256: 'e'.repeat(64) },
+      { path: 'AGENTS.md', block: 'rules', kind: 'generated', template: 'templates/rules.md', templateSha256: sha(RULES_V1), sha256: h['AGENTS.md#rules'] },
+    ],
+  }, null, 2));
+  assert.strictEqual(report(repo, script).entries.find(e => e.block === 'rules').template, 'newer');
+  const r = run(repo, ['--base', 'AGENTS.md#rules'], script);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, RULES_V1, 'stdout is the whole template the block came from, byte for byte');
+  assert.match(r.stderr, /base of AGENTS\.md#rules: templates\/rules\.md at [0-9a-f]{12} \(\d{4}-\d{2}-\d{2}\)/);
+  for (const spec of ['AGENTS.md', 'AGENTS.md#nope']) {
+    const bad = run(repo, ['--base', spec], script);
+    assert.strictEqual(bad.status, 2, `${spec}: exit ${bad.status} ${bad.stderr}`);
+    assert.ok(bad.stderr.includes(`has no template-backed entry ${spec}\n`), bad.stderr);
+  }
+  // upgrade.md step 2's recipe: cut the block, marker lines included, out of all three, merge the cuts, put the result back
+  const dir = tmp('harness-status-block-');
+  write(dir, 'AGENTS.md', agents);
+  write(dir, 'base', r.stdout);
+  write(dir, 'theirs', RULES_V2);
+  const cut = (f) => spawnSync('sed', ['-n', '/<!-- harness:begin rules -->/,/<!-- harness:end rules -->/p', f], { cwd: dir, encoding: 'utf8' }).stdout;
+  for (const f of ['AGENTS.md', 'base', 'theirs']) write(dir, `${f}.block`, cut(f));
+  const merged = spawnSync('git', ['merge-file', '-p', 'AGENTS.md.block', 'base.block', 'theirs.block'], { cwd: dir, encoding: 'utf8', env: ENV });
+  assert.strictEqual(merged.status, 0, merged.stdout);
+  const ours = cut('AGENTS.md');
+  assert.strictEqual(agents.split(ours).length, 2, 'the cut is the block, once');
+  assert.strictEqual(agents.replace(ours, () => merged.stdout), agentsWith(installedBlock(RULES_V2)), 'the binding the project filled and the text around the block stay; the rule the template changed comes in');
+});
+
+test('mutant (js.8): a template state that ignores the hash reads every template current', () => {
+  const { clone } = skillClone();
+  const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));
+  const src = fs.readFileSync(path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js'), 'utf8');
+  const from = "sha(text) === entry.templateSha256 ? 'current' : 'newer'";
+  assert.strictEqual(src.split(from).length - 1, 1, 'the compare is in the script exactly once');
+  fs.writeFileSync(path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'mutant.js'), src.replace(from, () => "'current'"));
+  const mutant = path.join(clone, 'skills', 'harness-bootstrap', 'scripts', 'mutant.js');
+  assert.strictEqual(report(repo, mutant).entries.find(e => e.path === 'scripts/demo.mjs').template, 'current');
 });
 
 // ── mutation ─────────────────────────────────────────────────────────────────

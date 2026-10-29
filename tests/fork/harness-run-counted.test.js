@@ -1,6 +1,7 @@
 /**
  * Tests for the harness-bootstrap run-counted template (skills/harness-bootstrap/templates/scripts):
- * runs the shipped node:test suite hermetically, then proves it can fail by mutating the core.
+ * runs the shipped node:test suite hermetically, then proves it can fail by mutating the core or
+ * the wrapper, and that a project's own kind and flag do not fail it.
  */
 
 const assert = require('assert');
@@ -13,9 +14,10 @@ const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
 const TEST_REL = path.join('lib', 'run-counted-core.test.mjs');
 const CORE_REL = path.join('lib', 'run-counted-core.mjs');
+const CLI_REL = 'run-counted.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 18;
+const EXPECTED_TESTS = 26;
 
 let passed = 0;
 let failed = 0;
@@ -66,17 +68,24 @@ function runSuite(scriptsDir, cleanup) {
 
 const cleanup = [];
 
-/** Copy the shipped scripts, apply a one-line mutation to the core, and assert the suite fails. */
-function mutantFails(name, needle, replacement) {
+/** Copy the shipped scripts and replace each needle (it must occur exactly once) in the file at `rel`. */
+function mutatedCopy(edits) {
+  const copy = tmp('run-counted-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  for (const [rel, needle, replacement] of edits) {
+    const file = path.join(copy, rel);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(before.split(needle).length, 2, `the needle must occur exactly once in ${rel}: ${needle}`);
+    fs.writeFileSync(file, before.replace(needle, () => replacement));
+  }
+  return copy;
+}
+
+/** Copy the shipped scripts, apply a one-line mutation to the core (or the file at `rel`), and assert the suite fails. */
+function mutantFails(name, needle, replacement, rel = CORE_REL) {
   test(`mutant: ${name} makes the suite fail`, () => {
-    const copy = tmp('run-counted-mutant-');
-    cleanup.push(copy);
-    fs.cpSync(SCRIPTS, copy, { recursive: true });
-    const corePath = path.join(copy, CORE_REL);
-    const before = fs.readFileSync(corePath, 'utf8');
-    const mutated = before.replace(needle, replacement);
-    assert.notStrictEqual(mutated, before, 'the mutation did not apply');
-    fs.writeFileSync(corePath, mutated);
+    const copy = mutatedCopy([[rel, needle, replacement]]);
     const res = runSuite(copy, cleanup);
     const out = res.stdout + res.stderr;
     assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
@@ -100,8 +109,14 @@ mutantFails(
   'problems: hits.length > 1 ? [`${hits.length} ${kind} summary lines in the output (one expected)`] : [] };',
   'problems: [] };',
 );
-mutantFails('reading only the last of two node summaries', 'if (plans > 1 || ls.slice(0, plan).some(isTests)) problems.push(', 'if (false) problems.push(');
-mutantFails('reading a second node summary by its # tests line alone', 'if (plans > 1 || ls.slice(0, plan).some(isTests))', 'if (ls.slice(0, plan).some(isTests))');
+mutantFails('reading only the last of two node summaries', 'if (plans > 1 || ls.slice(0, plan).some(isRun)) problems.push(', 'if (false) problems.push(');
+mutantFails('reading a second node summary by its # tests line alone', 'if (plans > 1 || ls.slice(0, plan).some(isRun))', 'if (ls.slice(0, plan).some(isRun))');
+mutantFails('reading a console # tests line as a node summary', " && NODE_COUNTER.exec(ls[i + 1] ?? '')?.[1] === 'suites'", '');
+mutantFails('counting a file that registered no tests as a pass', 'for (const f of nodeEmptyFiles(ls)) problems.push(', 'for (const f of []) problems.push(');
+mutantFails('not forwarding a stop signal to the command', 'for (const sig of FORWARDED) process.on(sig, forward);', '', CLI_REL);
+mutantFails("signalling the command alone, not its process group", 'process.kill(-child.pid, sig);', 'child.kill(sig);', CLI_REL);
+mutantFails('waiting for close forever after a forwarded signal', 'if (!interrupted || !exited || grace) return;', 'return;', CLI_REL);
+mutantFails('forwarding a second stop signal instead of SIGKILL', "if (interrupted) return signalCommand('SIGKILL');", 'if (interrupted) return signalCommand(sig);', CLI_REL);
 mutantFails('letting a skip through', "  'skipped',\n  'todo',", "  'todo',");
 mutantFails('letting a flaky test through', "  'flaky',\n", '');
 mutantFails('ignoring the node skip and todo markers', 'for (const m of summary.markers ?? [])', 'for (const m of [])');
@@ -113,7 +128,27 @@ mutantFails("reading bun's summary from stdout", "bun: 'stderr'", "bun: 'stdout'
 mutantFails('reading an inherited key as a counter word', 'Object.hasOwn(words, m[2]) && words[m[2]]', 'words[m[2]]');
 mutantFails('ignoring a --test flag in NODE_OPTIONS', "if (!/--test/.test(v)) return null;", 'return null;');
 
+test("a project's own kind and flag in its core do not fail the shipped suite", () => {
+  const copy = mutatedCopy([
+    [CORE_REL, "export const KINDS = ['vitest', 'node', 'pytest', 'bun', 'playwright'];", "export const KINDS = ['vitest', 'node', 'pytest', 'bun', 'playwright', 'extra'];"],
+    [CORE_REL, "playwright: 'stdout' };", "playwright: 'stdout', extra: 'stdout' };"],
+    [CORE_REL, "  if (kind === 'playwright') return parsePlaywright(text);\n", "  if (kind === 'playwright') return parsePlaywright(text);\n  if (kind === 'extra') return null;\n"],
+    [CORE_REL, "const FLAGS = { '--kind': 'kind', '--min': 'min' };", "const FLAGS = { '--kind': 'kind', '--min': 'min', '--root': 'root' };"],
+  ]);
+  const res = runSuite(copy, cleanup);
+  const out = res.stdout + res.stderr;
+  assert.strictEqual(res.status, 0, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+});
+
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
+
+test('the header says what a SIGKILL to the wrapper leaves running', () => {
+  const header = fs.readFileSync(path.join(SCRIPTS, CLI_REL), 'utf8').split('*/')[0];
+  assert.match(header, /A SIGKILL to this process cannot be forwarded/);
+  assert.match(header, /the command runs on until a write to its closed pipes ends it/);
+});
 
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);

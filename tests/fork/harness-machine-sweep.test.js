@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'machine-sweep-core.mjs');
 const CLI_REL = path.join('scripts', 'machine-sweep.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 26;
+const EXPECTED_TESTS = 29;
 
 let passed = 0;
 let failed = 0;
@@ -105,7 +105,9 @@ mutantFails('an installed copy with a changed core read as current', 'COPIED.som
 mutantFails('a linked category directory followed out of its root', 'return allowed(...physical);', 'return true;');
 mutantFails("a linked worktree's record reading its own registry", "read(path.join(main, '.claude', 'registry.md'))", "read(path.join(repo, '.claude', 'registry.md'))", CLI_REL);
 mutantFails('a failed ps or lsof read as no process', 'if (!rows || !cwds) return null;', 'rows ??= []; cwds ??= [];');
-mutantFails("a live sweep's lock taken by its age", '  if (Number.isInteger(pid)) return !alive;\n', '');
+mutantFails("a live sweep's lock taken by its age", '  if (Number.isInteger(pid)) return !alive || (Number.isFinite(started) && Number.isFinite(written) && started > written + LOCK_START_SLACK_MS);\n', '');
+mutantFails("a reused pid's entry holding the lock, staleLock ignoring when the process started", ' || (Number.isFinite(started) && Number.isFinite(written) && started > written + LOCK_START_SLACK_MS)', '');
+mutantFails("a reused pid's entry holding the lock, lock() passing no start time", 'lockDecision({ mine, entries, alive, started, now: Date.now() })', 'lockDecision({ mine, entries, alive, now: Date.now() })', CLI_REL);
 mutantFails('a failed ps before the signal read as the planned process', 'if (!now.ok || now.out.trim() !== p.command.trim()) return 0;', 'if (now.out.trim() !== p.command.trim()) return 0;', CLI_REL);
 mutantFails("a run's end removing the entry another sweep wrote", 'return { release: () => fs.rmSync(own, { force: true }) };', 'return { release: () => fs.rmSync(locks, { recursive: true, force: true }) };', CLI_REL);
 mutantFails('a run going on beside a live one', "    else if (holder === null) holder = pid ?? 'unknown';\n", '');

@@ -17,7 +17,7 @@
  * cache expiries) and `--by-step` joins the turns to the unit's step markers (unit-step.mjs), so the
  * retro can see that one step cost a fifth of a unit, or that the waits were most of its wall time.
  */
-import { formatMinutes, label, stepIntervals } from './unit-step-core.mjs';
+import { UNIT_ID_SOURCE, formatMinutes, label, stepIntervals } from './unit-step-core.mjs';
 
 // ---- [B] project bindings
 // [B] USD per million tokens: [input, output, cacheRead]. Matched on the model id's family word.
@@ -197,15 +197,35 @@ export function parseTranscript(text, ctx = {}) {
   return rows;
 }
 
-/** Drop repeats of the same (message.id, requestId); the first one seen wins. Keyless rows stay. */
+// What a row's usage is: the fields a later copy of the same message may carry more of.
+const USAGE_FIELDS = ['output', 'input', 'cacheRead', 'cacheWrite', 'writeCost', 'cost'];
+
+/**
+ * One row per (message.id, requestId). Claude Code writes a streamed message once per content block,
+ * each line carrying the usage so far, so the copies of one message can differ in their output tokens
+ * (a subagent's transcript is where they do). The row keeps the first copy's place, time and labels with
+ * the usage of the copy that has the most output; of equal outputs the first stays. Keyless rows stay.
+ * Pure: a row that takes a later copy's usage is a new object, the rows it was given are not touched.
+ */
 export function dedupeRows(rows) {
-  const seen = new Set();
-  return rows.filter((r) => {
-    if (r.key === null) return true;
-    if (seen.has(r.key)) return false;
-    seen.add(r.key);
-    return true;
-  });
+  const at = new Map();
+  const out = [];
+  for (const r of rows) {
+    if (r.key === null) {
+      out.push(r);
+      continue;
+    }
+    const i = at.get(r.key);
+    if (i === undefined) {
+      at.set(r.key, out.length);
+      out.push(r);
+    } else if (r.output > out[i].output) {
+      const kept = { ...out[i] };
+      for (const k of USAGE_FIELDS) kept[k] = r[k];
+      out[i] = kept;
+    }
+  }
+  return out;
 }
 
 /** A time inside [since, until]; a missing bound is open. With a bound, an unreadable time is out. */
@@ -215,6 +235,64 @@ export function inWindow(ts, since, until) {
   if (lo === null && hi === null) return true;
   if (!Number.isFinite(ts)) return false;
   return (lo === null || ts >= lo) && (hi === null || ts <= hi);
+}
+
+/**
+ * A transcript's text -> { times, live }: the time of every line, whatever its type (a tool result is
+ * written after the turn that called the tool), and whether a tool is running now -- the last assistant
+ * message called a tool and no result has followed. The copies of one streamed message are one message.
+ * A line with no readable time has none.
+ */
+export function transcriptTimes(text) {
+  const times = [];
+  let pending = new Set();
+  let lastId = null;
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let d;
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = Date.parse(d?.timestamp);
+    if (Number.isFinite(ts)) times.push(ts);
+    const msg = d?.message;
+    const content = Array.isArray(msg?.content) ? msg.content : [];
+    if (d?.type === 'assistant' && msg) {
+      const id = msg.id ?? null;
+      if (id === null || id !== lastId) pending = new Set();
+      lastId = id;
+      for (const c of content) if (c?.type === 'tool_use' && c.id) pending.add(c.id);
+    } else if (d?.type === 'user') {
+      for (const c of content) if (c?.type === 'tool_result') pending.delete(c.tool_use_id);
+    }
+  }
+  return { times, live: pending.size > 0 };
+}
+
+/**
+ * The window a ledger's runs are counted in: `window` is { since, until } as given (ISO strings or
+ * null), `times` the sessions' times in ms, `now` the time in ms while a session is still running a
+ * tool, else null. A ledger holds every run its checkout ever made, so a bound the owner left out is
+ * the sessions' first (`since`) or last (`until`) readable time, not open; a live session's `until` is
+ * now, since the run its tool started is not in the transcript yet. With no readable time the window
+ * is as given.
+ */
+export function ledgerWindow(window, times, now = null) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const t of times) {
+    if (!Number.isFinite(t)) continue;
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  if (lo === Infinity) return window;
+  const given = (b) => b !== null && b !== undefined;
+  return {
+    since: given(window.since) ? window.since : new Date(lo).toISOString(),
+    until: given(window.until) ? window.until : new Date(now ?? hi).toISOString(),
+  };
 }
 
 /** Rows -> dollars (total, main thread, subagents, per model family), turns, output tokens, Claude %. */
@@ -266,7 +344,7 @@ export function isOwnerPrompt(d) {
   const origin = d.origin !== null && typeof d.origin === 'object' ? d.origin.kind : d.origin;
   if (origin !== undefined && origin !== null) return origin === 'human';
   const c = d.message?.content;
-  let text = '';
+  let text;
   if (typeof c === 'string') text = c;
   else if (Array.isArray(c)) {
     if (c.some((x) => x?.type === 'tool_result')) return false;
@@ -435,8 +513,9 @@ export function summarizeCache(rows, { since = null, until = null } = {}) {
   return out;
 }
 
-// A dispatch description's step tag, `[<unit> s<step> r<round>]`; the round is optional.
-const STEP_TAG = /\[([A-Za-z0-9][A-Za-z0-9._-]*) s([A-Za-z0-9][A-Za-z0-9._-]{0,31}?)(?: r(\d+))?\]/;
+// A dispatch description's step tag, `[<unit> s<step> r<round>]`; the round is optional. The unit is
+// unit-step's own id rule (`harness/x` included).
+const STEP_TAG = new RegExp(`\\[(${UNIT_ID_SOURCE}) s([A-Za-z0-9][A-Za-z0-9._-]{0,31}?)(?: r(\\d+))?\\]`);
 
 /** `[EP-27.03 s8c r2] codex review` -> { unit, step, round }; null when there is no tag. */
 export function parseTag(description) {
@@ -654,9 +733,11 @@ function quotaPercent(intervals) {
 // The tool a Codex thread asks the owner with and stops until the answer, and the one that asks and goes on.
 const CODEX_ASK = 'request_user_input';
 const CODEX_ASK_ASYNC = 'request_user_input_async';
-// A user line Codex wrote itself (its environment, an open page) starts with a tag; a reply to an
-// async question is the owner's.
-const CODEX_INJECTED = /^\s*<(?!send_user_message_question_reply>)/;
+// A user message Codex wrote itself (its environment, an open page, the AGENTS.md instructions) is
+// whole elements, so a line the owner typed that merely starts with `<` is still the owner's.
+const CODEX_AGENTS_LINE = /^# AGENTS\.md instructions for [^\n]*/;
+const CODEX_TAG = /^<([A-Za-z_][A-Za-z0-9_.:-]*)(?=[\s/>])/;
+const CODEX_OWNER_TAG = 'send_user_message_question_reply';
 // A rollout line is parsed only when it may be one of these; the test after parsing decides.
 const CODEX_WANTED = /"type":"(?:session_meta|turn_context|compacted|task_started|task_complete|turn_aborted|token_count|function_call|function_call_output|message)"/;
 // The quota window the Codex % reads: the weekly one (codex-run.mjs picks the same).
@@ -764,6 +845,54 @@ function readTurnEvent(s, state, p, ts) {
   }
 }
 
+/**
+ * Whether a user message is Codex's own: one or more complete elements `<tag ...>...</tag>` (or
+ * `<tag .../>`) with only whitespace between them, after at most one `# AGENTS.md instructions for ...`
+ * first line. An async question's reply is the owner's. One forward scan: an AGENTS.md message can be 40 KB.
+ */
+export function isCodexOwn(message) {
+  const t = String(message ?? '').trim();
+  let i = CODEX_AGENTS_LINE.exec(t)?.[0].length ?? 0;
+  let elements = 0;
+  for (;;) {
+    while (i < t.length && /\s/.test(t[i])) i += 1;
+    if (i >= t.length) return elements > 0;
+    const tag = CODEX_TAG.exec(t.slice(i, i + 80));
+    if (!tag || tag[1] === CODEX_OWNER_TAG) return false;
+    const open = t.indexOf('>', i);
+    if (open === -1) return false;
+    i = open + 1;
+    elements += 1;
+    if (t[open - 1] === '/') continue;
+    // Depth by the same name: the next open and the next close are each looked up once, then moved on.
+    const [opening, closing] = [`<${tag[1]}`, `</${tag[1]}>`];
+    // A same-name opening that closes itself (`<a/>`) raises no depth. The `>` that ends an opening is looked up once.
+    let gt = 0;
+    const nextOpen = (from) => {
+      for (let k = t.indexOf(opening, from); k !== -1; k = t.indexOf(opening, k + 1)) {
+        if (!/[\s/>]/.test(t[k + opening.length] ?? '')) continue;
+        if (gt !== -1 && gt < k) gt = t.indexOf('>', k);
+        if (gt === -1 || t[gt - 1] !== '/') return k;
+      }
+      return -1;
+    };
+    let depth = 1;
+    let o = nextOpen(i);
+    let c = t.indexOf(closing, i);
+    while (depth > 0) {
+      if (c === -1) return false;
+      if (o !== -1 && o < c) {
+        depth += 1;
+        o = nextOpen(o + 1);
+      } else {
+        depth -= 1;
+        i = c + closing.length;
+        c = t.indexOf(closing, i);
+      }
+    }
+  }
+}
+
 /** A question to the owner, a tool's output, or a user line: typed by the owner, or written by Codex. */
 function readItem(s, p, ts) {
   if (p.type === 'function_call' && (p.name === CODEX_ASK || p.name === CODEX_ASK_ASYNC) && p.call_id) {
@@ -774,7 +903,7 @@ function readItem(s, p, ts) {
       .filter((c) => c?.type === 'input_text')
       .map((c) => String(c.text ?? ''))
       .join('');
-    s.events.push({ ts, type: typed.trim() !== '' && !CODEX_INJECTED.test(typed) ? 'prompt' : 'note' });
+    s.events.push({ ts, type: typed.trim() !== '' && !isCodexOwn(typed) ? 'prompt' : 'note' });
   }
 }
 
@@ -867,7 +996,11 @@ const usd = (v) => `$${v.toFixed(2)}`;
  */
 export function summaryLine(claude, codex, { claudeRuns = null, host = null, percent = null } = {}) {
   const total = claude.total + (claudeRuns?.usd ?? 0);
-  const runs = claudeRuns && (claudeRuns.runs || claudeRuns.notRun) ? ` (${claudeRuns.runs} claude-run${claudeRuns.notRun ? `, ${claudeRuns.notRun} not run` : ''})` : '';
+  // Runs with no cost (a timeout) are named: the dollars before them are not the whole spend.
+  const runs =
+    claudeRuns && (claudeRuns.runs || claudeRuns.notRun)
+      ? ` (${claudeRuns.runs} claude-run${claudeRuns.unpriced ? `, ${claudeRuns.unpriced} without a cost` : ''}${claudeRuns.notRun ? `, ${claudeRuns.notRun} not run` : ''})`
+      : '';
   const ledger = codex === null ? null : `${codex.runs} runs${codex.notRun ? `, ${codex.notRun} not run` : ''}`;
   const tail =
     codex === null && host === null

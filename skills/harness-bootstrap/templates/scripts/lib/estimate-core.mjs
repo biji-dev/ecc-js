@@ -20,6 +20,10 @@ import { parseOwnerWait, splitRow } from './unit-record-core.mjs';
 export const MIN_ROWS = 3;
 // [B] The tiers a Gate 1 estimate can be asked for.
 export const TIERS = ['small', 'full'];
+// [B] The words the log's Tier cells start with; a row whose tier is none of them is left out of every
+// tier figure. Replace them with the project's own (S, M, L); the longest word is tried first, so
+// `hot-small` is read whole beside `hot`. What `--tier` accepts is TIERS, above.
+export const TIER_WORDS = ['trivial', 'hot-small', 'small', 'full', 'docs'];
 // [B] The log's column headers, matched case-insensitively by prefix (a leading `★` or `*` ignored).
 export const COLUMNS = {
   unit: 'unit',
@@ -92,9 +96,13 @@ export function percentile(values, p) {
   return v[lo] + (v[hi] - v[lo]) * (pos - lo);
 }
 
-/** First word of a tier cell, lowercased, when it is a known tier word; else ''. */
-export function tierWord(cell) {
-  const m = /^\W*(trivial|small|full|docs)\b/i.exec(String(cell ?? ''));
+const escapeRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The bound tier word a tier cell starts with (after non-word characters), lowercased; else ''. */
+export function tierWord(cell, words = TIER_WORDS) {
+  const alt = [...words].sort((a, b) => b.length - a.length).map((w) => escapeRe(String(w)));
+  if (alt.length === 0) return '';
+  const m = new RegExp(`^\\W*(${alt.join('|')})(?!\\w)`, 'i').exec(String(cell ?? ''));
   return m ? m[1].toLowerCase() : '';
 }
 
@@ -138,17 +146,23 @@ const norm = (c) => c.toLowerCase().replace(/^[\s*★]+/, '').replace(/-/g, ' ')
 const findCol = (names, prefix) => names.findIndex((n) => n.startsWith(prefix));
 
 /**
- * Every markdown table in `text`: its normalised header names and its rows, each with its 1-based
- * line. A row with no header of its own -- rows appended below a later table -- continues the
- * nearest earlier table with as many columns as it has cells, or is dropped.
+ * The one scan of a markdown text: every table (its normalised header names and its rows, each with
+ * its 1-based line) and the rows left out. A row with no header of its own -- rows appended below a
+ * later table -- continues the nearest earlier table with as many columns as it has cells; with none,
+ * it is left out.
  */
-export function tables(text) {
+function scan(text) {
   const out = [];
+  const leftOut = [];
   let prev = null;
   let current = null;
   let loose = [];
   const adopt = () => {
-    for (const r of loose) out.findLast((x) => x.names.length === r.cells.length)?.rows.push(r);
+    for (const r of loose) {
+      const home = out.findLast((x) => x.names.length === r.cells.length);
+      if (home) home.rows.push(r);
+      else leftOut.push(r);
+    }
     loose = [];
   };
   for (const [i, line] of String(text ?? '').split(/\r?\n/).entries()) {
@@ -173,14 +187,30 @@ export function tables(text) {
     prev = cells;
   }
   if (!current) adopt();
-  return out;
+  return { tables: out, leftOut };
+}
+
+/** Every markdown table in `text`: its normalised header names and its rows, each with its 1-based line. */
+export const tables = (text) => scan(text).tables;
+
+/** The rows no table took (`{ line, cells }`): no header of their own, and no table above with as many columns. */
+export const leftOutRows = (text) => scan(text).leftOut;
+
+const MAX_LEFT_OUT_LINES = 10;
+
+/** The one-line warning for `rows` (leftOutRows' result), the same in estimate and retro; '' when there are none. */
+export function leftOutWarning(rows) {
+  if (rows.length === 0) return '';
+  const lines = rows.slice(0, MAX_LEFT_OUT_LINES).map((r) => r.line).join(', ');
+  return `${rows.length} log row(s) left out: no table above has as many columns (line ${lines}${rows.length > MAX_LEFT_OUT_LINES ? ', …' : ''})`;
 }
 
 /**
  * The log text -> one record per usable table row, from every table that has Unit and Elapsed/Cost
  * columns. With `raw`, a record also carries its 1-based `line` and its table's normalised column
  * `names` and raw `cells`, so a reader of other columns (retro-core) parses the log the same way.
- * `columns` replaces COLUMNS for a reader that cannot see this project's binding (the weekly job).
+ * `columns` replaces COLUMNS and `tierWords` TIER_WORDS for a reader that cannot see this project's
+ * binding (the weekly job).
  */
 const isLogTable = (col) => col.unit !== -1 && (col.elapsed !== -1 || col.cost !== -1);
 
@@ -189,7 +219,7 @@ export function hasLogTable(text, { columns = COLUMNS } = {}) {
   return tables(text).some(({ names }) => isLogTable(Object.fromEntries(Object.entries(columns).map(([k, v]) => [k, findCol(names, v)]))));
 }
 
-export function parseLog(text, { raw = false, columns = COLUMNS } = {}) {
+export function parseLog(text, { raw = false, columns = COLUMNS, tierWords = TIER_WORDS } = {}) {
   const records = [];
   for (const { names, rows } of tables(text)) {
     const col = Object.fromEntries(Object.entries(columns).map(([k, v]) => [k, findCol(names, v)]));
@@ -199,7 +229,7 @@ export function parseLog(text, { raw = false, columns = COLUMNS } = {}) {
       const first = cells[col.unit] ?? '';
       if (!first) continue;
       const parts = first.split('·').map((s) => s.trim());
-      const tier = col.tier !== -1 ? tierWord(at(cells, 'tier')) : tierWord(parts.length > 1 ? parts.at(-1) : '');
+      const tier = col.tier !== -1 ? tierWord(at(cells, 'tier'), tierWords) : tierWord(parts.length > 1 ? parts.at(-1) : '', tierWords);
       const elapsed = parseElapsed(at(cells, 'elapsed'));
       const wait = col.ownerWait !== -1 ? ownerWaitMinutes(at(cells, 'ownerWait')) : null;
       const cost = parseCost(at(cells, 'cost'));

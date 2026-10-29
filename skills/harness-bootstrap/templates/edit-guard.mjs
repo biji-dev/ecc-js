@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap edit-guard hook (generated YYYY-MM-DD). Claude Code PreToolUse
-// (Edit|Write|MultiEdit|NotebookEdit) and Codex PreToolUse (apply_patch|Edit|Write).
+// (Edit|Write|MultiEdit|NotebookEdit), Codex PreToolUse (apply_patch|Edit|Write) and ZCode
+// PreToolUse (Edit|Write).
 // [M] mechanism (ship as-is): reading the edited paths from the hook's stdin JSON, the refusal
 //   and the entry check. [B] binding (re-derived per project): the PROTECTED line below.
 // WHY. A hook that reads the paths from an environment variable never runs: one project's .env
@@ -11,9 +12,13 @@
 //   Codex        apply_patch (the Edit and Write matchers alias it; tool_name stays apply_patch):
 //                tool_input.command holds the patch, whose `*** Add File:`, `*** Update File:`,
 //                `*** Delete File:` and `*** Move to:` lines name the paths, relative to `cwd`
+//                (indented, one counts where a file section may start; inside an Update hunk a
+//                space-led line is context)
+//   ZCode        Edit, Write: tool_input.file_path, as on Claude Code
 // A refusal exits 2 with `BLOCKED (protected-path): <path> ...` on stderr, which both hosts read
 // as a block. Input that does not parse, or names no path, exits 0: the hook never blocks on its
-// own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted.
+// own failure. Codex loads a project's .codex/hooks.json only once its .codex/ layer is trusted;
+// ZCode runs the hooks in .zcode/config.json only with hooks.enabled: true.
 // A PostToolUse formatter reads the same paths: import { editedPaths } from this file.
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -21,12 +26,14 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// [B] Repo-relative paths (`/` separators) an agent never edits: env files that hold secrets (a
-// committed template, .env.example, .env.sample or .env.template, stays editable) and installed
-// packages. A project adds its own: a lock file, an auth-state directory, generated code. Every
+// [B] Repo-relative paths (`/` separators) an agent never edits: env files that hold secrets and
+// installed packages. An env file is `.env` or `.envrc`, either with a suffix after `.`, `-`, `_` or
+// `~` (.env.local, .env-local, .env~, .envrc.local), or any `<name>.env` (prod.env); a committed
+// template whose last suffix is example, sample or template (.env.example, .env.production.example)
+// stays editable. A project adds its own: a lock file, an auth-state directory, generated code. Every
 // pattern takes `i`, a project's own too: macOS and Windows volumes are case-insensitive by default,
 // so `.ENV` is `.env` there and `NODE_MODULES/x` writes into node_modules.
-export const PROTECTED = [/(^|\/)\.env(\.(?!example$|sample$|template$)[^/]*)?$/i, /(^|\/)node_modules(\/|$)/i];
+export const PROTECTED = [/(^|\/)(?:\.env(?:rc)?(?:[.~_-](?!(?:[^/]*\.)?(?:example|sample|template)$)[^/]*)?|[^/]+\.env)$/i, /(^|\/)node_modules(\/|$)/i];
 
 /** `p` relative to `root` with `/` separators when inside it, else `p` itself. */
 function repoRel(root, p) {
@@ -82,9 +89,17 @@ export function editedPaths(input, root = ROOT) {
   // The patch as one string; an argv-style array is read the same way.
   const patch = Array.isArray(toolInput.command) ? toolInput.command.join('\n') : toolInput.command;
   if (typeof patch === 'string' && patch.includes('*** Begin Patch')) {
+    // Inside an Update File hunk, up to the next header or column-0 `***` line, a space-led line is
+    // context: a doc that holds a patch example names paths the patch never writes.
+    let inUpdate = false;
     for (const line of patch.split(/\r?\n/)) {
-      const m = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
-      if (m) raw.push(m[1].trim());
+      const m = /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
+      const head = line.trimStart();
+      const move = head.startsWith('*** Move to: ');
+      const context = inUpdate && line.startsWith(' ');
+      // `*** Move to:` counts at any indent and keeps its Update section: refuse more than Codex applies, never less.
+      if (m && (!context || move)) raw.push(m[1].trim());
+      if (!move && !context && head.startsWith('***')) inUpdate = m !== null && head.startsWith('*** Update File: ');
     }
   }
   let realRoot = root;

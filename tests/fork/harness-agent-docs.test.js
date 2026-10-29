@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 69;
+const EXPECTED_PASS = 84;
 
 let passed = 0;
 let failed = 0;
@@ -185,7 +185,7 @@ test('mutant without the base check passes a repo whose imports are over the bas
   assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
   assert.match(shipped.err, /^FAIL base: every session loads \d+ bytes from this repository, budget 49152/m);
   assert.doesNotMatch(shipped.err, /^FAIL budget: /m);
-  const result = runScript(mutantOf('if (baseTarget !== undefined) {', 'if (false) {'), dir);
+  const result = runScript(mutantOf('if (baseTarget !== null) {', 'if (false) {'), dir);
   assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
 });
 
@@ -282,6 +282,27 @@ test('mutant that reads every glob match as a file crashes on a symlinked direct
   const result = runScript(mutant, dir);
   assert.notStrictEqual(result.status, 0, `mutant should crash: ${result.out}${result.err}`);
   assert.match(result.err, /EISDIR/);
+});
+
+/** The template suite run against a mutant of the script: the names of the tests that failed. */
+function failedTestsAgainst(mutant) {
+  const scratch = tmp('agent-docs-mutant-scratch-');
+  const env = { ...GIT_ENV, TMPDIR: scratch, TEMP: scratch, TMP: scratch, CHECK_AGENT_DOCS_SCRIPT: mutant };
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', TEMPLATE_TEST], { encoding: 'utf8', env });
+  assert.notStrictEqual(r.status, 0, 'the template suite passed against the mutant');
+  return [...r.stdout.matchAll(/^not ok \d+ - (.*)$/gm)].map((m) => m[1]);
+}
+
+test('mutant that counts every path prefix, whether or not its directory exists, is killed by the template suite', () => {
+  const mutant = mutantOf("isDir(p.slice(0, p.lastIndexOf('/')))", 'true');
+  const failed = failedTestsAgainst(mutant);
+  assert.ok(failed.some((n) => n.includes('a prefix whose directory is absent at the root is skipped')), `not killed by the prefix test: ${failed.join(' | ')}`);
+});
+
+test('mutant that reads a link against the citing file only is killed by the template suite', () => {
+  const mutant = mutantOf('...(escapes ? [] : [rootRel])', '');
+  const failed = failedTestsAgainst(mutant);
+  assert.ok(failed.some((n) => n.includes('a link in a nested file is read against the file and against the repository root')), `not killed by the nested-link test: ${failed.join(' | ')}`);
 });
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

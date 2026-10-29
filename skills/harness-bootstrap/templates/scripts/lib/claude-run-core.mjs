@@ -31,7 +31,7 @@ export const ROUTES = {
   investigate: { model: CATALOG.judgment, effort: 'high', essential: false },
   'lane-a': { model: CATALOG.bounded, effort: 'high', essential: false },
 };
-// The effort floor is high; max is the owner's word, never a wrapper flag (gate-design.md).
+// The effort floor is high; max is the owner's word, never a wrapper flag (harness-bootstrap's reference/gate-design.md).
 export const EFFORTS = ['high', 'xhigh'];
 export const EXIT = { ok: 0, failed: 1, usage: 2, unavailable: 3, reserved: 4 };
 export const MODES = ['on', 'essential', 'off'];
@@ -164,7 +164,7 @@ export function budgetDecision(kind, m) {
   return { run: true, reason: '' };
 }
 
-/** The review brief: the diff file, the one severity scale (gate-design.md › Severity), the focus last. */
+/** The review brief: the diff file, the one severity scale (harness-bootstrap's reference/gate-design.md › Severity), the focus last. */
 export function reviewPrompt({ diffRel, base, focus = '' }) {
   const text = [
     'You are the second-family reviewer of one change: read-only, with Read, Grep and Glob, and no way to run commands or edit files.',

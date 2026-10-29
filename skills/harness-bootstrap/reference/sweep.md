@@ -21,9 +21,10 @@ merge, whichever counts more.
 > landings" (2026-10-11), whose report opened with "the weekly cadence is enforced
 > by nothing mechanical".
 
-`[M]` **The report is committed** at `docs/harness/reports/sweep-<date>.md`, never
-in a gitignored directory: job 3 compares against the last report, and the next
-due-check counts from it.
+`[M]` **The report is committed** at `REPORTS.sweep` in `harness-due-core.mjs`
+(default `docs/harness/reports/sweep-<date>.md`), never in a gitignored
+directory: job 3 compares against the last report, and the next due-check counts
+from it.
 
 ## The risk it exists for
 
@@ -37,7 +38,9 @@ a watch.
 `[M]` **1 · Reconcile status against evidence.** The plan's status column is what
 every runner reads; when it drifts, the wrong task gets selected.
 
-- Only ever **advance** a status, and only on a commit you can name.
+- Only ever **advance** a status, and only on a commit you can name that is on the
+  mainline (`git merge-base --is-ancestor <sha> <mainline>`): a fix still on an
+  unmerged branch is reported, never advanced.
 - Status says done but no commit exists → **report, change nothing.** History may
   be squashed. Advancing on proof is safe; retracting on absence is not.
 - In-progress marks are human judgment about work outside the repository. Never
@@ -68,22 +71,27 @@ phase.
 
 ## Derived, never stored
 
-`[M]` Velocity is **computed at read time and stored nowhere** — grouped by
-defect profile, with `Size` reported alongside only to show whether it tracks.
-Storing it creates a second owner for a fact the log already holds.
+`[M]` Velocity is **computed at read time and stored nowhere** — the work time per
+unit from the log's Elapsed (work), reconciled as `log-format.md` says: a row that
+cannot be reconciled is marked, left out and counted. Grouped by defect profile,
+with the tier reported alongside only to show whether it tracks. Storing it creates
+a second owner for a fact the log already holds.
 
-`[M]` Also report: which tripwires fired and whether any fired twice, and the
-deferral queue's **growth rate** — the slope matters more than the level.
+`[M]` Also report: which tripwires fired (`rules.md` §2: read from the log's
+Verdicts, Retries and Friction cells and the state files' decision logs) and
+whether any fired twice, and the deferral queue's **growth rate** — the slope
+matters more than the level.
 
 ## Change mode
 
 `[M]` **The register is the follow-ups doc.** Job 1 reconciles its Status column —
-`scheduled <unit>` against that unit's merge, `fixed <sha>` against the commit,
-never the other way; job 2 warns on rows scheduled for a unit that is close and
+`scheduled <unit>` against that unit's merge, `fixed <sha>` against the commit
+once it is on the mainline, never the other way; job 2 warns on rows scheduled for a unit that is close and
 not started; job 3 reports the queue by status and its growth.
 
-`[B]` Register locations · merge-commit shapes, read from `git log --merges
---format=%s` on the real history, never from the convention (one project: its first
+`[B]` Register locations · landing shapes, read from `git log --first-parent
+--format=%s <mainline>` on the real history — merges and direct landings both —
+never from the convention (one project: its first
 pattern caught `Merge P0-07:` and missed `Merge segment P0-12:` and
 `merge(P1-12a):`, fixed in 430e3af8, and its later merges read `Merge task/p2-16:
 …` and `P3-12 landed: …`; the other: `Merge l-core/T-DATA-037: …` — its first sweep

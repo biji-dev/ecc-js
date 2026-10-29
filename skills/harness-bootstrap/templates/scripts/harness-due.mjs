@@ -3,8 +3,8 @@
 // [M] mechanism (ships as-is): everything. The [B] bindings (the mainline, the paths, the phase in a
 // row id, the cadences, the limits, the commands) live at the top of scripts/lib/harness-due-core.mjs.
 /**
- * The runner runs it at step 0, before the claim, and at step 9, after the merge (runner.md ›
- * Due-checks):
+ * The runner runs it at step 0, before the claim, and at step 9, after the merge (harness-bootstrap's
+ * reference/runner.md › Due-checks):
  *
  *   node scripts/harness-due.mjs [--claim <row id>] [--json] [--now <ISO>] [--home <dir>]
  *   node scripts/harness-due.mjs --seen <YYYY-Www> [--home <dir>]
@@ -43,7 +43,7 @@ import {
   projectName,
   reportShape,
 } from './lib/harness-due-core.mjs';
-import { blameDates, lastCommitTimes, repoTop } from './lib/retro-gather.mjs';
+import { blameDates, lastCommitTimes, readFollowUps, repoTop } from './lib/retro-gather.mjs';
 import { gitRead } from './lib/run-sources.mjs';
 
 const USAGE =
@@ -106,7 +106,7 @@ function readReports(top) {
   for (const [kind, template] of Object.entries(REPORTS)) {
     if (template === null) continue;
     const { dir } = reportShape(template);
-    let names = [];
+    let names;
     try {
       names = fs.readdirSync(path.join(top, dir));
     } catch {
@@ -168,7 +168,7 @@ function readWorktrees(top) {
 
 /** The machine sweep's approvals and its last run, from <home>/.agents/harness. */
 function readDisk(top, harness) {
-  let free = null;
+  let free;
   try {
     const s = fs.statfsSync(top);
     free = s.bavail * s.bsize;
@@ -199,7 +199,7 @@ function readDisk(top, harness) {
 
 function readProposals(harness) {
   const dir = path.join(harness, 'retro');
-  let names = [];
+  let names;
   try {
     names = fs.readdirSync(dir);
   } catch {
@@ -212,6 +212,10 @@ function readProposals(harness) {
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let args;
   let top;
   try {
@@ -243,7 +247,7 @@ function main() {
       top,
       project,
       log: withDates(top, LOG),
-      followUps: withDates(top, FOLLOW_UPS),
+      followUps: readFollowUps(top, FOLLOW_UPS),
       reports: readReports(top),
       merges: readMerges(top),
       disk: readDisk(top, harness),

@@ -7,18 +7,30 @@
 //   node harness-status.js <repo>                 JSON report on stdout
 //   node harness-status.js <repo> --text          human-readable report
 //   node harness-status.js <repo> --hash <spec>.. sha256 lines, spec = path or path#block
-// Exit 0 on success, 2 on bad arguments or a missing path/block.
+//   node harness-status.js <repo> --base <path|path#block> [--history <clone>]
+//                                                 the template text a manifest entry was
+//                                                 generated from, found by its templateSha256
+//                                                 in this skill's git history: the base of an
+//                                                 upgrade's three-way merge (upgrade.md); for a
+//                                                 block, the whole template, markers and all
+// Exit 0 on success, 2 on bad arguments or a missing path/block, 1 when --base finds no commit
+// that holds the base.
 //
 // Read-only: the only commands run are `git rev-parse --show-toplevel`,
 // `git rev-parse --git-path hooks` (finds the hooks directory of a linked worktree, a
-// submodule, or a core.hooksPath, including a relative or ~/ path) and
-// `git check-ignore -q` (a gitignored scaffold that is absent reads `ignored`). This is an
-// accepted deviation from "git config --get / ls-files only": none of them writes, every
-// inherited GIT_* variable is removed (a git hook's GIT_DIR must not redirect the lookup) and
-// GIT_OPTIONAL_LOCKS=0 is set so no git command refreshes the index. When git fails, or
-// <repo> is not itself a repository top level, the hooks directory falls back to
-// <repo>/.git/hooks and nothing counts as ignored. Outside <repo> it reads only
-// $CODEX_HOME/config.toml (default ~/.codex/config.toml) for project_doc_max_bytes.
+// submodule, or a core.hooksPath, including a relative or ~/ path),
+// `git rev-parse --git-common-dir` (finds the main checkout, where the registry lives, as the
+// commit guard does), `git check-ignore -q` (a gitignored scaffold that is absent reads
+// `ignored`) and, for --base, `git log` and `git cat-file blob` in this skill's own repository
+// or the clone --history names. This is an accepted deviation from "git config --get /
+// ls-files only": none of them writes, every inherited GIT_* variable is removed (a git hook's
+// GIT_DIR must not redirect the lookup) and GIT_OPTIONAL_LOCKS=0 is set so no git command
+// refreshes the index. When git fails, or <repo> is not itself a repository top level, the
+// hooks directory falls back to <repo>/.git/hooks and nothing counts as ignored. Outside <repo>
+// it reads only $CODEX_HOME/config.toml (default ~/.codex/config.toml) for
+// project_doc_max_bytes, and this skill's own templates/: each template-backed entry's
+// `template` state compares the template it names with the templateSha256 its manifest
+// recorded.
 //
 // The read-only claim rule is exported (READONLY_CLAIM) so the agent-docs lint can use the
 // same regex: `require('./harness-status.js').READONLY_CLAIM`.
@@ -33,6 +45,10 @@ const { spawnSync } = require('child_process');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worktrees', 'dist', 'build', 'coverage']);
 const MAX_READ = 2 * 1024 * 1024;
 const MANIFEST = '.agents/harness-manifest.json';
+// the skill this script ships in: a template-backed manifest entry names a file under its
+// templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
+const SKILL_DIR = path.join(__dirname, '..');
+const TEMPLATE_STATES = ['current', 'newer', 'gone', 'unrecorded', 'invalid'];
 const SKILL_ROOTS = ['.claude/skills', '.agents/skills'];
 const DOCS = ['AGENTS.md', 'CLAUDE.md'];
 const PLAN_SKILLS = ['task-runner', 'segment-runner', 'phase-preflight', 'workstream-sweep'];
@@ -57,21 +73,26 @@ const NEUTRAL_FILES = [
   'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
   '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
 ];
-// harness-due's checks, from files alone (templates/scripts/lib/harness-due-core.mjs holds the
-// generated defaults): where its reports are -- the v5 default first, then the paths earlier
-// installs used -- the phase in a row id, and each cadence in days. A report's date is in its name.
+// harness-due's checks, from files alone: where its reports are, the phase in a row id, and each
+// cadence in days. A report's date is in its name. The places below are the defaults
+// (templates/scripts/lib/harness-due-core.mjs holds the same): the v5 place first, then the paths
+// earlier installs used. A project that rebinds REPORTS or PHASE_OF in its installed core is read
+// from that file as text (dueBindings) -- a kind written as 'path', "path" or null, a PHASE_OF
+// written as a one-line regex literal -- and anything else keeps these.
 const DUE_REPORTS = {
   preflight: ['docs/harness/reports/preflight-<phase>.md', 'docs/preflight/<phase>.md'],
   sweep: ['docs/harness/reports/sweep-<date>.md', 'docs/sweeps/<date>.md'],
   retro: ['docs/harness/reports/retro-<week>.md'],
   hygiene: ['docs/harness/reports/hygiene-<date>.md'],
 };
-// harness-host's models file (templates/harness-models.json), the hosts it may name, and the wrapper
+const DUE_CORE = 'scripts/lib/harness-due-core.mjs';
+const DUE_CORE_TEMPLATE = 'templates/scripts/lib/harness-due-core.mjs';
+// harness-host's models file (templates/harness-models.json) and the wrapper
 // each second family runs through (templates/scripts/lib/harness-host-core.mjs holds the same).
 const MODELS_FILE = '.agents/harness-models.json';
-const MODEL_HOSTS = { claude: true, codex: true, zcode: true, kimi: true };
 const WRAPPER_OF = { codex: 'scripts/codex-run.mjs', claude: 'scripts/claude-run.mjs' };
-const DUE_VALUE = { preflight: /^[A-Za-z]+-?\d+$/, sweep: /^\d{4}-\d{2}-\d{2}$/, retro: /^\d{4}-W\d{2}$/, hygiene: /^\d{4}-\d{2}-\d{2}$/ };
+// what a placeholder's value looks like in a report's file name (the core's PLACEHOLDERS)
+const DUE_VALUE = { phase: /^[A-Za-z0-9][A-Za-z0-9_-]*$/, date: /^\d{4}-\d{2}-\d{2}$/, week: /^\d{4}-W\d{2}$/ };
 const DUE_DAYS = { sweep: 7, retro: 7, hygiene: 14, p3: 14 };
 const PHASE_OF = /^([A-Za-z]+-?\d+)[-.]\w/;
 const LOG_FILES = ['docs/harness/log.md', 'docs/harness-log.md', 'harness/log.md'];
@@ -80,8 +101,9 @@ const DAY_MS = 86400000;
 const GUARD_RUN = /harness[- ]guard|commit guard|pre-commit/i;
 const NEVER_AUTO = /never[- ]auto|never merged on agent output|manual review categories/i;
 const POLICY_STATUS = /Never-auto policy:\s*(DRAFT|REVIEWED)/;
+const LEGACY_POLICY_HEADING = /^#{1,6}\s.*\b(?:hot[ -]modules|critical[ -]code)\b/i;
 const SECRET_PATTERNS = [
-  [/(api[_-]?key|secret|token|password|passwd)['"]?\s*[:=]\s*['"]?[A-Za-z0-9_\-/+]{12,}/i, 'credential-like assignment'],
+  [/(api[_-]?key|secret|token|password|passwd)\\?['"]?\s*[:=]\s*\\?['"]?[A-Za-z0-9_\-/+]{12,}/i, 'credential-like assignment'],
   [/AKIA[0-9A-Z]{16}/, 'AWS access key id'],
   [/sk-[A-Za-z0-9]{20,}/, 'API key with sk- prefix'],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key header'],
@@ -93,7 +115,8 @@ function fail(message) {
   if (message) process.stderr.write(`harness-status: ${message}\n`);
   process.stderr.write(
     'usage: node harness-status.js <repo> [--text]\n' +
-    '       node harness-status.js <repo> --hash <path|path#block>...\n'
+    '       node harness-status.js <repo> --hash <path|path#block>...\n' +
+    '       node harness-status.js <repo> --base <path|path#block> [--history <clone>]\n'
   );
   process.exit(2);
 }
@@ -164,6 +187,21 @@ function walk(startRel, maxDepth = Infinity) {
   return out;
 }
 
+/** True when a path sits below a directory named archive: finished work kept there is not budgeted. */
+function inArchive(rel) {
+  return rel.split('/').slice(0, -1).some(seg => seg.toLowerCase() === 'archive');
+}
+
+/** A skill directory's files by path relative to it: { text with CRLF normalized | null when unreadable }. */
+function skillFiles(root) {
+  const out = new Map();
+  for (const rel of walk(root)) {
+    const text = read(rel, Infinity);
+    out.set(rel.slice(root.length + 1), text === null ? null : norm(text));
+  }
+  return out;
+}
+
 function skillNames(root) {
   try {
     return fs.readdirSync(abs(root))
@@ -187,11 +225,14 @@ function blockText(text, block) {
   return null;
 }
 
-function hashSpec(spec) {
+/** `path` or `path#block` → { rel (null when not repo-relative), block (null for a whole file) }. */
+function splitSpec(spec) {
   const cut = spec.lastIndexOf('#');
-  const relRaw = cut > 0 ? spec.slice(0, cut) : spec;
-  const block = cut > 0 ? spec.slice(cut + 1) : null;
-  const rel = safeRel(relRaw);
+  return { rel: safeRel(cut > 0 ? spec.slice(0, cut) : spec), block: cut > 0 ? spec.slice(cut + 1) : null };
+}
+
+function hashSpec(spec) {
+  const { rel, block } = splitSpec(spec);
   if (!rel) return { error: `invalid path in ${spec}` };
   const text = read(rel, Infinity);
   if (text === null) return { error: `file not found: ${rel}` };
@@ -216,6 +257,13 @@ function gitOut(args) {
   const r = spawnSync('git', ['-C', REPO, ...args], { encoding: 'utf8', env: gitEnv() });
   if (r.error || r.status !== 0) return null;
   return r.stdout.replace(/\r?\n$/, '');
+}
+
+/** git in another directory (the skill's history), stdout untouched: a blob is printed as it is. */
+function gitAt(dir, args) {
+  const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: gitEnv(), maxBuffer: 256 * 1024 * 1024 });
+  if (r.error || r.status !== 0) return null;
+  return r.stdout;
 }
 
 /** True when <repo> is itself a repository top level (not a plain directory nested in another one). */
@@ -295,9 +343,28 @@ function stripMarkerBlocks(text) {
   return ls.filter((_, i) => !skip[i]).join('\n');
 }
 
+/** The registry as the commit guard finds it: in the main checkout, so every linked worktree of the
+ *  clone reads the same lock (`git rev-parse --git-common-dir`). { rel, text }: rel is relative to
+ *  <repo> (`../../.claude/registry.md` from a worktree two levels below the main checkout), text null
+ *  when there is no such file. Outside a repository top level it is <repo>'s own. */
+function registryAt() {
+  let rel = '.claude/registry.md';
+  let file = abs(rel);
+  const common = isRepoTop() ? gitOut(['rev-parse', '--git-common-dir']) : null;
+  const dir = common ? path.resolve(REPO, common) : null;
+  if (dir && path.basename(dir) === '.git') {
+    let main = path.dirname(dir);
+    let here = REPO;
+    try { main = fs.realpathSync(main); here = fs.realpathSync(REPO); } catch { /* keep the unresolved paths */ }
+    file = path.join(main, '.claude', 'registry.md');
+    rel = path.relative(here, file).split(path.sep).join('/');
+  }
+  return { rel, text: readAbs(file) };
+}
+
 /** Held rows of the registry: rows inside the active markers whose first cell is a number >= 1. */
-function registryHeld() {
-  const text = read('.claude/registry.md');
+function registryHeld(registry) {
+  const text = registry.text;
   if (text === null) return null;
   const ls = norm(text).split('\n');
   const b = ls.findIndex(l => l.includes('<!-- harness:active -->'));
@@ -308,7 +375,7 @@ function registryHeld() {
     const m = l.match(/^\s*\|\s*(\d+)\s*\|/);
     return m && Number(m[1]) >= 1;
   }).length;
-  return { path: '.claude/registry.md', held, scope: scoped ? 'active-markers' : 'whole-file' };
+  return { path: registry.rel, held, scope: scoped ? 'active-markers' : 'whole-file' };
 }
 
 /** The installed guard and its ID_PATTERN: { file, pattern } for the first candidate with an
@@ -360,35 +427,77 @@ function mdTables(text) {
   return out;
 }
 
-/** A due kind's reports at any of its places, newest first: [{ rel, value, time }]. A week's time is its end. */
-function dueReports(kind) {
+/** A report template -> { template, dir, head, tail, key }, or null when harness-due could not read it
+ *  either: not repo-relative, or a file name that does not carry exactly one of <phase>, <date>, <week>. */
+function reportPlace(template) {
+  const rel = safeRel(template);
+  if (!rel) return null;
+  const dir = path.posix.dirname(rel);
+  const base = path.posix.basename(rel);
+  const keys = [...base.matchAll(/<(\w+)>/g)].map(m => m[1]);
+  if (/[<>]/.test(dir) || keys.length !== 1 || !Object.prototype.hasOwnProperty.call(DUE_VALUE, keys[0])) return null;
+  const [head, tail] = base.split(`<${keys[0]}>`);
+  return { template: rel, dir, head: head.toLowerCase(), tail: tail.toLowerCase(), key: keys[0] };
+}
+
+/** harness-due's bindings from the installed core, read as text and never imported: where each kind's
+ *  reports are (a list of places, or null: bound to null, never due) and the phase in a row id (a
+ *  RegExp, or null when PHASE_OF is a function or an expression this script cannot run). The core is
+ *  the manifest entry whose template is the due core, else scripts/lib/harness-due-core.mjs. A kind
+ *  written any other way, a missing block or line, or no core keeps the defaults above. */
+function dueBindings(rawEntries) {
+  const out = { reports: {}, phase: PHASE_OF };
+  for (const kind of Object.keys(DUE_REPORTS)) out.reports[kind] = DUE_REPORTS[kind].map(reportPlace);
+  const entry = rawEntries.find(e => e && typeof e === 'object' && e.template === DUE_CORE_TEMPLATE);
+  const named = entry ? safeRel(entry.path) : null;
+  const text = [named, DUE_CORE].filter(Boolean).map(rel => read(rel)).find(t => t !== null);
+  if (text === undefined) return out;
+  const src = norm(text);
+  const block = /^export const REPORTS = \{([\s\S]*?)^\};/m.exec(src);
+  if (block) for (const kind of Object.keys(DUE_REPORTS)) {
+    const bound = new RegExp(`^[ \\t]*${kind}[ \\t]*:[ \\t]*(?:'([^'\\\\\\n]*)'|"([^"\\\\\\n]*)"|(null))[ \\t]*,?[ \\t]*(?://.*)?$`, 'm').exec(block[1]);
+    const place = bound && !bound[3] ? reportPlace(bound[1] !== undefined ? bound[1] : bound[2]) : null;
+    if (bound && bound[3]) out.reports[kind] = null;
+    else if (place) out.reports[kind] = [place];
+  }
+  const line = /^export const PHASE_OF\s*=\s*(.*)$/m.exec(src);
+  if (line) {
+    // a one-line regex literal is used as it is; a function or any other expression cannot be run here
+    const literal = /^\/((?:[^/\\\n[]|\\.|\[(?:[^\]\\\n]|\\.)*\])+)\/([a-z]*)\s*;\s*(?:\/\/.*)?$/.exec(line[1].trim());
+    out.phase = null;
+    try { if (literal) out.phase = new RegExp(literal[1], literal[2].replace(/[gy]/g, '')); } catch { out.phase = null; }
+  }
+  return out;
+}
+
+/** The reports at a kind's places (null: none), newest first: [{ rel, value, time }]. A week's time is its end. */
+function dueReports(places) {
   const out = [];
-  for (const place of DUE_REPORTS[kind]) {
-    const dir = path.posix.dirname(place);
-    const [head, tail] = path.posix.basename(place).split(/<\w+>/);
+  for (const place of places || []) {
     let names = [];
-    try { names = fs.readdirSync(abs(dir)); } catch { continue; }
+    try { names = fs.readdirSync(abs(place.dir)); } catch { continue; }
     for (const name of names) {
-      if (name.length <= head.length + tail.length || !name.startsWith(head) || !name.endsWith(tail)) continue;
-      const value = name.slice(head.length, name.length - tail.length);
-      if (!DUE_VALUE[kind].test(value)) continue;
+      const low = name.toLowerCase();
+      if (low.length <= place.head.length + place.tail.length || !low.startsWith(place.head) || !low.endsWith(place.tail)) continue;
+      const value = name.slice(place.head.length, name.length - place.tail.length);
+      if (!DUE_VALUE[place.key].test(value)) continue;
       let time = NaN;
-      if (kind === 'retro') {
+      if (place.key === 'week') {
         const [y, w] = value.split('-W').map(Number);
         const jan4 = Date.UTC(y, 0, 4);
         time = jan4 - ((new Date(jan4).getUTCDay() + 6) % 7) * DAY_MS + w * 7 * DAY_MS;
-      } else if (kind !== 'preflight') {
+      } else if (place.key === 'date') {
         time = Date.parse(`${value}T00:00:00Z`);
       }
-      out.push({ rel: `${dir}/${name}`, value, time });
+      out.push({ rel: place.dir === '.' ? name : `${place.dir}/${name}`, value, time });
     }
   }
   return out.sort((a, b) => (b.time || 0) - (a.time || 0));
 }
 
 /** Registry table cells inside the active markers (else the whole file), header and separator rows left out. */
-function registryCells() {
-  const text = read('.claude/registry.md');
+function registryCells(registry) {
+  const text = registry.text;
   if (text === null) return [];
   const ls = norm(text).split('\n');
   const b = ls.findIndex(l => l.includes('<!-- harness:active -->'));
@@ -459,6 +568,7 @@ function buildReport() {
   // manifest and entries
   let manifest = null;
   let entries = [];
+  let rawEntries = [];
   const manifestText = read(MANIFEST, Infinity);
   if (manifestText !== null) {
     let parsed = null;
@@ -488,9 +598,13 @@ function buildReport() {
         stage: parsed.stage === 'foundation' ? 'foundation' : 'full',
         flipAfter: typeof parsed.flipAfter === 'string' ? parsed.flipAfter : null,
       };
-      entries = (parsed.entries || []).map(manifestEntry);
+      rawEntries = parsed.entries || [];
+      entries = rawEntries.map(manifestEntry);
     }
   }
+
+  // the registry is in the main checkout, from a linked worktree too (the commit guard finds it so)
+  const registryFile = registryAt();
 
   // lineage: a manifest names its modes; without one the fingerprints decide, and the v2 core
   // files (registry, task-runner, plan auditors, a log with "Missed by harness") are plan evidence
@@ -499,7 +613,7 @@ function buildReport() {
   const coreIsPlan = !manifest || modes.includes('plan');
   const plan = [];
   const change = [];
-  if (coreIsPlan && isFile('.claude/registry.md')) plan.push('.claude/registry.md');
+  if (coreIsPlan && registryFile.text !== null) plan.push(registryFile.rel);
   for (const root of SKILL_ROOTS) {
     for (const name of PLAN_SKILLS) {
       if ((coreIsPlan || !V2_CORE_SKILLS.has(name)) && isFile(`${root}/${name}/SKILL.md`)) plan.push(`${root}/${name}/SKILL.md`);
@@ -556,9 +670,10 @@ function buildReport() {
   if (sizes['CLAUDE.md'] !== null && sizes['CLAUDE.md'] > 40000) {
     haz('claude-md-large', `CLAUDE.md is ${sizes['CLAUDE.md']} bytes; over 40000`, 'CLAUDE.md');
   }
-  // anywhere: the harness docs live in docs/ by default, elsewhere when docs/ is a governed set
+  // anywhere: the harness docs live in docs/ by default, elsewhere when docs/ is a governed set;
+  // finished work kept in an archive directory is not budgeted
   for (const rel of walk('')) {
-    if (!rel.endsWith('.state.md')) continue;
+    if (!rel.endsWith('.state.md') || inArchive(rel)) continue;
     const bytes = stat(rel).size;
     sizes.stateFiles.push({ path: rel, bytes });
     if (bytes > 8192) haz('state-file-over-budget', `${bytes} bytes; budget is 8192`, rel);
@@ -579,11 +694,11 @@ function buildReport() {
   const ids = { DEC: idSets.DEC.size, D: idSets.D.size, Q: idSets.Q.size, Dnum: idSets.Dnum.size };
 
   // registry and guard
-  const registry = registryHeld();
+  const registry = registryHeld(registryFile);
   if (registry) {
-    const reg = read('.claude/registry.md') || '';
+    const reg = registryFile.text;
     if (!reg.includes('<!-- harness:active -->') || !reg.includes('<!-- /harness:active -->')) {
-      haz('registry-no-markers', 'registry lacks the <!-- harness:active --> / <!-- /harness:active --> markers', '.claude/registry.md');
+      haz('registry-no-markers', 'registry lacks the <!-- harness:active --> / <!-- /harness:active --> markers', registryFile.rel);
     }
     // a guard in the hooks dir, or in husky / lefthook; each must be paired with a pre-merge-commit
     // hook that runs it, because a non-conflicting `git merge` runs pre-merge-commit, not pre-commit
@@ -615,7 +730,7 @@ function buildReport() {
       haz('merge-unguarded', 'a pre-commit guard is installed but no pre-merge-commit hook runs it; a non-conflicting `git merge` runs pre-merge-commit, not pre-commit');
     }
   } else if (verdict !== 'none' || manifest) {
-    haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', '.claude/registry.md');
+    haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
   }
 
   // the guard's ID_PATTERN must take whole task ids: it is cut short by '.' or a trailing alnum run
@@ -637,7 +752,7 @@ function buildReport() {
           cut.push(`branch '${name}': ID_PATTERN takes '${m[0]}' from '${run}'`);
         }
       }
-      for (const cell of registryCells()) {
+      for (const cell of registryCells(registryFile)) {
         if (!cell || /\s/.test(cell) || cell.includes('/')) continue;
         const c = cell.toUpperCase();
         const m = c.match(idRe);
@@ -667,11 +782,15 @@ function buildReport() {
     let dangling = false;
     try { same = fs.realpathSync(abs(a)) === fs.realpathSync(abs(c)); } catch { same = false; dangling = link.isSymbolicLink(); }
     if (same) continue;
-    const ta = read(`${a}/SKILL.md`);
-    const tc = read(`${c}/SKILL.md`);
-    if ((ta !== null || tc !== null) && (ta === null || tc === null || norm(ta) !== norm(tc))) {
+    // a copy is compared file by file: a file on one side only, or whose text differs, is drift
+    const left = skillFiles(a);
+    const right = skillFiles(c);
+    const names = [...new Set([...left.keys(), ...right.keys()])].sort();
+    const differing = names.filter(n => left.get(n) !== right.get(n));
+    if (differing.length) {
       const how = !link.isSymbolicLink() ? 'is not a symlink' : dangling ? 'is a dangling symlink' : 'is a symlink that points elsewhere';
-      haz('skill-link-drift', `skill ${name} differs between .agents/skills and .claude/skills and the .claude copy ${how}`, c);
+      const count = differing.length === 1 ? '1 file differs' : `${differing.length} files differ`;
+      haz('skill-link-drift', `skill ${name} differs between .agents/skills and .claude/skills (first: ${differing[0]}; ${count}) and the .claude copy ${how}`, c);
     }
   }
 
@@ -718,7 +837,7 @@ function buildReport() {
     }
   }
 
-  hostHazards(manifest, haz);
+  hostHazards(haz);
 
   // hooks
   for (const rel of ['.claude/settings.json', '.claude/settings.local.json']) {
@@ -755,7 +874,15 @@ function buildReport() {
     if (t === null) continue;
     const status = t.match(POLICY_STATUS);
     if (status) policy.push({ path: rel, status: status[1] });
-    if (!NEVER_AUTO.test(t) || status) continue;
+    if (status) continue;
+    // a never-auto section, or a hot-modules or critical-code heading (upgrade.md: a legacy policy is
+    // recognised by what it governs): either needs the status line
+    const hot = norm(t).split('\n').findIndex(l => LEGACY_POLICY_HEADING.test(l));
+    if (!NEVER_AUTO.test(t) && hot < 0) continue;
+    if (!NEVER_AUTO.test(t)) {
+      haz('policy-no-status', 'has a hot-modules or critical-code heading but no "Never-auto policy: DRAFT|REVIEWED" line', rel, hot + 1);
+      continue;
+    }
     const heading = norm(t).split('\n').findIndex(l => /^#{1,6}\s/.test(l) && /never.?auto/i.test(l));
     haz('policy-no-status', 'has a never-auto section but no "Never-auto policy: DRAFT|REVIEWED" line', rel, heading >= 0 ? heading + 1 : lineOf(t, NEVER_AUTO));
   }
@@ -771,16 +898,41 @@ function buildReport() {
   // due-checks: what harness-due would say, from files alone -- no git, so a report is dated by its
   // name and a landing is not counted; with no manifest the install is taken to be an older one
   const now = Date.now();
-  const roleFile = (role, list) => {
-    const own = manifest && manifest.roles && typeof manifest.roles[role] === 'string' ? safeRel(manifest.roles[role]) : null;
-    return [...(own ? [own] : []), ...list].find(isFile) || null;
+  // a role is a path, or a list of them; `<dir>/*.md` is that directory's markdown files by name;
+  // one unsafe entry drops the whole role
+  const roleNamed = role => {
+    const v = manifest && manifest.roles ? manifest.roles[role] : null;
+    // a glob is judged as written: `./*.md` is the root's files, a bare `*.md` a literal name
+    const parsed = (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).map(spec => {
+      if (typeof spec === 'string' && spec.endsWith('/*.md')) {
+        const dir = spec.slice(0, -'/*.md'.length);
+        const rel = dir === '.' ? '.' : safeRel(dir);
+        return rel && { dir: rel };
+      }
+      const rel = safeRel(spec);
+      return rel && { file: rel };
+    });
+    if (!parsed.length || !parsed.every(Boolean)) return [];
+    return parsed.flatMap(p => {
+      if (p.file) return [p.file];
+      let names = [];
+      try { names = fs.readdirSync(abs(p.dir)).filter(n => n.endsWith('.md')).sort(); } catch { /* no such directory */ }
+      return names.map(n => (p.dir === '.' ? n : `${p.dir}/${n}`));
+    });
+  };
+  const roleFile = (role, list) => [...roleNamed(role), ...list].find(isFile) || null;
+  const roleFiles = (role, list) => {
+    const named = roleNamed(role).filter(isFile);
+    return named.length ? named : [list.find(isFile)].filter(Boolean);
   };
   const hasSkill = name => SKILL_ROOTS.some(root => isDir(`${root}/${name}`));
   const installed = manifest ? Date.parse(manifest.generated) : NaN;
   const settled = days => !Number.isFinite(installed) || now - installed >= days * DAY_MS;
   const ageOf = r => Math.floor((now - r.time) / DAY_MS);
   const logRel = roleFile('log', LOG_FILES);
-  const phaseOf = id => ((PHASE_OF.exec(id) || [])[1] || '').toLowerCase();
+  // where each kind's reports are and what a row id's phase is: the installed core's, else the defaults
+  const due = dueBindings(rawEntries);
+  const phaseOf = id => ((due.phase && due.phase.exec(id) || [])[1] || '').toLowerCase();
   const logIds = [];
   for (const t of mdTables(logRel ? read(logRel) || '' : '')) {
     const col = t.names.findIndex(n => n.startsWith('unit') || n.startsWith('task'));
@@ -791,39 +943,50 @@ function buildReport() {
     }
   }
   // the phase under way -- the last phased log row's -- with no preflight report
-  const preflights = dueReports('preflight');
-  if (hasSkill('phase-preflight') || preflights.length) {
+  const preflights = dueReports(due.reports.preflight);
+  // a kind bound to null is never due; a PHASE_OF this script cannot run names no phase
+  if (due.reports.preflight && due.phase && (hasSkill('phase-preflight') || preflights.length)) {
     const current = logIds.filter(phaseOf).pop();
     if (current && !preflights.some(r => r.value.toLowerCase() === phaseOf(current))) {
-      const phase = PHASE_OF.exec(current)[1];
+      const phase = due.phase.exec(current)[1];
       const rows = logIds.filter(id => phaseOf(id) === phaseOf(current)).length;
-      haz('preflight-missing', `phase ${phase} is under way (${rows} log row${rows === 1 ? '' : 's'}) and has no preflight report at ${DUE_REPORTS.preflight.map(p => p.replace('<phase>', phase)).join(' or ')}`, logRel);
+      haz('preflight-missing', `phase ${phase} is under way (${rows} log row${rows === 1 ? '' : 's'}) and has no preflight report at ${due.reports.preflight.map(p => p.template.replace(/<\w+>/, () => phase)).join(' or ')}`, logRel);
     }
   }
   // a recurring report older than its cadence, or none once the install is that old
   const overdue = (kind, runs) => {
-    if (!runs) return;
-    const r = dueReports(kind)[0];
+    if (!runs || due.reports[kind] === null) return;
+    const r = dueReports(due.reports[kind])[0];
     if (r && ageOf(r) >= DUE_DAYS[kind]) haz(`${kind}-overdue`, `the newest ${kind} report is ${ageOf(r)} days old; due every ${DUE_DAYS[kind]} days`, r.rel);
-    else if (!r && settled(DUE_DAYS[kind])) haz(`${kind}-overdue`, `no ${kind} report at ${DUE_REPORTS[kind].join(' or ')}`);
+    else if (!r && settled(DUE_DAYS[kind])) haz(`${kind}-overdue`, `no ${kind} report at ${due.reports[kind].map(p => p.template).join(' or ')}`);
   };
-  overdue('sweep', hasSkill('workstream-sweep') || dueReports('sweep').length > 0);
+  overdue('sweep', hasSkill('workstream-sweep') || dueReports(due.reports.sweep).length > 0);
   overdue('retro', isFile('scripts/retro.mjs'));
   overdue('hygiene', isFile('scripts/harness-due.mjs'));
   // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
-  const fuRel = roleFile('follow-ups', FOLLOW_UP_FILES);
-  const fuText = fuRel ? read(fuRel) : null;
-  if (fuText !== null) {
-    let openP3 = 0;
-    for (const t of mdTables(fuText)) {
+  // The template's own rules, not a project's retro-core bindings (this script never imports a core): the
+  // status column starts with `status`, open is the word `open`, and a table with a column starting with
+  // `sev` or `priority` makes a P3 of that cell alone, else of any cell.
+  let openP3 = 0;
+  let fuRel = null;
+  for (const rel of roleFiles('follow-ups', FOLLOW_UP_FILES)) {
+    const text = read(rel);
+    if (text === null) continue;
+    let here = 0;
+    for (const t of mdTables(text)) {
       const st = t.names.findIndex(n => n.startsWith('status'));
       if (st === -1) continue;
-      for (const cells of t.rows) if (/^open\b/i.test(cells[st] || '') && cells.some(c => /\bP3\b/.test(c))) openP3 += 1;
+      const sev = t.names.findIndex(n => n.startsWith('sev') || n.startsWith('priority'));
+      for (const cells of t.rows) {
+        if (/^open\b/i.test(cells[st] || '') && (sev === -1 ? cells.some(c => /\bP3\b/.test(c)) : /\bP3\b/.test(cells[sev] || ''))) here += 1;
+      }
     }
-    const h = dueReports('hygiene')[0];
-    if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
-      haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
-    }
+    openP3 += here;
+    if (here && fuRel === null) fuRel = rel;
+  }
+  const h = dueReports(due.reports.hygiene)[0];
+  if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
+    haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
   }
 
   // foundation stage: the pass-signal unit landed and the flip did not run
@@ -840,6 +1003,7 @@ function buildReport() {
     manifest,
     lineage: { plan, change, verdict, source: lineageSource },
     entries,
+    templates: templateCounts(entries),
     markers,
     sizes,
     ids,
@@ -881,14 +1045,30 @@ function secondFamilyHazard(host, entry, haz) {
   haz('second-family-absent', `${host}'s second family, ${second}, runs through ${wrapper}, which is not installed${then} (if the project never runs on ${host}, drop its entry)`, MODELS_FILE);
 }
 
-function hostHazards(manifest, haz) {
+// The models file lists the hosts the project runs, not every manifest target: harness-host flags
+// the session's own host at step 0, so no entry is owed for a target the project does not run on.
+function hostHazards(haz) {
   const hostModels = hostModelsOf(haz);
   if (!hostModels) return;
-  const targets = manifest && Array.isArray(manifest.targets) ? manifest.targets : [];
-  for (const t of targets) {
-    if (Object.prototype.hasOwnProperty.call(MODEL_HOSTS, t) && !hostModels[t]) haz('host-models-missing', `the manifest targets ${t} and ${MODELS_FILE} has no ${t} entry`, MODELS_FILE);
-  }
   for (const [host, entry] of Object.entries(hostModels)) secondFamilyHazard(host, entry, haz);
+}
+
+/** The entry's template in this skill against the templateSha256 its manifest recorded: current,
+ *  newer (the skill changed it since: an upgrade merges it, upgrade.md step 2), gone (the skill
+ *  no longer ships it), unrecorded (no templateSha256) or invalid (a path outside templates/). */
+function templateState(entry) {
+  const rel = safeRel(entry.template);
+  if (!rel || !rel.startsWith('templates/')) return 'invalid';
+  let text;
+  try { text = fs.readFileSync(path.join(SKILL_DIR, ...rel.split('/')), 'utf8'); } catch { return 'gone'; }
+  if (typeof entry.templateSha256 !== 'string') return 'unrecorded';
+  return sha(text) === entry.templateSha256 ? 'current' : 'newer';
+}
+
+function templateCounts(entries) {
+  const counts = Object.fromEntries(TEMPLATE_STATES.map(s => [s, 0]));
+  for (const e of entries) if (e.template) counts[e.template] += 1;
+  return counts;
 }
 
 function manifestEntry(entry) {
@@ -898,6 +1078,7 @@ function manifestEntry(entry) {
   const row = { path: entry.path };
   if (entry.block) row.block = entry.block;
   row.kind = entry.kind;
+  if (typeof entry.template === 'string') row.template = templateState(entry);
   const rel = safeRel(entry.path);
   if (!rel) return { ...row, status: 'missing', detail: 'path is not repo-relative' };
   const text = read(rel, Infinity);
@@ -1009,7 +1190,11 @@ function renderText(r) {
     out.push('  (none)');
   } else {
     out.push('  Path[#block] | Kind | Status');
-    for (const e of r.entries) out.push(`  ${e.path}${e.block ? `#${e.block}` : ''} | ${e.kind} | ${e.status}`);
+    for (const e of r.entries) out.push(`  ${e.path}${e.block ? `#${e.block}` : ''} | ${e.kind} | ${e.status}${e.template ? ` | template ${e.template}` : ''}`);
+  }
+  if (r.entries.some(e => e.template)) {
+    const t = r.templates;
+    out.push(`templates: ${t.newer} newer, ${t.current} current, ${t.gone} gone, ${t.unrecorded} unrecorded${t.invalid ? `, ${t.invalid} invalid` : ''} (against the skill at ${SKILL_DIR})`);
   }
   out.push('');
   if (!r.markers.length) {
@@ -1047,42 +1232,107 @@ function renderText(r) {
   return `${out.join('\n').replace(/[^\x20-\x7e\n]/g, '?')}\n`;
 }
 
+// ---- --base -----------------------------------------------------------------
+
+const FULL_CLONE = 'pass --history <a full clone of the skill repository>';
+
+/** --base: prints the template text a manifest entry was generated from, found in the skill
+ *  repository's history by the templateSha256 the manifest recorded: the base of the
+ *  upgrade's three-way merge (upgrade.md step 2). A block entry (`path#block`, as --hash takes
+ *  it) prints its whole template, the hash covering the whole file; the merge cuts the block out
+ *  of it. Exit 1 when no commit holds it. */
+function printBase(spec, history) {
+  const { rel, block } = splitSpec(spec);
+  const name = block === null ? rel : `${rel}#${block}`;
+  let entries = null;
+  try { entries = JSON.parse(read(MANIFEST, Infinity)).entries; } catch { entries = null; }
+  if (!Array.isArray(entries)) fail(`--base needs ${MANIFEST} with an entries list`);
+  const entry = entries.find(e => e && typeof e === 'object' && e.path === rel && (block === null ? !e.block : e.block === block) && typeof e.template === 'string');
+  if (!rel || !entry) fail(`${MANIFEST} has no template-backed entry ${spec}`);
+  if (typeof entry.templateSha256 !== 'string') fail(`${spec} records no templateSha256: its base is unknown`);
+  const template = safeRel(entry.template);
+  if (!template || !template.startsWith('templates/')) fail(`${spec}: its template ${entry.template} is not under templates/`);
+  const top = history === null
+    ? (gitAt(SKILL_DIR, ['rev-parse', '--show-toplevel']) || '').trim()
+    : path.resolve(history);
+  if (!top) {
+    process.stderr.write(`harness-status: the skill at ${SKILL_DIR} is not in a git repository: ${FULL_CLONE}\n`);
+    process.exit(1);
+  }
+  // every version of the template any commit wrote (a merge's own resolution too), oldest last
+  const log = gitAt(top, ['log', '--all', '-m', '--no-abbrev', '--format=%x01%H %cs', '--raw', '--', `:(top,glob)**/${template}`]);
+  if (log === null) {
+    process.stderr.write(`harness-status: ${top} is not a git repository: ${FULL_CLONE}\n`);
+    process.exit(1);
+  }
+  const written = new Map();
+  for (const chunk of log.split('\x01').slice(1)) {
+    const [commit, date] = chunk.slice(0, chunk.indexOf('\n')).split(' ');
+    for (const m of chunk.matchAll(/^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) /gm)) {
+      if (!/^0+$/.test(m[1])) written.set(m[1], { commit, date });
+    }
+  }
+  for (const [blob, at] of written) {
+    const text = gitAt(top, ['cat-file', 'blob', blob]);
+    if (text === null || sha(text) !== entry.templateSha256) continue;
+    process.stdout.write(text);
+    process.stderr.write(`harness-status: base of ${name}: ${template} at ${at.commit.slice(0, 12)} (${at.date})\n`);
+    process.exit(0);
+  }
+  process.stderr.write(`harness-status: no commit in ${top} holds ${template} with sha256 ${entry.templateSha256.slice(0, 12)}; a plugin cache is a shallow clone: ${FULL_CLONE}\n`);
+  process.exit(1);
+}
+
 // ---- main -------------------------------------------------------------------
 
-function main() {
-  const argv = process.argv.slice(2);
-  let repoArg = null;
-  let text = false;
-  let specs = null;
-  for (const a of argv) {
-    if (a === '--text') text = true;
-    else if (specs) specs.push(a);
-    else if (a === '--hash') specs = [];
-    else if (a.startsWith('--')) fail(`unknown option ${a}`);
-    else if (repoArg === null) repoArg = a;
+/** { repoArg, text, specs, base, history } from argv; an unknown option or a missing value exits 2. */
+function parseArgs(argv) {
+  const out = { repoArg: null, text: false, specs: null, base: null, history: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--text') out.text = true;
+    else if (out.specs) out.specs.push(a);
+    else if (a === '--hash') out.specs = [];
+    else if (a === '--base' || a === '--history') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) fail(`${a} needs a value`);
+      out[a.slice(2)] = value;
+      i += 1;
+    } else if (a.startsWith('--')) fail(`unknown option ${a}`);
+    else if (out.repoArg === null) out.repoArg = a;
     else fail(`unexpected argument ${a}`);
   }
+  return out;
+}
+
+/** --hash: one sha256 line per spec; exit 2 when any path or block is missing. */
+function printHashes(specs) {
+  let missing = false;
+  for (const spec of specs) {
+    const r = hashSpec(spec);
+    if (r.error) {
+      process.stderr.write(`harness-status: ${r.error}\n`);
+      missing = true;
+    } else {
+      process.stdout.write(`${r.hash}  ${spec}\n`);
+    }
+  }
+  process.exit(missing ? 2 : 0);
+}
+
+function main() {
+  const { repoArg, text, specs, base, history } = parseArgs(process.argv.slice(2));
   if (repoArg === null) fail('missing <repo>');
   if (specs && text) fail('--hash and --text cannot be combined');
   if (specs && !specs.length) fail('--hash needs at least one path or path#block');
+  if (base !== null && (specs || text)) fail('--base cannot be combined with --hash or --text');
+  if (history !== null && base === null) fail('--history needs --base');
   REPO = path.resolve(repoArg);
   let s = null;
   try { s = fs.statSync(REPO); } catch { s = null; }
   if (!s || !s.isDirectory()) fail(`not a directory: ${repoArg}`);
-
-  if (specs) {
-    let missing = false;
-    for (const spec of specs) {
-      const r = hashSpec(spec);
-      if (r.error) {
-        process.stderr.write(`harness-status: ${r.error}\n`);
-        missing = true;
-      } else {
-        process.stdout.write(`${r.hash}  ${spec}\n`);
-      }
-    }
-    process.exit(missing ? 2 : 0);
-  }
+  if (base !== null) printBase(base, history);
+  if (specs) printHashes(specs);
 
   const report = buildReport();
   process.stdout.write(text ? renderText(report) : `${JSON.stringify(report, null, 2)}\n`);

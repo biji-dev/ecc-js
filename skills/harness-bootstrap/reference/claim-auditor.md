@@ -29,8 +29,9 @@ and one session at `max` passed it to every auditor (`rules.md` §1 › Cost).
 
 `[M]` **Tools: `Read, Grep, Glob, Bash`.** It needs Bash to re-measure and to
 sabotage. That makes it *not* read-only, so the agent file says so and sets the
-bound: every protection it removes, it restores, and it confirms the restore with
-`git diff --stat` being empty for that path before reporting.
+bound: it sabotages only in a worktree of its own, never the shared tree another
+agent may be reading; every protection it removes, it restores from a copy taken
+first, and it proves the restore with `cmp` before reporting.
 
 `[M]` **Fresh context**, like the conformance auditor.
 
@@ -100,12 +101,15 @@ title is a claim like any other.
   names broke? Flag fixtures built from the implementation, assertions that only
   check something is defined or was called, mocks that cannot reject, and
   assertions that restate the code.
-- **Mutation-check the top suspects without losing work.** Commit first. Save the
-  fix as a patch (`git show <fix-sha> -- <file>`, or `git diff <base> -- <file>` for
-  uncommitted work), `git apply -R` it, run the one test — **its own assertion must
-  fail; a compile or import error is not a pass** — then `git apply` it back and
-  confirm `git status --porcelain -uall` matches what it was before. Never
-  `git checkout -- <file>`.
+- **Mutation-check the top suspects without losing work, in a worktree of its
+  own.** Commit first, then `git worktree add --detach <temp dir> HEAD` outside the
+  repository (a gate run in the shared tree reads what sits inside it) and work only
+  there: one project saw a reviewer's edit appear in the shared tree mid-run. Before
+  changing a file, `cp` it to the scratch directory. Save the fix as a patch
+  (`git show <fix-sha> -- <file>`), `git apply -R` it, run the one test — **its own
+  assertion must fail; a compile or import error is not a pass** — then restore the
+  file from its copy and prove it with `cmp <copy> <file>` before the next suspect.
+  Remove the worktree at the end. Never `git checkout -- <file>`.
 - **The fix commits are a fresh diff.** Every fix commit made after the step 8
   review that no fix-round re-review read (`review-gate.mjs --kind fix` said `skip`)
   is reviewed for correctness and regressions here, because nobody else saw it. The

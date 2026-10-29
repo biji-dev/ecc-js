@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap review-gate (generated YYYY-MM-DD). Which review is this diff owed?
 // [M] mechanism (ships as-is): this whole file; the bindings [B] live at the top of
-// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, TRIGGERS, FIX_LINES).
+// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS, TRIGGERS, FIX_LINES).
 /**
  * Decides from facts (paths, production lines, what a fix round fixed) which reviewers a diff is
  * owed, so the main thread does not guess: nothing, the second model family, one Opus
@@ -17,12 +17,14 @@
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
  *                  --round counts fix rounds on this area (1, 2, 3 ...)
  *   --writer       REQUIRED, never assumed: the ROLE that wrote the diff (for --kind fix: the fix),
- *                  on this host (gate-design.md › Model and effort): main = the judgment model (Opus
+ *                  on this host (harness-bootstrap's reference/gate-design.md › Model and effort):
+ *                  main = the judgment model (Opus
  *                  on Claude Code) | bounded = the bounded model (Sonnet) | second = the second
- *                  family | mixed = several executors (a fix round split between main and second;
- *                  routes like second). On Claude Code claude|sonnet|codex name the same roles; on
- *                  another host they are a usage error. Code is never reviewed only by the family
- *                  that wrote it, and critical code written by anyone but main gets a main reviewer
+ *                  family | mixed = several executors, the second family among them (routes like
+ *                  second); main and bounded together are bounded. On Claude Code
+ *                  claude|sonnet|codex name the same roles; on another host they are a usage
+ *                  error. Code is never reviewed only by the family that wrote it, and critical
+ *                  code written by anyone but main gets a main reviewer
  *   --host         the host whose roles --writer names. Default: harness-host's detection
  *                  (HARNESS_HOST, then each host's own variables); unknown reads like Claude Code
  *   --head <ref>   limit the diff to the committed range base..ref. Default: the WORKING TREE
@@ -56,6 +58,11 @@ const git = (cwd, ...a) =>
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+  process.stdout.write(`${USAGE}\n`);
+  process.exit(0);
+}
 
 let args;
 try {

@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 5
+  version: 6
 ---
 
 # Harness bootstrap
@@ -55,9 +55,11 @@ use the folder this `SKILL.md` was read from.
 
 Every reference line is marked **`[M]` mechanism** — ship it — or **`[B]`
 binding** — re-derive it from this project. Generating means writing files that
-name **this** project's real paths, commands and column names inline. Never an
-indirection layer: the runners work partly because the format is literally in the
-instructions, and an adapter is a place to guess wrong.
+name **this** project's real paths, commands and column names inline, and stamps
+each template's `generated YYYY-MM-DD` header with the day it ran (an upgrade's
+merge keeps the stamp the install has). Never an indirection layer: the runners
+work partly because the format is literally in the instructions, and an adapter is
+a place to guess wrong.
 
 ### Who orchestrates
 
@@ -85,7 +87,7 @@ orient:
   is an assertion.
 - **A "done" report ends with the step ledger; a step missing from it did not
   run.**
-- **The record is written last, from the diff — fields generated, prose audited by someone else.**
+- **The record is written last, from the diff — fields generated, prose audited at Full by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
 - **Never ask the owner for a new session or a hand-off.**
@@ -264,10 +266,10 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
-| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
+| `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` (a copy where the project refuses committed symlinks, `harness-targets.md`) | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
 | `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `effort: high`, `tools: Read, Grep, Glob`; states its bound |
 | `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B's fallback when the second family is unavailable · `model: opus`, `effort: high`, `tools: Read, Grep, Glob` |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages and restores |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages only in a worktree of its own and restores |
 | `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices, `effort: high`, `autoCompactWindow: 250000` |
 | every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
 | `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line |
@@ -275,8 +277,8 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `scripts/unit-step.mjs` + `scripts/lib/unit-step-core.mjs` + its test | `templates/scripts/unit-step.mjs`, `templates/scripts/lib/unit-step-core.mjs`, `templates/scripts/lib/unit-step-core.test.mjs` | each runner step's start and end, one line each in the unit's steps file beside its state file (`runner.md` › Step markers); bind `STEPS_DIR` to the state file's directory |
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |
 | `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); with `--times` and `--by-step`, where the time and money went; bind the price table and the dollars-per-percent calibration |
-| `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under `docs/harness/reports/`: KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
-| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, the paths, `REPORTS`, `PHASE_OF`, `CADENCE` and the limits |
+| `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`): KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
+| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
 | `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts, a Codex host's threads and the two run ledgers are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does and `CLAUDE_LEDGER_DIR` as `claude-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `scripts/intake.mjs` + `scripts/lib/intake-core.mjs` + its test | `templates/scripts/intake.mjs`, `templates/scripts/lib/intake-core.mjs`, `templates/scripts/lib/intake-core.test.mjs` | the Intake type: `--check` holds a drafted request to the owner sheet's properties, and `--gate1` makes unit 1's Gate 1 automatic while its approval still matches the claim (`intake.md`); bind `STRAY` |
@@ -284,7 +286,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `.codex/agents/<name>.toml` for each generated agent, where Codex is a target | `harness-targets.md` › Codex | `name`, `description`, the agent's brief as `developer_instructions`, `model` and `model_reasoning_effort` from the models file; no `sandbox_mode`, which a TOML cannot bound |
 | `.claude/registry.md` | `commit-guard.md` | the lock, with markers and a header row; gitignored; a `Worktree` column under `SCOPE=checkout`. Exclude it from the formatter |
 | `.githooks/pre-commit` **and** `.githooks/pre-merge-commit` (the same script) + `git config core.hooksPath .githooks`, + `scripts/lib/harness-guard.test.mjs` | `commit-guard.md`, `templates/harness-guard.sh`, `templates/scripts/lib/harness-guard.test.mjs` | or chain into husky/lefthook. Set `SCOPE` and `ID_PATTERN`; the test runs the installed guard in throwaway repos, with `IDS` bound to every plan id (the id self-test, `commit-guard.md`) and `GUARD` to where it is installed |
-| `.claude/hooks/command-guard.mjs` + settings entry + `scripts/lib/command-guard.test.mjs` | `harness-targets.md`, `templates/command-guard.mjs`, `templates/scripts/lib/command-guard.test.mjs` | refuses `--no-verify`, hook-path overrides and mainline force-pushes, by parsing; set `HOOKS_DIR`; a rule added to `EXTRA_RULES` gets its own case in the test |
+| `.claude/hooks/command-guard.mjs` + settings entry + `scripts/lib/command-guard.test.mjs` | `harness-targets.md`, `templates/command-guard.mjs`, `templates/scripts/lib/command-guard.test.mjs` | refuses `--no-verify`, hook-path overrides, mainline force-pushes and a `&`-backgrounded Codex run, by parsing; set `HOOKS_DIR`; a rule added to `EXTRA_RULES` gets its own case in the test |
 | `.claude/hooks/edit-guard.mjs` + settings entry, and `.codex/hooks.json` where Codex runs, + `scripts/lib/edit-guard.test.mjs` | `harness-targets.md`, `templates/edit-guard.mjs`, `templates/scripts/lib/edit-guard.test.mjs` | refuses an agent's edit of an env file or of installed packages, reading the paths from the hook's stdin on both hosts; bind `PROTECTED`, and the test's `REFUSED` and `ALLOWED` with it |
 | `scripts/check-agent-docs.mjs` + `scripts/lib/check-agent-docs.test.mjs`, run as a gate | `harness-targets.md`, `templates/scripts/check-agent-docs.mjs`, `templates/scripts/lib/check-agent-docs.test.mjs` | budgets ratcheted from today's sizes · `--rules-for` for briefs · the test is slow: a `full`-level gate |
 | the harness log, `docs/harness/log.md` | `log-format.md` | **the engine** — headers only, no seeded medians |
@@ -313,7 +315,7 @@ answer when the owner just accepts:
 | `scripts/claude-run.mjs` + `scripts/lib/claude-run-core.mjs` + its test | `cross-model.md` › When the host is not Claude Code, `templates/scripts/claude-run.mjs`, `templates/scripts/lib/claude-run-core.mjs`, `templates/scripts/lib/claude-run-core.test.mjs` | a host other than Claude Code (Codex; ZCode, for when Codex is out), with Claude Code installed and logged in | yes when it is; else record its passes `degraded` |
 | `scripts/unit-stack.sh`, run as `bash scripts/unit-stack.sh`; `.unit-stack.env` gitignored | `runner.md` › Step 0, `templates/unit-stack.sh` | units that run a live stack (a server, a database, containers) side by side; bind the registry's path (the commit guard's `REGISTRY`), the slot range, the disk floor and what a slot owns | yes, where units run live stacks in parallel |
 | `.claude/workflows/review.workflow.js` | `harness-targets.md`, `templates/workflows/review.workflow.js` | Full-tier review fan-outs often enough to want them deterministic | no, until the log shows them |
-| phase preflight · workstream sweep | `preflight.md`, `sweep.md` | phases in the plan (preflight); a question register, non-code work that gates code, or a follow-ups doc in change mode (sweep). 5 and 8 runs | yes, wherever they have a home; the due-checks run them |
+| phase preflight · workstream sweep | `preflight.md`, `sweep.md` | phases in the plan (preflight); a question register, non-code work that gates code, or a follow-ups doc in change mode (sweep). 5 and 8 runs | yes, wherever they have a home; the due-checks run them, and their `COMMANDS` cite these references (bind `COMMANDS` to the project's own skill where it generates one) |
 | segment runner | `segment.md` | several independent low-risk tasks; 2 runs | no |
 
 **The project's own model wins on names.** Where its documents define agent roles
@@ -323,8 +325,13 @@ harness's docs (`docs/harness/`, `docs/plans/`) move wherever Phase A agreed whe
 `docs/` is a governed set.
 
 **Fit the project's tooling.** Run the project's own lint, format and type check over
-the generated files before hashing. Where the harness's Node scripts break its
-config (a strict TypeScript lint with no Node globals; with nothing to run yet, the
+the generated files before hashing, and every other check its CI runs, the gates
+`run-gates.sh` binds (one project's structural check refused a module outside every
+workspace and turned the mainline red on the new scripts). Where the harness's Node
+scripts break its config (a strict TypeScript lint with no Node globals; a type-aware
+lint: the `.mjs` files are in no tsconfig, so typescript-eslint's project service reads
+each as a parse error — scope `tseslint.configs.disableTypeChecked` to the harness's
+script paths, one project had 46 such errors; with nothing to run yet, the
 flip does this — `foundation.md`), add one block scoped to those
 paths; keep the template scripts out of the formatter (a reformat breaks their hash,
 and the agent-docs test reads its CONFIG block); add `.review-work/`, `.codex-runs/` and
@@ -340,10 +347,10 @@ another agent, every merge by a human, the owner's review of one kind of change
 stricter rule, Trivial included. Units that are not plan items (harness work,
 vendor-trap skills, follow-ups no unit owns) run on `harness/<slug>` branches matched
 by the registry's `Branch` cell; write paths with `<unit>`, never the plan's id
-shape alone. The harness's own paths go on the risk map (the guard, the command and
-edit guards and `run-gates.sh` are critical: a broken one silently allows everything)
-and on the coverage map, covered by the tests that ship with them in `scripts/lib/`,
-which the counted `harness` gate runs.
+shape alone. The harness's own paths go on the risk map as critical
+(`policy-derivation.md` › The harness's own paths: the one list) and on the
+coverage map, covered by the tests that ship with them in `scripts/lib/`, which the
+counted `harness` gate runs.
 
 **Review the install before committing it.** A fresh agent that did not write it
 (the judgment model, read-only) checks that every path, command, flag, agent and section reference

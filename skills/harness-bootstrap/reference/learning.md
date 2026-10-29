@@ -13,7 +13,7 @@ projects only when someone carried it by hand.
 
 | Step | Where it runs | Writes | Cadence |
 |---|---|---|---|
-| the retro | in each project, `scripts/retro.mjs` | `docs/harness/reports/retro-<YYYY-Www>.md`, committed | weekly |
+| the retro | in each project, `scripts/retro.mjs` | `retro-<YYYY-Www>.md` under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`), committed | weekly |
 | the retro review | across projects, `scripts/retro-weekly.mjs` from this skill | `~/.agents/harness/retro/proposals-<YYYY-Www>.md` | weekly, on a schedule |
 | Phase F | in this skill's own repository | the next harness round's plan | when a review proposes a promotion |
 
@@ -23,7 +23,7 @@ read-only; what they propose is routed into work that already has a gate (below)
 ## The retro
 
 `[M]` `scripts/retro.mjs` reads what is already on disk — the log (each row dated by
-the commit that last changed it, `git blame`), the follow-ups doc, the state and
+the commit that last changed it, › How a row gets its date), the follow-ups doc, the state and
 steps files, earlier digests, the Claude Code transcripts of the sessions that ran
 in the repository or one of its worktrees, the threads a Codex host ran there
 (`$CODEX_HOME/sessions` and `archived_sessions`, `CODEX_HOME` defaulting to `~/.codex`),
@@ -51,10 +51,25 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
 `[M]` **The window** runs from the end of the newest digest of another week (else
 seven days back) to now. A second run in the same week rewrites that week's digest.
 
+`[M]` **The digest is committed as the retro wrote it.** It is regenerated, never
+edited, so a formatter that re-pads tables on commit would change it: list
+`REPORTS_DIR` in the project formatter's ignore file (`.prettierignore` or its
+equivalent).
+
+`[M]` **How a row gets its date.** `git blame -w`: a formatter's re-pad of a table
+keeps its rows' dates. Blame looks past the commits listed in the repository's
+`.git-blame-ignore-revs` (a commit that repairs the log's columns), and only those:
+`--no-ignore-revs-file` clears whatever `blame.ignoreRevsFile` a machine's git config
+names, since a named file that is missing stops blame and would undate every row. A
+state file moved with `git mv` keeps the time of its last change. With `FILED_AT`
+bound (off by default), a follow-up is aged from the filing date in its own cells,
+not from its line's commit; the weekly job, which reads no project binding, dates
+by line.
+
 `[M]` **Data it cannot see, said in the digest's Read line rather than guessed:**
 
 - A log row that is not committed has no date; it is counted as undated and left
-  out.
+  out, with a `Warn:` line under Read and the same line on stderr.
 - A turn held by the step intervals of two units goes to the unit whose step started
   last (planning the next unit while this one waits on Gate 2 is the next unit's
   work); a dispatch goes to the unit its tag or description names, all of it, though
@@ -71,7 +86,7 @@ seven days back) to now. A second run in the same week rewrites that week's dige
   and state files and its ledgers (one project on its first run: 48 log rows, no
   transcripts).
 
-`[B]` `REPORTS_DIR`, `LOG`, `FOLLOW_UPS`, `PLANS_DIR`, the log columns
+`[B]` `REPORTS_DIR`, `LOG`, `FOLLOW_UPS`, `PLANS_DIR`, `FILED_AT` (`null`), the log columns
 (`EXTRA_COLUMNS`, and estimate-core's), `OUTLIER_X` 2, `MIN_COHORT` 3, `MIN_SHARE`
 5, `REWRITE_ALERT_PERCENT` 5, `QUEUE_ALERT_DAYS` 14, and the `STEP_WORDS` that map
 an untagged dispatch to its step.
@@ -141,9 +156,10 @@ word of runners from before the unit, is read by that column. `--list` and
 `~/.agents/harness/retro-weekly/` — a plugin update cannot move the copy — and
 loads a LaunchAgent: Mondays at 09:00, and a Mac asleep then runs it at the next
 wake. `--print-schedule` gives the cron line for Linux (a missed run does not catch
-up) and the Task Scheduler line for Windows. Each carries a set `CLAUDE_CONFIG_DIR`:
-the LaunchAgent and the cron line in the job's environment, the Windows task as
-`--config-dir`, since schtasks sets no environment. The schedule runs node by the
+up) and the Task Scheduler line for Windows. Each carries a set `CLAUDE_CONFIG_DIR`
+and `CODEX_HOME` (where the retro reads the Codex host's threads): the LaunchAgent
+and the cron line in the job's environment, the Windows task as `--config-dir` and
+`--codex-home`, since schtasks sets no environment. The schedule runs node by the
 name PATH gives it when that is the same binary (`/opt/homebrew/bin/node`, not the
 versioned Cellar path an upgrade removes). Re-run `--install` after an
 upgrade of this skill. `--uninstall` removes the schedule and the copy and keeps the

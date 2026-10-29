@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const RUNNER = fileURLToPath(new URL('../codex-run.mjs', import.meta.url));
 import {
   CATALOG,
+  CODEX_CANDIDATES,
   EXIT,
   MODELS,
   ROUTES,
@@ -23,6 +24,7 @@ import {
   buildRouterPrompt,
   classify,
   codexArgv,
+  codexBinary,
   formatTokens,
   freshestLimits,
   lastRateLimits,
@@ -58,7 +60,11 @@ fs.writeFileSync(
   { mode: 0o755 },
 );
 
-/** Env for a spawned wrapper: fresh HOME and CODEX_HOME, no CODEX_RUN* or GIT_* variable, stub codex first on PATH. */
+/**
+ * Env for a spawned wrapper: fresh HOME and CODEX_HOME, no CODEX_RUN* or GIT_* variable, stub codex first on PATH.
+ * The fresh HOME also keeps the CLI's own install path (CODEX_CANDIDATES under HOME) empty, so every test
+ * that sets no CODEX_BIN still reaches the PATH stub, never a codex installed on this machine.
+ */
 function cleanEnv(extra = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('CODEX_RUN') || k.startsWith('GIT_')) delete env[k];
@@ -134,6 +140,27 @@ test('the clamp bounds a router answer: ultra, frontier and a writable sandbox a
       .effort,
     'max',
   );
+});
+
+test('max needs --allow-max: an override or a routed max drops to xhigh with a note', () => {
+  const dropped = resolveRoute('investigate', { override: { effort: 'max' } });
+  assert.equal(dropped.effort, 'xhigh');
+  assert.match(dropped.notes.join(' '), /max needs --allow-max -> xhigh/);
+  const routed = resolveRoute('investigate', { routed: { model: CATALOG.default, effort: 'max' } });
+  assert.equal(routed.effort, 'xhigh');
+  assert.match(routed.notes.join(' '), /max needs --allow-max -> xhigh/);
+  // Lifted by --allow-max, or by --allow-ultra, which implies it.
+  for (const lift of [{ allowMax: true }, { allowUltra: true }]) {
+    const r = resolveRoute('investigate', { override: { effort: 'max' }, ...lift });
+    assert.equal(r.effort, 'max', JSON.stringify(lift));
+    assert.deepEqual(r.notes, []);
+  }
+  // Nothing below max is touched.
+  assert.equal(resolveRoute('investigate', { override: { effort: 'xhigh' } }).effort, 'xhigh');
+});
+
+test('parseArgs takes --allow-max as a flag', () => {
+  assert.equal(parseArgs(['investigate', '--allow-max']).flags.has('allow-max'), true);
 });
 
 test('an explicit override beats the router answer', () => {
@@ -819,6 +846,56 @@ test('--dry-run spends nothing: default binary is `codex` on PATH, no ledger row
   assert.equal(JSON.parse(bin.stdout).argv[0], '/elsewhere/codex');
 });
 
+test('codexBinary: CODEX_BIN, then the CLI install paths under HOME, then codex on PATH', () => {
+  assert.ok(CODEX_CANDIDATES.length > 0 && CODEX_CANDIDATES.every((c) => !c.startsWith('/')));
+  const first = `/h/u/${CODEX_CANDIDATES[0]}`;
+  const present = (...files) => (p) => files.includes(p);
+  // CODEX_BIN wins over a present candidate.
+  assert.equal(codexBinary({ CODEX_BIN: '/x/codex' }, '/h/u', present(first)), '/x/codex');
+  // A present candidate beats PATH.
+  assert.equal(codexBinary({}, '/h/u', present(first)), first);
+  // No candidate present: PATH.
+  assert.equal(codexBinary({}, '/h/u', present()), 'codex');
+  // An empty CODEX_BIN reads as unset, both ways.
+  assert.equal(codexBinary({ CODEX_BIN: '' }, '/h/u', present(first)), first);
+  assert.equal(codexBinary({ CODEX_BIN: '' }, '/h/u', present()), 'codex');
+  // Candidates are tried in order, under the home directory given.
+  const seen = [];
+  codexBinary({}, '/h/u', (p) => (seen.push(p), false));
+  assert.deepEqual(seen, CODEX_CANDIDATES.map((c) => `/h/u/${c}`));
+});
+
+test('--dry-run runs the CLI installed under HOME before a codex shim on PATH; CODEX_BIN beats both', () => {
+  const dir = tmpDir('codex-run-installed-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const home = tmpDir('codex-run-installed-home-');
+  const installed = path.join(home, CODEX_CANDIDATES[0]);
+  fs.mkdirSync(path.dirname(installed), { recursive: true });
+  // Only records a call; the run is a dry run, so it is never called.
+  fs.writeFileSync(installed, `#!/bin/sh\necho "$@" >> "${GUARD_MARKER}"\nexit 1\n`, { mode: 0o755 });
+  const args = ['adversarial', '--prompt', 'p.md', '--out', 'v.md', '--dry-run'];
+  const res = runWrapper(dir, args, { HOME: home });
+  assert.equal(res.status, EXIT.ok, res.stderr);
+  assert.equal(JSON.parse(res.stdout).argv[0], installed);
+  const bin = runWrapper(dir, args, { HOME: home, CODEX_BIN: '/elsewhere/codex' });
+  assert.equal(JSON.parse(bin.stdout).argv[0], '/elsewhere/codex');
+  // A candidate that is not executable is passed over.
+  fs.chmodSync(installed, 0o644);
+  assert.equal(JSON.parse(runWrapper(dir, args, { HOME: home }).stdout).argv[0], 'codex');
+});
+
+test('--dry-run --effort max prints xhigh; with --allow-max it prints max', () => {
+  const dir = tmpDir('codex-run-allowmax-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const args = ['investigate', '--prompt', 'p.md', '--out', 'v.md', '--dry-run', '--effort', 'max'];
+  const clamped = runWrapper(dir, args);
+  assert.equal(clamped.status, EXIT.ok, clamped.stderr);
+  assert.equal(JSON.parse(clamped.stdout).route.effort, 'xhigh');
+  const lifted = runWrapper(dir, [...args, '--allow-max']);
+  assert.equal(lifted.status, EXIT.ok, lifted.stderr);
+  assert.equal(JSON.parse(lifted.stdout).route.effort, 'max');
+});
+
 test('a missing codex binary exits 3 (unavailable) and writes an unavailable ledger row', () => {
   const dir = tmpDir('codex-run-missing-');
   fs.writeFileSync(path.join(dir, 'p.md'), 'task');
@@ -887,7 +964,7 @@ function wrapperFixture({ resolver } = {}) {
   return repo;
 }
 
-function dryRunInFixture(repo, extra) {
+function dryRunInFixture(repo, extra, env = {}) {
   return spawnSync(
     process.execPath,
     [
@@ -900,7 +977,7 @@ function dryRunInFixture(repo, extra) {
       '--dry-run',
       ...extra,
     ],
-    { encoding: 'utf8', cwd: repo, env: cleanEnv() },
+    { encoding: 'utf8', cwd: repo, env: cleanEnv(env) },
   );
 }
 
@@ -951,6 +1028,26 @@ test('--rules-for puts the rule file text in the prompt: the prompt grows by exa
     return JSON.parse(res.stdout).promptBytes;
   };
   assert.equal(promptBytes(body) - promptBytes(''), Buffer.byteLength(body));
+});
+
+test('the rule resolver runs on the wrapper\'s own node, never the `node` on PATH', () => {
+  // A machine whose PATH `node` is another version (a version manager, a shim) must not run it.
+  const shimDir = tmpDir('codex-run-nodeshim-');
+  const marker = path.join(shimDir, 'node-was-called');
+  fs.writeFileSync(path.join(shimDir, 'node'), `#!/bin/sh\necho "$@" >> "${marker}"\nexit 1\n`, {
+    mode: 0o755,
+  });
+  const rule = '# Rule\nAlways validate input at the boundary.\n';
+  const repo = wrapperFixture({ resolver: "console.log('rules/area.md');\n" });
+  fs.mkdirSync(path.join(repo, 'rules'));
+  fs.writeFileSync(path.join(repo, 'rules/area.md'), rule);
+  const without = JSON.parse(dryRunInFixture(repo, []).stdout);
+  // cleanEnv's extra replaces PATH whole, so the codex stub (GUARD_DIR) stays first.
+  const PATH = [GUARD_DIR, shimDir, process.env.PATH].filter(Boolean).join(path.delimiter);
+  const res = dryRunInFixture(repo, ['--rules-for', 'src/a.ts'], { PATH });
+  assert.equal(res.status, EXIT.ok, res.stderr);
+  assert.ok(JSON.parse(res.stdout).promptBytes - without.promptBytes >= Buffer.byteLength(rule));
+  assert.equal(fs.existsSync(marker), false, 'the resolver ran on the PATH node');
 });
 
 test('the prompt reaches codex on stdin, byte for byte', () => {

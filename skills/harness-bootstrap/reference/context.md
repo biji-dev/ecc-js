@@ -160,8 +160,11 @@ and a compaction mid-review loses what they read.
 > Origin: one project slices to about 70 calls and a 200K peak since its own study
 > found subagents at 76% of its spend, with the main-thread hook seeing none of it.
 
-`[B]` The window (`autoCompactWindow` in Claude Code's settings — local, project,
-then user; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` beats all three), the hook's warning
+`[B]` The window (`autoCompactWindow` in Claude Code's settings, which follow the
+settings order: managed settings, then `--settings`, then local, project and user;
+`--autocompact` beats the key for one session, and
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` beats both; a `modelSettings` entry in a settings
+file beats the top-level key in the same file), the hook's warning
 (220K) and its margin under the window (40K; with no window set, a 260K limit), the
 gate wait's figure (150K), the base target, the state file's path. The retro
 re-measures them (`learning.md`).
@@ -183,7 +186,10 @@ transcript tail and:
 - takes its limit from the auto-compact window, 40K under it, read where Claude
   Code reads it: `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then `.claude/settings.local.json`,
   `.claude/settings.json` and the user's settings (`$CLAUDE_CONFIG_DIR/settings.json`
-  when that is set, else `~/.claude/settings.json`); with none set, or `auto`, 260K;
+  when that is set, else `~/.claude/settings.json`); with none set, or `auto`, 260K.
+  It reads the env variable and those three files only, so a window set by managed
+  settings, `--settings`, `--autocompact` or a `modelSettings` entry is not seen:
+  set `CONTEXT_BUDGET_LIMIT` 40K under that window instead;
 - on `PostToolUse`, speaks only when the context crosses into a new 25K band or a
   new level, so a long tool loop hears about it without hearing it every call;
 - after a compaction, says nothing until the next reply brings a new figure. A hook
@@ -231,7 +237,7 @@ output that matters), or `skipped` / `unavailable` / `degraded` with the reason.
 | 8 review — code-reviewer + security-reviewer | ran | 3 findings: 2 fixed (abc1234), 1 → follow-ups |
 | 8 second-family review | unavailable | `codex-run: unavailable kind=review … usage limit` — degraded, Opus stood in |
 | 8 lane B blast radius | ran | 2 readers outside the diff fixed (def5678) |
-| 8 verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
+| 8a verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
 ```
 
 `[M]` Then five lists:
@@ -273,9 +279,10 @@ gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-
 ```
 
 `--min` is today's count. A run above it prints the raise (`run-counted: 412 → 418:
-raise --min in scripts/run-gates.sh`); the unit that added the tests raises it. No
-summary is a FAIL, so a `--filter` that matched no package, `--if-present` with no
-script anywhere and `--passWithNoTests` fail where they passed. Bind one counted gate
+raise --min on the gate's line`), wherever the project defines its gates; the unit
+that added the tests raises it. No summary is a FAIL, so a `--filter` that matched
+no package, `--if-present` with no script anywhere and `--passWithNoTests` fail
+where they passed. Bind one counted gate
 per package: a second summary in one output fails too. A plain `gate` passes on exit
 0 alone, so bind a build without `--if-present` and a pnpm filter with
 `--fail-if-no-match`: pnpm 10.30 exits 0 when `-r --if-present run build` finds no

@@ -9,7 +9,7 @@
  * claude-run's, and writes
  * `<REPORTS_DIR>/retro-<YYYY-Www>.md`, at most 8 KB: KPIs against the four weeks before, outliers,
  * where the money went by step, friction, what the owner caught, the queue, and at most five
- * candidates for the retro review (`learning.md`).
+ * candidates for the retro review (harness-bootstrap's reference/learning.md).
  *
  *   node scripts/retro.mjs [--since <ISO>] [--until <ISO>] [--projects-dir <dir>] [--ledger <path>]
  *     [--dry-run | --json | --export <dir>]
@@ -24,7 +24,11 @@
  *   --json              print the digest's data as JSON; write nothing
  *   --export <dir>      write only <dir>/retro-<YYYY-Www>.json, the data, which outlives the transcripts
  *
- * exit: 0 ok | 2 usage (bad flag, not in a git repository, no log, unreadable file).
+ * A figure that reads zero or missing for a reason the project can fix (spend against an empty log,
+ * landed units and no session, a follow-ups doc with no status column) is also a `Warn:` line in the
+ * digest and a `retro: warn:` line on stderr, in every mode.
+ *
+ * exit: 0 ok (warnings or not) | 2 usage (bad flag, not in a git repository, no log, unreadable file).
  *
  * It writes the digest (or, with --export, the one JSON file) and nothing else.
  */
@@ -43,6 +47,10 @@ function usage(msg) {
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let args;
   let top;
   let data;
@@ -65,6 +73,7 @@ function main() {
   } catch (e) {
     return usage(e.message);
   }
+  for (const w of data.warnings) process.stderr.write(`retro: warn: ${w}\n`);
   if (args.json) return process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
   if (args.dryRun) return process.stdout.write(fitDigest(data));
   const dir = args.export ? path.resolve(args.export) : path.join(top, REPORTS_DIR);

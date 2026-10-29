@@ -45,8 +45,10 @@
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
 #   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
 #   the real index is never touched. A run with every gate PASS is recorded under that tree,
-#   the mode (full or scoped:<since-sha>), the bound gate list and the KEY_EXTRA output. The
-#   next run for the same tree, mode, gates and extra prints, instead of running anything:
+#   the mode (full or scoped:<since-sha>), the bound gate list, the KEY_EXTRA output and
+#   NODE_OPTIONS (hashed, never stored; unset = empty: it changes what every node child runs).
+#   The next run for the same tree, mode, gates, extra and NODE_OPTIONS prints, instead of
+#   running anything:
 #     REUSED <tree> <time of the original run>
 #     <the original result lines and SUMMARY line>            (exit 0)
 #   A run is recorded only if the tree is still the same after the gates ran; otherwise it
@@ -65,7 +67,9 @@
 #   inputs (node_modules, .env, build output) and refs are NOT in it unless KEY_EXTRA names
 #   them. KEY_EXTRA is a shell command whose stdout is hashed into the key (env
 #   RUN_GATES_KEY_EXTRA overrides, empty = nothing), e.g.
-#     KEY_EXTRA='cat pnpm-lock.yaml node_modules/.modules.yaml 2>/dev/null; git rev-parse origin/main'
+#     KEY_EXTRA='cat pnpm-lock.yaml node_modules/.modules.yaml 2>/dev/null; git rev-parse origin/main; node --version; pnpm --version'
+#   It runs under `bash -c` with no stdin, so write it in single quotes (double quotes inside);
+#   its output is hashed, never stored.
 #   Worktrees of one repository share the cache (same tree, same result), so a worktree
 #   whose ignored inputs differ needs KEY_EXTRA to name them. Keep the cache dir out of any
 #   writer's reach (a sandboxed Codex run must not be able to write a PASS record): the
@@ -142,6 +146,7 @@ gate_counted() {
 # gate lint always 'npm run -s lint'
 # gate test always 'npm test'
 # gate build full 'npm run -s build'
+# A runner's own cache (turbo, nx) only hides a stale result, as run-gates already reuses by tree: turbo run <task> --force, nx run-many … --skip-nx-cache.
 # A test gate counts what ran: run-counted fails on a skip, a filter that matched nothing or a
 # pass count under the floor (--min: today's count; it prints the raise when the count grows).
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run'
@@ -340,8 +345,9 @@ trap 'remove_snapshot; release_lock' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Sets MODE_ID, VARIANT and REC_DIR: the mode, the bound gates and the KEY_EXTRA output decide
-# which records can answer this run. Called again after a lock wait (the mode may have changed).
+# Sets MODE_ID, VARIANT and REC_DIR: the mode, the bound gates, the KEY_EXTRA output and
+# NODE_OPTIONS (what every node child runs; unset = empty) decide which records can answer this
+# run. Called again after a lock wait (the mode may have changed).
 compute_variant() {
   local extra=""
   MODE_ID=full
@@ -351,7 +357,7 @@ compute_variant() {
     MODE_ID=snapshot
   fi
   if [ -n "$KEY_EXTRA_CMD" ]; then extra=$(bash -c "$KEY_EXTRA_CMD" 2>/dev/null </dev/null); fi
-  VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")")
+  VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")|$(hash_str "${NODE_OPTIONS:-}")")
   REC_DIR="$CACHE_DIR/records/$VARIANT"
 }
 

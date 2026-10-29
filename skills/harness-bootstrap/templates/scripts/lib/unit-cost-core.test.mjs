@@ -23,6 +23,7 @@ import {
   inWindow,
   isOwnerPrompt,
   isPricedId,
+  ledgerWindow,
   parseArgs,
   parseCodexSession,
   parseEvents,
@@ -39,6 +40,7 @@ import {
   summarizeSteps,
   summarizeTimes,
   summaryLine,
+  transcriptTimes,
   unionMs,
 } from './unit-cost-core.mjs';
 import { codexProjectSessions, codexSessionFiles, codexSessionsDir, fileLines } from './run-sources.mjs';
@@ -125,6 +127,45 @@ test('dedupeRows drops a repeated (message.id, requestId) pair, keeps a new requ
   assert.equal(dedupeRows(rows).length, 3);
   const keyless = [{ key: null }, { key: null }];
   assert.equal(dedupeRows(keyless).length, 2);
+});
+
+test('dedupeRows keeps one row per message: the first copy\'s place and labels, the usage of the copy with the most output', () => {
+  const copy = (id, at, output, input, ctx) => parseTranscript(turn({ id, at, usage: { input_tokens: input, output_tokens: output } }), ctx)[0];
+  const T1 = '2026-10-24T01:00:00Z';
+  const T2 = '2026-10-24T01:00:05Z';
+  const T3 = '2026-10-24T01:00:09Z';
+  const first = { kind: 'sub', agentId: 'A', agentType: 'implementer', session: 's1', description: 'first file' };
+  const later = { kind: 'main', agentId: 'B', agentType: 'reviewer', session: 's2', description: 'later file' };
+  const k1 = copy('m1', T1, 1, 10, first);
+  const big = copy('m1', T2, 1000, 20, later);
+  const small = copy('m1', T3, 500, 30, later);
+  const before = structuredClone([k1, big, small]);
+  const [kept, ...rest] = dedupeRows([k1, big, small]);
+  assert.equal(rest.length, 0);
+  // the most output, not the last copy; the place and the labels are the first copy's
+  assert.deepEqual([kept.output, kept.input, kept.cacheRead, kept.cacheWrite, kept.writeCost, kept.cost], [big.output, big.input, big.cacheRead, big.cacheWrite, big.writeCost, big.cost]);
+  assert.equal(kept.output, 1000);
+  assert.equal(kept.input, 20);
+  assert.deepEqual([kept.ts, kept.kind, kept.agentId, kept.agentType, kept.session, kept.agentDescription], [k1.ts, 'sub', 'A', 'implementer', 's1', 'first file']);
+  assert.deepEqual([k1, big, small], before);
+  // equal outputs keep the first copy's usage
+  assert.equal(dedupeRows([k1, copy('m1', T2, 1, 99, later)])[0].input, 10);
+  // a keyless row and a second key keep their places
+  const x = copy('m2', T1, 7, 1, first);
+  const keyless = { ...x, key: null };
+  assert.deepEqual(dedupeRows([k1, keyless, big]).map((r) => [r.key, r.output]), [['m1|r1', 1000], [null, 7]]);
+  assert.deepEqual(dedupeRows([k1, x, big]).map((r) => [r.key, r.output]), [['m1|r1', 1000], ['m2|r1', 7]]);
+  // every cost figure takes the larger copy
+  const s = summarizeClaude([k1, big]);
+  assert.equal(s.outputTokens, 1000);
+  near(s.total, big.cost);
+  const early = copy('m1', atMin(5), 1, 10, { kind: 'main' });
+  const late = copy('m1', atMin(35), 1000, 20, { kind: 'main' });
+  const markers = [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30), marker('8c', 'done', 50)];
+  const steps = Object.fromEntries(summarizeSteps([early, late], markers, { unit: 'U-1' }).steps.map((st) => [st.label, st]));
+  near(steps['4 r1'].usd, late.cost);
+  assert.equal(steps['4 r1'].turns, 1);
+  assert.equal(steps['8c r1'].turns, 0);
 });
 
 test('summarizeClaude dedupes across files: a turn repeated in a subagent file counts once', () => {
@@ -271,6 +312,59 @@ test('summarizeLedger filters by the window and by a substring of cwd', () => {
   assert.equal(summarizeLedger(entries, { cwdMatch: '/p/app' }).runs, 3);
 });
 
+test('ledgerWindow fills only the bounds the owner left out, with the sessions\' first and last time', () => {
+  const lo = Date.parse('2026-10-24T01:00:00Z');
+  const hi = Date.parse('2026-10-24T03:00:00Z');
+  const times = [hi, NaN, lo, Date.parse('2026-10-24T02:00:00Z'), Number.NaN];
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, times), { since: new Date(lo).toISOString(), until: new Date(hi).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: '2026-10-24T00:00:00Z', until: null }, times), { since: '2026-10-24T00:00:00Z', until: new Date(hi).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: null, until: '2026-10-24T04:00:00Z' }, times), { since: new Date(lo).toISOString(), until: '2026-10-24T04:00:00Z' });
+  assert.deepEqual(ledgerWindow({ since: 'a', until: 'b' }, times), { since: 'a', until: 'b' });
+  // no readable time: the window as given
+  assert.deepEqual(ledgerWindow({ since: null, until: '2026-10-24T04:00:00Z' }, [NaN]), { since: null, until: '2026-10-24T04:00:00Z' });
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, []), { since: null, until: null });
+  // a long session\'s times do not overflow an argument list
+  const many = Array.from({ length: 200_000 }, (_, i) => lo + i);
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, many), { since: new Date(lo).toISOString(), until: new Date(lo + 199_999).toISOString() });
+});
+
+test('transcriptTimes takes the time of every line, and says a tool is running when the last call has no result', () => {
+  const line = (type, min, message, extra = {}) => JSON.stringify({ type, timestamp: atMin(min), message, ...extra });
+  const call = (min, id, tool) => line('assistant', min, { id, content: [{ type: 'tool_use', id: tool, name: 'Bash', input: {} }] });
+  const said = (min, id) => line('assistant', min, { id, content: [{ type: 'text', text: 'ok' }] });
+  const result = (min, tool) => line('user', min, { content: [{ type: 'tool_result', tool_use_id: tool, content: 'done' }] });
+  const read = (...lines) => transcriptTimes(lines.join('\n'));
+  const at = (...mins) => mins.map((m) => T0 + m * MIN);
+  // every type of line has a time; a line without one, a torn line and a blank one have none
+  const all = read(line('user', 0, { content: 'go' }), said(1, 'a'), call(2, 'b', 't1'), result(3, 't1'), line('system', 4, undefined), JSON.stringify({ type: 'user', message: {} }), '{"type":"user"', '');
+  assert.deepEqual(all.times, at(0, 1, 2, 3, 4));
+  assert.equal(all.live, false);
+  // a call whose result is not written yet is running now
+  assert.deepEqual(read(line('user', 0, { content: 'go' }), call(2, 'b', 't1')), { times: at(0, 2), live: true });
+  assert.equal(read(call(2, 'b', 't1'), result(3, 't1')).live, false);
+  // the copies of one streamed message are one message: a text copy after the call does not end it
+  assert.equal(read(call(2, 'b', 't1'), said(2, 'b')).live, true);
+  // parallel calls: running until every one has its result
+  const two = [call(2, 'b', 't1'), call(2, 'b', 't2')];
+  assert.equal(read(...two, result(3, 't1')).live, true);
+  assert.equal(read(...two, result(3, 't1'), result(4, 't2')).live, false);
+  // a later message of the assistant's own means the call was answered or given up
+  assert.equal(read(call(2, 'b', 't1'), said(5, 'c')).live, false);
+  assert.deepEqual(read(''), { times: [], live: false });
+  // a long transcript's times do not overflow an argument list
+  assert.equal(transcriptTimes(Array.from({ length: 200_000 }, (_, i) => said(i % 60, `m${i}`)).join('\n')).times.length, 200_000);
+});
+
+test('ledgerWindow ends an open until at now while a session is live, and a bound the owner gave stays', () => {
+  const lo = Date.parse('2026-10-24T01:00:00Z');
+  const hi = Date.parse('2026-10-24T03:00:00Z');
+  const now = Date.parse('2026-10-24T05:00:00Z');
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, [lo, hi], now), { since: new Date(lo).toISOString(), until: new Date(now).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: null, until: '2026-10-24T03:10:00Z' }, [lo, hi], now), { since: new Date(lo).toISOString(), until: '2026-10-24T03:10:00Z' });
+  assert.deepEqual(ledgerWindow({ since: '2026-10-24T00:00:00Z', until: null }, [lo, hi], now), { since: '2026-10-24T00:00:00Z', until: new Date(now).toISOString() });
+  assert.deepEqual(ledgerWindow({ since: null, until: null }, [lo, hi], null), { since: new Date(lo).toISOString(), until: new Date(hi).toISOString() });
+});
+
 test('parseLedger skips blank and torn lines and non-object values', () => {
   const text = `${JSON.stringify(run())}\n\n{"at":\n[1,2]\n42\n${JSON.stringify(run({ kind: 'docs' }))}\n`;
   assert.deepEqual(parseLedger(text).map((e) => e.kind), ['review', 'docs']);
@@ -352,7 +446,7 @@ function fixture() {
   fs.writeFileSync(path.join(proj, 'sess1.jsonl'), `${turn({ id: 'a', usage: { output_tokens: M } })}\n`);
   fs.writeFileSync(path.join(proj, 'sess1', 'subagents', 'agent-1.jsonl'), `${turn({ id: 'b', model: 'claude-sonnet-5-5', usage: { output_tokens: M } })}\n`);
   fs.writeFileSync(path.join(proj, 'sess1', 'subagents', 'agent-1.meta.json'), JSON.stringify({ agentType: 'implementer' }));
-  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run())}\n`);
+  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run({ cwd: root }))}\n`);
   return root;
 }
 
@@ -405,7 +499,8 @@ test('from a linked worktree the wrapper reads the main checkout\'s ledger, the 
   const wt = path.join(root, '.worktrees', 'wt1');
   git('worktree', 'add', '-q', '-b', 'wt1', wt);
   fs.mkdirSync(path.join(root, '.codex-runs'));
-  fs.writeFileSync(path.join(root, '.codex-runs', 'ledger.jsonl'), `${JSON.stringify(run())}\n`);
+  // one run made in the linked worktree, one in the main checkout: each reads its own
+  fs.writeFileSync(path.join(root, '.codex-runs', 'ledger.jsonl'), `${[run({ cwd: wt }), run({ cwd: root })].map((e) => JSON.stringify(e)).join('\n')}\n`);
   const sessions = fixture();
   const args = ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'];
   const fromWorktree = cli(sessions, args, wt);
@@ -423,7 +518,7 @@ test('--line prints exactly the summary line, one line, with the not-run count o
   assert.equal(r.status, 0, r.stderr);
   const total = PRICE.opus[1] + PRICE.sonnet[1];
   assert.equal(r.stdout, `Cost $${total.toFixed(2)} · Claude ${Math.round((total / DOLLARS_PER_PERCENT) * 10) / 10}% · Codex 2% (1 runs)\n`);
-  fs.appendFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run({ outcome: 'reserved' }))}\n`);
+  fs.appendFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run({ cwd: root, outcome: 'reserved' }))}\n`);
   assert.match(cli(root, [...base, '--line']).stdout, /Codex 2% \(1 runs, 1 not run\)\n$/);
   assert.equal(cli(root, [...base, '--line', '--json']).status, 2);
 });
@@ -679,6 +774,22 @@ test('parseTag reads [<unit> s<step> r<n>] anywhere in a description, the round 
   assert.equal(parseTag('[EP-27.03 8c]'), null);
 });
 
+test('parseTag reads a harness/<slug> unit and refuses a path that climbs or nests deeper', () => {
+  assert.deepEqual(parseTag('[harness/x s8c r2] codex review'), { unit: 'harness/x', step: '8c', round: 2 });
+  assert.deepEqual(parseTag('[change/fix-login s4] build'), { unit: 'change/fix-login', step: '4', round: 1 });
+  assert.equal(parseTag('[../x s1]'), null);
+  assert.equal(parseTag('[a/b/c s1]'), null);
+  assert.equal(parseTag('[/x s1]'), null);
+});
+
+test('summarizeSteps: a subagent tagged with a harness/<slug> unit is placed by its tag', () => {
+  const markers = [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30), marker('8c', 'done', 50)];
+  const rows = [pricedRow(5, 1), pricedRow(10, 8, { kind: 'sub', agentId: 'a1', description: '[harness/x s8c r1] codex review' })];
+  const by = Object.fromEntries(summarizeSteps(rows, markers, { unit: 'harness/x' }).steps.map((x) => [x.label, x]));
+  near(by['8c r1'].usd, 8);
+  near(by['4 r1'].usd, 1);
+});
+
 test('summarizeSteps: main turns by interval, subagents by their tag or else their first turn, the rest unmarked', () => {
   const markers = [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30), marker('8c', 'done', 50)];
   const rows = [
@@ -861,6 +972,28 @@ test('the wrapper adds --times and --by-step from the session, its subagents\' t
   assert.equal(cli(root, [...args, '--line']).status, 2);
 });
 
+test('--by-step on a nested steps file takes the unit its markers name; --unit wins; a file with no unit falls back to its basename', () => {
+  const root = tmpDir('unit-cost-nested-');
+  const proj = path.join(root, 'projects', '-p-app');
+  fs.mkdirSync(path.join(proj, 's8', 'subagents'), { recursive: true });
+  const usage = { output_tokens: M / PRICE.opus[1] };
+  fs.writeFileSync(path.join(proj, 's8.jsonl'), [userLine(0, 'sweep'), turn({ id: 'm1', req: 'r1', at: atMin(1), usage })].join('\n'));
+  fs.writeFileSync(path.join(proj, 's8', 'subagents', 'agent-1.jsonl'), `${turn({ id: 's1', req: 'sr1', at: atMin(2), usage })}\n`);
+  fs.writeFileSync(path.join(proj, 's8', 'subagents', 'agent-1.meta.json'), JSON.stringify({ agentType: 'reviewer', description: '[harness/x s8c] review' }));
+  fs.mkdirSync(path.join(root, 'harness'));
+  const steps = path.join(root, 'harness', 'x.steps.jsonl');
+  const lines = (unit) => [marker('4', 'start', 0), marker('4', 'done', 30), marker('8c', 'start', 30)].map((m) => jline({ ...m, ts: undefined, unit })).join('\n');
+  fs.writeFileSync(steps, lines('harness/x'));
+  const base = ['--session', 's8', '--projects-dir', path.join(root, 'projects'), '--by-step', steps, '--json'];
+  const j = JSON.parse(cli(root, base).stdout);
+  assert.equal(j.steps.unit, 'harness/x');
+  const by = Object.fromEntries(j.steps.steps.map((x) => [x.label, x]));
+  assert.equal(by['8c r1'].agents, 1);
+  assert.equal(JSON.parse(cli(root, [...base, '--unit', 'other/y']).stdout).steps.unit, 'other/y');
+  fs.writeFileSync(steps, lines(''));
+  assert.equal(JSON.parse(cli(root, base).stdout).steps.unit, 'x');
+});
+
 // ---- a Codex host (its rollouts under $CODEX_HOME/sessions) and the claude-run ledger
 
 const cx = (min, type, payload) => jline({ timestamp: atMin(min), type, payload });
@@ -939,6 +1072,52 @@ test('parseCodexSession reads a rollout: its own meta, turns, readings, question
   // An exec run is no host session; torn and foreign lines are skipped.
   const exec = parseCodexSession([cxMeta(0, { id: 'ex-1', session_id: 'ex-1', originator: 'codex_exec', source: 'exec' }), '{"torn', 'not json', '']);
   assert.deepEqual([exec.id, exec.host, exec.readings.length], ['ex-1', false, 0]);
+});
+
+test('a Codex user message is its own when it is whole elements, optionally after an AGENTS.md first line; anything the owner typed is a prompt', () => {
+  const kind = (text) => {
+    const e = parseCodexSession([cxMeta(0), cxUser(1, text)]).events;
+    assert.equal(e.length, 1, text);
+    return e[0].type;
+  };
+  const agents = '# AGENTS.md instructions for /r/app\n\n<INSTRUCTIONS>\nuse <b>tabs</b>\n</INSTRUCTIONS>';
+  const env = '<environment_context>\n  <cwd>/r/app</cwd>\n</environment_context>';
+  for (const own of [
+    '<user_action>\n  <context>opened a page</context>\n</user_action>',
+    env,
+    `  ${env}  \n`,
+    agents,
+    `${agents}\n${env}`,
+    '<marker/>',
+    '<a x="1">one</a>\n<a>two</a>',
+    '<a>outer <a>inner</a> tail</a>',
+    '<user_action><user_action/></user_action>',
+    '<a><a/><a>x</a></a>',
+    '<a><a x="1"/></a>',
+  ]) {
+    assert.equal(kind(own), 'note', own);
+  }
+  for (const mine of [
+    '<- that test',
+    '<b>x</b> and more',
+    '<image name=[Image #1]>\nsee this',
+    '<image>x</image> and what does this do',
+    `${env} then fix it`,
+    '<a>open',
+    '<a><a/></a></a>',
+    '<a><a></a>',
+    '# AGENTS.md instructions for /r/app\nplease read it',
+    'plain words',
+    '<send_user_message_question_reply> [{"answer":"yes"}]',
+    '<send_user_message_question_reply>yes</send_user_message_question_reply>',
+  ]) {
+    assert.equal(kind(mine), 'prompt', mine);
+  }
+  // A 40 KB instructions message is one linear pass.
+  const t0 = Date.now();
+  assert.equal(kind(`# AGENTS.md instructions for /r/app\n\n<INSTRUCTIONS>\n${'<x> y </x>\n'.repeat(4000)}</INSTRUCTIONS>`), 'note');
+  assert.equal(kind(`<a>${'<a>'.repeat(5000)}`), 'prompt');
+  assert.ok(Date.now() - t0 < 2000, 'a long message is scanned in linear time');
 });
 
 test('summarizeCodexHost: tokens are the growth of the running totals inside the window; turns, questions and compactions are the main thread\'s', () => {
@@ -1028,6 +1207,9 @@ test('summaryLine adds claude-run dollars to the cost and its Claude %, and name
   const runs = { runs: 2, notRun: 0, usd: 7.655 };
   assert.equal(summaryLine(claude, null, { claudeRuns: runs }), `Cost $20.00 · Claude ${pct}% (2 claude-run) · Codex no ledger`);
   assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, notRun: 1 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 1 not run) · Codex no ledger`);
+  // A run with no cost (a timeout) is named, so the dollars are not read as the whole spend.
+  assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, unpriced: 2 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 2 without a cost) · Codex no ledger`);
+  assert.equal(summaryLine(claude, null, { claudeRuns: { ...runs, unpriced: 1, notRun: 1 } }), `Cost $20.00 · Claude ${pct}% (2 claude-run, 1 without a cost, 1 not run) · Codex no ledger`);
   assert.equal(summaryLine(claude, null, { host: { percent: 5 }, percent: 5 }), 'Cost $12.35 · Claude 0.6% · Codex 5% (host)');
   assert.equal(summaryLine(claude, { percent: 1.5, runs: 3, notRun: 1 }, { host: { percent: 5 }, percent: 6 }), 'Cost $12.35 · Claude 0.6% · Codex 6% (host, 3 runs, 1 not run)');
   // Without either, the line is the one it always was.
@@ -1108,6 +1290,16 @@ test('the wrapper takes a Codex thread id: its rollout under $CODEX_HOME/session
   assert.match(missing.stderr, /session th-404 not found/);
 });
 
+test('--json carries the union Codex % of a Codex host as codexPercent, and null without one', () => {
+  const root = fixture();
+  const env = { CODEX_HOME: codexHome() };
+  const base = ['--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'none.jsonl'), '--json'];
+  const host = JSON.parse(cli(root, ['--session', 'th-1', ...base], root, env).stdout);
+  assert.equal(host.codexPercent, 6);
+  assert.equal(host.summary.match(/Codex ([\d.]+)%/)[1], String(host.codexPercent));
+  assert.equal(JSON.parse(cli(root, ['--session', 'sess1', ...base], root, env).stdout).codexPercent, null);
+});
+
 test('the wrapper reads the main checkout\'s claude-run ledger from a worktree and adds the dollars of the runs made in that worktree', () => {
   const { root, git } = gitRepo();
   const wt = path.join(root, '.worktrees', 'wt2');
@@ -1132,6 +1324,131 @@ test('the wrapper reads the main checkout\'s claude-run ledger from a worktree a
   assert.equal(r.stdout, line(2.75, 3));
   // --cwd-match picks the runs instead
   assert.equal(cli(sessions, [...args, '--cwd-match', path.join('.worktrees', 'wt-other')], wt).stdout, line(5, 1));
+});
+
+test('the wrapper reads the main checkout\'s Codex ledger from a worktree and counts the runs made in that worktree', () => {
+  const { root, git } = gitRepo();
+  const wt = path.join(root, '.worktrees', 'wt');
+  const other = path.join(root, '.worktrees', 'wt-other');
+  git('worktree', 'add', '-q', '-b', 'wt', wt);
+  git('worktree', 'add', '-q', '-b', 'wt-other', other);
+  const link = path.join(tmpDir('unit-cost-link-'), 'wt-link');
+  fs.symlinkSync(wt, link);
+  // each run has its own stretch of the quota: 2 + 1 + 1 made in wt, 5 in the main checkout, 7 in wt-other
+  const row = (cwd, before, after) => JSON.stringify(run({ cwd, limitsBefore: { usedPercent: before, resetsAt: 111 }, limitsAfter: { usedPercent: after, resetsAt: 111 } }));
+  fs.mkdirSync(path.join(root, '.codex-runs'));
+  fs.writeFileSync(
+    path.join(root, '.codex-runs', 'ledger.jsonl'),
+    `${[row(wt, 10, 12), row(path.join(wt, 'src'), 20, 21), row(link, 30, 31), row(root, 40, 45), row(other, 50, 57), JSON.stringify(run({ cwd: undefined, limitsBefore: { usedPercent: 60, resetsAt: 111 }, limitsAfter: { usedPercent: 68, resetsAt: 111 } }))].join('\n')}\n`,
+  );
+  const sessions = fixture();
+  const args = ['--session', 'sess1', '--projects-dir', path.join(sessions, 'projects'), '--line'];
+  const codex = (cwd, more = []) => {
+    const r = cli(sessions, [...args, ...more], cwd);
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim().split(' · ').pop();
+  };
+  // the main checkout's run and the other worktree's are other units'; a row with no cwd is nobody's
+  assert.equal(codex(wt), 'Codex 4% (3 runs)');
+  assert.equal(codex(root), 'Codex 5% (1 runs)');
+  // --cwd-match picks the runs instead
+  assert.equal(codex(wt, ['--cwd-match', path.join('.worktrees', 'wt-other')]), 'Codex 7% (1 runs)');
+});
+
+test('a ledger counts only the runs between the sessions\' first and last turn, a bound the owner gave stays', () => {
+  const root = tmpDir('unit-cost-window-');
+  const proj = path.join(root, 'projects', '-p-app');
+  fs.mkdirSync(proj, { recursive: true });
+  const at = (hhmm) => `2026-10-24T${hhmm}:00Z`;
+  fs.writeFileSync(
+    path.join(proj, 'sess1.jsonl'),
+    `${turn({ id: 'a', at: at('01:00'), usage: { output_tokens: 1 } })}\n${turn({ id: 'b', at: at('03:00'), usage: { output_tokens: 1 } })}\n`,
+  );
+  // a run before the first turn, one between the turns and one after the last, each with its own quota stretch and dollars
+  const times = [
+    [at('00:30'), 10, 12, 1],
+    [at('02:00'), 20, 21, 2],
+    [at('03:30'), 30, 35, 4],
+  ];
+  const rows = (extra) => times.map(([when, lo, hi, costUsd]) => JSON.stringify({ at: when, kind: 'review', cwd: root, outcome: 'ok', costUsd, ms: 1, limitsBefore: { usedPercent: lo, resetsAt: 111 }, limitsAfter: { usedPercent: hi, resetsAt: 111 }, ...extra }));
+  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${rows().join('\n')}\n`);
+  fs.mkdirSync(path.join(root, '.claude-runs'));
+  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${rows().join('\n')}\n`);
+  const read = (...more) => {
+    const r = cli(root, ['--session', 'sess1', '--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'ledger.jsonl'), '--json', ...more]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout);
+    return [j.codex.runs, j.codex.percent, j.claudeRuns.runs, j.claudeRuns.usd, j.claude.turns];
+  };
+  // no bounds: the run between the turns
+  assert.deepEqual(read(), [1, 1, 1, 2, 2]);
+  // --since: the run before the first turn too; the end is the last turn
+  assert.deepEqual(read('--since', at('00:00')), [2, 3, 2, 3, 2]);
+  // --until: the run after the last turn too; the start is the first turn
+  assert.deepEqual(read('--until', at('04:00')), [2, 6, 2, 6, 2]);
+  // both given: as given
+  assert.deepEqual(read('--since', at('00:00'), '--until', at('04:00')), [3, 8, 3, 7, 2]);
+  // the turns themselves keep the window as given
+  assert.equal(read('--since', at('02:00'))[4], 1);
+});
+
+/**
+ * A session whose main thread ends in `tail` (lines after two usage turns at 01:00 and 03:00), both run
+ * ledgers made in the directory it is read from; returns the runs each counts for the extra arguments.
+ */
+function tailCase(tail) {
+  const root = tmpDir('unit-cost-tail-');
+  const proj = path.join(root, 'projects', '-p-app');
+  fs.mkdirSync(proj, { recursive: true });
+  const at = (hhmm) => `2026-10-24T${hhmm}:00Z`;
+  const call = (id, hhmm) => JSON.stringify({ type: 'assistant', timestamp: at(hhmm), requestId: `r-${id}`, message: { id, model: 'claude-opus-5-5', usage: { output_tokens: 1 }, content: [{ type: 'tool_use', id: `t-${id}`, name: 'Bash', input: {} }] } });
+  fs.writeFileSync(path.join(proj, 'sess1.jsonl'), `${[call('a', '01:00'), ...tail(call, at)].join('\n')}\n`);
+  const rows = [
+    [at('00:30'), 10, 12, 1],
+    [at('02:00'), 20, 21, 2],
+    [at('03:30'), 30, 35, 4],
+  ].map(([when, lo, hi, costUsd]) => JSON.stringify({ at: when, kind: 'review', cwd: root, outcome: 'ok', costUsd, ms: 1, limitsBefore: { usedPercent: lo, resetsAt: 111 }, limitsAfter: { usedPercent: hi, resetsAt: 111 } }));
+  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${rows.join('\n')}\n`);
+  fs.mkdirSync(path.join(root, '.claude-runs'));
+  fs.writeFileSync(path.join(root, '.claude-runs', 'ledger.jsonl'), `${rows.join('\n')}\n`);
+  return (...more) => {
+    const r = cli(root, ['--session', 'sess1', '--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'ledger.jsonl'), '--json', ...more]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout);
+    return [j.codex.runs, j.claudeRuns.runs];
+  };
+}
+
+test('a session that ends with a tool result after its last turn counts the run that tool result holds, in both ledgers', () => {
+  const read = tailCase((call, at) => [
+    call('b', '03:00'),
+    JSON.stringify({ type: 'user', timestamp: at('03:40'), message: { content: [{ type: 'tool_result', tool_use_id: 't-b', content: 'done' }] } }),
+  ]);
+  // the run at 03:30 is between the last turn and the last line
+  assert.deepEqual(read(), [2, 2]);
+  assert.deepEqual(read('--until', '2026-10-24T03:10:00Z'), [1, 1]);
+});
+
+test('a session still running a tool counts the runs up to now, and a bound the owner gave stays', () => {
+  const read = tailCase((call) => [call('b', '03:00')]);
+  // the tool call has no result yet: the run at 03:30 may be the one it started
+  assert.deepEqual(read(), [2, 2]);
+  assert.deepEqual(read('--until', '2026-10-24T03:10:00Z'), [1, 1]);
+});
+
+test('a Codex host\'s Codex % counts the ledger\'s runs only between the threads\' first and last time', () => {
+  const root = fixture();
+  const env = { CODEX_HOME: codexHome() };
+  // a run before the threads, one between their turns and one after, each with its own stretch of the quota
+  const row = (min, before, after) => JSON.stringify(run({ at: atMin(min), cwd: root, limitsBefore: { usedPercent: before, resetsAt: 1_800_000_000 }, limitsAfter: { usedPercent: after, resetsAt: 1_800_000_000 } }));
+  fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${[row(-10, 40, 41), row(30, 50, 53), row(80, 60, 65)].join('\n')}\n`);
+  const line = (...more) => {
+    const r = cli(root, ['--session', 'th-1', '--projects-dir', path.join(root, 'projects'), '--ledger', path.join(root, 'ledger.jsonl'), '--line', ...more], root, env);
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  assert.equal(line(), 'Cost $0.00 · Claude 0% · Codex 9% (host, 1 runs)');
+  assert.equal(line('--since', atMin(-60), '--until', atMin(120)), 'Cost $0.00 · Claude 0% · Codex 15% (host, 3 runs)');
 });
 
 test('a Codex thread archived to $CODEX_HOME/archived_sessions is still found, with its subagent', () => {

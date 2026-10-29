@@ -15,10 +15,11 @@ import {
   copyFileSync,
   unlinkSync,
   symlinkSync,
+  chmodSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir, devNull } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SHIPPED =
@@ -27,6 +28,15 @@ const SHIPPED =
 // The [B] budgets the suite runs under. Small, so over-budget fixtures stay small; skillLines is the shipped default.
 const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024, base: 6144 };
 const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile}, base: ${BUDGETS.base} },`;
+// The same line with some keys replaced by source text (`null`, a bad value) or, for `undefined`, left out.
+const budgetsLine = (over = {}) => {
+  const all = { 'AGENTS.md': BUDGETS.agents, 'CLAUDE.md': BUDGETS.claude, rule: BUDGETS.rule, skillLines: BUDGETS.skillLines, stateFile: BUDGETS.stateFile, base: BUDGETS.base, ...over };
+  const parts = Object.entries(all)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k.includes('.') ? `'${k}'` : k}: ${v}`);
+  return `budgets: { ${parts.join(', ')} },`;
+};
+const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base'];
 // The rest is the shipped default, which the fixtures below are written against.
 const CONFIG_BLOCK = `export const CONFIG = {
   ${BUDGETS_LINE}
@@ -136,6 +146,19 @@ function withConfig(from, to) {
   return file;
 }
 
+/** Like withConfig, with several [B] CONFIG lines replaced. */
+function withConfigs(pairs) {
+  let text = readFileSync(SCRIPT, 'utf8');
+  for (const [from, to] of pairs) {
+    assert.ok(text.includes(from), `CONFIG line not found: ${from}`);
+    text = text.replace(from, to);
+  }
+  const dir = track(realpathSync(mkdtempSync(join(tmpdir(), 'check-agent-docs-copy-'))));
+  const file = join(dir, 'check-agent-docs.mjs');
+  writeFileSync(file, text);
+  return file;
+}
+
 test('baseline project passes and reports a check count', () => {
   const r = expectOk();
   assert.ok(Number(r.out.match(/\((\d+) checks\)/)[1]) > 5);
@@ -188,12 +211,117 @@ test('budget: a state file over its byte budget fails', () => {
   expectFail({ 'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n` }, 'budget', `a\\.state\\.md .*budget ${BUDGETS.stateFile}`);
 });
 
+test('budget: a state file that git ignores is still read, from the pattern\'s static prefix only', () => {
+  const ignore = { 'docs/plans/.gitignore': '*.state.md\n' };
+  expectFail({ ...ignore, 'docs/plans/a.state.md': 'x'.repeat(9216) }, 'budget', 'docs/plans/a\\.state\\.md 9216 bytes, budget 1024');
+  // An ignored small one passes, and is counted like a tracked one.
+  assert.equal(checksIn(expectOk(ignore)), checksIn(expectOk()), 'an ignored state file is not counted');
+  // With no static prefix the git list is the only source: an ignored match elsewhere is never read.
+  const anywhere = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: '**/*.state.md'");
+  const big = { 'notes/b.state.md': 'x'.repeat(9216) };
+  const hidden = run(fixture({ '.gitignore': 'notes/\n', ...big }), [], anywhere);
+  assert.equal(hidden.status, 0, `an ignored file outside any static prefix was read: ${hidden.all}`);
+  const shown = run(fixture(big), [], anywhere);
+  assert.equal(shown.status, 1, `the control (not ignored) did not fail: ${shown.all}`);
+  assert.match(shown.err, /^FAIL budget: notes\/b\.state\.md 9216 bytes/m, shown.all);
+});
+
+test('budget: a state pattern with a leading ./ still finds an ignored state file', () => {
+  const dotted = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: './docs/plans/**/*.state.md'");
+  const dir = fixture({ 'docs/plans/.gitignore': '*.state.md\n', 'docs/plans/a.state.md': 'x'.repeat(9216) });
+  const r = run(dir, [], dotted);
+  assert.equal(r.status, 1, `the ignored state file was not read through a ./ pattern: ${r.all}`);
+  assert.match(r.err, /^FAIL budget: docs\/plans\/a\.state\.md 9216 bytes/m, r.all);
+});
+
+test('budget: the state walk follows the pattern\'s own segments - a workspace glob and braces still find ignored files', () => {
+  const big = 'x'.repeat(9216);
+  const ignore = { '.gitignore': 'apps/*/docs/plans/\n' };
+  const star = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/*/docs/plans/**/*.state.md'");
+  const files = { ...ignore, 'apps/web/docs/plans/a.state.md': big, 'apps/api/docs/plans/sub/deep/b.state.md': big };
+  const found = run(fixture(files), [], star);
+  assert.equal(found.status, 1, found.all);
+  assert.match(found.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `the workspace glob missed a state file: ${found.all}`);
+  assert.match(found.err, /^FAIL budget: apps\/api\/docs\/plans\/sub\/deep\/b\.state\.md /m, `a file under ** was pruned: ${found.all}`);
+  const braces = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/{web,api}/docs/plans/*.state.md'");
+  const both = run(fixture(files), [], braces);
+  assert.match(both.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `a brace alternative missed its file: ${both.all}`);
+  assert.doesNotMatch(both.err, /deep\/b\.state\.md/, `a file below a single-segment pattern was read: ${both.all}`);
+});
+
+test('budget: the state walk stays out of directories the pattern cannot match, and does not run for --rules-for or a null stateFile', () => {
+  const STAR = "statePattern: 'apps/*/docs/plans/**/*.state.md'";
+  const WALK = "statePattern: 'docs/plans/**/*.state.md'";
+  const star = withConfigs([[WALK, STAR]]);
+  const starNoState = withConfigs([[WALK, STAR], [BUDGETS_LINE, budgetsLine({ stateFile: 'null' })]]);
+  const files = { 'apps/web/docs/plans/a.state.md': '# State\n', 'apps/web/node_modules/locked/x.txt': 'x\n' };
+  const locked = (d) => join(d, 'apps/web/node_modules/locked');
+  const dir = fixture(files, (d) => chmodSync(locked(d), 0o000)); // under root a read still works: the test then passes anyway
+  try {
+    const r = run(dir, [], star);
+    assert.equal(r.status, 0, `the walk went into node_modules: ${r.all}`);
+    assert.match(r.out, /^check-agent-docs: OK/m, r.all);
+    // A `--rules-for` run returns before the state files are read; so does a run with the budget off.
+    const rules = run(dir, ['--rules-for', 'src/db/schema.js'], star);
+    assert.equal(rules.status, 0, `--rules-for walked the state directories: ${rules.all}`);
+    assert.equal(rules.out, '.claude/rules/db.md\n', rules.all);
+    const off = run(dir, [], starNoState);
+    assert.equal(off.status, 0, `a null stateFile budget still walked the state directories: ${off.all}`);
+  } finally {
+    chmodSync(locked(dir), 0o755); // so the temp dir can be removed
+  }
+});
+
 test('budget: a SKILL.md over its line budget fails and exactly the budget passes', () => {
   const head = '---\nname: demo\ndescription: Demo\n---\n';
   const body = (n) => `${head}${'line\n'.repeat(n - 4)}`;
   const max = BUDGETS.skillLines;
   expectOk({ '.claude/skills/demo/SKILL.md': body(max) });
   expectFail({ '.claude/skills/demo/SKILL.md': body(max + 1) }, 'budget', `SKILL\\.md ${max + 1} lines, budget ${max}`);
+});
+
+/** Every file over its test budget, and so the always-loaded total over the base. */
+function overEveryBudget() {
+  return {
+    'AGENTS.md': `${baseFiles()['AGENTS.md']}${'x'.repeat(BUDGETS.agents)}\n`,
+    'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(BUDGETS.claude)}\n`,
+    '.claude/rules/db.md': `---\npaths:\n  - "src/db/**"\n---\n${'x'.repeat(BUDGETS.rule)}\n`,
+    'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n`,
+    '.claude/skills/demo/SKILL.md': `---\nname: demo\ndescription: Demo\n---\n${'line\n'.repeat(BUDGETS.skillLines)}`,
+  };
+}
+const allNull = Object.fromEntries(BUDGET_KEYS.map((k) => [k, 'null']));
+
+test('budget: a null budget is off - files over the default budgets pass and no budget check is counted', () => {
+  const nulls = withConfig(BUDGETS_LINE, budgetsLine(allNull));
+  const dir = fixture(overEveryBudget());
+  assert.equal(run(dir).status, 1, 'the default budgets must fail this fixture, or the null run proves nothing');
+  const off = run(dir, [], nulls);
+  assert.equal(off.status, 0, `every budget null still fails: ${off.all}`);
+  // AGENTS.md, CLAUDE.md, rule, state file, skill and base: one check each in a default run.
+  assert.equal(checksIn(run(fixture(), [], nulls)), checksIn(run(fixture())) - 6, 'a null budget still counts a check');
+});
+
+test('budget: a missing key fails once, names the key and its files are not checked', () => {
+  const dir = fixture(overEveryBudget());
+  for (const key of BUDGET_KEYS) {
+    const script = withConfig(BUDGETS_LINE, budgetsLine({ ...allNull, [key]: undefined }));
+    const r = run(dir, [], script);
+    assert.equal(r.status, 1, `${key} missing: expected exit 1, got ${r.status}: ${r.all}`);
+    const lines = r.err.match(/^FAIL budget: .*$/gm) ?? [];
+    assert.deepEqual(lines, [`FAIL budget: CONFIG.budgets.${key} is missing - set a number, or null to turn it off`], `${key} missing: ${r.all}`);
+  }
+});
+
+test('budget: a value that is not a whole number or null fails once, with the value', () => {
+  const dir = fixture(overEveryBudget());
+  const bad = [['rule', "'16384'", '"16384"'], ['stateFile', '-1', '-1'], ['skillLines', '1.5', '1.5'], ['AGENTS.md', 'true', 'true'], ['base', 'NaN', 'NaN']];
+  for (const [key, source, shown] of bad) {
+    const r = run(dir, [], withConfig(BUDGETS_LINE, budgetsLine({ ...allNull, [key]: source })));
+    assert.equal(r.status, 1, `${key} ${source}: expected exit 1, got ${r.status}: ${r.all}`);
+    const lines = r.err.match(/^FAIL budget: .*$/gm) ?? [];
+    assert.deepEqual(lines, [`FAIL budget: CONFIG.budgets.${key} is ${shown}, not a whole number or null`], `${key} ${source}: ${r.all}`);
+  }
 });
 
 // 3. rule-paths
@@ -353,6 +481,27 @@ test('links: root-relative, file-relative, fragment, anchor, http and mailto lin
   expectOk({ 'AGENTS.md': text, '.claude/rules/db.md': rule });
 });
 
+test('links: a link in a nested file is read against the file and against the repository root', () => {
+  const head = '---\npaths:\n  - "src/db/**"\n---\n\n';
+  const rule = (link) => ({ '.claude/rules/db.md': `${head}See ${link}.\n` });
+  expectOk(rule('[g](docs/guide.md)'));
+  const gone = expectFail(rule('[g](docs/gone.md)'), 'links', '\\.claude/rules/db\\.md:6 link target `docs/gone\\.md` does not exist');
+  assert.equal(gone.err.match(/^FAIL /gm).length, 1, gone.err);
+  // A skill's own reference file, beside it, passes as before.
+  const skill = '---\nname: demo\ndescription: Demo\n---\n\nSee [r](reference/a.md).\n';
+  expectOk({ '.claude/skills/demo/SKILL.md': skill, '.claude/skills/demo/reference/a.md': '# A\n' });
+  // A target that is absent and gitignored at the root passes; absent and not ignored fails.
+  expectOk({ '.gitignore': 'docs/private/\n', ...rule('[p](docs/private/notes.md)') });
+  expectFail(rule('[p](docs/private/notes.md)'), 'links', 'docs/private/notes\\.md');
+  // A root-relative reading never leaves the repository: `../<this repo>/docs/guide.md` is not the repository's guide.
+  const out = fixture({}, (d) => {
+    writeFileSync(join(d, '.claude/rules/db.md'), `${head}See [g](../${basename(d)}/docs/guide.md).\n`);
+  });
+  const r = run(out);
+  assert.equal(r.status, 1, `a root-relative link out of the repository passed: ${r.all}`);
+  assert.match(r.err, /^FAIL links: \.claude\/rules\/db\.md:6 /m, r.all);
+});
+
 test('links: links inside code fences and inline code are ignored', () => {
   expectOk({ 'AGENTS.md': `${baseFiles()['AGENTS.md']}\n\`[x](docs/nope.md)\`\n\n\`\`\`\n[y](docs/nope2.md)\n\`\`\`\n` });
 });
@@ -365,6 +514,26 @@ test('paths: a backticked path that does not exist fails', () => {
 test('paths: globs, placeholders, other prefixes and existing paths pass', () => {
   const extra = '\nSee `src/**/*.js`, `src/<name>/x.js`, `docs/{a,b}.md`, `other/missing.js`, `src/index.js:3-9`, `src/db/`.\n';
   expectOk({ 'AGENTS.md': `${baseFiles()['AGENTS.md']}${extra}` });
+});
+
+test('paths: a prefix whose directory is absent at the root is skipped (a monorepo cites workspace paths)', () => {
+  const rule = (cited, glob = 'src/db/**') => `---\npaths:\n  - "${glob}"\n---\n\nSee ${cited}.\n`;
+  const monorepo = (cited) => ({
+    'src/index.js': null,
+    'src/db/schema.js': null,
+    'apps/web/src/a.ts': 'export {};\n',
+    'AGENTS.md': baseFiles()['AGENTS.md'].replace('`src/index.js`', '`apps/web/src/a.ts`'),
+    '.claude/rules/db.md': rule(cited, 'apps/web/src/**'),
+  });
+  const skipped = run(fixture(monorepo('`src/outcome.ts`')));
+  assert.equal(skipped.status, 0, `a workspace-relative citation was read as a root path: ${skipped.all}`);
+  // The prefix that does name a root directory still counts.
+  expectFail({ '.claude/rules/db.md': rule('`src/gone.ts`') }, 'paths', 'src/gone\\.ts');
+  expectOk({ '.claude/rules/db.md': rule('`src/index.js`') });
+  // A file named like the directory does not make the prefix count.
+  const file = run(fixture({ lib: 'not a directory\n', ...monorepo('`lib/x.ts`') }));
+  assert.equal(file.status, 0, `a file named lib made the lib/ prefix count: ${file.all}`);
+  expectFail({ 'lib/y.ts': 'export {};\n', '.claude/rules/db.md': rule('`lib/x.ts`') }, 'paths', 'lib/x\\.ts');
 });
 
 test('paths: intentionallyAbsent exempts a path', () => {
@@ -435,6 +604,27 @@ test('directories and dangling symlinks named *.md or SKILL.md are skipped, neve
   assert.doesNotMatch(r.all, /EISDIR|ENOENT|at .*\.mjs/);
 });
 
+test('a skill reached through both skill directories is read once and reported by the path a fix edits', () => {
+  for (const [realDir, linkDir] of [
+    ['.agents/skills', '.claude/skills'],
+    ['.claude/skills', '.agents/skills'],
+  ]) {
+    const dir = fixture({ [`${realDir}/x/SKILL.md`]: '# No frontmatter\n' }, (d) => {
+      try {
+        mkdirSync(join(d, linkDir), { recursive: true });
+        symlinkSync(`../../${realDir}/x`, join(d, linkDir, 'x'));
+      } catch {
+        // symlinks may be unavailable (Windows without privileges); then only the real skill exists
+      }
+    });
+    const r = run(dir);
+    assert.equal(r.status, 1, r.all);
+    const found = r.err.match(/^FAIL frontmatter: .*$/gm) ?? [];
+    assert.equal(found.length, 1, `${realDir}: the skill is reported ${found.length} times: ${r.err}`);
+    assert.match(found[0], new RegExp(`^FAIL frontmatter: ${realDir.replace('.', '\\.')}/x/SKILL\\.md:1 has no frontmatter$`), r.all);
+  }
+});
+
 // 7. frontmatter
 test('frontmatter: a skill without frontmatter or without description fails', () => {
   expectFail({ '.claude/skills/demo/SKILL.md': '# Demo\n' }, 'frontmatter', 'SKILL\\.md:1 has no frontmatter');
@@ -501,16 +691,23 @@ test('frontmatter values are not link- or path-checked', () => {
 
 // 8. secrets
 test('secrets: credential-shaped strings fail and are never printed', () => {
+  // Every value is built at run time, so this file never holds a literal a secret scanner flags.
+  const aws = 'AKIA' + 'ABCDEFGHIJKLMNOP';
+  const val = ['abcdefghij', 'klmnop1234'].join('');
+  const sk = 'sk-' + 'abcdefghijklmnopqrstuvwxyz';
+  const pw = ['hunter2', 'hunter2', 'hunter2'].join('');
   const cases = [
-    ['api_key = abcdefghijklmnop1234', 'abcdefghijklmnop1234'],
-    ['AWS AKIAABCDEFGHIJKLMNOP here', 'AKIAABCDEFGHIJKLMNOP'],
-    ['key sk-abcdefghijklmnopqrstuvwxyz', 'sk-abcdefghijklmnopqrstuvwxyz'],
-    ['-----BEGIN RSA PRIVATE KEY-----', 'BEGIN RSA PRIVATE KEY'],
-    ['Password: "hunter2hunter2hunter2"', 'hunter2hunter2hunter2'],
+    [`api_key = ${val}`, val],
+    [`AWS ${aws} here`, aws],
+    [`key ${sk}`, sk],
+    ['-----BEGIN RSA ' + 'PRIVATE KEY-----', 'BEGIN RSA PRIVATE KEY'],
+    [`Password: "${pw}"`, pw],
+    [`"password": "${val}"`, val], // a JSON key
+    [`\\"api_key\\": \\"${val}\\"`, val], // a JSON-escaped key and value, as in a stringified settings file
   ];
   for (const [line, secret] of cases) {
     const r = expectFail({ 'CLAUDE.md': `@AGENTS.md\n${line}\n` }, 'secrets', 'CLAUDE\\.md:2 ');
-    assert.ok(!r.all.includes(secret), `output leaked ${secret}`);
+    assert.ok(!r.all.includes(secret), `output leaked a ${secret.length}-character value`);
   }
 });
 
@@ -655,12 +852,29 @@ test('--base --json: the files, their total, the target and the excess', () => {
   assert.deepEqual(Object.keys(parsed.files[0]).sort(), ['bytes', 'file', 'via']);
 });
 
-test('base: an install with no base budget skips the check, and --base says no target is set', () => {
-  const script = withConfig(`, base: ${BUDGETS.base} }`, ' }');
+test('base: an install with a null base budget skips the check, and --base says no target is set', () => {
+  const script = withConfig(`, base: ${BUDGETS.base} }`, ', base: null }');
   const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
   assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
   assert.equal(run(dir, [], script).status, 0);
   assert.match(run(dir, ['--base'], script).out, /no target set \(budgets\.base\)/);
+});
+
+test('base: --base and --base --json with a null or a missing base budget print no target and no excess', () => {
+  const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
+  for (const base of ['null', undefined]) {
+    const script = withConfig(BUDGETS_LINE, budgetsLine({ base }));
+    const text = run(dir, ['--base'], script);
+    assert.equal(text.status, 0, text.all);
+    assert.match(text.out, /no target set \(budgets\.base\)/, `base ${base}: ${text.out}`);
+    assert.doesNotMatch(text.out, /over the target/, `base ${base}: ${text.out}`);
+    const json = JSON.parse(run(dir, ['--base', '--json'], script).out);
+    assert.equal(json.target, null, `base ${base}: target ${json.target}`);
+    assert.equal(json.over, null, `base ${base}: over ${json.over}`);
+  }
+  // Missing is a mistake the full run reports once; null is a choice it does not.
+  const full = run(dir, [], withConfig(BUDGETS_LINE, budgetsLine({ base: undefined })));
+  assert.deepEqual(full.err.match(/^FAIL .*$/gm), ['FAIL budget: CONFIG.budgets.base is missing - set a number, or null to turn it off'], full.all);
 });
 
 // 10. citations
@@ -837,4 +1051,44 @@ test('outside a git repository: fails the check, but --rules-for just prints not
   const rf = spawnSync(process.execPath, [copy, '--rules-for', 'x'], { cwd: dir, encoding: 'utf8', env });
   assert.equal(rf.status, 0);
   assert.equal(rf.stdout, '');
+});
+
+// arguments: --help prints the usage; an unknown flag is a usage error, never a lint run
+test('--help and -h print the usage on stdout and exit 0, even outside a git repository', () => {
+  const dir = track(realpathSync(mkdtempSync(join(tmpdir(), 'check-agent-docs-help-'))));
+  const copy = join(dir, 'check-agent-docs.mjs');
+  copyFileSync(SCRIPT, copy);
+  const env = { ...ENV, GIT_CEILING_DIRECTORIES: dirname(dir) };
+  for (const flag of ['--help', '-h']) {
+    const r = spawnSync(process.execPath, [copy, flag], { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `${flag}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.stderr, '');
+    assert.match(r.stdout, /^usage: node scripts\/check-agent-docs\.mjs \[--json\] \[--base\] \| --rules-for <file\.\.\.>\n$/);
+  }
+});
+
+test('an unknown flag is a usage error with exit 2, and no check runs', () => {
+  const r = run(fixture(), ['--bogus']);
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /^check-agent-docs: unknown option --bogus$/m);
+  assert.match(r.err, /^usage: node scripts\/check-agent-docs\.mjs /m);
+  assert.doesNotMatch(r.all, /FAIL|OK \(/);
+  assert.equal(r.out, '');
+});
+
+test('-h and --help after --rules-for are paths, not a request for the usage', () => {
+  const dir = fixture();
+  const r = run(dir, ['--json', '--rules-for', 'src/db/schema.js', '-h', '--help']);
+  assert.equal(r.status, 0, r.all);
+  assert.equal(r.out, '.claude/rules/db.md\n');
+});
+
+test('a bare word before --rules-for is a usage error; the paths after --rules-for are still paths', () => {
+  const dir = fixture();
+  const r = run(dir, ['stray']);
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /^check-agent-docs: unexpected argument stray$/m);
+  const ok = run(dir, ['--json', '--rules-for', 'src/db/schema.js', '--not-a-path', 'other.txt']);
+  assert.equal(ok.status, 0, ok.all);
+  assert.equal(ok.out, '.claude/rules/db.md\n');
 });

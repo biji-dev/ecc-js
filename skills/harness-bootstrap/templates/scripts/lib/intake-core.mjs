@@ -2,7 +2,7 @@
 // [M] mechanism (ships as-is): everything below the [B] block. [B] binding: the block right
 // below -- the words that mark a question this project's documents leave open.
 /**
- * Feature intake (reference/intake.md): checks a drafted request for the properties the owner
+ * Feature intake (harness-bootstrap's reference/intake.md): checks a drafted request for the properties the owner
  * sheet needs, whatever the project's own shape -- each deliverable's Demo: line, every P and C
  * decision as a card, the Never-auto: and Risk map: lines, the Estimate: line, unit 1's Scope
  * block -- and decides unit 1's Gate 1 from the request's Approved: line. No I/O here
@@ -21,7 +21,7 @@ import crypto from 'node:crypto';
 export const STRAY = /\bTBD\b|\?\?|\bto be decided\b/i;
 // ---- end [B]
 
-// The Scope block's labels (scope-guard.md), in the order the hash reads them.
+// The Scope block's labels (harness-bootstrap's reference/scope-guard.md), in the order the hash reads them.
 export const LABELS = ['In scope', 'Out of scope', 'Done when', 'Must not', 'Verification plan'];
 const REQUIRED = LABELS.slice(0, 3);
 const PREFIX = String.raw`^\s*(?:>\s*)?(?:[-*]\s+)?`;
@@ -146,7 +146,7 @@ function readCards(text) {
   return { cards, covered };
 }
 
-/** Decision cards (gate-design.md › Who decides): `<id> · <class> · <question>`, then its body up to the next card, heading or fence. */
+/** Decision cards (harness-bootstrap's reference/gate-design.md › Who decides): `<id> · <class> · <question>`, then its body up to the next card, heading or fence. */
 export function parseCards(text) {
   return readCards(text).cards;
 }

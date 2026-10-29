@@ -39,14 +39,14 @@ const TARGETED = new Set(['register', 'unregister']);
 const VALUE_FLAGS = {
   '--project': 'project',
   '--log': 'log',
-  '--follow-ups': 'followUps',
   '--home': 'home',
   '--projects-dir': 'projectsDir',
   '--config-dir': 'configDir',
+  '--codex-home': 'codexHome',
   '--claude': 'claude',
   '--budget': 'budget',
 };
-const REGISTER_ONLY = ['project', 'log', 'followUps'];
+const REGISTER_ONLY = ['project', 'log'];
 // A project names its export directory.
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -61,11 +61,12 @@ export function parseArgs(argv) {
     dryRun: false,
     project: null,
     log: null,
-    followUps: null,
+    followUps: [],
     plans: [],
     home: null,
     projectsDir: null,
     configDir: null,
+    codexHome: null,
     claude: null,
     budget: REVIEW_BUDGET_USD,
     review: true,
@@ -85,18 +86,19 @@ export function parseArgs(argv) {
     else if (t === '--no-review') a.review = false;
     else if (t === '--no-notify') a.notify = false;
     else if (t === '--plans') a.plans.push(value(t, argv[++i]));
+    else if (t === '--follow-ups') a.followUps.push(value(t, argv[++i]));
     else if (Object.hasOwn(VALUE_FLAGS, t)) a[VALUE_FLAGS[t]] = value(t, argv[++i]);
     else throw new Error(`unknown option ${t}`);
   }
   if (!a.command && a.dryRun) a.command = 'run';
   if (!a.command) throw new Error('no command');
   if (a.dryRun && !['run', 'install', 'uninstall'].includes(a.command)) throw new Error(`--dry-run goes with --run, --install or --uninstall, not ${a.command}`);
-  if (a.command !== 'register' && (REGISTER_ONLY.some((k) => a[k] !== null) || a.plans.length)) {
+  if (a.command !== 'register' && (REGISTER_ONLY.some((k) => a[k] !== null) || a.followUps.length || a.plans.length)) {
     throw new Error('--project, --log, --follow-ups and --plans go with --register');
   }
   if (a.command !== 'run' && (!a.review || !a.notify)) throw new Error('--no-review and --no-notify go with --run');
   if (a.project !== null && !PROJECT_NAME.test(a.project)) throw new Error(`bad project name "${a.project}"`);
-  for (const rel of [a.log, a.followUps, ...a.plans]) if (rel !== null) inside(rel, 'a path');
+  for (const rel of [a.log, ...a.followUps, ...a.plans]) if (rel !== null) inside(rel, 'a path');
   a.budget = Number(a.budget);
   if (!(Number.isFinite(a.budget) && a.budget > 0)) throw new Error('--budget must be a positive number of dollars');
   return a;
@@ -111,7 +113,7 @@ function inside(rel, what) {
 
 export const emptyRegistry = () => ({ schema: 1, repos: [] });
 
-/** The registry file's text -> { schema: 1, repos: [{ path, project, log?, followUps?, plans? }] }; throws when it is not one. */
+/** The registry file's text -> { schema: 1, repos: [{ path, project, log?, followUps?, plans? }] } (followUps a list, or an older registry's string); throws when it is not one. */
 export function readRegistry(text) {
   let r;
   try {
@@ -154,15 +156,18 @@ export function planDirs(tracked) {
  * A registered repository's files: the registry entry's own value, else the manifest's role, else
  * the first candidate the repository tracks; plans from the entry or from where its state and steps
  * files are. `from` says which, for the dry run. A manifest role outside the repository is ignored.
+ * The follow-ups value is a path or a list of them (an older registry's string, or a list role), as given.
  */
 export function resolveRepo(entry, { manifest = null, tracked = [] } = {}) {
   const has = new Set(tracked);
   const from = {};
-  const pick = (key, role, candidates) => {
+  const pick = (key, role, candidates, { list = false } = {}) => {
     const roleValue = manifest?.roles?.[role];
+    const given = entry[key];
+    const roleOk = (typeof roleValue === 'string' && safe(roleValue)) || (list && Array.isArray(roleValue) && roleValue.length > 0 && roleValue.every((r) => typeof r === 'string' && safe(r)));
     let rel = null;
-    if (entry[key]) [rel, from[key]] = [entry[key], 'registry'];
-    else if (typeof roleValue === 'string' && safe(roleValue)) [rel, from[key]] = [roleValue, 'manifest'];
+    if (Array.isArray(given) ? given.length : given) [rel, from[key]] = [given, 'registry'];
+    else if (roleOk) [rel, from[key]] = [roleValue, 'manifest'];
     else {
       rel = candidates.find((c) => has.has(c)) ?? null;
       from[key] = rel ? 'found' : 'none';
@@ -170,7 +175,7 @@ export function resolveRepo(entry, { manifest = null, tracked = [] } = {}) {
     return rel;
   };
   const log = pick('log', 'log', LOG_CANDIDATES);
-  const followUps = pick('followUps', 'follow-ups', FOLLOW_UPS_CANDIDATES);
+  const followUps = pick('followUps', 'follow-ups', FOLLOW_UPS_CANDIDATES, { list: true });
   const plans = entry.plans?.length ? entry.plans : planDirs(tracked);
   from.plans = entry.plans?.length ? 'registry' : plans.length ? 'found' : 'none';
   return { path: entry.path, project: entry.project, log, followUps, plans, from };
@@ -296,9 +301,10 @@ const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 /**
  * The LaunchAgent plist: the program and its arguments, the weekly calendar slot, PATH (and the
- * Claude Code config directory when one is set: launchd never sees the shell's), and one log file.
+ * Claude Code config directory and the Codex home when they are set: launchd never sees the shell's),
+ * and one log file.
  */
-export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile, configDir = null }) {
+export function launchdPlist({ label = LABEL, programArguments, schedule = SCHEDULE, pathEnv, logFile, configDir = null, codexHome = null }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -311,7 +317,7 @@ export function launchdPlist({ label = LABEL, programArguments, schedule = SCHED
     '  </array>',
     '  <key>StartCalendarInterval</key>',
     `  <dict><key>Weekday</key><integer>${schedule.weekday}</integer><key>Hour</key><integer>${schedule.hour}</integer><key>Minute</key><integer>${schedule.minute}</integer></dict>`,
-    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string>${configDir ? `<key>CLAUDE_CONFIG_DIR</key><string>${xml(configDir)}</string>` : ''}</dict>`,
+    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(pathEnv)}</string>${configDir ? `<key>CLAUDE_CONFIG_DIR</key><string>${xml(configDir)}</string>` : ''}${codexHome ? `<key>CODEX_HOME</key><string>${xml(codexHome)}</string>` : ''}</dict>`,
     `  <key>StandardOutPath</key><string>${xml(logFile)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(logFile)}</string>`,
     '  <key>ProcessType</key><string>Background</string>',
@@ -331,16 +337,17 @@ export const shellLine = (args) => args.map(shq).join(' ');
  * The cron line (Linux) and the schtasks line (Windows) for the same weekly slot. The cron line makes
  * the log's directory first: the shell opens the redirect before the command runs, and a missing
  * directory fails it, so the job would never start. A set `configDir` goes in as the command's
- * CLAUDE_CONFIG_DIR, which cron never inherits; schtasks sets no environment, so its task passes
- * the directory as `--config-dir`.
+ * CLAUDE_CONFIG_DIR, which cron never inherits, and a set `codexHome` as its CODEX_HOME (where the retro
+ * reads the Codex host's threads); schtasks sets no environment, so its task passes them as
+ * `--config-dir` and `--codex-home`.
  */
-export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null }) {
+export function scheduleLines({ programArguments, logFile, schedule = SCHEDULE, configDir = null, codexHome = null }) {
   const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const hhmm = `${String(schedule.hour).padStart(2, '0')}:${String(schedule.minute).padStart(2, '0')}`;
   const [program, ...rest] = programArguments;
-  const tr = [program, ...rest, ...(configDir ? ['--config-dir', configDir] : [])].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
+  const tr = [program, ...rest, ...(configDir ? ['--config-dir', configDir] : []), ...(codexHome ? ['--codex-home', codexHome] : [])].map((x) => (/\s/.test(x) ? `\\"${x}\\"` : x)).join(' ');
   return {
-    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
+    cron: `${schedule.minute} ${schedule.hour} * * ${schedule.weekday} mkdir -p ${shq(path.dirname(logFile))} && ${configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ` : ''}${codexHome ? `CODEX_HOME=${shq(codexHome)} ` : ''}${shellLine(programArguments)} >> ${shq(logFile)} 2>&1`,
     schtasks: `schtasks /Create /F /SC WEEKLY /D ${days[schedule.weekday]} /ST ${hhmm} /TN harness-retro-weekly /TR "${tr}"`,
   };
 }

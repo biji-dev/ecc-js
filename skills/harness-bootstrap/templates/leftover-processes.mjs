@@ -45,7 +45,7 @@ export function parseLsof(out) {
 
 /** The listeners and machine-wide processes to name, for the checkout at `root`. */
 export function leftovers(root) {
-  let main = false;
+  let main;
   try {
     main = statSync(join(root, '.git')).isDirectory();
   } catch {
@@ -61,7 +61,9 @@ export function leftovers(root) {
       if (!cwd || (cwd !== root && !cwd.startsWith(root + sep))) continue;
       if (main && cwd.startsWith(worktrees)) continue;
       const ports = [...new Set(names.map((n) => n.slice(n.lastIndexOf(':') + 1)))].join(',');
-      found.push(`:${ports} ${run('ps', ['-o', 'command=', '-p', pid]).trim().slice(0, 60)} (pid ${pid})`);
+      // the executable only: a command line can carry a secret (macOS's comm is the full path)
+      const exe = run('ps', ['-o', 'comm=', '-p', pid]).trim();
+      found.push(`:${ports} ${exe.slice(exe.lastIndexOf('/') + 1)} (pid ${pid})`);
     }
   }
   // by the executable's name alone: a shell whose command text mentions one is not one
@@ -125,10 +127,10 @@ async function main() {
   }
   if (!found.length && !tight) return;
   const list = found.join('; ');
-  // the installed copy exists only once the owner approved a category (machine.md)
+  // the installed copy exists only once the owner approved a category (harness-bootstrap's reference/machine.md)
   const sweep = existsSync(join(homedir(), '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'))
     ? 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --report lists the rest'
-    : "the harness-bootstrap skill's scripts/machine-sweep.mjs --report lists the rest (machine.md)";
+    : "the harness-bootstrap skill's scripts/machine-sweep.mjs --report lists the rest (the skill's reference/machine.md)";
   if (input.hook_event_name === 'Stop') {
     const parts = [];
     if (found.length) parts.push(`Still running from this checkout: ${list}`);

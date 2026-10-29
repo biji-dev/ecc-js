@@ -180,7 +180,8 @@ project may add its own. A ledger row's Step cell starts with the step's id (`8b
 
 `[M]` **Its steps file sits beside it:** `<unit>.steps.jsonl`, one JSON line per step
 start or end, appended by `unit-step.mjs` and never edited by hand (`runner.md` › Step
-markers). Committed with the state file, and kept after the unit lands: it is the only
+markers). Committed when the state file is — where the project keeps its state files
+out of git, both stay on this machine — and kept after the unit lands: it is the only
 record of which step spent the time. About 30 lines a unit, so no byte budget.
 
 `[M]` **Byte budget**, enforced by the agent-docs lint (`check-agent-docs.mjs`):
@@ -207,4 +208,6 @@ unit that filed it, and a **Status**: `open` · `scheduled <unit>` · `fixed <sh
 
 `[M]` Grounding reads it: rows scheduled for this unit are part of its requirement.
 
-`[B]` Path (default `docs/harness/follow-ups.md`), created as a scaffold.
+`[B]` Path (default `docs/harness/follow-ups.md`), created as a scaffold. The path may
+be a list, with `<dir>/*.md` entries (a directory's markdown files, by name); a doc of
+another shape binds STATUS_COLUMNS, STATUS_WORDS and SEVERITY_COLUMNS in retro-core.

@@ -136,7 +136,7 @@ test('formatHost: the role line first, exactly as the switch line quotes it', ()
   assert.deepEqual(formatHost(missing).split('\n'), [
     'host kimi · main ? · second family ?',
     '  detected by HARNESS_HOST',
-    `HAZARD host-models-missing — ${MODELS_FILE} has no kimi entry: the roles have no models on this host (gate-design.md › Model and effort)`,
+    `HAZARD host-models-missing — ${MODELS_FILE} has no kimi entry: the roles have no models on this host (harness-bootstrap's reference/gate-design.md › Model and effort)`,
     'harness-host: 1 hazard',
   ]);
   const noFile = hostReport({ host: 'codex', by: 'CODEX_SANDBOX', models: null, modelsError: 'missing', hazards: [] });
@@ -144,6 +144,22 @@ test('formatHost: the role line first, exactly as the switch line quotes it', ()
   const unknown = hostReport({ host: 'unknown', by: '', models: null, hazards: [] });
   assert.equal(unknown.known, false);
   assert.match(formatHost(unknown), /^host unknown · no host variable is set: set HARNESS_HOST/);
+});
+
+test('a hazard that cites a skill file cites it as harness-bootstrap\'s reference/<file>, which a project does have', () => {
+  // The templates install into a project with no gate-design.md, context.md or cross-model.md.
+  const zcode = MODELS.hosts.zcode;
+  const details = [
+    ...effortHazards('claude', { env: { CLAUDE_CODE_EFFORT_LEVEL: 'max', CLAUDE_EFFORT: 'xhigh' } }),
+    ...familyHazards('zcode', { ...zcode, second: null, fallback: null }, {}),
+    ...familyHazards('zcode', zcode, { codex: { ok: false, why: 'a' }, claude: { ok: false, why: 'b' } }),
+    ...hostReport({ host: 'kimi', by: 'HARNESS_HOST', models: parseModels(json(MODELS)), hazards: [] }).hazards,
+  ].map((h) => h.detail);
+  const cited = details.flatMap((d) => d.match(/[\w-]+\.md/g) ?? []);
+  assert.deepEqual([...new Set(cited)].sort(), ['context.md', 'cross-model.md', 'gate-design.md']);
+  for (const d of details)
+    for (const [, name] of d.matchAll(/([\w-]+\.md)/g))
+      assert.ok(d.includes(`harness-bootstrap's reference/${name}`), `${name} is cited bare in: ${d}`);
 });
 
 const RUNNER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'harness-host.mjs');

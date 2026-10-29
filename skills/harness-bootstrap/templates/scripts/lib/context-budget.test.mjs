@@ -3,6 +3,8 @@
 // at this project's own figures: each case writes a transcript and pipes a real hook payload into
 // it. Hermetic: no settings file, window variable or CONTEXT_BUDGET_* setting reaches the hook,
 // so the figures are its defaults (the window lookup is the template's own suite).
+// [B] binding: the EXPECTED line, bound with the hook's [B] WARN, DEFAULT_LIMIT and GATE_TEXT lines
+// and equal to them. The cases run at these figures, never at the hook's: a rebound hook fails here.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,6 +12,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// [B] The hook's figures with no window set: its WARN, DEFAULT_LIMIT and GATE_TEXT.
+const EXPECTED = { WARN: 220_000, LIMIT: 260_000, GATE_TEXT: 150_000 };
 
 const HOOK = fileURLToPath(new URL('../../.claude/hooks/context-budget.mjs', import.meta.url));
 const EVENTS = ['Stop', 'UserPromptSubmit', 'PostToolUse'];
@@ -27,11 +32,11 @@ const tmp = (prefix) => {
 const HOME = tmp('context-budget-home-');
 const ENV = { ...process.env, HOME };
 for (const k of ['CONTEXT_BUDGET_WARN', 'CONTEXT_BUDGET_LIMIT', 'CONTEXT_BUDGET_STATE_DIR', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_PROJECT_DIR', 'CLAUDE_CONFIG_DIR']) delete ENV[k];
-// The hook's figures, as it reads them under that environment (its WARN is read at import).
+// The hook's own figures under that environment (its WARN is read at import), held to EXPECTED below.
 delete process.env.CONTEXT_BUDGET_WARN;
 const { GATE_TEXT, budgetFigures } = await import(pathToFileURL(HOOK).href);
-const { warn: WARN, limit: LIMIT } = budgetFigures(ENV, tmp('context-budget-project-'), HOME);
-const GATE = Math.min(GATE_TEXT, WARN);
+const { WARN, LIMIT } = EXPECTED;
+const GATE = Math.min(EXPECTED.GATE_TEXT, WARN);
 const K = (n) => `${n / 1000}K`;
 
 const user = (text) => ({ type: 'user', message: { role: 'user', content: text } });
@@ -54,6 +59,11 @@ function run(records, event, stateDir = tmp('context-budget-state-')) {
 }
 const said = (out) => out?.systemMessage ?? out?.hookSpecificOutput?.additionalContext ?? null;
 const at = (tokens, event) => said(run([user('hi'), reply(tokens)], event));
+
+test('the hook runs at the bound figures', () => {
+  const { warn, limit } = budgetFigures(ENV, tmp('context-budget-project-'), HOME);
+  assert.deepEqual({ WARN: warn, LIMIT: limit, GATE_TEXT }, EXPECTED, 'the hook\'s WARN, limit or GATE_TEXT is not the EXPECTED binding');
+});
 
 test('below the gate line only UserPromptSubmit speaks: the figure and the mark', () => {
   const tokens = GATE - 1_000;

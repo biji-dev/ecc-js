@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { randomBytes } = require('crypto');
 
 const ROOT = path.join(__dirname, '..', '..');
 // LEFTOVER_UNDER_TEST points the suite at another copy of the hook; unset, it tests the shipped file.
@@ -54,9 +55,9 @@ function checkout() {
   return { root, worktree };
 }
 
-/** A TCP listener whose working directory is `cwd`; resolves once it listens, with its pid and port. */
-function listen(cwd) {
-  const child = spawn(process.execPath, ['-e', "const s = require('net').createServer().listen(0, '127.0.0.1', () => console.log(s.address().port)); setTimeout(() => {}, 120000);"], { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+/** A TCP listener whose working directory is `cwd`, `args` on its command line; resolves once it listens, with its pid and port. */
+function listen(cwd, args = []) {
+  const child = spawn(process.execPath, ['-e', "const s = require('net').createServer().listen(0, '127.0.0.1', () => console.log(s.address().port)); setTimeout(() => {}, 120000);", '--', ...args], { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
   cleanup.push(() => child.kill());
   return new Promise((resolve, reject) => {
     child.stdout.once('data', (d) => resolve({ pid: child.pid, port: Number(String(d).trim()) }));
@@ -102,14 +103,20 @@ function runHook(event, dir, { script = QUIET, pressure = '0', session = 's', tm
     assert.strictEqual(runHook('UserPromptSubmit', checkout().root), null);
   });
 
-  await test('a listener started in the checkout is named to the owner on Stop and to the model on UserPromptSubmit', async () => {
+  await test('a listener started in the checkout is named, by its executable only, to the owner on Stop and to the model on UserPromptSubmit', async () => {
     const co = checkout();
-    const { pid, port } = await listen(path.join(co.root));
+    // a command line can carry a secret: the hook names the executable, never its arguments
+    const secret = `--token=${randomBytes(12).toString('hex')}`;
+    const { pid, port } = await listen(path.join(co.root), [secret]);
+    const named = `:${port} ${path.basename(process.execPath)} (pid ${pid})`;
     const stop = runHook('Stop', co.root);
-    assert.match(stop.systemMessage, new RegExp(`^Still running from this checkout: :${port} .*\\(pid ${pid}\\)`));
+    assert.strictEqual(stop.systemMessage, `Still running from this checkout: ${named}`, 'the listener is named as `:<port> <executable> (pid <pid>)`');
+    assert.ok(!stop.systemMessage.includes(secret.slice(8)), 'the listener\'s arguments are printed');
     const prompt = runHook('UserPromptSubmit', co.root);
     assert.strictEqual(prompt.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-    assert.match(prompt.hookSpecificOutput.additionalContext, new RegExp(`^\\[leftover-processes\\] Still running from this checkout: :${port} .*by recorded PID, never pkill`));
+    assert.ok(prompt.hookSpecificOutput.additionalContext.startsWith(`[leftover-processes] Still running from this checkout: ${named}. `), prompt.hookSpecificOutput.additionalContext);
+    assert.match(prompt.hookSpecificOutput.additionalContext, /by recorded PID, never pkill/);
+    assert.ok(!prompt.hookSpecificOutput.additionalContext.includes(secret.slice(8)), 'the listener\'s arguments are told to the model');
   }, { skip: noLsof });
 
   await test("a main checkout leaves out its worktrees' listeners; the worktree's own session names them", async () => {
@@ -160,7 +167,7 @@ function runHook(event, dir, { script = QUIET, pressure = '0', session = 's', tm
       assert.strictEqual(res.status, 0, res.stderr);
       return JSON.parse(res.stdout).systemMessage;
     };
-    assert.match(message(tmp('leftover-h-')), /The machine is tight \(memory pressure warn\)\. the harness-bootstrap skill's scripts\/machine-sweep\.mjs --report lists the rest \(machine\.md\)\.$/);
+    assert.match(message(tmp('leftover-h-')), /The machine is tight \(memory pressure warn\)\. the harness-bootstrap skill's scripts\/machine-sweep\.mjs --report lists the rest \(the skill's reference\/machine\.md\)\.$/);
     const installed = tmp('leftover-h-');
     fs.mkdirSync(path.join(installed, '.agents', 'harness', 'machine-sweep'), { recursive: true });
     fs.writeFileSync(path.join(installed, '.agents', 'harness', 'machine-sweep', 'machine-sweep.mjs'), '');

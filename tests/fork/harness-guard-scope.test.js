@@ -614,6 +614,264 @@ if (!hasGit) {
     });
   }
 
+  // ---- Merging a branch whose row is still held: refused in either scope (land order: release first) ----
+  /** Checkout scope, both hooks; task/p2-20 in the linked worktree .worktrees/held with one commit to `file`. */
+  function heldBranchSetup(file = 'held.txt') {
+    const guard = guardText('checkout');
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    const wt = addWorktree(dir, '.worktrees/held', 'task/p2-20');
+    fs.writeFileSync(path.join(wt, file), 'held\n');
+    git(wt, ['add', file]);
+    assertAllowed(git(wt, ['commit', '-qm', 'held work', '--no-verify'])); // set-up: before its row is written
+    return { dir, wt };
+  }
+  const HELD_ROWS = [
+    ['its Branch cell', '| 1 | P2-20 | 2 | task/p2-20 | `.worktrees/held` | 2026-10-09T10:00Z |'],
+    ['the task id the merged name carries', '| 1 | P2-20 | 2 | seg/other | `.worktrees/held` | 2026-10-09T10:00Z |'],
+  ];
+  const mergeHeld = (dir) => git(dir, ['merge', '--no-ff', '-m', 'merge task/p2-20', 'task/p2-20']);
+  const STILL_HELD = /merging 'task\/p2-20', which still holds a row in \.claude\/registry\.md.*release its row first/;
+
+  for (const [label, row] of HELD_ROWS) {
+    test(`checkout scope: a clean --no-ff merge of a branch whose row is held (matched by ${label}) is refused by pre-merge-commit; released, it merges`, () => {
+      const { dir } = heldBranchSetup();
+      try {
+        setRegistry(dir, row, WT_HEADER);
+        assertAllowed(tryCommit(dir)); // the row locks .worktrees/held, not the main checkout
+        assertRefused(mergeHeld(dir), STILL_HELD);
+        git(dir, ['merge', '--abort']);
+        setRegistry(dir, '', WT_HEADER);
+        assertAllowed(mergeHeld(dir));
+        assert.ok(fs.existsSync(path.join(dir, 'held.txt')), 'the merge landed');
+      } finally { cleanup(dir); }
+    });
+  }
+
+  /** A conflicted merge of `branch` into main, resolved and staged: the commit that concludes it runs pre-commit. */
+  function conflictedMerge(dir, branch) {
+    fs.writeFileSync(path.join(dir, 'work.txt'), 'main\n');
+    git(dir, ['add', 'work.txt']);
+    assertAllowed(git(dir, ['commit', '-qm', 'main work']));
+    const m = git(dir, ['merge', '--no-ff', '-m', `merge ${branch}`, branch]);
+    assert.notStrictEqual(m.status, 0, 'the merge conflicts');
+    assert.ok(fs.existsSync(path.join(dir, '.git', 'MERGE_HEAD')), 'the merge is in progress');
+    fs.writeFileSync(path.join(dir, 'work.txt'), 'resolved\n');
+    git(dir, ['add', 'work.txt']);
+  }
+
+  test('checkout scope: a conflicted merge of a branch whose row is held, concluded with git commit, is refused (MERGE_HEAD, no reflog action); released, it commits', () => {
+    const { dir } = heldBranchSetup('work.txt');
+    try {
+      setRegistry(dir, HELD_ROWS[0][1], WT_HEADER);
+      conflictedMerge(dir, 'task/p2-20');
+      assertRefused(git(dir, ['commit', '-qm', 'conclude merge']), /merging 'task\/p2-20', which still holds a row.*release its row first/);
+      setRegistry(dir, '', WT_HEADER);
+      assertAllowed(git(dir, ['commit', '-qm', 'conclude merge']));
+      assert.ok(!fs.existsSync(path.join(dir, '.git', 'MERGE_HEAD')), 'the merge is concluded');
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: merging a branch that holds no row goes through, clean or concluded with git commit, while another branch holds one', () => {
+    const { dir } = heldBranchSetup();
+    try {
+      featureBranch(dir);
+      setRegistry(dir, HELD_ROWS[0][1], WT_HEADER);
+      assertAllowed(mergeFeature(dir));
+      git(dir, ['switch', '-qc', 'other']);
+      fs.writeFileSync(path.join(dir, 'work.txt'), 'other\n');
+      git(dir, ['add', 'work.txt']);
+      assertAllowed(git(dir, ['commit', '-qm', 'other work']));
+      git(dir, ['switch', '-q', 'main']);
+      conflictedMerge(dir, 'other');
+      assertAllowed(git(dir, ['commit', '-qm', 'conclude merge']));
+    } finally { cleanup(dir); }
+  });
+
+  test("checkout scope: a held branch claimed at main's tip with no commits of its own; another branch merging main, concluded with git commit, is allowed", () => {
+    const guard = guardText('checkout');
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    try {
+      git(dir, ['switch', '-qc', 'other']);
+      fs.writeFileSync(path.join(dir, 'work.txt'), 'other\n');
+      git(dir, ['add', 'work.txt']);
+      assertAllowed(git(dir, ['commit', '-qm', 'other work']));
+      git(dir, ['switch', '-q', 'main']);
+      fs.writeFileSync(path.join(dir, 'work.txt'), 'main\n');
+      git(dir, ['add', 'work.txt']);
+      assertAllowed(git(dir, ['commit', '-qm', 'main work']));
+      addWorktree(dir, '.worktrees/held', 'task/p2-20'); // claimed at main's tip, no commits yet
+      setRegistry(dir, HELD_ROWS[0][1], WT_HEADER);
+      git(dir, ['switch', '-q', 'other']);
+      assert.notStrictEqual(git(dir, ['merge', '--no-ff', '-m', 'merge main', 'main']).status, 0, 'the merge conflicts');
+      fs.writeFileSync(path.join(dir, 'work.txt'), 'resolved\n');
+      git(dir, ['add', 'work.txt']);
+      const tip = git(dir, ['rev-parse', 'task/p2-20']).stdout.trim();
+      assert.strictEqual(git(dir, ['rev-parse', 'MERGE_HEAD']).stdout.trim(), tip, 'MERGE_HEAD is the held branch tip');
+      assertAllowed(git(dir, ['commit', '-qm', 'conclude merge'])); // main points at it too and holds no row
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: a held branch with work of its own, also at refs/remotes/origin/task/p2-20, merged with a conflict and concluded, is still refused', () => {
+    const { dir } = heldBranchSetup('work.txt');
+    try {
+      const tip = git(dir, ['rev-parse', 'task/p2-20']).stdout.trim();
+      assert.strictEqual(git(dir, ['update-ref', 'refs/remotes/origin/task/p2-20', tip]).status, 0, 'update-ref');
+      setRegistry(dir, HELD_ROWS[0][1], WT_HEADER);
+      conflictedMerge(dir, 'task/p2-20');
+      assertRefused(git(dir, ['commit', '-qm', 'conclude merge']), STILL_HELD);
+    } finally { cleanup(dir); }
+  });
+
+  // ---- Names as typed, pulls and commit matches: refused while held work is merged ----
+  /** Checkout scope, both hooks; task/held in .worktrees/held with a commit of its own to `file`, its row held. */
+  function heldWorkSetup({ idPattern, file = 'held.txt' } = {}) {
+    const guard = guardText('checkout', { idPattern });
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    const wt = addWorktree(dir, '.worktrees/held', 'task/held');
+    fs.writeFileSync(path.join(wt, file), 'held\n');
+    git(wt, ['add', file]);
+    assertAllowed(git(wt, ['commit', '-qm', 'held work', '--no-verify'])); // set-up: before its row is written
+    setRegistry(dir, '| 1 | held | 2 | task/held | `.worktrees/held` | 2026-10-09T10:00Z |', WT_HEADER);
+    return { dir, wt };
+  }
+  const HELD_WORK = /merging 'task\/held', which still holds a row.*release its row first/;
+  /** A bare remote `origin` with task/held pushed to it and fetched back. */
+  function pushedHeld(dir, wt) {
+    const bare = tmp('harness-scope-remote-');
+    git(bare, ['init', '-q', '--bare']);
+    assert.strictEqual(git(dir, ['remote', 'add', 'origin', bare]).status, 0, 'remote add');
+    assertAllowed(git(wt, ['push', '-q', 'origin', 'task/held']));
+    assertAllowed(git(dir, ['fetch', '-q', 'origin']));
+    return bare;
+  }
+
+  test('checkout scope, change mode: a clean --no-ff merge of refs/heads/task/held is refused', () => {
+    const { dir } = heldWorkSetup({ idPattern: '' });
+    try {
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge', 'refs/heads/task/held']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope, change mode: a clean --no-ff merge of origin/task/held, pushed to a bare remote, is refused', () => {
+    const { dir, wt } = heldWorkSetup({ idPattern: '' });
+    const bare = pushedHeld(dir, wt);
+    try {
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge', 'origin/task/held']), HELD_WORK);
+    } finally { cleanup(dir, bare); }
+  });
+
+  test('checkout scope: git pull --no-ff origin task/held is refused', () => {
+    const { dir, wt } = heldWorkSetup();
+    const bare = pushedHeld(dir, wt);
+    try {
+      assertRefused(git(dir, ['pull', '-q', '--no-ff', '--no-edit', 'origin', 'task/held']), HELD_WORK);
+    } finally { cleanup(dir, bare); }
+  });
+
+  test('checkout scope: a clean --no-ff merge of an unheld copy branch at the held tip (held work of its own) is refused', () => {
+    const { dir } = heldWorkSetup();
+    try {
+      assert.strictEqual(git(dir, ['branch', 'copy', 'task/held']).status, 0, 'branch copy');
+      assertRefused(git(dir, ['merge', '--no-ff', '-m', 'merge copy', 'copy']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: a conflicted merge of that copy branch, concluded with git commit, is refused', () => {
+    const { dir } = heldWorkSetup({ file: 'work.txt' });
+    try {
+      assert.strictEqual(git(dir, ['branch', 'copy', 'task/held']).status, 0, 'branch copy');
+      conflictedMerge(dir, 'copy');
+      assertRefused(git(dir, ['commit', '-qm', 'conclude merge']), HELD_WORK);
+    } finally { cleanup(dir); }
+  });
+
+  // ---- The owning run's own merges: the rows it owns (they match its branch and lock its checkout) never refuse ----
+  const OWN_ROW = {
+    repo: '| 1 | P2-20 | 2 | task/p2-20 | 2026-10-09T10:00Z |',
+    checkout: '| 1 | P2-20 | 2 | task/p2-20 | `.worktrees/held` | 2026-10-09T10:00Z |',
+  };
+  /** `scope`, both hooks; task/p2-20 holds row 1 (its checkout: the main one under repo, .worktrees/held under checkout) and has a commit. */
+  function ownRunSetup(scope, more = '') {
+    const guard = guardText(scope);
+    const dir = guardedRepo(guard);
+    installMergeHook(dir, guard);
+    // tracked, as an install keeps it: a linked worktree runs the hooks its own checkout holds
+    git(dir, ['add', '.githooks/pre-merge-commit']);
+    assertAllowed(git(dir, ['commit', '-qm', 'merge hook']));
+    let wt = dir;
+    if (scope === 'checkout') wt = addWorktree(dir, '.worktrees/held', 'task/p2-20');
+    else git(dir, ['switch', '-qc', 'task/p2-20']);
+    setRegistry(dir, [OWN_ROW[scope], more].filter(Boolean).join('\n'), scope === 'checkout' ? WT_HEADER : PLAIN_HEADER);
+    assertAllowed(tryCommit(wt));
+    return { dir, wt };
+  }
+  /** A commit of its own on a new `branch` from main, made past the guard (set-up), then back on task/p2-20. */
+  function sideBranch(wt, branch, file) {
+    assert.strictEqual(git(wt, ['switch', '-qc', branch, 'main']).status, 0, `switch -c ${branch}`);
+    fs.writeFileSync(path.join(wt, file), `${branch}\n`);
+    git(wt, ['add', file]);
+    assertAllowed(git(wt, ['commit', '-qm', `${branch} work`, '--no-verify']));
+    git(wt, ['switch', '-q', 'task/p2-20']);
+  }
+
+  for (const scope of ['repo', 'checkout']) {
+    test(`${scope} scope: the owning run pulls its own branch back, diverged; its own row does not refuse the merge`, () => {
+      const { dir, wt } = ownRunSetup(scope);
+      const bare = tmp('harness-scope-remote-');
+      try {
+        git(bare, ['init', '-q', '--bare']);
+        assert.strictEqual(git(dir, ['remote', 'add', 'origin', bare]).status, 0, 'remote add');
+        assertAllowed(git(wt, ['push', '-q', 'origin', 'task/p2-20']));
+        // the pushed branch moves on elsewhere: a copy, committed past the guard, pushed over it
+        assert.strictEqual(git(wt, ['switch', '-qc', 'elsewhere']).status, 0, 'switch -c elsewhere');
+        fs.writeFileSync(path.join(wt, 'remote.txt'), 'r\n');
+        git(wt, ['add', 'remote.txt']);
+        assertAllowed(git(wt, ['commit', '-qm', 'remote work', '--no-verify']));
+        assertAllowed(git(wt, ['push', '-q', 'origin', 'elsewhere:task/p2-20']));
+        git(wt, ['switch', '-q', 'task/p2-20']);
+        assertAllowed(tryCommit(wt)); // diverged
+        assertAllowed(git(wt, ['pull', '-q', '--no-rebase', '--no-edit', 'origin', 'task/p2-20']));
+        assert.ok(fs.existsSync(path.join(wt, 'remote.txt')), 'the pull merged');
+      } finally { cleanup(dir, bare); }
+    });
+
+    test(`${scope} scope: the owning run merges a sub-branch that carries its task id; its own row does not refuse`, () => {
+      const { dir, wt } = ownRunSetup(scope);
+      try {
+        assert.strictEqual(git(wt, ['switch', '-qc', 'task/p2-20-review']).status, 0, 'switch -c task/p2-20-review');
+        fs.writeFileSync(path.join(wt, 'review.txt'), 'v\n');
+        git(wt, ['add', 'review.txt']);
+        assertAllowed(git(wt, ['commit', '-qm', 'review'])); // it carries P2-20: the owning run commits there too
+        git(wt, ['switch', '-q', 'task/p2-20']);
+        assertAllowed(tryCommit(wt));
+        assertAllowed(git(wt, ['merge', '--no-ff', '-m', 'merge review', 'task/p2-20-review']));
+        assert.ok(fs.existsSync(path.join(wt, 'review.txt')), 'the merge landed');
+      } finally { cleanup(dir); }
+    });
+
+    test(`${scope} scope: the owning run merging another task's branch that still holds a row is refused`, () => {
+      const other = scope === 'checkout'
+        ? '| 2 | P2-21 | 2 | task/p2-21 | `.worktrees/other` | 2026-10-09T10:00Z |'
+        : '| 2 | P2-21 | 2 | task/p2-21 | 2026-10-09T10:00Z |';
+      const { dir, wt } = ownRunSetup(scope, other);
+      try {
+        sideBranch(wt, 'task/p2-21', 'other.txt');
+        assertRefused(git(wt, ['merge', '--no-ff', '-m', 'merge p2-21', 'task/p2-21']), /merging 'task\/p2-21', which still holds a row.*release its row first/);
+      } finally { cleanup(dir); }
+    });
+  }
+
+  test("checkout scope: a sub-branch with the run's task id whose own row locks another checkout is still refused", () => {
+    const { dir, wt } = ownRunSetup('checkout', '| 2 | P2-20 | 1 | task/p2-20-review | `.worktrees/review` | 2026-10-09T10:00Z |');
+    try {
+      sideBranch(wt, 'task/p2-20-review', 'review.txt');
+      assertRefused(git(wt, ['merge', '--no-ff', '-m', 'merge review', 'task/p2-20-review']), /merging 'task\/p2-20-review', which still holds a row.*release its row first/);
+    } finally { cleanup(dir); }
+  });
+
   /** Tracked registry; task/T-AB-12-x has no row left after merging `side`, which only releases it. */
   function releaseMergeSetup(install) {
     const guard = guardText('repo');
@@ -679,9 +937,9 @@ if (!hasGit) {
   test('the header comment lists exactly the [B] lines the file has', () => {
     const lines = fs.readFileSync(GUARD, 'utf8').split('\n');
     const bound = lines.filter((l) => /^[A-Z_]+=.*#\s*\[B\]/.test(l)).map((l) => l.split('=')[0]);
-    assert.deepStrictEqual(bound, ['REGISTRY', 'ID_PATTERN', 'SCOPE']);
+    assert.deepStrictEqual(bound, ['REGISTRY', 'ID_PATTERN', 'SCOPE', 'MAINLINE']);
     const header = lines.slice(0, 6).join('\n');
-    assert.match(header, /\[B\] REGISTRY, ID_PATTERN and SCOPE/);
+    assert.match(header, /\[B\] REGISTRY, ID_PATTERN, SCOPE and MAINLINE/);
     assert.ok(!/four settings|three settings/.test(header), 'no stale count');
     const stray = lines.slice(6).filter((l) => /\[B\]/.test(l) && !/^[A-Z_]+=/.test(l));
     assert.deepStrictEqual(stray, [], '[B] appears only on binding lines after the header');

@@ -13,15 +13,19 @@
  */
 
 // ---- [B] project bindings
-// [B] The directory of the unit's state file (scope-guard.md › the state file). The steps file
+// [B] The directory of the unit's state file (harness-bootstrap's reference/scope-guard.md › The state file). The steps file
 // `<unit>.steps.jsonl` sits beside the state file and is committed with it.
 export const STEPS_DIR = 'docs/plans';
 // ---- end [B]
 
 export const EVENTS = ['start', 'done'];
 export const MAX_ROUND = 99;
-// A unit id names a file, so it carries no path separator; a step id is the runner's own (`0a`, `8c`).
-const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// A unit id names a file: `<unit>.steps.jsonl` sits beside the state file. One `/` nests the file under
+// the id's first segment (`harness/sweep-2026-10-28`, `change/fix-login`); each segment starts with a
+// letter or digit, so `..`, an absolute path and a third level stay refused. The source is exported
+// so every reader of a unit id (unit-cost's step tag, retro's marker command) matches the same rule.
+export const UNIT_ID_SOURCE = '[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';
+const UNIT_ID = new RegExp(`^${UNIT_ID_SOURCE}$`);
 const STEP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 /** `8b r2` -- how a step and its round are named everywhere (reports, dispatch tags). */
@@ -153,7 +157,8 @@ const hhmm = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 
 /**
  * The `--list` text: one line per interval (UTC times), then every problem prefixed with `!`. A step
- * closed by the next start carries no note: that is the runner's normal path (`runner.md`).
+ * closed by the next start carries no note: that is the runner's normal path (harness-bootstrap's
+ * reference/runner.md › Step markers).
  */
 export function formatIntervals({ intervals, problems }) {
   const lines = intervals.map((iv) => {

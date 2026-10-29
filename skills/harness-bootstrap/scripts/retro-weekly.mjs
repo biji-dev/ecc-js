@@ -7,7 +7,7 @@
  * review of the digests (`learning.md` › The weekly job).
  *
  *   node <skill dir>/scripts/retro-weekly.mjs --register <repo> [--project <name>] [--log <rel>]
- *     [--follow-ups <rel>] [--plans <rel>]...
+ *     [--follow-ups <rel | dir/*.md>]... [--plans <rel>]...
  *   node <skill dir>/scripts/retro-weekly.mjs --unregister <repo | project>
  *   node <skill dir>/scripts/retro-weekly.mjs --list
  *   node <skill dir>/scripts/retro-weekly.mjs --run [--no-review] [--no-notify] [--budget <usd>] [--dry-run]
@@ -16,6 +16,8 @@
  * options: --home <dir> (default ~/.agents/harness) · --projects-dir <dir> (default $CLAUDE_CONFIG_DIR/projects
  *          when that is set, else ~/.claude/projects) · --config-dir <dir> (the CLAUDE_CONFIG_DIR for this
  *          run and its review; the Windows task passes it, schtasks setting no environment)
+ *          · --codex-home <dir> (the CODEX_HOME for this run, where the Codex host's threads are read; the
+ *          Windows task passes it likewise)
  *          · --claude <path> (default: claude on PATH)
  *
  * Files under the home: repos.json (the registry) · retro/<project>/retro-<YYYY-Www>.{json,md} (each
@@ -109,7 +111,7 @@ function resolved(entry) {
 }
 
 function describe(r) {
-  const f = (rel, from) => (rel ? `${rel} (${from})` : 'none');
+  const f = (rel, from) => (rel ? `${[rel].flat().join(', ')} (${from})` : 'none');
   return `log ${f(r.log, r.from.log)} · follow-ups ${f(r.followUps, r.from.followUps)} · plans ${r.plans.length ? `${r.plans.join(', ')} (${r.from.plans})` : 'none'}`;
 }
 
@@ -301,9 +303,10 @@ function installPlan(opts, home) {
   const pathEnv = [...new Set([path.dirname(node), ...(claude ? [path.dirname(claude)] : []), '/usr/bin', '/bin', '/usr/sbin', '/sbin'])].join(':');
   const logFile = path.join(home, 'retro', 'weekly.out.log');
   const plist = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
-  // the schedule runs without the shell's environment: Claude Code's config directory goes in with it
+  // the schedule runs without the shell's environment: Claude Code's config directory and the Codex home go in with it
   const configDir = process.env.CLAUDE_CONFIG_DIR ? path.resolve(process.env.CLAUDE_CONFIG_DIR) : null;
-  return { copyDir, claude, programArguments, pathEnv, logFile, plist, configDir, files: closure() };
+  const codexHome = process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : null;
+  return { copyDir, claude, programArguments, pathEnv, logFile, plist, configDir, codexHome, files: closure() };
 }
 
 function install(opts, home) {
@@ -311,7 +314,7 @@ function install(opts, home) {
   if (!p.claude) throw new Usage('claude is not on PATH; pass --claude <path>');
   if (path.resolve(SKILL_DIR) === path.resolve(p.copyDir)) throw new Usage(`this is the installed copy; run --install from the skill itself`);
   const domain = `gui/${process.getuid?.() ?? 0}`;
-  const lines = scheduleLines({ programArguments: p.programArguments, logFile: p.logFile, configDir: p.configDir });
+  const lines = scheduleLines({ programArguments: p.programArguments, logFile: p.logFile, configDir: p.configDir, codexHome: p.codexHome });
   if (opts.dryRun) {
     out(`install dry run; writes nothing`);
     out(`copy ${p.files.length} files to ${p.copyDir}: ${p.files.join(', ')}`);
@@ -331,7 +334,7 @@ function install(opts, home) {
     out(`schedule it with: ${process.platform === 'win32' ? lines.schtasks : lines.cron}`);
     return 0;
   }
-  writeAtomic(p.plist, launchdPlist({ programArguments: p.programArguments, pathEnv: p.pathEnv, logFile: p.logFile, configDir: p.configDir }));
+  writeAtomic(p.plist, launchdPlist({ programArguments: p.programArguments, pathEnv: p.pathEnv, logFile: p.logFile, configDir: p.configDir, codexHome: p.codexHome }));
   fs.mkdirSync(path.dirname(p.logFile), { recursive: true });
   spawnSync('launchctl', ['bootout', `${domain}/${LABEL}`], { stdio: 'ignore' });
   const res = spawnSync('launchctl', ['bootstrap', domain, p.plist], { encoding: 'utf8' });
@@ -363,8 +366,9 @@ function main() {
     process.stderr.write(`retro-weekly: ${e.message}\n${USAGE}\n`);
     return 2;
   }
-  // set first: the transcripts' directory, the review's claude and the schedule read it
+  // set first: the transcripts' directory, the Codex threads', the review's claude and the schedule read them
   if (opts.configDir) process.env.CLAUDE_CONFIG_DIR = path.resolve(opts.configDir);
+  if (opts.codexHome) process.env.CODEX_HOME = path.resolve(opts.codexHome);
   const home = path.resolve(opts.home ?? path.join(os.homedir(), '.agents', 'harness'));
   try {
     switch (opts.command) {
@@ -405,7 +409,7 @@ function main() {
         return uninstall(opts, home);
       case 'printSchedule': {
         const p = installPlan(opts, home);
-        const lines = scheduleLines({ programArguments: p.programArguments, logFile: p.logFile, configDir: p.configDir });
+        const lines = scheduleLines({ programArguments: p.programArguments, logFile: p.logFile, configDir: p.configDir, codexHome: p.codexHome });
         out(`cron (Linux; a missed run does not catch up): ${lines.cron}`);
         out(`Task Scheduler (Windows): ${lines.schtasks}`);
         out(`both run the copy in ${p.copyDir}: run --install first to make it`);

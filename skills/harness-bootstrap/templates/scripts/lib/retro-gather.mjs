@@ -47,11 +47,25 @@ export function repoTop(cwd) {
 /**
  * line -> the commit time (ms) of the commit that last changed it, or null for a line not committed
  * yet (git blames it on the zero commit, with the time of the blame); empty when git cannot blame the file.
+ * Whitespace-only changes are not changes (`-w`: a formatter's re-pad of a table keeps its rows' dates),
+ * and the commits in `.git-blame-ignore-revs`, when the repository has that file, are looked past (a
+ * commit that repairs the log's columns). A file git refuses (a line in it is no commit id) is not used.
+ * The retro reads only the repository's own `.git-blame-ignore-revs`, whatever `blame.ignoreRevsFile` a
+ * machine's git config names (a named file that is missing would stop blame): `--no-ignore-revs-file` clears
+ * the list the config built, and the repository's file is added after it.
  */
 export function blameDates(top, rel) {
+  const base = ['blame', '-w', '--line-porcelain', '--no-ignore-revs-file'];
   let out;
   try {
-    out = gitRead(['blame', '--line-porcelain', '--', rel], top);
+    const ignore = path.join(top, '.git-blame-ignore-revs');
+    const listed = fs.existsSync(ignore) && fs.statSync(ignore).isFile();
+    try {
+      out = gitRead([...base, ...(listed ? ['--ignore-revs-file', '.git-blame-ignore-revs'] : []), '--', rel], top);
+    } catch (e) {
+      if (!listed) throw e;
+      out = gitRead([...base, '--', rel], top); // one bad line there must not undate the whole log
+    }
   } catch {
     return new Map();
   }
@@ -67,19 +81,97 @@ export function blameDates(top, rel) {
   return dates;
 }
 
-/** path (relative to top) -> the newest commit time (ms) that touched it, for every file under `dirs`. */
+/**
+ * The follow-ups doc(s) -> { text, dates }, or null when no file exists. `specs` is one path or a list
+ * (relative to `top`); an entry ending in `/*.md` is every markdown file in that directory, sorted by
+ * name, and a missing file or directory is skipped. The texts, each without its trailing newline, are
+ * joined by one blank line, and `dates.get(line)` is the commit time of that line in its own file.
+ * A file is blamed once, on the first lookup of one of its lines, so a doc of many files is blamed
+ * only where an open row needs a date.
+ */
+export function readFollowUps(top, specs, blame = blameDates) {
+  const rels = [];
+  for (const spec of [specs].flat()) {
+    if (!spec.endsWith('/*.md')) {
+      rels.push(spec);
+      continue;
+    }
+    const dir = spec.slice(0, -'/*.md'.length);
+    let names = [];
+    try {
+      names = fs.readdirSync(path.join(top, dir)).filter((n) => n.endsWith('.md')).sort();
+    } catch {
+      // a missing directory holds nothing
+    }
+    for (const n of names) rels.push(`${dir}/${n}`);
+  }
+  const files = [];
+  let next = 1;
+  for (const rel of rels) {
+    const file = path.join(top, rel);
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) continue;
+    const text = readText(file).replace(/\r?\n$/, '');
+    const lines = text.split('\n').length;
+    files.push({ rel, text, start: next, lines, blamed: null });
+    next += lines + 1;
+  }
+  if (files.length === 0) return null;
+  const dates = {
+    get(line) {
+      const f = files.findLast((x) => x.start <= line);
+      if (!f || line >= f.start + f.lines) return undefined;
+      f.blamed ??= blame(top, f.rel);
+      return f.blamed.get(line - f.start + 1);
+    },
+  };
+  return { text: files.map((f) => f.text).join('\n\n'), dates };
+}
+
+/**
+ * path (relative to top) -> the newest commit time (ms) that changed it, for every file under `dirs`.
+ * A pure move (`git mv`, R100: same content, new path) is not a change: the new path takes the time of
+ * what the old path was last changed at, so a state file archived this week does not read as edited this
+ * week. A path moved to two places keeps its time at both. A rename with edits is a change at its own time.
+ */
 export function lastCommitTimes(top, dirs) {
   let out;
   try {
-    out = gitRead(['log', '--format=%x00%ct', '--name-only', '--', ...dirs], top);
+    out = gitRead(['log', '-z', '-M', '--format=%x01%ct', '--name-status', '--', ...dirs], top);
   } catch {
     return new Map();
   }
+  // Newest first. `-z` gives NUL-separated tokens: `\x01<ct>`, then per file a status (the first one
+  // after a commit time starts with a newline) and one path, or two (old, new) for an R or C status.
   const times = new Map();
+  const moved = new Map(); // old path -> the paths it was moved to by pure moves
+  const take = (file, t, seen = new Set()) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!times.has(file)) times.set(file, t);
+    for (const to of moved.get(file) ?? []) take(to, t, seen);
+  };
+  const tokens = out.split('\0');
   let t = null;
-  for (const line of out.split('\n')) {
-    if (line.startsWith('\0')) t = Number(line.slice(1)) * 1000;
-    else if (line && !times.has(line)) times.set(line, t);
+  for (let i = 0; i < tokens.length; i++) {
+    const status = tokens[i].replace(/^\n/, '');
+    if (status.startsWith('\x01')) {
+      t = Number(status.slice(1)) * 1000;
+      continue;
+    }
+    if (!status) continue;
+    if (status[0] === 'R' || status[0] === 'C') {
+      const [from, to] = [tokens[i + 1], tokens[i + 2]];
+      i += 2;
+      if (status === 'R100') {
+        if (!moved.has(from)) moved.set(from, []);
+        moved.get(from).push(to);
+      } else {
+        take(to, t);
+      }
+    } else {
+      take(tokens[i + 1], t);
+      i += 1;
+    }
   }
   return times;
 }
@@ -120,8 +212,21 @@ export function readPrevious(dirs) {
 }
 
 /**
- * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` and `plansDirs` are
- * relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
+ * A steps file's markers into `steps` (unit -> markers): each under its own unit (`harness/x` sits in
+ * `harness/x.steps.jsonl`), one with none under `fallback`, the file's path under its plans dir.
+ */
+function addSteps(steps, markers, fallback) {
+  if (markers.length === 0 && !steps.has(fallback)) steps.set(fallback, []);
+  for (const m of markers) {
+    const unit = m.unit || fallback;
+    if (!steps.has(unit)) steps.set(unit, []);
+    steps.get(unit).push(m);
+  }
+}
+
+/**
+ * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` (a path or a list, see
+ * readFollowUps) and `plansDirs` are relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
  * `top` and its worktrees whose main file changed since `sinceMs`, and so are a Codex host's threads
  * (rollouts under `codexDir`, streamed: one can pass 512 MB).
@@ -131,7 +236,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
   if (logFile !== null && !fs.existsSync(logFile)) throw new Error(`no harness log at ${log}`);
   const g = {
     log: logFile === null ? { text: '', dates: new Map() } : { text: readText(logFile), dates: blameDates(top, log) },
-    followUps: null,
+    followUps: followUps ? readFollowUps(top, followUps) : null,
     states: [],
     steps: new Map(),
     rows: [],
@@ -142,9 +247,6 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     codex: [],
     claudeRuns: null,
   };
-  if (followUps && fs.existsSync(path.join(top, followUps))) {
-    g.followUps = { text: readText(path.join(top, followUps)), dates: blameDates(top, followUps) };
-  }
   const dirs = plansDirs.filter((d) => fs.existsSync(path.join(top, d)));
   const changed = lastCommitTimes(top, dirs);
   for (const dir of dirs) {
@@ -154,8 +256,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
         g.states.push({ path: rel, text: readText(file), changed: changed.get(rel) ?? fs.statSync(file).mtimeMs });
         continue;
       }
-      const unit = path.basename(file, '.steps.jsonl');
-      g.steps.set(unit, [...(g.steps.get(unit) ?? []), ...parseSteps(readText(file))]);
+      addSteps(g.steps, parseSteps(readText(file)), path.relative(path.join(top, dir), file).split(path.sep).join('/').replace(/\.steps\.jsonl$/, ''));
     }
   }
   const roots = worktreePaths(top);

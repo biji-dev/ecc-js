@@ -17,7 +17,7 @@ const CLI_REL = 'unit-cost.mjs';
 const SOURCES_REL = path.join('lib', 'run-sources.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 63;
+const EXPECTED_TESTS = 77;
 
 let passed = 0;
 let failed = 0;
@@ -81,6 +81,7 @@ function mutantFails(name, needle, replacement, fileRel = CORE_REL) {
     fs.cpSync(SCRIPTS, copy, { recursive: true });
     const filePath = path.join(copy, fileRel);
     const before = fs.readFileSync(filePath, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, 'the needle must occur exactly once in the file it mutates');
     const mutated = before.replace(needle, replacement);
     assert.notStrictEqual(mutated, before, 'the mutation did not apply');
     fs.writeFileSync(filePath, mutated);
@@ -104,7 +105,8 @@ test('the shipped unit-cost suite passes with the pinned test count', () => {
 
 mutantFails('pricing a 1h cache write at the 5m rate', 'export const CACHE_WRITE_1H = 2;', 'export const CACHE_WRITE_1H = 1.25;');
 mutantFails('dropping the flat cache-write fallback', 'if (w1h + w5m === 0) w5m = num(usage.cache_creation_input_tokens);', '');
-mutantFails('counting a repeated (message.id, requestId) twice', 'if (seen.has(r.key)) return false;', 'if (false) return false;');
+mutantFails('counting a repeated (message.id, requestId) twice', 'if (i === undefined) {', 'if (true) {');
+mutantFails('keeping the first copy\'s usage instead of the copy with the most output', '} else if (r.output > out[i].output) {', '} else if (false) {');
 mutantFails('counting synthetic turns', "if (msg.model === '<synthetic>') continue;", '');
 mutantFails('ignoring the upper bound of the window', 'return (lo === null || ts >= lo) && (hi === null || ts <= hi);', 'return lo === null || ts >= lo;');
 mutantFails('attributing subagent dollars to the main thread', 'out[r.kind] += r.cost;', 'out.main += r.cost;');
@@ -137,14 +139,24 @@ mutantFails('letting an unreadable time set a subagent\'s first turn', "if (r.ki
 mutantFails('taking a subagent rollout\'s copy of its parent\'s meta for its own', 'if (!state.meta) Object.assign(s, codexMeta(p));', 'Object.assign(s, codexMeta(p));');
 mutantFails('counting a codex exec run as the host\'s', "host: id !== null && m.originator !== 'codex_exec' && src !== 'exec',", 'host: id !== null,');
 mutantFails('holding an async question open until a result', 'if (!e.async) asks.set(e.id, e.ts);', 'asks.set(e.id, e.ts);');
-mutantFails('taking the owner\'s reply to an async question for a line Codex wrote', 'const CODEX_INJECTED = /^\\s*<(?!send_user_message_question_reply>)/;', 'const CODEX_INJECTED = /^\\s*</;');
+mutantFails('taking the owner\'s reply to an async question for a line Codex wrote', 'if (!tag || tag[1] === CODEX_OWNER_TAG) return false;', 'if (!tag) return false;');
+mutantFails('taking an unclosed element for a line Codex wrote', 'if (c === -1) return false;', 'if (c === -1) return true;');
+mutantFails('reading a step tag of a harness/<slug> unit as none', '(${UNIT_ID_SOURCE}) s(', '([A-Za-z0-9][A-Za-z0-9._-]*) s(');
+mutantFails('leaving the runs without a cost out of the summary line', "${claudeRuns.unpriced ? `, ${claudeRuns.unpriced} without a cost` : ''}", "");
+mutantFails('dropping the Codex % from --json', 'codexPercent: percent, ', '', CLI_REL);
+mutantFails('taking a nested steps file\'s unit from its basename', "named.length === 1 && named[0] !== '' ? named[0] : ", '', CLI_REL);
 mutantFails('adding a running total instead of its growth', 'const before = prev?.[k] ?? 0;', 'const before = 0;');
 mutantFails('counting the quota between two turns', 'if (cur && cur.seg === r.seg && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;', 'if (cur && Math.abs(r.resets - cur.reset) <= SAME_WINDOW_S) cur.hi = r.used;');
 mutantFails('leaving claude-run\'s dollars out of the cost', 'const total = claude.total + (claudeRuns?.usd ?? 0);', 'const total = claude.total;');
 mutantFails('printing Claude\'s cache line for a Codex thread alone', 'if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);', 'extra.cache = summarizeCache(rows, window);', CLI_REL);
 mutantFails('taking another thread\'s subagent', '(m.session === id || m.parent === id)', 'true', SOURCES_REL);
 mutantFails('splitting a line at a read boundary', 'const data = Buffer.concat([rest, buf.subarray(0, n)]);', 'const data = Buffer.from(buf.subarray(0, n));', SOURCES_REL);
-mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('adding the claude-run dollars of every worktree', 'return runs.filter((e) => here !== null && owner(e.cwd) === here);', 'return runs;', CLI_REL);
+mutantFails('counting the Codex runs of every worktree', '? worktreeRuns(parseLedger(readText(ledger)), args.cwdMatch) : null;', '? parseLedger(readText(ledger)) : null;', CLI_REL);
+mutantFails('leaving a ledger\'s window open', 'if (lo === Infinity) return window;', 'return window;');
+mutantFails('replacing a bound the owner gave with the sessions\' time', 'since: given(window.since) ? window.since : new Date(lo).toISOString(),', 'since: new Date(lo).toISOString(),');
+mutantFails('taking the ledger window from the usage rows only', 'const times = [...lines.flatMap((l) => l.times),', 'const times = [...rows.map((r) => r.ts),', CLI_REL);
+mutantFails('ignoring that a session is still running a tool', 'lines.some((l) => l.live) ? Date.now() : null', 'null', CLI_REL);
 mutantFails('placing a run made through a link by its unresolved path', 'const d = realPath(dir);', 'const d = path.resolve(dir);', SOURCES_REL);
 mutantFails('missing a thread archived to archived_sessions', "walk(path.join(path.dirname(dir), 'archived_sessions'));", '', SOURCES_REL);
 
@@ -164,7 +176,7 @@ function fixture() {
   fs.writeFileSync(path.join(proj, 's1.jsonl'), `${turn('a', 'claude-opus-5-5', 1_000_000)}\n${turn('a', 'claude-opus-5-5', 1_000_000)}\n`);
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x.jsonl'), `${turn('b', 'claude-sonnet-5-5', 1_000_000)}\n`);
   fs.writeFileSync(path.join(proj, 's1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ agentType: 'implementer' }));
-  const run = { at: '2026-10-24T01:00:00Z', kind: 'review', cwd: '/p/app', ms: 10, limitsBefore: { usedPercent: 1, resetsAt: 5 }, limitsAfter: { usedPercent: 3, resetsAt: 5 } };
+  const run = { at: '2026-10-24T01:00:00Z', kind: 'review', cwd: root, ms: 10, limitsBefore: { usedPercent: 1, resetsAt: 5 }, limitsAfter: { usedPercent: 3, resetsAt: 5 } };
   fs.writeFileSync(path.join(root, 'ledger.jsonl'), `${JSON.stringify(run)}\n`);
   return root;
 }

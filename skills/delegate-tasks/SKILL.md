@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 5
+  version: 6
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -172,7 +172,7 @@ Templates for every kind are in `reference/spec-templates.md`.
    chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
 5. **Per-slice review, by the other family.** After a serial slice passes its gate,
    one reviewer reads that slice's diff before the next slice builds on it — the
-   **second family's review** over a Claude-written slice (in the background, while
+   **second family's review** over a Claude-written slice (with the host's own background option, never a shell `&`, while
    the next independent slice starts). A cold second-family slice waits for the
    unit review (a harness's `review-gate.mjs` says `defer`; standalone, a Sonnet
    reviewer reads it). **Never an Opus reviewer per Claude-written slice** — in one
@@ -238,7 +238,7 @@ they stay in the session. Codex, ZCode and Kimi forms are in
   the accessibility snapshot against the spec's visual contract.
 - Blocked tasks: fix the **spec**, re-dispatch only that executor.
 - Run the project's strongest check once yourself — **standalone only.** Inside a
-  harness the runner's step 8 FULL verify is that check; run nothing extra on the
+  harness the runner's step 8a FULL verify is that check; run nothing extra on the
   same tree.
 - **Commit gate.** Standalone: present the diff summary and proposed conventional
   commit messages, and commit only when the user confirms. Inside a harness: the

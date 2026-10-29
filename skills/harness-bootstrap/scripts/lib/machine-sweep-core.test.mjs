@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   IDS,
+  LOCK_START_SLACK_MS,
   LOCK_STALE_MINUTES,
   REBUILDABLE,
   SCHEMA,
@@ -21,6 +22,7 @@ import {
   deletable,
   devOrphans,
   dockerBytes,
+  etimeMs,
   fmtBytes,
   formatReport,
   heldRows,
@@ -326,6 +328,55 @@ test("the lock's entries: a run goes on alone or not at all, and removes only a 
   // two runs that start together each find the other's entry: both stop, so neither frees beside the other
   const both = [{ name: '4242-a', written: fresh }, { name: '5151-b', written: fresh }];
   assert.deepEqual([lockDecision({ mine: '4242-a', entries: both, alive, now: NOW }).holder, lockDecision({ mine: '5151-b', entries: both, alive, now: NOW }).holder], [5151, 4242]);
+});
+
+test('etimeMs reads the [[dd-]hh:]mm:ss that ps prints as etime, padded or not, in milliseconds; anything else is null', () => {
+  assert.equal(etimeMs('  05:09'), 309_000);
+  assert.equal(etimeMs('5:09\n'), 309_000);
+  assert.equal(etimeMs('02:05:09'), (2 * 3600 + 5 * 60 + 9) * 1000);
+  assert.equal(etimeMs(' 3-02:05:09\n'), (3 * 86_400 + 2 * 3600 + 5 * 60 + 9) * 1000);
+  assert.equal(etimeMs('00:00'), 0);
+  for (const bad of ['', '  ', 'x', '1:2:3:4', '3-05:09', '05', '05:9x', '00:61', null, undefined]) assert.equal(etimeMs(bad), null, JSON.stringify(bad));
+});
+
+test('the lock: the system reuses pids, so a live pid whose process started after its entry was written is an earlier run\'s entry; age alone never is', () => {
+  const week = NOW - 7 * DAY;
+  // the process holding the pid started an hour ago; the entry is a week old
+  assert.equal(staleLock({ pid: 4242, alive: true, written: week, now: NOW, started: NOW - HOUR }), true, 'a reused pid holds the lock');
+  assert.equal(LOCK_START_SLACK_MS, 5000);
+  // a run writes its entry after it starts: started before, or within the slack after, is the same run
+  assert.equal(staleLock({ pid: 4242, alive: true, written: NOW - HOUR, now: NOW, started: week }), false);
+  assert.equal(staleLock({ pid: 4242, alive: true, written: NOW - HOUR, now: NOW, started: NOW - HOUR + LOCK_START_SLACK_MS }), false);
+  assert.equal(staleLock({ pid: 4242, alive: true, written: NOW - HOUR, now: NOW, started: NOW - HOUR + LOCK_START_SLACK_MS + 1 }), true);
+  // either time unknown: today's rule, a live pid holds however old its entry is
+  assert.equal(staleLock({ pid: 4242, alive: true, written: week, now: NOW, started: null }), false);
+  assert.equal(staleLock({ pid: 4242, alive: true, written: week, now: NOW }), false);
+  assert.equal(staleLock({ pid: 4242, alive: true, written: null, now: NOW, started: NOW - HOUR }), false);
+  assert.equal(staleLock({ pid: 4242, alive: false, written: NOW, now: NOW, started: null }), true);
+});
+
+test("the lock's entries, with the start times: a reused pid's week-old entry is removed, a live run's entry written after its start holds", () => {
+  const live = new Set([777, 4242, 5151]);
+  const alive = (pid) => live.has(pid);
+  const week = NOW - 7 * DAY;
+  const mine = lockEntry(777, NOW);
+  // 4242 started an hour ago, so its week-old entry is an earlier run's; 5151 started a minute before its entry
+  const starts = new Map([[4242, NOW - HOUR], [5151, NOW - 3 * 60_000]]);
+  const asked = [];
+  const started = (pid) => {
+    asked.push(pid);
+    return starts.get(pid) ?? null;
+  };
+  const decide = (others) => lockDecision({ mine, entries: [{ name: mine, written: NOW }, ...others.map(([name, written]) => ({ name, written }))], alive, started, now: NOW });
+  assert.deepEqual(decide([['4242-a1', week]]), { remove: ['4242-a1'], holder: null }, 'the reused pid still holds the lock');
+  assert.deepEqual(decide([['5151-b1', NOW - 2 * 60_000]]), { remove: [], holder: 5151 });
+  assert.deepEqual(decide([['4242-a1', week], ['5151-b1', NOW - 2 * 60_000]]), { remove: ['4242-a1'], holder: 5151 });
+  // a dead pid is not asked; the run's own pid on another start's entry keeps its handling
+  asked.length = 0;
+  assert.deepEqual(decide([['999-a2', week], ['777-a3', week]]), { remove: ['999-a2', '777-a3'], holder: null });
+  assert.deepEqual(asked, []);
+  // no start passed: today's behaviour
+  assert.deepEqual(lockDecision({ mine, entries: [{ name: mine, written: NOW }, { name: '4242-a1', written: week }], alive, now: NOW }), { remove: [], holder: 4242 });
 });
 
 test('sizes, the report and the log line', () => {
@@ -692,22 +743,32 @@ test("the CLI: a run's end leaves in place the entry another sweep wrote while i
   assert.deepEqual(fs.readdirSync(locks), ['424242-zz'], "the run's end removed another sweep's entry, or left its own");
 });
 
-test('the CLI: a live sweep\'s entry stops a second run however old it is, a dead one\'s is removed; usage errors exit 2', posixOnly, () => {
+test('the CLI: a live sweep\'s entry stops a second run, a dead sweep\'s or a reused pid\'s is removed; usage errors exit 2', posixOnly, () => {
   const h = fakeHome();
   const state = path.join(h.home, '.agents', 'harness');
   assert.equal(cli(h.home, ['--approve', 'updaters']).status, 0);
   const locks = path.join(state, 'machine-sweep.locks');
   fs.mkdirSync(locks, { recursive: true });
-  // process 1 never exits: its entry is a live sweep's, past the stale age or not
-  const live = path.join(locks, '1-a');
-  fs.writeFileSync(live, '');
-  fs.utimesSync(live, past(2), past(2));
-  const held = cli(h.home, ['--apply-approved']);
-  assert.equal(held.status, 1);
-  assert.match(held.stderr, /^machine-sweep: another sweep \(pid 1\) holds the lock; run again once it ends$/m);
-  assert.ok(fs.existsSync(path.join(h.caches, 'old-updater')));
-  assert.deepEqual(fs.readdirSync(locks), ['1-a'], "a live sweep's entry was removed, or the stopped run left its own");
-  fs.rmSync(live);
+  // a process this test starts is the live sweep: an entry written after it started holds the lock
+  const child = spawn('sleep', ['60'], { stdio: 'ignore' });
+  try {
+    const live = path.join(locks, `${child.pid}-a`);
+    fs.writeFileSync(live, '');
+    const held = cli(h.home, ['--apply-approved']);
+    assert.equal(held.status, 1);
+    assert.match(held.stderr, new RegExp(`^machine-sweep: another sweep \\(pid ${child.pid}\\) holds the lock; run again once it ends$`, 'm'));
+    assert.ok(fs.existsSync(path.join(h.caches, 'old-updater')));
+    assert.deepEqual(fs.readdirSync(locks), [path.basename(live)], "a live sweep's entry was removed, or the stopped run left its own");
+    // the same entry written before that process started is an earlier run's: the system gave its pid to another process
+    fs.utimesSync(live, past(2), past(2));
+    const reused = cli(h.home, ['--apply-approved']);
+    assert.equal(reused.status, 0, reused.stderr);
+    assert.ok(!fs.existsSync(path.join(h.caches, 'old-updater')));
+    assert.deepEqual(fs.readdirSync(locks), [], "a reused pid's entry stays, or the run left its own");
+  } finally {
+    child.kill();
+  }
+  put(path.join(h.caches, 'old-updater', 'pending', 'u.zip'), 'zip', 2, h.caches);
   fs.writeFileSync(path.join(locks, `${spawnSync(process.execPath, ['-e', '']).pid}-b`), '');
   const stale = cli(h.home, ['--apply-approved']);
   assert.equal(stale.status, 0, stale.stderr);

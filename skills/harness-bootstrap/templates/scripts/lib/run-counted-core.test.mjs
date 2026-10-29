@@ -4,7 +4,7 @@
 // Playwright 1.58.2 (list reporter). Hermetic: the wrapper runs fake runners and node's own test
 // runner on files in a temp directory.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,20 +14,27 @@ import { BAD_COUNTERS, KINDS, SUMMARY_STREAM, nodeDirectiveMarkers, nodeOptionsP
 
 const WRAPPER = fileURLToPath(new URL('../run-counted.mjs', import.meta.url));
 const ESC = '\u001b';
+const STANDARD_KINDS = ['vitest', 'node', 'pytest', 'bun', 'playwright'];
 
 // ---- the pure core
 
 test('parseArgs reads the kind, the floor and the command after --; anything else is a usage error', () => {
   assert.deepEqual(parseArgs(['--kind', 'vitest', '--min', '12', '--', 'pnpm', '-s', 'test']), { kind: 'vitest', min: 12, cmd: 'pnpm', args: ['-s', 'test'] });
-  assert.deepEqual(KINDS, ['vitest', 'node', 'pytest', 'bun', 'playwright']);
-  assert.deepEqual(KINDS.map((k) => SUMMARY_STREAM[k]), ['stdout', 'stdout', 'stdout', 'stderr', 'stdout']);
+  // by membership: a project's own kind or flag is no failure here
+  for (const k of STANDARD_KINDS) assert.ok(KINDS.includes(k), `${k} is not in KINDS`);
+  assert.deepEqual(STANDARD_KINDS.map((k) => SUMMARY_STREAM[k]), ['stdout', 'stdout', 'stdout', 'stderr', 'stdout']);
+  for (const k of KINDS) {
+    assert.ok(['stdout', 'stderr'].includes(SUMMARY_STREAM[k]), `${k} has no summary stream`);
+    assert.doesNotThrow(() => parseSummary(k, ''), `${k} has no parser`);
+  }
   const usage = (argv, re) => assert.throws(() => parseArgs(argv), (e) => e.usage === true && re.test(e.message));
   usage(['--kind', 'vitest', '--min', '1', 'npm', 'test'], /missing `--`/);
   usage(['--kind', 'vitest', '--min', '1', '--'], /no command/);
-  usage(['--kind', 'jest', '--min', '1', '--', 'jest'], /--kind must be one of: vitest, node, pytest, bun, playwright/);
+  const named = (e) => e.message.startsWith('--kind must be one of: ') && e.message.slice(23).split(', ');
+  assert.throws(() => parseArgs(['--kind', 'jest', '--min', '1', '--', 'jest']), (e) => e.usage === true && STANDARD_KINDS.every((k) => named(e).includes(k)));
   for (const min of [null, '0', '-3', '2.5', 'x']) usage(['--kind', 'bun', ...(min === null ? [] : ['--min', min]), '--', 'bun', 'test'], /--min must be an integer of 1 or more/);
   usage(['--kind', 'bun', '--kind', 'bun', '--min', '1', '--', 'bun', 'test'], /--kind given twice/);
-  usage(['--kind', 'bun', '--min', '1', '--root', '.', '--', 'bun', 'test'], /unknown option: --root/);
+  usage(['--kind', 'bun', '--min', '1', '--no-such-flag', '.', '--', 'bun', 'test'], /unknown option: --no-such-flag/);
   usage(['--kind', 'bun', '--min', '', '--', 'bun', 'test'], /--min needs a value/);
   for (const flag of ['--test-name-pattern=x', '--test-skip-pattern', '--test-only', '--test-shard=1/2']) usage(['--kind', 'node', '--min', '1', '--', 'node', '--test', flag, 'a.test.mjs'], /drops tests without counting them/);
   assert.equal(parseArgs(['--kind', 'vitest', '--min', '1', '--', 'vitest', 'run', '--test-name-pattern=x']).kind, 'vitest');
@@ -188,6 +195,67 @@ test("node (TAP): two runs in one output are two summaries, so a green last run 
   assert.deepEqual(parseSummary('node', TAP_SUITE), { passed: 1, failed: 0, cancelled: 0, skipped: 0, todo: 0, unknown: [], problems: [], markers: [] });
 });
 
+// node 24.14.1, `node --test --test-reporter=tap`: a test that logs `tests 5`. The console line is a
+// bare TAP comment before the plan; a summary's # tests line has # suites right after it.
+const TAP_LOG = [
+  'TAP version 13',
+  '# tests 5',
+  '# Subtest: logs',
+  'ok 1 - logs',
+  '  ---',
+  '  duration_ms: 0.486459',
+  "  type: 'test'",
+  '  ...',
+  '1..1',
+  '# tests 1',
+  '# suites 0',
+  '# pass 1',
+  '# fail 0',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 32.285625',
+].join('\n');
+
+test('node (TAP): a console # tests line is no summary; one followed by # suites is, and two real runs are two', () => {
+  assert.deepEqual(parseSummary('node', TAP_LOG), { passed: 1, failed: 0, cancelled: 0, skipped: 0, todo: 0, unknown: [], problems: [], markers: [] });
+  assert.deepEqual(parseSummary('node', TAP_LOG.replace('# tests 5\n', '# tests 5\n# suites 1\n')).problems, ['2 node summaries in the output (one expected)']);
+  assert.deepEqual(parseSummary('node', `${TAP_LOG}\n${TAP_LOG}\n`).problems, ['2 node summaries in the output (one expected)']);
+});
+
+// node 24.14.1, `node --test --test-reporter=tap empty.test.mjs`: a file that registers no tests.
+const TAP_EMPTY = [
+  'TAP version 13',
+  '# Subtest: empty.test.mjs',
+  'ok 1 - empty.test.mjs',
+  '  ---',
+  '  duration_ms: 1',
+  "  type: 'test'",
+  '  ...',
+  '1..1',
+  '# tests 1',
+  '# suites 0',
+  '# pass 1',
+  '# fail 0',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 26.168625',
+].join('\n');
+
+test('node (TAP): a file that registered no tests is a problem, not one pass; a suite or a test titled with a file name is not', () => {
+  const empty = (name) => `${name} registered no tests: node counted the file itself as one passing test`;
+  const s = parseSummary('node', TAP_EMPTY);
+  assert.deepEqual(s.problems, [empty('empty.test.mjs')]);
+  assert.equal(verdict({ kind: 'node', min: 1, exitCode: 0, summary: s }).ok, false);
+  // under default discovery node names the file by its path
+  assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', 'sub/blank.test.mjs')).problems, [empty('sub/blank.test.mjs')]);
+  assert.deepEqual(parseSummary('node', TAP_SUITE.replaceAll('group', 'utils.ts')).problems, []);
+  assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', 'reads a.mjs')).problems, []);
+  // an absolute path may hold whitespace: node prints it as given
+  for (const abs of ['/tmp/a b/empty.test.mjs', 'C:\\a b\\empty.test.mjs']) assert.deepEqual(parseSummary('node', TAP_EMPTY.replaceAll('empty.test.mjs', abs)).problems, [empty(abs)]);
+});
+
 test('pytest: the final counts line in any order, bare (-q) or between = rules; deselected and xfailed count', () => {
   assert.deepEqual(parseSummary('pytest', '============== 1 failed, 1 passed, 1 skipped, 1 xfailed in 0.02s ===============\n'), { passed: 1, failed: 1, skipped: 1, xfailed: 1, unknown: [], problems: [] });
   assert.deepEqual(parseSummary('pytest', '.                                                                        [100%]\n1 passed, 3 deselected in 0.00s\n'), { passed: 1, deselected: 3, unknown: [], problems: [] });
@@ -255,7 +323,7 @@ test('counter words are own keys only, and colour is the one escape stripped', (
 test('verdict: success ends with exactly the COUNTED line, above the floor with the raise hint; every reason is a line', () => {
   const s = parseSummary('vitest', '      Tests  52 passed (52)\n');
   assert.deepEqual(verdict({ kind: 'vitest', min: 52, exitCode: 0, summary: s }), { ok: true, lines: ['COUNTED vitest 52 passed (min 52)'] });
-  assert.deepEqual(verdict({ kind: 'vitest', min: 50, exitCode: 0, summary: s }).lines, ['run-counted: 50 → 52: raise --min in scripts/run-gates.sh', 'COUNTED vitest 52 passed (min 50)']);
+  assert.deepEqual(verdict({ kind: 'vitest', min: 50, exitCode: 0, summary: s }).lines, ["run-counted: 50 → 52: raise --min on the gate's line", 'COUNTED vitest 52 passed (min 50)']);
   assert.deepEqual(verdict({ kind: 'vitest', min: 60, exitCode: 0, summary: s }).lines, ['run-counted: FAIL 52 passed, below --min 60']);
   assert.deepEqual(BAD_COUNTERS, ['failed', 'errors', 'skipped', 'todo', 'flaky', 'interrupted', 'not run', 'cancelled', 'filtered out', 'deselected', 'xfailed', 'xpassed']);
   const all = Object.fromEntries(BAD_COUNTERS.map((c) => [c, 1]));
@@ -267,6 +335,16 @@ test('verdict: success ends with exactly the COUNTED line, above the floor with 
   ]);
   assert.match(verdict({ kind: 'bun', min: 1, exitCode: null, spawnError: 'spawn nope ENOENT', summary: null }).lines[0], /FAIL the command did not start: spawn nope ENOENT/);
   assert.ok(bad.lines.every((l) => !l.startsWith('COUNTED')));
+});
+
+test('verdict: a forwarded signal fails the run, once, even when the command exited 0 with a clean summary', () => {
+  const s = parseSummary('vitest', '      Tests  3 passed (3)\n');
+  assert.deepEqual(verdict({ kind: 'vitest', min: 3, exitCode: 0, interrupted: 'SIGTERM', summary: s }), { ok: false, lines: ['run-counted: FAIL interrupted by SIGTERM (forwarded to the command)'] });
+  assert.deepEqual(verdict({ kind: 'vitest', min: 3, exitCode: null, signal: 'SIGINT', interrupted: 'SIGINT', summary: s }).lines, ['run-counted: FAIL interrupted by SIGINT (forwarded to the command)']);
+  assert.deepEqual(verdict({ kind: 'vitest', min: 3, exitCode: null, signal: 'SIGKILL', interrupted: 'SIGHUP', summary: s }).lines, [
+    'run-counted: FAIL interrupted by SIGHUP (forwarded to the command)',
+    'run-counted: FAIL the command was killed by SIGKILL',
+  ]);
 });
 
 // ---- the wrapper
@@ -288,13 +366,17 @@ function fakeRunner(dir, out, { code = 0, err = '' } = {}) {
   return [process.execPath, file];
 }
 
-function wrap(args, env = {}) {
+function wrapEnv(env = {}) {
   const base = { ...process.env };
   delete base.NODE_OPTIONS;
   // node --test marks its children with NODE_TEST_CONTEXT: a nested `node --test` that inherits it
   // reports to this run instead of printing its own TAP
   delete base.NODE_TEST_CONTEXT;
-  return spawnSync(process.execPath, [WRAPPER, ...args], { encoding: 'utf8', env: { ...base, ...env } });
+  return { ...base, ...env };
+}
+
+function wrap(args, env = {}, cwd = undefined) {
+  return spawnSync(process.execPath, [WRAPPER, ...args], { encoding: 'utf8', env: wrapEnv(env), cwd });
 }
 
 test('the wrapper: a passing run ends with COUNTED; a skip, a floor above the count or a non-zero exit fails', () => {
@@ -346,6 +428,26 @@ test("the wrapper over node's own runner: TAP passes, a skipped suite fails, the
   assert.equal(tap('a.test.mjs', ['--test-name-pattern=one']).status, 2);
 });
 
+test("the wrapper over node's own runner: a file that registers no tests fails, alone or beside a real test file", () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'empty.test.mjs'), '');
+  fs.writeFileSync(path.join(d, 'real.test.mjs'), "import { test } from 'node:test';\ntest('one', () => {});\n");
+  // relative names, run from the directory: node names the empty file by the path it was given
+  const tap = (...files) => wrap(['--kind', 'node', '--min', '1', '--', process.execPath, '--test', '--test-reporter=tap', ...files], {}, d);
+  // and by an absolute path whose directory name has a space
+  const spaced = path.join(d, 'a dir');
+  fs.mkdirSync(spaced);
+  fs.writeFileSync(path.join(spaced, 'empty.test.mjs'), '');
+  const abs = tap(path.join(spaced, 'empty.test.mjs'));
+  assert.equal(abs.status, 1, abs.stdout + abs.stderr);
+  assert.match(abs.stdout, / dir\/empty\.test\.mjs registered no tests: node counted the file itself as one passing test$/m);
+  for (const r of [tap('empty.test.mjs'), tap('empty.test.mjs', 'real.test.mjs')]) {
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^run-counted: FAIL empty\.test\.mjs registered no tests: node counted the file itself as one passing test$/m);
+    assert.doesNotMatch(r.stdout, /^COUNTED/m);
+  }
+});
+
 test('the wrapper over two node runs in one command: the first failed, the last exited 0, and the gate fails', () => {
   const d = tmp();
   fs.writeFileSync(path.join(d, 'fail.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('broken', () => { assert.equal(1, 2); });\n");
@@ -367,7 +469,139 @@ test('the wrapper: a --test flag in its own NODE_OPTIONS fails before the comman
   assert.equal(r.status, 1);
   assert.match(r.stdout, /^run-counted: FAIL NODE_OPTIONS holds a --test flag/m);
   assert.ok(!fs.existsSync(marker), 'the command ran');
-  const usage = wrap(['--kind', 'vitest', '--', 'vitest']);
+  const usage = wrap(['--kind', 'vitest', '--', process.execPath, '-e', '']);
   assert.equal(usage.status, 2);
   assert.match(usage.stderr, /^run-counted: --min must be an integer[^\n]*\nusage: node scripts\/run-counted\.mjs --kind/);
+});
+
+/** Resolve once `check()` holds; throw after `ms`, the bound on a wait that polls for its condition. */
+async function until(check, ms, what) {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code !== 'ESRCH';
+  }
+}
+
+// run-counted's STOP_GRACE_MS (2 s) and a margin: the bound on a wrapper that must not hang.
+const GRACE_BOUND_MS = 4000;
+
+/**
+ * A script that writes its PID to `pidFile` (written, then renamed, so it appears whole) once it
+ * runs, then waits. `trap`: SIGTERM is caught; `exitOnTrap` then exits 0, else it writes
+ * `${pidFile}.term` and keeps waiting. `launch`: it first starts that script on its own pipes.
+ */
+function waiter(file, pidFile, { trap = false, exitOnTrap = false, launch = null } = {}) {
+  const lines = ["import fs from 'node:fs';", "import { spawn } from 'node:child_process';"];
+  if (launch) lines.push(`spawn(process.execPath, [${JSON.stringify(launch)}], { stdio: 'inherit' });`);
+  if (trap) lines.push(`process.on('SIGTERM', () => ${exitOnTrap ? 'process.exit(0)' : `fs.writeFileSync(${JSON.stringify(`${pidFile}.term`)}, '')`});`);
+  lines.push(`fs.writeFileSync(${JSON.stringify(`${pidFile}.part`)}, String(process.pid));`, `fs.renameSync(${JSON.stringify(`${pidFile}.part`)}, ${JSON.stringify(pidFile)});`);
+  lines.push('setInterval(() => {}, 1000);');
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  return file;
+}
+
+/** Start the wrapper over `script`; `stop()` kills whatever is left of it and of the PIDs in `pids`. */
+function startWrap(script) {
+  const w = spawn(process.execPath, [WRAPPER, '--kind', 'node', '--min', '1', '--', process.execPath, script], { env: wrapEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = { out: '', closed: null, pids: [] };
+  w.stdout.on('data', (b) => (r.out += b));
+  w.on('close', (code, signal) => (r.closed = { code, signal }));
+  r.kill = (sig) => w.kill(sig);
+  r.stop = () => {
+    if (r.closed === null) w.kill('SIGKILL');
+    for (const pid of r.pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+  };
+  return r;
+}
+
+const pidOf = async (pidFile, r) => {
+  await until(() => fs.existsSync(pidFile), 2000, `${path.basename(pidFile)} to appear`);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  r.pids.push(pid);
+  return pid;
+};
+const INTERRUPTED = /^run-counted: FAIL interrupted by SIGTERM \(forwarded to the command\)$/m;
+
+test('the wrapper forwards SIGTERM to the command, waits for it and exits 128 + 15, even when the command traps it and exits 0', async () => {
+  const d = tmp();
+  for (const exitOnTrap of [false, true]) {
+    const pidFile = path.join(d, `pid-${exitOnTrap}`);
+    const r = startWrap(waiter(path.join(d, `wait-${exitOnTrap}.mjs`), pidFile, { trap: exitOnTrap, exitOnTrap }));
+    try {
+      const pid = await pidOf(pidFile, r);
+      r.kill('SIGTERM');
+      await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+      assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+      assert.match(r.out, INTERRUPTED);
+      assert.doesNotMatch(r.out, /killed by SIGTERM|^COUNTED/m);
+      await until(() => !alive(pid), 2000, 'the command to end');
+    } finally {
+      r.stop();
+    }
+  }
+});
+
+test('the wrapper stops the processes the command started: SIGTERM reaches its whole process group', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'worker.pid');
+  const worker = waiter(path.join(d, 'worker.mjs'), pidFile);
+  const launcherPid = path.join(d, 'launcher.pid');
+  const r = startWrap(waiter(path.join(d, 'launcher.mjs'), launcherPid, { launch: worker }));
+  try {
+    await pidOf(launcherPid, r);
+    const pid = await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+    await until(() => !alive(pid), 2000, 'the worker to end');
+  } finally {
+    r.stop();
+  }
+});
+
+test('the wrapper does not hang on a worker that traps SIGTERM and holds the pipes open after the command exited', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'worker.pid');
+  const worker = waiter(path.join(d, 'worker.mjs'), pidFile, { trap: true });
+  const launcherPid = path.join(d, 'launcher.pid');
+  const r = startWrap(waiter(path.join(d, 'launcher.mjs'), launcherPid, { launch: worker }));
+  try {
+    await pidOf(launcherPid, r);
+    await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+  } finally {
+    r.stop();
+  }
+});
+
+test('a second SIGTERM kills a command that traps the first and never exits: exit 128 + 9, the first signal named', async () => {
+  const d = tmp();
+  const pidFile = path.join(d, 'pid');
+  const r = startWrap(waiter(path.join(d, 'stubborn.mjs'), pidFile, { trap: true }));
+  try {
+    const pid = await pidOf(pidFile, r);
+    r.kill('SIGTERM');
+    await until(() => fs.existsSync(`${pidFile}.term`), 2000, 'the command to get the first SIGTERM');
+    r.kill('SIGTERM');
+    await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
+    assert.deepEqual(r.closed, { code: 137, signal: null }, r.out);
+    assert.match(r.out, INTERRUPTED);
+    await until(() => !alive(pid), 2000, 'the command to end');
+  } finally {
+    r.stop();
+  }
 });

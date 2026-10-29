@@ -58,10 +58,11 @@ const LEDGER_DIR = '.claude-runs';
 
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 
+const USAGE =
+  'usage: node scripts/claude-run.mjs <kind> [--prompt <file>] [--base <ref>] [--out <file>] [options] (see the file header)';
+
 function usage(msg) {
-  process.stderr.write(
-    `claude-run: ${msg}\nusage: node scripts/claude-run.mjs <kind> [--prompt <file>] [--base <ref>] [--out <file>] [options] (see the file header)\n`,
-  );
+  process.stderr.write(`claude-run: ${msg}\n${USAGE}\n`);
   return EXIT.usage;
 }
 
@@ -148,7 +149,7 @@ function planRun(a) {
   const inside = !rel.startsWith('..') && !path.isAbsolute(rel);
   const route = resolveRoute(a);
   const argv = claudeArgv(route, a, { addDirs: inside ? [] : [scratch] });
-  let given = '';
+  let given;
   try {
     given = a.prompt ? fs.readFileSync(a.prompt, 'utf8') : '';
   } catch (e) {
@@ -184,6 +185,10 @@ function record({ a, run, res, result, ms, ledger, base }) {
 }
 
 async function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let a;
   let run;
   try {

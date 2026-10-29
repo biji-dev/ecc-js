@@ -20,11 +20,12 @@
  *                        archived, $CODEX_HOME/archived_sessions (CODEX_HOME defaults to ~/.codex).
  *                        Codex reports tokens and quota, not dollars
  *   --projects-dir <d>   default $CLAUDE_CONFIG_DIR/projects when set, else ~/.claude/projects
- *   --since / --until    only turns (and Codex runs) inside this ISO window
+ *   --since / --until    only turns inside this ISO window; a ledger's runs are counted only between
+ *                        the sessions' first and last line, or until now while one is running a tool
  *   --ledger <path>      Codex ledger JSONL (default: the main checkout's .codex-runs/ledger.jsonl, the
  *                        one codex-run.mjs writes -- the same file from a linked worktree -- if present)
  *   --cwd-match <s>      only ledger runs (Codex and claude-run) whose cwd contains this substring;
- *                        for claude-run it replaces the default, the runs made in this worktree
+ *                        it replaces the default, the runs made in this worktree, for both ledgers
  *   --times              add the main thread's wall, owner-wait and work time (owner wait: each question
  *                        until its answer, each typed prompt back to the last turn before it), its
  *                        compactions, its cache-hit share and its cache-expiry rewrites
@@ -36,9 +37,11 @@
  *   --line               print only the one-line summary (`Cost $<x> · Claude <p>% · Codex <q>% (<n> runs)`),
  *                        for `unit-record.mjs --cost "$(node scripts/unit-cost.mjs ... --line)"`
  *
- * claude-run's ledger (the main checkout's .claude-runs/ledger.jsonl, when there is one) adds to the
- * cost the dollars of the runs made in this worktree, judged by each run's real cwd: claude-run keeps
- * no transcript, and every worktree of the repository writes that one ledger.
+ * The two run ledgers (the main checkout's .codex-runs/ledger.jsonl and .claude-runs/ledger.jsonl, when
+ * there are any) are written by every worktree of the repository, so a ledger's runs are this unit's
+ * only when made in this worktree, judged by each run's real cwd, and between the sessions' first and
+ * last line (a bound left out ends there). claude-run's add their dollars to the cost: it keeps no
+ * transcript.
  *
  * The Codex % is account-wide: it is the growth of the account's weekly quota during the Codex runs
  * and a Codex host's turns, so it includes any other work on the same account in that window.
@@ -54,6 +57,7 @@ import path from 'node:path';
 import {
   codexPercent,
   formatReport,
+  ledgerWindow,
   parseArgs,
   parseCodexSession,
   parseEvents,
@@ -68,6 +72,7 @@ import {
   summarizeSteps,
   summarizeTimes,
   summaryLine,
+  transcriptTimes,
 } from './lib/unit-cost-core.mjs';
 import {
   CLAUDE_LEDGER_DIR,
@@ -109,17 +114,28 @@ function findSession(projectsDir, codexDir, id) {
 }
 
 /**
- * claude-run's runs that are this unit's: every worktree writes the main checkout's ledger, so the ones
- * made in this worktree, or with --cwd-match every run (summarizeClaudeRuns then keeps the matching ones).
+ * A ledger's runs that are this unit's: both ledgers live in the main checkout and every worktree writes
+ * them, so the ones made in this worktree (a run with no cwd is no worktree's), or with --cwd-match every
+ * run (the summaries then keep the matching ones).
  */
 function worktreeRuns(runs, cwdMatch) {
   if (cwdMatch) return runs;
   const owner = worktreeOwner(worktreePaths(process.cwd()));
   const here = owner(process.cwd());
-  return runs.filter((e) => owner(e.cwd) === here);
+  return runs.filter((e) => here !== null && owner(e.cwd) === here);
+}
+
+/** The --by-step unit: --unit, else the one unit all the markers name (`harness/x` lives in `harness/x.steps.jsonl`), else the file's name. */
+function stepsUnit(args, markers) {
+  const named = [...new Set(markers.map((m) => m.unit))];
+  return args.unit ?? (named.length === 1 && named[0] !== '' ? named[0] : path.basename(args.byStep).replace(/\.steps\.jsonl$/, ''));
 }
 
 function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    process.exit(0);
+  }
   let args;
   let claude;
   let codex = null;
@@ -135,6 +151,11 @@ function main() {
     const threads = files.map((file) => parseCodexSession(fileLines(file)));
     const rows = texts.flatMap(({ text, ctx }) => parseTranscript(text, ctx));
     const window = { since: args.since, until: args.until };
+    // The sessions' own turns keep the window as given; a ledger's runs are counted between their first and
+    // last line (a tool result comes after its turn), or until now while a tool is running.
+    const lines = texts.map(({ text }) => transcriptTimes(text));
+    const times = [...lines.flatMap((l) => l.times), ...threads.flatMap((t) => [...t.starts, ...t.readings.map((r) => r.ts)])];
+    const runWindow = ledgerWindow(window, times, lines.some((l) => l.live) ? Date.now() : null);
     claude = summarizeClaude(rows, window);
     if (args.times) {
       const events = [
@@ -147,29 +168,30 @@ function main() {
       if (texts.length || !threads.length) extra.cache = summarizeCache(rows, window);
     }
     if (args.byStep) {
-      const unit = args.unit ?? path.basename(args.byStep).replace(/\.steps\.jsonl$/, '');
-      extra.steps = summarizeSteps(rows, parseSteps(readText(args.byStep)), { ...window, unit });
+      const markers = parseSteps(readText(args.byStep));
+      extra.steps = summarizeSteps(rows, markers, { ...window, unit: stepsUnit(args, markers) });
     }
     const ledger = args.ledger ?? defaultLedger();
-    const entries = ledger && fs.existsSync(ledger) ? parseLedger(readText(ledger)) : null;
-    if (entries) codex = summarizeLedger(entries, { ...window, cwdMatch: args.cwdMatch });
+    const entries = ledger && fs.existsSync(ledger) ? worktreeRuns(parseLedger(readText(ledger)), args.cwdMatch) : null;
+    if (entries) codex = summarizeLedger(entries, { ...runWindow, cwdMatch: args.cwdMatch });
     const claudeLedger = defaultLedger(process.cwd(), CLAUDE_LEDGER_DIR);
     if (fs.existsSync(claudeLedger)) {
       const runs = worktreeRuns(parseLedger(readText(claudeLedger)), args.cwdMatch);
-      extra.claudeRuns = summarizeClaudeRuns(runs, { ...window, cwdMatch: args.cwdMatch });
+      extra.claudeRuns = summarizeClaudeRuns(runs, { ...runWindow, cwdMatch: args.cwdMatch });
     }
     if (threads.length) {
       extra.host = summarizeCodexHost(threads, window);
-      extra.percent = codexPercent(entries ?? [], threads, { ...window, cwdMatch: args.cwdMatch });
+      extra.percent = codexPercent(entries ?? [], threads, { ...runWindow, cwdMatch: args.cwdMatch });
     }
   } catch (e) {
     return usage(e.message);
   }
   if (args.line) process.stdout.write(`${summaryLine(claude, codex, extra)}\n`);
   else if (args.json) {
-    const { claudeRuns = null, host = null, percent: _percent, ...rest } = extra;
+    // `codexPercent` is the union % the summary line prints on a Codex host (the host's turns and the ledger's runs).
+    const { claudeRuns = null, host = null, percent = null, ...rest } = extra;
     const summary = summaryLine(claude, codex, extra);
-    process.stdout.write(`${JSON.stringify({ claude, codex, claudeRuns, codexHost: host, summary, ...rest }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ claude, codex, claudeRuns, codexHost: host, codexPercent: percent, summary, ...rest }, null, 2)}\n`);
   } else process.stdout.write(formatReport(claude, codex, extra));
 }
 

@@ -10,15 +10,18 @@
 // whole unit diff, P3s never open a fix round, Opus re-reviews only critical code with a P1
 // fixed, at most two Opus rounds, and a re-review is scoped to the fix. A fix written by the
 // second family is re-read by Claude, never by the family that wrote it. Critical code written by
-// anyone but Opus (the second family, Sonnet, or a mix) gets an Opus reviewer per slice. The
-// writer is never assumed: every decision names who wrote the diff (`--writer`, required).
+// anyone but Opus (the second family, Sonnet, or a mix) gets an Opus reviewer per slice, and a P3
+// batch over it gets one too. The writer is never assumed: every decision names who wrote the
+// diff (`--writer`, required).
 //
 // Decides from FACTS about a diff (paths, production lines, what a fix round fixed) which review
 // it is owed, so the main thread does not guess. No I/O here, so the test can pin each rule.
+// It reviews production files, tests and the harness's instruction files, and skips only docs
+// alone: a weakened test is a weakened control, and a test under a critical path is critical.
 //
 // THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
-// model, a bounded model and a second family (gate-design.md › Model and effort). Read as Claude
-// Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
+// model, a bounded model and a second family (harness-bootstrap's reference/gate-design.md › Model
+// and effort). Read as Claude Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
 // unit went to the bounded model -- the family that wrote it. So `--writer` names the role, and a
 // family name counts only on Claude Code (or an unknown host, where every v4 install ran).
 
@@ -28,6 +31,8 @@ import { HOSTS } from './harness-host-core.mjs';
 export const CRITICAL = []; // path regexes of critical code (risk map › critical); empty until bound
 export const NON_PRODUCTION = [/\.md$/, /^docs\//, /(^|\/)(__tests__|tests?|e2e|fixtures)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that are not production code (docs, tests, fixtures)
 export const TESTS = [/(^|\/)(__tests__|tests?|e2e)\//, /\.(test|spec)\.[cm]?[jt]sx?$/]; // paths that count as tests (calls the test analyzer at the unit review)
+// the harness's own instruction files and host config: Code, never docs (harness-bootstrap's reference/runner.md › Task type first)
+export const INSTRUCTIONS = [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//];
 export const TRIGGERS = {
   // specialist reviewer → path regexes that call it at the unit review (the project's risk map)
   'security-reviewer': [/auth|session|token|crypto|permission|rbac|tenant|webhook|public/i],
@@ -47,8 +52,9 @@ export const FIX_LINES = 40; // a critical P1 fix at or under this many producti
 export const KINDS = ['slice', 'unit', 'fix'];
 export const TIERS = ['small', 'full'];
 // who wrote the diff, as decide() routes it, in Claude Code's names: claude = Opus (main thread /
-// implementer), codex = the second family, sonnet = a Sonnet builder, mixed = several executors
-// (a fix round split between Opus and Codex). The CLI takes a role and maps it with writerRole.
+// implementer), codex = the second family, sonnet = a Sonnet builder (or Opus and Sonnet
+// together), mixed = several executors, the second family among them (routes like codex). The
+// CLI takes a role and maps it with writerRole.
 export const WRITERS = ['claude', 'codex', 'sonnet', 'mixed'];
 // --writer's role → the routing value; the same on every host
 export const ROLES = { main: 'claude', bounded: 'sonnet', second: 'codex', mixed: 'mixed' };
@@ -83,7 +89,10 @@ export function writerRole(writer, host) {
   throw new Error(`--writer is required and names the role that wrote the diff: main | bounded | second | mixed${also}`);
 }
 
-export const isProduction = (path) => !NON_PRODUCTION.some((re) => re.test(path));
+const isExempt = (path) => NON_PRODUCTION.some((re) => re.test(path));
+export const isInstruction = (path) => INSTRUCTIONS.some((re) => re.test(path));
+// a test in an instruction directory stays a test: reviewed and critical, but its lines and count are a test's
+export const isProduction = (path) => (isInstruction(path) ? !isTest(path) : !isExempt(path));
 export const isCritical = (path) => CRITICAL.some((re) => re.test(path));
 export const isTest = (path) => TESTS.some((re) => re.test(path));
 
@@ -146,16 +155,20 @@ export function parseArgs(argv) {
 /**
  * kind 'slice': after a slice passes its gate, before the next builds on it.
  * kind 'unit':  step 8, once, over the whole unit diff from the merge base.
- * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet |
- * mixed (several executors, e.g. a fix round split between Opus and Codex; routes like codex).
+ * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet
+ * (Sonnet, or Opus and Sonnet together) | mixed (several executors, the second family among them;
+ * routes like codex).
  * kind 'fix':   once per fix round, over `<sha-before-the-fixes>..` (pass the whole round once,
  *               after its last fix group); `maxFixed` is the highest severity the round fixed
  *               (P0 counts as P1) and `round` counts fix rounds on this area from 1. For this
  *               kind `writer` is who wrote THE FIX: a codex, sonnet or mixed fix on critical code
  *               is re-read by Opus ('review'); a codex or mixed cold fix by a Sonnet reviewer.
+ *               A P3 round is the P3 batch ('p3-batch', no re-review) unless it touches critical
+ *               code and Opus did not write it: then the Opus reviewer reads it ('review').
  * decision: 'skip' | 'defer' | 'required' | 'second-family' | 'review' | 'p3-batch' |
  *           'second-family+opus' | 'escalate-adversarial'.
  * `files` is [{ path, lines }]; `reviewers` is the ordered list of reviewers to run (maybe empty).
+ * `critical` covers production files and tests; `testFiles` counts the tests that are not production.
  */
 export function decide({ files, kind, tier = 'full', writer, maxFixed = null, round = 1 }) {
   if (!KINDS.includes(kind)) throw new Error(`--kind must be one of ${KINDS.join('|')}`);
@@ -166,7 +179,11 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     throw new Error(`--max-fixed must be one of ${SEVERITIES.join('|')} for --kind fix`);
 
   const prod = files.filter((f) => isProduction(f.path));
-  const critical = prod.filter((f) => isCritical(f.path)).map((f) => f.path);
+  // what the gate reviews: production files plus tests; test lines never make a fix "large"
+  const reviewed = files.filter((f) => isProduction(f.path) || isTest(f.path));
+  const docsOnly = reviewed.length === 0;
+  const critical = reviewed.filter((f) => isCritical(f.path)).map((f) => f.path);
+  const named = `${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}`;
   const prodLines = prod.reduce((n, f) => n + f.lines, 0);
   const notChecked = [
     'importers>=10',
@@ -181,16 +198,19 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     maxFixed,
     prodFiles: prod.length,
     prodLines,
+    testFiles: reviewed.length - prod.length,
     critical,
     notChecked,
   };
   const out = (decision, reviewers, reason) => ({ decision, reviewers, reason, ...facts });
+  const DOCS_ONLY = 'no production code and no tests: docs only';
+  // a specialist reads code: an instruction file's prose names auth or sessions without being either
   const specialists = Object.keys(TRIGGERS).filter((name) =>
-    prod.some((f) => TRIGGERS[name].some((re) => re.test(f.path))),
+    files.some((f) => !isExempt(f.path) && TRIGGERS[name].some((re) => re.test(f.path))),
   );
 
   if (kind === 'slice') {
-    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
+    if (docsOnly) return out('skip', [], DOCS_ONLY);
     if (secondFamilyWrote(writer) && critical.length === 0)
       return out(
         'defer',
@@ -200,7 +220,6 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
           : 'cold slice written partly by the second family: the unit review covers it',
       );
     if (writer !== 'claude' && critical.length > 0) {
-      const named = `${critical[0]}${critical.length > 1 ? ` +${critical.length - 1}` : ''}`;
       const by =
         writer === 'codex'
           ? 'the second family (an owner override, executor: codex)'
@@ -221,14 +240,22 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   }
 
   if (kind === 'unit') {
-    if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
-    if (tier === 'small') {
+    if (docsOnly) return out('skip', [], DOCS_ONLY);
+    const what =
+      prod.length === 0
+        ? '; tests only, no production code'
+        : prod.every((f) => isInstruction(f.path))
+          ? '; instruction files, no other production code'
+          : '';
+    // critical code is Full (harness-bootstrap's reference/gate-design.md › Tiers): a mis-tiered unit gets the full lineup anyway
+    const escalate = tier === 'small' && critical.length > 0;
+    if (tier === 'small' && !escalate) {
       // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Sonnet
       const base = secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review';
       return out(
         'review',
         [base, ...specialists],
-        `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff`,
+        `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff${what}`,
       );
     }
     const reviewers = [
@@ -240,20 +267,29 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     return out(
       'review',
       reviewers,
-      `full unit: one review pass over the whole unit diff${secondFamilyWrote(writer) ? '; the unit was written by the second family, so the Opus code-reviewer is the cross-family review' : ''}`,
+      `full unit: one review pass over the whole unit diff${what}${secondFamilyWrote(writer) ? '; the unit was written by the second family, so the Opus code-reviewer is the cross-family review' : ''}${escalate ? `; critical path at --tier small (${named}): reviewed as full, re-tier the row` : ''}`,
     );
   }
 
   // kind 'fix'
-  if (maxFixed === 'P3')
+  if (maxFixed === 'P3') {
+    // the batch is Sonnet's or the second family's: critical code in it still gets the Opus reader;
+    // no specialist joins (P3s are nits)
+    if (critical.length > 0 && writer !== 'claude')
+      return out(
+        'review',
+        ['opus-code-reviewer'],
+        `the P3 batch over critical code was written by ${WRITER_NAMES[writer]}, so Opus reads it (${named})`,
+      );
     return out(
       'p3-batch',
       [],
       'P3s never open a fix round: they wait for the P3 batch, one per slice set, no re-review',
     );
-  if (prod.length === 0) return out('skip', [], 'no production code: tests or docs only');
+  }
+  if (docsOnly) return out('skip', [], DOCS_ONLY);
   const r = fixRound({ critical, maxFixed, round, prodLines, writer });
-  // the specialist whose trigger the fix hits joins its re-review (gate-design.md › Fix rounds)
+  // the specialist whose trigger the fix hits joins its re-review (harness-bootstrap's reference/gate-design.md › Fix rounds)
   if (specialists.length === 0) return out(r.decision, r.reviewers, r.reason);
   if (r.decision === 'skip')
     return out('review', specialists, `${r.reason}; the triggered specialist re-reads the fix`);

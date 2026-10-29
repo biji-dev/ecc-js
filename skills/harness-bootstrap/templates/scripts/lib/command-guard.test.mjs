@@ -34,10 +34,10 @@ test('wrappers, paths and chains do not hide a bypass', () => {
 });
 
 test('env -S, a shell\'s options after -c and the other shells do not hide a bypass', () => {
-  for (const c of ["env -S 'git commit --no-verify -m x'", 'env -P /usr/bin git commit -n -m x', "bash -c -x 'git commit -n -m x'", "bash -c -- 'git commit -n -m x'", "ksh -c 'git commit -n -m x'", "csh -c 'git commit -n -m x'"]) {
+  for (const c of ["env -S 'git commit --no-verify -m x'", "env -S '# note' git commit -n -m x", 'env -P /usr/bin git commit -n -m x', "bash -c -x 'git commit -n -m x'", "bash -c -- 'git commit -n -m x'", "ksh -c 'git commit -n -m x'", "csh -c 'git commit -n -m x'"]) {
     assert.equal(rule(c), 'no-verify', c);
   }
-  for (const c of ["env -S 'git status'", "bash -c -x 'git commit -m x'", "ksh -c 'git log -n 5'"]) {
+  for (const c of ["env -S 'git status'", "env -S 'echo x; git commit -n -m y'", "bash -c -x 'git commit -m x'", "ksh -c 'git log -n 5'"]) {
     assert.equal(rule(c), null, c);
   }
 });

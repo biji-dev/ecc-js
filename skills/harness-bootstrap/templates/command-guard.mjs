@@ -15,9 +15,11 @@
 // and xargs are stripped with their options (`command -p`, `exec -a name`, `time -p`,
 // `time -o file`, `time -f fmt`, `env -P dir`; a long option also by an unambiguous prefix, as GNU
 // tools take it: `env --u`), as are a shell's `-c "<script>"` (bash, sh, dash, zsh, ksh, csh,
-// fish and their kin; options may come before or after the -c: `bash -c -x "<script>"`),
-// `env -S "<string>"` and `eval "<script>"` (each re-parsed). A
-// command's environment is its inline VAR=value words (also those after env or sudo), any
+// fish and their kin; options may come before or after the -c: `bash -c -x "<script>"`) and
+// `eval "<script>"` (each re-parsed). `env -S "<string>"` is split as env splits it, not as a shell
+// would (its quotes and backslash escapes; `;` and `|` are text; `\c`, or a word that starts with
+// an unquoted `#`, ends the string but not the words after it), and its words are read in its
+// place. A command's environment is its inline VAR=value words (also those after env or sudo), any
 // `export VAR=value` earlier in the same shell (not past a `( ... )`, a backtick, a pipeline or a
 // backgrounded list: each runs in a subshell), and, inside a `bash -c` or `eval` script, the
 // shell's own; a later assignment wins. A command runs in the background when its and-or list
@@ -31,8 +33,9 @@
 // This stops an agent's own mistakes; it is not a sandbox. Known limits: command substitution
 // inside double quotes is not parsed (a nested `$(...)` with its own quotes is skipped as one
 // string; quotes nested inside backticks are not); a program named by a variable or substitution
-// ($(which git)), shell aliases and git aliases (`git ci`) are not resolved; an export or cd in an
-// `eval` script does not reach the commands after the eval (bash runs it in the current shell);
+// ($(which git)), an `env -S` string's `${VAR}`, shell aliases and git aliases (`git ci`) are not
+// resolved; an export or cd in an `eval` script does not reach the commands after the eval (bash
+// runs it in the current shell);
 // settings made in an earlier Bash call (export HUSKY=0, GIT_CONFIG_* variables), or on this line
 // by `declare -x`, `typeset -x` or `set -a`, are not tracked; an assignment whose value is an
 // unquoted `$(...)` or backtick substitution is cut from its command (GIT_CONFIG_KEY_0=$(...) git
@@ -224,13 +227,59 @@ function maskQuotes(src, quoted) {
 }
 
 /**
+ * The words `env -S` makes of its string, by env's rules (FreeBSD's and GNU's agree), not a shell's:
+ * blanks (space, tab, newline, \v, \f, \r) separate words outside quotes; '...' keeps everything but
+ * \' and \\; elsewhere \" \' \\ \# \$ \f \n \r \t \v and an escaped blank stand for the character,
+ * and \_ is a blank inside "..." and a separator outside; \c, or a word that starts with an unquoted
+ * #, ends the string. `;`, `|` and `$(...)` are text, and `${NAME}` stays as written. A string env
+ * refuses (an unknown escape, an open quote) is read as far as it goes.
+ */
+function envSplit(text) {
+  const words = [];
+  let word = null; // null between words; a quote starts one, even an empty one
+  let quote = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote === "'" && c !== "'" && !(c === '\\' && (text[i + 1] === "'" || text[i + 1] === '\\'))) {
+      word += c;
+    } else if (c === '\\') {
+      const e = text[++i];
+      if (e === undefined || e === 'c') break;
+      if (e === '_' && !quote) {
+        if (word !== null) words.push(word);
+        word = null;
+      } else {
+        word = (word ?? '') + (e === '_' ? ' ' : ({ f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[e] ?? e));
+      }
+    } else if (c === quote) {
+      quote = null;
+    } else if (quote) {
+      word += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      word ??= '';
+    } else if (/[ \t\n\v\f\r]/.test(c)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else if (c === '#' && word === null) {
+      break;
+    } else {
+      word = (word ?? '') + c;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+/**
  * If words[0] is a wrapper in WRAPPER_SHORT_VALUE (command, exec, time, env, sudo, ...), drop it
  * with its options (and, for env and sudo, VAR=value words, which are appended to `assignments`).
- * `env -S "<string>"` instead becomes an eval of `env <string> <the words after it>`, those words
- * quoted as they were: env splits the string into words and runs them. True when something was
- * dropped.
+ * `env -S "<string>"` instead puts the words env makes of the string (envSplit) in place of env's
+ * options and the string, ahead of the words after it, which stay: the next pass reads them as env
+ * does (options, VAR=value words, the command). A split word with whitespace is held as a quoted
+ * string is (`hold`). True when something was dropped.
  */
-function unwrap(words, assignments, unq) {
+function unwrap(words, assignments, unq, hold) {
   const name = basename(words[0]);
   const shortValue = WRAPPER_SHORT_VALUE.get(name);
   if (shortValue === undefined) return false;
@@ -263,8 +312,8 @@ function unwrap(words, assignments, unq) {
   }
   if (split) {
     const [string, after] = split;
-    const kept = words.slice(after).map((w) => (w.includes(SEP) ? `'${unq(w).replace(/'/g, "'\\''")}'` : w));
-    words.splice(0, words.length, 'eval', 'env', string ?? '', ...kept);
+    const parts = envSplit(unq(string ?? '')).map((w) => (/\s/.test(w) ? hold(w) : w));
+    words.splice(0, after, 'env', ...parts);
     return true;
   }
   // `command -v` and `-V` only look a name up: nothing runs.
@@ -395,6 +444,7 @@ function parse(command, cwd, quoted, depth, background) {
     .replace(/(?<!&)&>>?\s*[^\s;&|()<>]*/g, ' ')
     .replace(/\|&/g, '|');
   const unq = (w) => w.replace(PH, (_, n) => quoted[Number(n)]);
+  const hold = (content) => `${SEP}Q${quoted.push(content) - 1}${SEP}`;
   // A quoted string without whitespace becomes plain text, so a quoted flag is still a flag.
   const open = (w) => w.replace(PH, (m, n) => {
     const c = quoted[Number(n)];
@@ -409,7 +459,7 @@ function parse(command, cwd, quoted, depth, background) {
       if (!words.length) break;
       if (ASSIGNMENT.test(words[0])) env.push(words.shift());
       else if (WRAPPERS.has(words[0])) words.shift();
-      else if (!unwrap(words, env, unq)) break;
+      else if (!unwrap(words, env, unq, hold)) break;
     }
     if (!words.length) continue;
     const state = stateOf(segment.node);

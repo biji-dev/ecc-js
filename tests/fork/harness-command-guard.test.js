@@ -126,6 +126,13 @@ async function main() {
     ["env -S 'git commit -m x' -n", 'no-verify'],
     ["env -S 'HUSKY=0 git commit -m x'", 'no-verify'],
     ["env -S 'codex exec x' &", 'codex-background'],
+    // env, not a shell, splits the string: a word that starts with # and a \c end the string, not
+    // the words after it; \_ separates words; options inside the string are env's own
+    ["env -S '# note' git commit -n -m x", 'no-verify'],
+    ["env -S '#x' git commit --no-verify -m x", 'no-verify'],
+    ["env -S '\\c' git commit -n -m x", 'no-verify'],
+    ["env -S 'git\\_commit\\_-n\\_-m\\_x'", 'no-verify'],
+    ["env -S '-u HOME -S \"git commit -n -m x\"'", 'no-verify'],
     ['env -P /usr/bin git commit -n -m x', 'no-verify'],
     ['env -a g0 git commit -n -m x', 'no-verify'],
     ['env --u HOME git commit -n -m x', 'no-verify'],
@@ -434,6 +441,10 @@ async function main() {
     "env -S 'git status'",
     "env -S 'git commit -m x' -m 'say -n here'",
     'env -S',
+    // env hands `;` and `|` to the program as words, and its quotes keep a word whole
+    "env -S 'echo x; git commit -n -m y'",
+    "env -S 'echo x | git commit -n -m y'",
+    "env -S 'git commit -m \"say -n here\"'",
     'env -P /usr/bin git status',
     'env --unset=HOME git status',
     "bash -c -x 'git commit -m x'",

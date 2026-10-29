@@ -232,31 +232,39 @@ function maskQuotes(src, quoted) {
  * \' and \\; elsewhere \" \' \\ \# \$ \f \n \r \t \v and an escaped blank stand for the character,
  * and \_ is a blank inside "..." and a separator outside; \c, or a word that starts with an unquoted
  * #, ends the string. `;`, `|` and `$(...)` are text, and `${NAME}` stays as written. A string env
- * refuses (an unknown escape, an open quote) is read as far as it goes.
+ * refuses (an unknown escape, an open quote) is read as far as it goes. Each word comes back masked
+ * as the shell's words are: a quoted run, or an escaped character, that holds whitespace is held
+ * (`hold`) and the rest stays text, so a VAR= prefix or an option cluster before it is still read.
  */
-function envSplit(text) {
+function envSplit(text, hold) {
   const words = [];
+  const mask = (s) => (/\s/.test(s) ? hold(s) : s);
   let word = null; // null between words; a quote starts one, even an empty one
   let quote = null;
+  let run = ''; // the open quote's text so far
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (quote === "'" && c !== "'" && !(c === '\\' && (text[i + 1] === "'" || text[i + 1] === '\\'))) {
-      word += c;
+      run += c;
     } else if (c === '\\') {
       const e = text[++i];
       if (e === undefined || e === 'c') break;
       if (e === '_' && !quote) {
         if (word !== null) words.push(word);
         word = null;
-      } else {
-        word = (word ?? '') + (e === '_' ? ' ' : ({ f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[e] ?? e));
+        continue;
       }
+      const ch = e === '_' ? ' ' : ({ f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }[e] ?? e);
+      if (quote) run += ch;
+      else word = (word ?? '') + mask(ch);
     } else if (c === quote) {
+      word += mask(run);
       quote = null;
     } else if (quote) {
-      word += c;
+      run += c;
     } else if (c === "'" || c === '"') {
       quote = c;
+      run = '';
       word ??= '';
     } else if (/[ \t\n\v\f\r]/.test(c)) {
       if (word !== null) words.push(word);
@@ -267,6 +275,7 @@ function envSplit(text) {
       word = (word ?? '') + c;
     }
   }
+  if (quote) word += mask(run);
   if (word !== null) words.push(word);
   return words;
 }
@@ -276,8 +285,7 @@ function envSplit(text) {
  * with its options (and, for env and sudo, VAR=value words, which are appended to `assignments`).
  * `env -S "<string>"` instead puts the words env makes of the string (envSplit) in place of env's
  * options and the string, ahead of the words after it, which stay: the next pass reads them as env
- * does (options, VAR=value words, the command). A split word with whitespace is held as a quoted
- * string is (`hold`). True when something was dropped.
+ * does (options, VAR=value words, the command). True when something was dropped.
  */
 function unwrap(words, assignments, unq, hold) {
   const name = basename(words[0]);
@@ -312,8 +320,7 @@ function unwrap(words, assignments, unq, hold) {
   }
   if (split) {
     const [string, after] = split;
-    const parts = envSplit(unq(string ?? '')).map((w) => (/\s/.test(w) ? hold(w) : w));
-    words.splice(0, after, 'env', ...parts);
+    words.splice(0, after, 'env', ...envSplit(unq(string ?? ''), hold));
     return true;
   }
   // `command -v` and `-V` only look a name up: nothing runs.

@@ -1,7 +1,8 @@
 // harness-bootstrap unit-step tests (generated YYYY-MM-DD). Run: node --test scripts/lib/unit-step-core.test.mjs
-// [M] mechanism (ships as-is): every test. [B] binding: none -- the CLI tests pass --dir, so a
-// project's own STEPS_DIR keeps them green.
-// Hermetic: the wrapper runs in a temp directory with a fresh HOME.
+// [M] mechanism (ships as-is): every test. [B] binding: none -- the CLI tests pass --dir and read
+// MAIN_CHECKOUT_STEPS from the core, so a project's own bindings keep them green.
+// Hermetic: the wrapper runs in a temp directory with a fresh HOME; the branch cases run in throwaway
+// git repositories that no GIT_* variable or global config reaches.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,14 +11,18 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  MAIN_CHECKOUT_STEPS,
   MAX_ROUND,
   UNIT_ID_SOURCE,
+  branchCheck,
+  branchMatchesUnit,
   checkNext,
   formatIntervals,
   formatMinutes,
   label,
   parseArgs,
   parseSteps,
+  parseWorktrees,
   stepIntervals,
   stepLine,
 } from './unit-step-core.mjs';
@@ -69,6 +74,28 @@ test('parseArgs rejects a wrong count, a path in the unit id, a bad step, event 
   assert.throws(() => parseArgs(['U-1', '8b', 'start', '--dir']), /needs a value/);
   assert.throws(() => parseArgs(['U-1', '8b', 'start', '--wat']), /unknown option --wat/);
   assert.throws(() => parseArgs(['U-1', '8b', '--list']), /--list takes the unit id only/);
+});
+
+test('parseArgs reads --check <unit>, --where and --where <unit> [--dir], and refuses them with anything else', () => {
+  const check = parseArgs(['--check', 'EP-7']);
+  assert.deepEqual([check.check, check.where, check.list, check.unit, check.step], [true, false, false, 'EP-7', null]);
+  assert.equal(parseArgs(['harness/x', '--check']).unit, 'harness/x');
+  const where = parseArgs(['--where']);
+  assert.deepEqual([where.where, where.check, where.unit, where.dir], [true, false, null, null]);
+  const named = parseArgs(['--where', 'EP-7', '--dir', 'x/y']);
+  assert.deepEqual([named.where, named.unit, named.dir], [true, 'EP-7', 'x/y']);
+  assert.throws(() => parseArgs(['--check']), /--check takes the unit id only/);
+  assert.throws(() => parseArgs(['--check', 'EP-7', '8', 'start']), /--check takes the unit id only/);
+  assert.throws(() => parseArgs(['--where', 'EP-7', 'EP-8']), /--where takes one unit id at most/);
+  for (const extra of [['--list'], ['--round', '2'], ['--at', '2026-10-26T01:00:00Z']]) {
+    assert.throws(() => parseArgs(['--check', 'EP-7', ...extra]), /--check runs alone/, extra[0]);
+    assert.throws(() => parseArgs(['--where', 'EP-7', ...extra]), /--where runs alone/, extra[0]);
+  }
+  assert.throws(() => parseArgs(['--check', 'EP-7', '--dir', 'x']), /--check runs alone, not with --dir/);
+  assert.throws(() => parseArgs(['--check', '--where', 'EP-7']), /runs alone/);
+  assert.throws(() => parseArgs(['--check', '../x']), /bad unit id/);
+  assert.throws(() => parseArgs(['--where', 'a/b/c']), /bad unit id/);
+  assert.throws(() => parseArgs(['--where', '--wat']), /unknown option --wat/);
 });
 
 test('parseArgs takes a unit id of one segment, or two joined by one slash, and refuses every other path', () => {
@@ -178,14 +205,228 @@ test('formatMinutes and formatIntervals print durations, open steps and every pr
   assert.equal(formatIntervals({ intervals: [], problems: [] }), 'no step markers\n');
 });
 
-function cli(cwd, args) {
+test('branchMatchesUnit takes the unit id as a whole branch segment or a segment prefix before - _ or ., in any case', () => {
+  const cases = [
+    ['task/EP-7-login', 'EP-7', true],
+    ['task/EP-70', 'EP-7', false],
+    ['EP-7', 'EP-7', true],
+    ['harness/proportional-tier', 'proportional-tier', true],
+    ['harness/fu-10-edit-guard-scope', 'fu-10', true],
+    ['change/fix-login', 'change/fix-login', true],
+    ['harness/sweep-2026-10-28', 'sweep-2026-10-28', true],
+    ['harness/sweep-2026-10-28', 'harness/sweep-2026-10-28', true],
+    ['main', 'EP-7', false],
+    ['task/xEP-7', 'EP-7', false],
+    ['task/ep-7-login', 'EP-7', true],
+    ['task/EP-7.2', 'EP-7', true],
+    ['task/EP-7_b', 'EP-7', true],
+  ];
+  for (const [branch, unit, want] of cases) assert.equal(branchMatchesUnit(branch, unit), want, `${branch} x ${unit}`);
+  // A unit id is matched literally: its `.` is no wildcard.
+  assert.equal(branchMatchesUnit('task/EPx7', 'EP.7'), false);
+});
+
+test('branchCheck lets an exempt step run anywhere, refuses a wrong branch, and lets no branch or a detached HEAD through', () => {
+  assert.deepEqual(MAIN_CHECKOUT_STEPS.map((step) => branchCheck({ unit: 'EP-7', step, branch: 'main' })), MAIN_CHECKOUT_STEPS.map(() => ({ ok: true })));
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: '11', branch: 'main', mainCheckoutSteps: ['0', '11'] }), { ok: true });
+  assert.equal(branchCheck({ unit: 'EP-7', step: '0', branch: 'main', mainCheckoutSteps: ['11'] }).ok, false);
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: '8', branch: 'task/EP-7-login' }), { ok: true });
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: '8', branch: 'task/EP-8' }), {
+    ok: false,
+    reason: 'EP-7 runs on its own branch; this checkout is on task/EP-8',
+  });
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: '8', branch: null }), { ok: true });
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: '8', branch: 'HEAD' }), { ok: true });
+  // --check (step null): nothing is exempt, so the main checkout is refused.
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: null, branch: 'main' }), {
+    ok: false,
+    reason: 'EP-7 runs on its own branch; this checkout is on main',
+  });
+  assert.deepEqual(branchCheck({ unit: 'EP-7', step: null, branch: 'task/EP-7' }), { ok: true });
+});
+
+test('parseWorktrees reads each porcelain block; a detached or bare worktree has no branch; other keys are ignored', () => {
+  const text = [
+    'worktree /repo',
+    'HEAD 1111111111111111111111111111111111111111',
+    'branch refs/heads/main',
+    '',
+    'worktree /repo/.worktrees/ep-7',
+    'HEAD 2222222222222222222222222222222222222222',
+    'branch refs/heads/task/EP-7-login',
+    'locked reason given',
+    '',
+    'worktree /repo/.worktrees/snap',
+    'HEAD 3333333333333333333333333333333333333333',
+    'detached',
+    'prunable gitdir file points to non-existent location',
+    '',
+  ].join('\n');
+  assert.deepEqual(parseWorktrees(text), [
+    { path: '/repo', branch: 'main', head: '1111111111111111111111111111111111111111', detached: false, bare: false },
+    { path: '/repo/.worktrees/ep-7', branch: 'task/EP-7-login', head: '2222222222222222222222222222222222222222', detached: false, bare: false },
+    { path: '/repo/.worktrees/snap', branch: null, head: '3333333333333333333333333333333333333333', detached: true, bare: false },
+  ]);
+  assert.deepEqual(parseWorktrees('worktree /bare.git\nbare\n'), [{ path: '/bare.git', branch: null, head: null, detached: false, bare: true }]);
+  assert.deepEqual(parseWorktrees(''), []);
+});
+
+const GIT_ENV = {
+  GIT_CONFIG_GLOBAL: os.devNull,
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_AUTHOR_NAME: 't',
+  GIT_AUTHOR_EMAIL: 't@example.com',
+  GIT_COMMITTER_NAME: 't',
+  GIT_COMMITTER_EMAIL: 't@example.com',
+};
+
+function hermeticEnv() {
   const env = { ...process.env, HOME: tmpDir('unit-step-home-') };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
-  return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env, encoding: 'utf8' });
+  return Object.assign(env, GIT_ENV);
 }
+
+function cli(cwd, args) {
+  return spawnSync(process.execPath, [RUNNER, ...args], { cwd, env: hermeticEnv(), encoding: 'utf8' });
+}
+
+const GIT = hermeticEnv();
+const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT });
+
+/** Makes `dir` a git repository with one commit on `branch`. */
+function gitRepo(dir, branch) {
+  assert.equal(git(dir, 'init', '-q', '-b', branch).status, 0, 'git init');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(dir, 'README'), '0\n');
+  git(dir, 'add', 'README');
+  assert.equal(git(dir, 'commit', '-q', '-m', 'init').status, 0, 'the first commit');
+}
+
+const PLANS = path.join('docs', 'plans');
+const WORK_STEP = '2';
+
+/**
+ * A repository on main with two linked worktrees: harness/lane-a holding unit lane-a's steps file and
+ * harness/lane-b holding the nested unit harness/lane-b's. The main checkout holds landed units' files.
+ */
+function lanes() {
+  const root = tmpDir('unit-step-repo-');
+  const main = path.join(root, 'main');
+  fs.mkdirSync(main);
+  gitRepo(main, 'main');
+  const marker = (unit, step, event, min) => `${stepLine({ t: new Date(Date.parse('2026-10-26T01:00:00Z') + min * MIN).toISOString(), unit, step, event, round: 1 })}\n`;
+  fs.mkdirSync(path.join(main, PLANS, 'harness'), { recursive: true });
+  fs.writeFileSync(path.join(main, PLANS, 'EP-1.steps.jsonl'), marker('EP-1', '9', 'done', 0));
+  fs.writeFileSync(path.join(main, PLANS, 'harness', 'landed.steps.jsonl'), marker('harness/landed', '9', 'done', 0));
+  const files = {};
+  for (const [lane, unit] of [['lane-a', 'lane-a'], ['lane-b', 'harness/lane-b']]) {
+    const wt = path.join(root, lane);
+    const r = git(main, 'worktree', 'add', '-q', wt, '-b', `harness/${lane}`);
+    assert.equal(r.status, 0, `git worktree add: ${r.stderr}`);
+    files[lane] = path.join(wt, PLANS, `${unit}.steps.jsonl`);
+    fs.mkdirSync(path.dirname(files[lane]), { recursive: true });
+    fs.writeFileSync(files[lane], marker(unit, '1', 'start', 0) + marker(unit, '1', 'done', 5));
+  }
+  return { main, a: path.join(root, 'lane-a'), b: path.join(root, 'lane-b'), files };
+}
+
+const lineCount = (file) => fs.readFileSync(file, 'utf8').trim().split('\n').length;
+
+test('a marker off the unit\'s branch is refused, appends nothing and names the unit\'s checkout', () => {
+  const w = lanes();
+  const before = { a: lineCount(w.files['lane-a']), b: lineCount(w.files['lane-b']) };
+  const fromMain = cli(w.main, ['lane-a', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(fromMain.status, 1, fromMain.stderr);
+  assert.match(fromMain.stderr, /^unit-step: refused: lane-a runs on its own branch; this checkout is on main$/m);
+  assert.ok(fromMain.stderr.includes(`unit-step: the unit's checkout: cd ${w.a}\n`), fromMain.stderr);
+  assert.equal(fromMain.stdout, '');
+  const fromB = cli(w.b, ['lane-a', WORK_STEP, 'done', '--dir', path.join(w.a, PLANS)]);
+  assert.equal(fromB.status, 1, fromB.stderr);
+  assert.match(fromB.stderr, /this checkout is on harness\/lane-b$/m);
+  assert.ok(fromB.stderr.includes(`cd ${w.a}\n`), fromB.stderr);
+  const nobody = cli(w.main, ['EP-9', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(nobody.status, 1);
+  assert.match(nobody.stderr, /^unit-step: no worktree is on a branch for EP-9$/m);
+  assert.deepEqual({ a: lineCount(w.files['lane-a']), b: lineCount(w.files['lane-b']) }, before);
+  assert.equal(fs.existsSync(path.join(w.main, PLANS, 'lane-a.steps.jsonl')), false);
+  assert.equal(fs.existsSync(path.join(w.main, PLANS, 'EP-9.steps.jsonl')), false);
+  assert.equal(fs.existsSync(path.join(w.b, PLANS, 'lane-a.steps.jsonl')), false);
+});
+
+test('a marker on the unit\'s branch lands, and the main-checkout steps land from the main checkout', () => {
+  const w = lanes();
+  const own = cli(w.a, ['lane-a', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(own.status, 0, own.stderr);
+  assert.equal(own.stderr, '');
+  assert.equal(lineCount(w.files['lane-a']), 3);
+  const nested = cli(w.b, ['harness/lane-b', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.equal(lineCount(w.files['lane-b']), 3);
+  for (const step of MAIN_CHECKOUT_STEPS) {
+    const r = cli(w.main, ['lane-a', step, 'start', '--dir', PLANS]);
+    assert.equal(r.status, 0, `${step}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /refused/);
+  }
+  assert.equal(lineCount(path.join(w.main, PLANS, 'lane-a.steps.jsonl')), MAIN_CHECKOUT_STEPS.length);
+  // --list is never refused.
+  assert.equal(cli(w.main, ['lane-a', '--list', '--dir', path.join(w.a, PLANS)]).status, 0);
+});
+
+test('outside a git checkout or on a detached HEAD a marker lands with a warning', () => {
+  const w = lanes();
+  assert.equal(git(w.a, 'switch', '-q', '--detach').status, 0);
+  const detached = cli(w.a, ['EP-9', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(detached.status, 0, detached.stderr);
+  assert.match(detached.stderr, /^unit-step: warning: detached HEAD, branch not checked$/m);
+  const bare = tmpDir('unit-step-nogit-');
+  const outside = cli(bare, ['EP-9', WORK_STEP, 'start', '--dir', bare]);
+  assert.equal(outside.status, 0, outside.stderr);
+  assert.match(outside.stderr, /^unit-step: warning: not in a git checkout, branch not checked$/m);
+  assert.equal(lineCount(path.join(bare, 'EP-9.steps.jsonl')), 1);
+});
+
+test('--where lists every unit worktree with its last marker and picks one only when it is the only one', () => {
+  const w = lanes();
+  const all = cli(w.main, ['--where', '--dir', PLANS]);
+  assert.equal(all.status, 1, all.stderr);
+  assert.equal(
+    all.stdout,
+    [
+      `lane-a · harness/lane-a · ${w.a} · 1 r1 done 2026-10-26T01:05:00.000Z`,
+      `harness/lane-b · harness/lane-b · ${w.b} · 1 r1 done 2026-10-26T01:05:00.000Z`,
+      '',
+    ].join('\n'),
+  );
+  assert.match(all.stderr, /^unit-step: 2 candidates: name the unit \(\/task-runner <unit>\)$/m);
+  const one = cli(w.main, ['--where', 'lane-a', '--dir', PLANS]);
+  assert.equal(one.status, 0, one.stderr);
+  assert.equal(one.stdout, `lane-a · harness/lane-a · ${w.a} · 1 r1 done 2026-10-26T01:05:00.000Z\n`);
+  fs.rmSync(w.files['lane-a']);
+  assert.equal(cli(w.main, ['--where', 'lane-a', '--dir', PLANS]).stdout, `lane-a · harness/lane-a · ${w.a} · no markers\n`);
+  const none = cli(w.main, ['--where', 'EP-1', '--dir', PLANS]);
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /^unit-step: no worktree is on a branch for EP-1$/m);
+  const nogit = cli(tmpDir('unit-step-nogit-'), ['--where']);
+  assert.equal(nogit.status, 1);
+  assert.match(nogit.stderr, /^unit-step: no unit worktree found$/m);
+});
+
+test('--check passes on the unit\'s branch and refuses everywhere else, writing nothing', () => {
+  const w = lanes();
+  const own = cli(w.a, ['--check', 'lane-a']);
+  assert.equal(own.status, 0, own.stderr);
+  assert.equal(own.stdout, `unit-step: lane-a on harness/lane-a (${w.a})\n`);
+  const main = cli(w.main, ['--check', 'lane-a']);
+  assert.equal(main.status, 1);
+  assert.match(main.stderr, /^unit-step: refused: lane-a runs on its own branch; this checkout is on main$/m);
+  assert.ok(main.stderr.includes(`cd ${w.a}\n`), main.stderr);
+  assert.equal(cli(w.b, ['--check', 'lane-a']).status, 1);
+  assert.equal(fs.existsSync(path.join(w.main, PLANS, 'lane-a.steps.jsonl')), false);
+});
 
 test('the wrapper appends one line per marker to <dir>/<unit>.steps.jsonl and --list prints the intervals', () => {
   const root = tmpDir('unit-step-cli-');
+  gitRepo(root, 'task/U-1');
   const dir = path.join(root, 'plans');
   const at = (min) => new Date(Date.parse('2026-10-26T01:00:00Z') + min * MIN).toISOString();
   const start = cli(root, ['U-1', '8b', 'start', '--dir', dir, '--at', at(0)]);

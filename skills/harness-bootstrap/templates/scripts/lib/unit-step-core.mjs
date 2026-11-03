@@ -1,6 +1,7 @@
 // harness-bootstrap unit-step core (generated YYYY-MM-DD). Pure core of scripts/unit-step.mjs.
 // [M] mechanism (ships as-is): everything below the [B] block. [B] binding: the block right
-// below -- where the steps file lives, re-derived from the project's state-file path.
+// below -- where the steps file lives, re-derived from the project's state-file path, and the
+// runner steps that may run off the unit's branch.
 /**
  * Step markers: one JSON line per step start or end, appended beside the unit's state file, so a
  * unit's time and cost can be split by runner step afterwards. No I/O here, so
@@ -16,6 +17,10 @@
 // [B] The directory of the unit's state file (harness-bootstrap's reference/scope-guard.md › The state file). The steps file
 // `<unit>.steps.jsonl` sits beside the state file and is committed with it.
 export const STEPS_DIR = 'docs/plans';
+// [B] The steps that may run on any branch: resume and claim run before the unit's worktree exists, teardown
+// runs in the main checkout after the merge. Every other step runs on the unit's own branch. An install whose
+// own step ids differ (one names its land step `11`) rebinds it.
+export const MAIN_CHECKOUT_STEPS = ['0a', '0', '10'];
 // ---- end [B]
 
 export const EVENTS = ['start', 'done'];
@@ -31,36 +36,113 @@ const STEP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 /** `8b r2` -- how a step and its round are named everywhere (reports, dispatch tags). */
 export const label = (m) => `${m.step} r${m.round}`;
 
-/** Reject unknown flags, a bad id, event or round, and a wrong argument count before any file is touched. */
-export function parseArgs(argv) {
-  const a = { unit: null, step: null, event: null, round: '1', dir: null, at: null, list: false };
+// The options `--check` and `--where` refuse: each runs alone, and only `--where` takes `--dir`.
+const ALONE = {
+  '--check': ['--list', '--where', '--round', '--at', '--dir'],
+  '--where': ['--list', '--check', '--round', '--at'],
+};
+
+/** argv -> the options read (defaults filled), the flags given and the positional arguments. */
+function readOptions(argv) {
+  const a = { unit: null, step: null, event: null, round: '1', dir: null, at: null, list: false, check: false, where: false };
+  const given = new Set();
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
-    if (t === '--list') a.list = true;
+    if (t === '--list' || t === '--check' || t === '--where') a[t.slice(2)] = true;
     else if (t === '--round' || t === '--dir' || t === '--at') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
       a[t.slice(2)] = v;
     } else if (t.startsWith('--')) throw new Error(`unknown option ${t}`);
-    else positional.push(t);
+    else {
+      positional.push(t);
+      continue;
+    }
+    given.add(t);
   }
-  if (a.list) {
-    if (positional.length !== 1) throw new Error('--list takes the unit id only');
+  return { a, given, positional };
+}
+
+/** The positional arguments each mode takes: the unit (none for a bare `--where`), or unit, step and event. */
+function takePositional(a, positional) {
+  if (a.check || a.list) {
+    if (positional.length !== 1) throw new Error(`--${a.check ? 'check' : 'list'} takes the unit id only`);
     [a.unit] = positional;
+  } else if (a.where) {
+    if (positional.length > 1) throw new Error('--where takes one unit id at most');
+    a.unit = positional[0] ?? null;
   } else {
     if (positional.length !== 3) throw new Error('needs <unit> <step> start|done');
     [a.unit, a.step, a.event] = positional;
     if (!STEP_ID.test(a.step)) throw new Error(`bad step "${a.step}"`);
     if (!EVENTS.includes(a.event)) throw new Error(`the event is start or done, not "${a.event}"`);
   }
-  if (!UNIT_ID.test(a.unit)) throw new Error(`bad unit id "${a.unit}"`);
+}
+
+/**
+ * Reject unknown flags, a bad id, event or round, and a wrong argument count before any file is touched.
+ * `--check <unit>` and `--where [<unit>]` each run alone; `--where` alone takes `--dir`.
+ */
+export function parseArgs(argv) {
+  const { a, given, positional } = readOptions(argv);
+  for (const [mode, refused] of Object.entries(ALONE)) {
+    const other = given.has(mode) && refused.find((f) => given.has(f));
+    if (other) throw new Error(`${mode} runs alone, not with ${other}`);
+  }
+  takePositional(a, positional);
+  if (a.unit !== null && !UNIT_ID.test(a.unit)) throw new Error(`bad unit id "${a.unit}"`);
   if (!/^\d+$/.test(a.round) || Number(a.round) < 1 || Number(a.round) > MAX_ROUND) {
     throw new Error(`--round is a whole number from 1 to ${MAX_ROUND}, not "${a.round}"`);
   }
   a.round = Number(a.round);
   if (a.at !== null && Number.isNaN(Date.parse(a.at))) throw new Error(`--at is not an ISO time: ${a.at}`);
   return a;
+}
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Whether `branch` is the unit's: the id is a whole path segment of it, or a segment's prefix followed by
+ * `-`, `_` or `.`, in any case (`task/ep-7-login` is EP-7's, `task/EP-70` is not).
+ */
+export function branchMatchesUnit(branch, unit) {
+  if (typeof branch !== 'string' || typeof unit !== 'string' || unit === '') return false;
+  return new RegExp(`(^|/)${escapeRegExp(unit)}($|[-_./])`, 'i').test(branch);
+}
+
+/**
+ * Whether a marker for `step` (null: `--check`, nothing exempt) may be written on `branch`. A step in
+ * `mainCheckoutSteps` runs anywhere; a null branch (no git checkout) or `HEAD` (detached) cannot be
+ * wrong, and the CLI warns. Git never checks one branch out twice, so the unit's branch is its worktree.
+ */
+export function branchCheck({ unit, step, branch, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {
+  if (step !== null && mainCheckoutSteps.includes(step)) return { ok: true };
+  if (branch === null || branch === 'HEAD') return { ok: true };
+  if (branchMatchesUnit(branch, unit)) return { ok: true };
+  return { ok: false, reason: `${unit} runs on its own branch; this checkout is on ${branch}` };
+}
+
+/** `git worktree list --porcelain` text -> `[{ path, branch, head, detached, bare }]`; branch null when detached or bare. */
+export function parseWorktrees(porcelain) {
+  const worktrees = [];
+  for (const block of String(porcelain ?? '').split(/\r?\n\r?\n/)) {
+    const w = { path: null, branch: null, head: null, detached: false, bare: false };
+    for (const line of block.split(/\r?\n/)) {
+      const sp = line.indexOf(' ');
+      const key = sp === -1 ? line : line.slice(0, sp);
+      const value = sp === -1 ? '' : line.slice(sp + 1);
+      if (key === 'worktree') w.path = value;
+      else if (key === 'HEAD') w.head = value;
+      else if (key === 'branch') w.branch = value.replace(/^refs\/heads\//, '');
+      else if (key === 'detached') w.detached = true;
+      else if (key === 'bare') w.bare = true;
+    }
+    if (w.path === null) continue;
+    if (w.detached || w.bare) w.branch = null;
+    worktrees.push(w);
+  }
+  return worktrees;
 }
 
 /** The JSON line for one marker; `t` is an ISO time. */

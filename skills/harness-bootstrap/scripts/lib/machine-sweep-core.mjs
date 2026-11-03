@@ -67,7 +67,7 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const GB = 1e9;
 const VALUE_FLAGS = { '--approve': 'approve', '--unapprove': 'unapprove', '--only': 'only', '--home': 'home', '--record': 'record' };
-const MODES = { '--report': 'report', '--apply-approved': 'apply' };
+const MODES = { '--report': 'report', '--status': 'status', '--apply-approved': 'apply' };
 
 /** One mode (`report` by default) and its options; an unknown category or flag throws before anything runs. */
 export function parseArgs(argv) {
@@ -75,7 +75,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t in MODES) {
-      if (a.mode && a.mode !== MODES[t]) throw new Error('pick one of --report and --apply-approved');
+      if (a.mode && a.mode !== MODES[t]) throw new Error('pick one of --report, --status and --apply-approved');
       a.mode = MODES[t];
     } else if (t === '--dry-run') a.dryRun = true;
     else if (t === '--json') a.json = true;
@@ -92,9 +92,15 @@ export function parseArgs(argv) {
     if (!/^[1-9]\d*$/.test(a.record)) throw new Error(`--record takes a process id, not "${a.record}"`);
     a.record = Number(a.record);
   }
-  if (a.dryRun && a.mode !== 'apply') throw new Error('--dry-run goes with --apply-approved');
   a.mode ??= changes[0] ?? 'report';
+  modeOptions(a);
   return a;
+}
+
+/** The options that belong to one mode alone. */
+function modeOptions(a) {
+  if (a.dryRun && a.mode !== 'apply') throw new Error('--dry-run goes with --apply-approved');
+  if (a.mode === 'status' && a.only !== null) throw new Error('--status takes no --only');
 }
 
 /** `pnpm,uv` -> ['pnpm', 'uv']; `all` -> every category; an unknown id throws. */
@@ -252,13 +258,20 @@ export function devOrphans(rows, services = new Set()) {
   });
 }
 
-/** `ps -o pid=,lstart=,command=` -> [{ pid, lstart, command }], the start time's spaces collapsed. */
-export function parseLstart(text) {
+/**
+ * `ps -o pid=,lstart=,command=` -> [{ pid, lstart, command }], the start time's spaces collapsed.
+ * With `cpu`, the text is `pid=,lstart=,time=,command=` and each row also holds `cpu`, as ps prints it.
+ */
+export function parseLstart(text, { cpu = false } = {}) {
+  const start = String.raw`(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})`;
+  const re = new RegExp(String.raw`^\s*(\d+)\s+${start}\s+${cpu ? String.raw`(\S+)\s+` : ''}(.*?)\s*$`);
   return String(text ?? '')
     .split('\n')
     .flatMap((l) => {
-      const m = /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*?)\s*$/.exec(l);
-      return m ? [{ pid: Number(m[1]), lstart: m[2].replace(/\s+/g, ' '), command: m[3] }] : [];
+      const m = re.exec(l);
+      if (!m) return [];
+      const row = { pid: Number(m[1]), lstart: m[2].replace(/\s+/g, ' '), command: m[m.length - 1] };
+      return [cpu ? { ...row, cpu: m[3] } : row];
     });
 }
 
@@ -276,17 +289,35 @@ export function parseRecords(text) {
     });
 }
 
+/** The records whose process still runs as the same process (start time and command, so a reused PID never matches), each with the `cpu` its live row holds. */
+export function liveRecords(records, live) {
+  const byPid = new Map(live.map((l) => [l.pid, l]));
+  return records.flatMap((r) => {
+    const l = byPid.get(r.pid);
+    return l && l.lstart === r.lstart && l.command === r.command ? [{ ...r, cpu: l.cpu }] : [];
+  });
+}
+
 /**
- * The recorded processes to stop: still the same process (start time and command, so a reused
- * PID never matches), recorded RECORDED_IDLE_HOURS ago or more, in a repository that holds no
- * registry row (`heldRepos`).
+ * The recorded processes to stop: still the same process (liveRecords), recorded
+ * RECORDED_IDLE_HOURS ago or more, in a repository that holds no registry row (`heldRepos`).
  */
 export function recordedToStop(records, live, { now, heldRepos = new Set(), idleHours = RECORDED_IDLE_HOURS }) {
-  const byPid = new Map(live.map((l) => [l.pid, l]));
-  return records.filter((r) => {
-    const l = byPid.get(r.pid);
-    return l && l.lstart === r.lstart && l.command === r.command && now - Date.parse(r.t) >= idleHours * HOUR && !(r.repo && heldRepos.has(r.repo));
-  });
+  return liveRecords(records, live).filter((r) => !(r.repo && heldRepos.has(r.repo)) && now - Date.parse(r.t) >= idleHours * HOUR);
+}
+
+/** A live record as `--status --json` lists it. */
+export const statusRow = (r) => ({ pid: r.pid, start: r.lstart, recorded: r.t, cpu: r.cpu ?? null, repo: r.repo ?? null, command: r.command });
+
+/**
+ * `--status` as text: one line per live record, then the count. `running` null: ps failed, so which
+ * of the `recorded` still run is unknown.
+ */
+export function formatStatus(recorded, running) {
+  if (!recorded) return 'machine-sweep: no process recorded\n';
+  if (!running) return `machine-sweep: ${recorded} recorded; could not tell which still run (ps failed)\n`;
+  const lines = running.map((r) => `${r.pid}  started ${r.lstart}  recorded ${r.t}  cpu ${r.cpu ?? '?'}  ${r.repo || '—'}  ${r.command.slice(0, 100)}`);
+  return `${[...lines, `machine-sweep: ${running.length} of ${recorded} recorded still running`].join('\n')}\n`;
 }
 
 /** Docker's sizes (`3.251GB`, `12.29kB`, `0B (0%)`) -> bytes; Docker counts in powers of 1000. */

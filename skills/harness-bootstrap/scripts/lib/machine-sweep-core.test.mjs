@@ -25,8 +25,10 @@ import {
   etimeMs,
   fmtBytes,
   formatReport,
+  formatStatus,
   heldRows,
   inUse,
+  liveRecords,
   lockDecision,
   lockEntry,
   lockPid,
@@ -45,6 +47,7 @@ import {
   settled,
   staleLock,
   staleStores,
+  statusRow,
   treePorts,
   unusedBrowsers,
   worktreeVerdict,
@@ -85,6 +88,15 @@ test('parseArgs takes one mode and its options, and refuses the rest before anyt
   assert.throws(() => parseArgs(['--only']), /needs a value/);
   assert.throws(() => parseArgs(['--force']), /unknown option --force/);
   assert.throws(() => parseArgs(['all']), /unexpected argument/);
+});
+
+test('parseArgs: --status runs alone, with --json and --home only', () => {
+  assert.equal(parseArgs(['--status']).mode, 'status');
+  assert.deepEqual([parseArgs(['--status', '--json', '--home', '/h']).json, parseArgs(['--status', '--home', '/h']).home], [true, '/h']);
+  for (const other of [['--approve', 'npm'], ['--unapprove', 'npm'], ['--record', '1'], ['--apply-approved'], ['--report'], ['--only', 'npm'], ['--dry-run']]) {
+    assert.throws(() => parseArgs(['--status', ...other]), /each run alone|pick one|--status takes no --only|--dry-run goes with/, other.join(' '));
+    assert.throws(() => parseArgs([...other, '--status']), /each run alone|pick one|--status takes no --only|--dry-run goes with/, other.join(' '));
+  }
 });
 
 test('approvals: read from sweep.json in category order, nothing from a torn or foreign file', () => {
@@ -187,6 +199,36 @@ test('recorded processes: stopped only while the same process, past the idle tim
   const stop = recordedToStop(records, live, { now: NOW, heldRepos: new Set(['/r/busy']) });
   assert.deepEqual(stop.map((r) => [r.pid, r.repo]), [[4242, '/r/free']]);
   assert.equal(recordedToStop(records, [], { now: NOW }).length, 0);
+});
+
+test('liveRecords: the same process is kept, a reused pid or another command is dropped', () => {
+  const live = parseLstart(['  4242 Mon Oct 26  9:00:00 2026     0:00.52 node server.js --port 3000', '  4243 Sun Oct 25 08:00:00 2026   01:02:03 vite', '  4244 Sun Oct 25 08:00:00 2026   00:00:00 other command'].join('\n'), { cpu: true });
+  assert.deepEqual(live[0], { pid: 4242, lstart: 'Mon Oct 26 9:00:00 2026', command: 'node server.js --port 3000', cpu: '0:00.52' });
+  const at = (pid, lstart, command) => ({ t: '2026-10-26T08:00:00.000Z', pid, lstart, command, repo: '/r/a' });
+  const records = [
+    at(4242, 'Mon Oct 26 9:00:00 2026', 'node server.js --port 3000'),
+    at(4243, 'Sat Oct 24 08:00:00 2026', 'vite'),
+    at(4244, 'Sun Oct 25 08:00:00 2026', 'the command it was'),
+    at(4245, 'Sun Oct 25 08:00:00 2026', 'gone'),
+  ];
+  const kept = liveRecords(records, live);
+  assert.deepEqual(kept.map((r) => [r.pid, r.cpu]), [[4242, '0:00.52']]);
+  assert.deepEqual(statusRow(kept[0]), { pid: 4242, start: 'Mon Oct 26 9:00:00 2026', recorded: '2026-10-26T08:00:00.000Z', cpu: '0:00.52', repo: '/r/a', command: 'node server.js --port 3000' });
+  assert.deepEqual(liveRecords(records, []), []);
+});
+
+test('formatStatus: a line per live record, the count last; nothing recorded, and ps failed, say so', () => {
+  const row = { t: '2026-10-26T08:00:00.000Z', pid: 4242, lstart: 'Mon Oct 26 9:00:00 2026', cpu: '0:00.52', repo: '/r/a', command: 'node server.js '.padEnd(150, 'x') };
+  const text = formatStatus(3, [row, { ...row, pid: 7, repo: null, command: 'vite' }]);
+  assert.equal(
+    text,
+    `4242  started Mon Oct 26 9:00:00 2026  recorded 2026-10-26T08:00:00.000Z  cpu 0:00.52  /r/a  ${row.command.slice(0, 100)}\n` +
+      '7  started Mon Oct 26 9:00:00 2026  recorded 2026-10-26T08:00:00.000Z  cpu 0:00.52  —  vite\n' +
+      'machine-sweep: 2 of 3 recorded still running\n',
+  );
+  assert.equal(formatStatus(2, []), 'machine-sweep: 0 of 2 recorded still running\n');
+  assert.equal(formatStatus(0, []), 'machine-sweep: no process recorded\n');
+  assert.equal(formatStatus(2, null), 'machine-sweep: 2 recorded; could not tell which still run (ps failed)\n');
 });
 
 test('in use: by a running executable or a working directory, macOS /private/var or not; held registry rows as harness-status reads them', () => {

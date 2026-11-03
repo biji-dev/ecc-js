@@ -7,6 +7,7 @@
  *   node scripts/machine-sweep.mjs --approve <ids> | --unapprove <ids> [--home <dir>]
  *   node scripts/machine-sweep.mjs --apply-approved [--only <ids>] [--dry-run] [--json] [--home <dir>]
  *   node scripts/machine-sweep.mjs --record <pid> [--home <dir>]
+ *   node scripts/machine-sweep.mjs --status [--json] [--home <dir>]
  *
  *   --report          the default: each category's size, what freeing it runs and what it keeps,
  *                     and the orphaned dev processes. It changes nothing
@@ -18,12 +19,14 @@
  *                     and appends one line to <home>/.agents/harness/sweep-log.jsonl; --dry-run
  *                     prints what it would run instead
  *   --record <pid>    records a process a harness run started, in <home>/.agents/harness/pids.jsonl
+ *   --status          lists the recorded processes that still run (pid, start, when recorded, CPU time,
+ *                     repository, command), and counts the rest; it runs alone and changes nothing
  *   --only <ids>      these categories alone: comma-separated ids, or `all`
  *   --home <dir>      the home directory to sweep and keep state in (default the user's); another
  *                     home leaves out the categories its tools keep in the real one
  *
- * exit: 0 done | 1 a category failed, a recorded PID is gone, or another sweep holds the lock |
- * 2 usage, or run as root.
+ * exit: 0 done (--status always) | 1 a category failed, a recorded PID is gone, or another sweep holds
+ * the lock | 2 usage, or run as root.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -42,8 +45,10 @@ import {
   etimeMs,
   fmtBytes,
   formatReport,
+  formatStatus,
   heldRows,
   inUse,
+  liveRecords,
   lockDecision,
   lockEntry,
   logEntry,
@@ -61,12 +66,13 @@ import {
   recordedToStop,
   settled,
   staleStores,
+  statusRow,
   unusedBrowsers,
   worktreeVerdict,
 } from './lib/machine-sweep-core.mjs';
 
 const USAGE =
-  'usage: node scripts/machine-sweep.mjs [--report | --apply-approved [--dry-run]] [--only <ids>] [--json] [--home <dir>] | --approve <ids> | --unapprove <ids> | --record <pid>';
+  'usage: node scripts/machine-sweep.mjs [--report | --apply-approved [--dry-run]] [--only <ids>] [--json] [--home <dir>] | --approve <ids> | --unapprove <ids> | --record <pid> | --status [--json] [--home <dir>]';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // what --approve installs, relative to HERE
 const COPIED = ['machine-sweep.mjs', path.join('lib', 'machine-sweep-core.mjs')];
@@ -634,6 +640,18 @@ function record(args, state) {
   return 0;
 }
 
+/** The recorded processes that still run, from one ps; `running` is null when ps failed (a ps that selected no process exits 1 with nothing to say). */
+function status(args, state) {
+  const records = parseRecords(read(path.join(state, 'pids.jsonl')));
+  let running = [];
+  if (records.length) {
+    const ps = run('ps', ['-o', 'pid=,lstart=,time=,command=', '-p', records.map((r) => r.pid).join(',')]);
+    running = !ps.ok && (ps.missing || ps.err) ? null : liveRecords(records, parseLstart(ps.out, { cpu: true }));
+  }
+  process.stdout.write(args.json ? `${JSON.stringify({ recorded: records.length, running: running && running.map(statusRow) }, null, 2)}\n` : formatStatus(records.length, running));
+  return 0;
+}
+
 function report(args, m, state) {
   const ids = args.only ?? IDS;
   const approved = readApprovals(read(path.join(state, 'sweep.json')) ?? '');
@@ -668,6 +686,7 @@ function main() {
   if (args.mode === 'apply') return apply(args, m, state);
   if (args.mode === 'approve' || args.mode === 'unapprove') return approve(args, state);
   if (args.mode === 'record') return record(args, state);
+  if (args.mode === 'status') return status(args, state);
   return report(args, m, state);
 }
 

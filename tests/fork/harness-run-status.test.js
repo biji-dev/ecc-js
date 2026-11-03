@@ -20,7 +20,7 @@ const CODEX_RUN = path.join(SCRIPTS, 'codex-run.mjs');
 const CLAUDE_RUN = path.join(SCRIPTS, 'claude-run.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 19;
+const EXPECTED_TESTS = 20;
 
 let passed = 0;
 let failed = 0;
@@ -217,6 +217,7 @@ async function checkRoutedRun({ args, env, dir, out, ledgerDir, routerPidFile },
   const routing = (s) => (s && s.sidecar.childPid === pids.router ? s : null);
   const { file, sidecar } = await waitFor(() => routing(spawnedSidecar(running)), 5000, 'the sidecar with the router pid');
   assert.deepStrictEqual([sidecar.kind, sidecar.out, path.basename(file)], ['auto', out, `${sidecar.run}.json`]);
+  assert.match(sidecar.log, /(^|\/)router\.[^/]*\.out\.json\.log$/, "while it routes, the log is the router's");
   const status = (...extra) => node([CODEX_RUN, '--status', '--cwd', dir, '--sample-ms', '300', ...extra], { cwd: dir, env });
   const live = await status();
   assert.strictEqual(live.code, 0, live.stdout + live.stderr);
@@ -226,7 +227,7 @@ async function checkRoutedRun({ args, env, dir, out, ledgerDir, routerPidFile },
     return s && s.sidecar.childPid !== pids.router ? s : null;
   }, 5000, "the model's child in the sidecar");
   pids.model = model.sidecar.childPid;
-  assert.deepStrictEqual([model.file, model.sidecar.run, model.sidecar.at, model.sidecar.kind], [file, sidecar.run, sidecar.at, 'auto']);
+  assert.deepStrictEqual([model.file, model.sidecar.run, model.sidecar.at, model.sidecar.kind, model.sidecar.log], [file, sidecar.run, sidecar.at, 'auto', `${out}.log`]);
   const res = await run;
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   pids.router = pids.model = null;

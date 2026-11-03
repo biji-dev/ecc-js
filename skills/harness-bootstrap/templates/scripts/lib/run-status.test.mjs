@@ -274,6 +274,28 @@ test('status: a run whose pids exit while it is sampled is dead, not quiet', asy
   assert.match(lines[0], / pids=101✗\/102✗ .* — check /);
 });
 
+test('status: a child registered while the run is sampled is probed, so a killed wrapper is not dead', async () => {
+  // codex-run hands the router's pid to the model's: the wrapper rewrites the sidecar, then dies.
+  const f = fixture();
+  const table = { 101: { start: T0, cpu: [1] }, 102: { start: T0 + 1500, cpu: [4] }, 103: { start: T0 + 4000, cpu: [6] } };
+  const p = procs(table);
+  let handed = false;
+  const ps = (args) => {
+    const text = p.ps(args);
+    if (args[1] === 'time=' && !handed) {
+      handed = true;
+      writeSidecar(f.ledgerFile, { ...f.record, childPid: 103, childStart: iso(T0 + 4000) });
+      delete table[101];
+      delete table[102];
+    }
+    return text;
+  };
+  const { lines, runs } = await run(f, { ps, kill: p.kill });
+  assert.equal(handed, true);
+  assert.notEqual(runs[0].verdict, 'dead');
+  assert.match(lines[0], / pids=101✗\/103 /);
+});
+
 test('status --out: the sidecar for that path, else the ledger\'s last row for it, else unknown', async () => {
   const f = fixture();
   const other = path.join(f.dir, 'other.md');

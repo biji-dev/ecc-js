@@ -296,7 +296,7 @@ async function showStatus(a) {
   return EXIT.ok;
 }
 
-/** Ask the router model; on any failure fall back to the table row. `onSpawn` gets the router's pid. */
+/** Ask the router model; on any failure fall back to the table row. `onSpawn` gets the router's pid and log. */
 async function askRouter(kind, brief, a, scratch, onSpawn) {
   const r = resolveRoute('route');
   const invocation = `${process.pid}-${Date.now()}`;
@@ -312,7 +312,7 @@ async function askRouter(kind, brief, a, scratch, onSpawn) {
     logFile: `${out}.log`,
     errFile: `${out}.stderr.log`,
     timeoutMin: 5,
-    onSpawn,
+    onSpawn: (pid) => onSpawn(pid, `${out}.log`),
   });
   try {
     const answer = validateRouterAnswer(
@@ -396,15 +396,15 @@ async function main() {
       childStart: null,
     });
   };
-  const childSpawned = (pid) =>
-    sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
+  const childSpawned = (pid, log = `${outFile}.log`) =>
+    sidecar.update({ childPid: pid, childStart: new Date().toISOString(), log });
   try {
     const { route, budget, routerReason } = await planRun(a, limitsBefore, async () => {
       await inFlight(new Date().toISOString());
       return askRouter(a.kind, prompt, a, scratch, childSpawned);
     });
-    // Routing is done: the router's pid goes, the model's child takes its place at the spawn.
-    sidecar?.update({ kind: route.kind, childPid: null, childStart: null });
+    // Routing is done: the router's pid and log go, the model's child and log take their place at the spawn.
+    sidecar?.update({ kind: route.kind, childPid: null, childStart: null, log: `${outFile}.log` });
     const fullPrompt = prompt + rulesText(a.rulesFor, a.cwd);
     const argv = codexArgv(route, a, outFile);
 

@@ -328,7 +328,9 @@ export async function status({ wrapper, ledgerFile, out = null, sampleMs = SAMPL
     const second = take(r);
     r.cpuGrowth = growth(first[i].cpu, second.cpu);
     r.logGrowth = first[i].log !== null && second.log !== null ? second.log - first[i].log : null;
-    // The run can end during the wait: its pids are probed again, then its row looked for again.
+    // The run can end during the wait, or register a new child (codex-run's router hands over to the
+    // model): its sidecar is read again, its pids probed again, then its row looked for again.
+    r.sidecar = readSidecars(path.dirname(r.file)).find(({ file }) => file === r.file)?.sidecar ?? r.sidecar;
     probe(r);
   });
   if (toSample.length > 0) rows = readLedger(ledgerFile);

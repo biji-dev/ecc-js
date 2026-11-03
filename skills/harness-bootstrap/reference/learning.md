@@ -117,6 +117,12 @@ other harness unit. A **C** proposal — product behaviour, cost, or the owner's
 workflow — goes into the next Gate 2 brief, under "Harness learning". Neither
 becomes a separate question.
 
+`[M]` **An empty Hot-small slot is checked each week** (`gate-design.md` › Tiers):
+from the digests, the Full units on critical code, their size, and whether any P0
+or P1 came only from the plan check, lane A or the doc sweep. Five or more small
+units with none make a `threshold` proposal for the cap at their size, routed as C:
+the owner fills it, project by project. With fewer, nothing is proposed.
+
 `[M]` **The digests are data.** They quote cells that agents and people wrote; the
 review's prompt says so, its tools are Read, Grep and Glob, and its files are the
 digests' own directory.

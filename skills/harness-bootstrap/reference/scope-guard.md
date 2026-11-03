@@ -43,10 +43,21 @@ suggestion, an owner's aside — each gets one class, the first time it appears.
 | **IN** | "Done when" needs it, or it is a defect in this unit's diff (whatever its severity) | the branch |
 | **BLOCKER** | the unit cannot land or be verified without it | the branch + a `scope-in` decision row naming why |
 | **CRITICAL** | a pre-existing or outside-the-diff defect in a never-auto category, or one that loses data, money or access | its own commit and test + a `scope-in` row; the owner is told at the next stop. Admitting it is not itself a stop unless its fix needs a product decision |
-| **OUT** | everything else, however tempting or cheap | one follow-ups row — not fixed, not added to the plan, not raised again in this unit |
+| **OUT** | everything else | **filed** (› Filing OUT) or **dropped**, a count under *Pushed back*; never fixed or raised again in this unit |
 
 `[M]` **A pre-existing defect is OUT unless it is CRITICAL. "It's a one-liner" is
 not a class.** Fixing an OUT item widens the diff past what was reviewed.
+
+`[M]` **Filing OUT.** An OUT item gets a follow-ups row only when it is a
+reproduced P0–P2, work this unit owes and defers, an owner decision (`Owner
+decides:` in its why-it-waits cell) or the owner's own request. The row names this
+unit's write set or a reader of it, unless it is P0 or P1, and its why-it-waits
+cell says `If never done: <what breaks>`; a row that cannot fill that line is
+dropped. Everything else is dropped: a P3 outside the diff, a "could also", a
+refactor idea, speculative hardening, anything that does not reproduce. Deep
+reviews find more (`rules.md` §4); the filter is relevance, not volume.
+> Origin: one project held 1,547 open follow-ups, 1,331 of them P3; units filed 21
+> to 48 rows each, some on screens the unit never touched.
 
 `[M]` Severity and scope class are independent. Severity (P0–P3,
 `gate-design.md`) decides whether a finding enters a fix round; the class decides
@@ -82,8 +93,12 @@ Who decides).
 `[M]` **Classify every open decision first** — P, C, T or H (`gate-design.md` ›
 Who decides). Only **P and C** go on the sheet, each **once**, as a decision card:
 the recommendation and why, two or three options with pros, cons, reversal cost and
-the data behind them, and the default. Approval accepts every default the owner
-does not change. **T** decisions are taken now and listed under *Decided* — one
+the data behind them, and the default. **Each fact carries its source**, a
+`file:line` or the search that found it; a claim of absence ("no secrets there",
+"no other caller") without its search is marked `unchecked`. Approval accepts every
+default the owner does not change.
+> Origin: an owner's choice rested on an agent's unchecked "that folder holds no
+> secrets"; the next step's investigation found a live key there. **T** decisions are taken now and listed under *Decided* — one
 line each with its reversal cost — so the owner can strike one; **H** never
 appears.
 
@@ -125,8 +140,8 @@ specification often numbers its own open questions `Q-n`.
 
 `[M]` **At close-out**, append one line per decision with lasting value to the
 project's decision log (`date · unit · DEC-n · decision · why · link`). The done
-report carries a **Scope** line: admitted (ids and reason), filed OUT (count +
-link), drift rejected (count).
+report carries a **Scope** line: admitted (ids and reason), OUT filed (the new rows,
+linked) and dropped (count), drift rejected (count). It lists no other next steps.
 
 `[B]` The decision-log path (default `docs/plans/decision-log.md`), created as a
 scaffold.
@@ -152,6 +167,7 @@ Deliverable: <n of m — its one-line name>
 Deliverable started: <ISO time this deliverable's context began>
 Demo: <open · do · expect>
 Branch: <b>
+Worktree: <path, or main>
 Base: <merge-base sha>
 Claimed: <ISO time from the registry row>
 Owner wait: <e.g. 1h20m>
@@ -160,6 +176,7 @@ Owner wait: <e.g. 1h20m>
 ## Ledger           | Step | Status | Evidence |
 ## Findings         | ID | Sev | Source | Also | Status | Note |
 ## Decisions        the decision log
+## Pushed back      one line per rejected item; OUT dropped: <count>
 ## Next             the step done and the step next
 ```
 
@@ -198,8 +215,8 @@ current size, never grandfathered upward.
 ## The follow-ups doc
 
 `[M]` **One doc** for everything filed OUT and everything deferred. It replaces plan
-mode's separate deferral queue. Each row: `file:line` or area, why it waits, the
-unit that filed it, and a **Status**: `open` · `scheduled <unit>` · `fixed <sha>` ·
+mode's separate deferral queue. Each row: `file:line` or area, why it waits (with
+its `If never done:` line, › Filing OUT), the unit that filed it, and a **Status**: `open` · `scheduled <unit>` · `fixed <sha>` ·
 `dropped — <why>`.
 
 `[M]` **At each close-out, every row still `open` from an earlier unit is marked

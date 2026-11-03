@@ -108,7 +108,9 @@ review, lanes B and C and the adversarial pass, and drops the plan check, lane A
 the separate doc sweep. A P1 promotes it to Full. **Ship it empty:** the line cap
 is a number that project earned. Fill the slot when the log shows the case — five
 or more critical-code units under some size that ran Full and found nothing the
-cheaper path would have missed.
+cheaper path would have missed; the weekly retro looks (`learning.md`). Once
+filled, it runs as written: the runner's Full column without those three steps,
+step 8 as `review-gate.mjs --tier full`.
 
 `[M]` **Re-tier at both gates.** A re-tier into a never-auto category discards the
 reviews already run.
@@ -124,7 +126,7 @@ session dispatches what it names, with `model` and `effort` passed.
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
 | **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
-| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the generic language lens is in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
+| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
 
 > Origin, the cost study (14 days, 1,094 review runs, 2,961 ledger findings): the
@@ -134,6 +136,24 @@ session dispatches what it names, with `model` and `effort` passed.
 > between them. Security (on its trigger), claim audits and plan conformance were the
 > cheapest per unique P0/P1 and stay. **Track it:** the log's *Yield by source*
 > (`log-format.md`) says which source to drop or restore next.
+
+`[M]` **The simplicity lens, once per family, Full only.** The plan critique asks
+the second family for the simplest plan that meets "Done when" (`cross-model.md`);
+the Opus `code-reviewer`'s brief asks the same of the diff. Each names a component
+"Done when" does not need: an abstraction with one caller, an option nobody sets, a
+generic layer, a new dependency, a helper that already exists (cited). A `simpler`
+finding is P2 when the excess adds a public surface, a dependency or a config key,
+else P3; its fix deletes or inlines. **One shape is always `simpler`:** a heuristic
+that must list every form it catches, such as a text-search wiring detector or a
+regex reader of config files; the fix is a hand list plus a duty on the unit that
+changes what it lists. At fix-round triage, findings that only teach such a
+heuristic one more form wait on that question; they are not fixed one by one. At
+the plan merge, at equal merit, the smaller plan wins. Small, Hot-small and Trivial
+run no lens: the second family's `review` takes no brief, and a session checking
+its own diff is self-evaluation (› Do not adopt).
+> Origin: a unit meant to make a one-line change cheaper built 563 lines, 427 of
+> them a text-search detector's test; its plan check added 9 required changes and
+> its review 12 IN findings, most of them one more form for the detector.
 
 `[M]` **What `review-gate.mjs` names, and what the session dispatches.** The names
 and the words of its reasons are Claude Code's: on another host, Opus is that host's
@@ -420,7 +440,7 @@ ECC's agents where the plugin is installed:
 
 | Trigger in the diff | Add |
 |---|---|
-| Full, once over the unit diff | a correctness reviewer — `code-reviewer`, with the language lens (types, async correctness, unsafe casts, error handling) in its brief |
+| Full, once over the unit diff | a correctness reviewer — `code-reviewer`, with the language lens (types, async correctness, unsafe casts, error handling) and the simplicity lens (› Review lineup) in its brief |
 | money, settlement, webhooks, notifications, a discarded result | `silent-failure-hunter` |
 | auth, sessions, tenancy, permissions, a public route | `security-reviewer` |
 | **a migration or schema file changed** | `database-reviewer` — not for a query edit alone |

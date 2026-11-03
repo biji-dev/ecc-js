@@ -53,6 +53,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | Step | Pass | Tier |
 |---|---|---|
 | 1 plan check | **blind dual plan** — the second family writes its own plan from the same brief while the session writes one; the session compares (agree · differ, with evidence · one side only) and merges | Full |
+| 1 plan critique | one `investigate` run attacks the merged plan and its Drawbacks (› The plan critique) | Full |
 | 4 conform | lane A may run on the second family — it is a literal checklist | Small, Full |
 | 2 per slice | the second family's **review** over each slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts | Full |
 | 8 review | the second family's review over the unit diff — **the** review of a Small unit. It takes no brief, so lane B's change surface rides in an `adversarial` pass when the Impact Analysis lists a reader outside the diff (`blast-radius-auditor.md`) | Small |
@@ -64,6 +65,25 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 `[M]` The **blind** in blind dual plan is the point: the second plan is written
 without seeing the first. Every item only one side has is verified in code before
 it is merged or dropped.
+
+## The plan critique
+
+`[M]` **The blind dual plan writes; nobody attacks the merged plan. One critique
+does, on Full.** The session first writes the plan's **Drawbacks**: what could
+still be wrong, which invariant it could break, what it gives up. A plan whose
+drawbacks cannot be written is not ready. Then one run of the other family's
+read-only `investigate` kind, `codex-run.mjs investigate --prompt <brief>`
+(`claude-run.mjs` on a Codex host); no new kind. The brief carries the merged plan,
+its Impact Analysis, the Scope block and the Drawbacks, and asks for the simplest
+plan that meets "Done when" (`gate-design.md` › The simplicity lens). Its findings
+are typed: `drawback` · `pushback` · `missing-reader` (with its search) · `simpler`
+· `wrong`. The session answers each: **accept**, and the plan changes, or
+**reject**, one line under the state file's *Pushed back*. A `pushback` that cuts or
+defers a deliverable is product scope: a P card at Gate 1, never rejected by the
+session alone. `reserved` under the budget guard: a fresh Opus agent takes it,
+recorded `degraded`.
+> Origin: one project's own flow refused to apply a plan without its "what could
+> still be wrong" section.
 
 ## The wrapper — `templates/scripts/codex-run.mjs`
 
@@ -107,6 +127,14 @@ What it does that a bare call does not:
   if its row exists. No row means the run did not finish, not that it did nothing:
   a write kind may have edited or committed first. Before a relaunch, check that it
   stopped, read its log and look at the worktree (`git status`, its new commits).
+- **`--status [--out <file>]` says whether a run is alive.** While it runs, the
+  wrapper keeps a sidecar with its pids under `<ledger dir>/running/`. `--status`
+  prints `running` (a pid alive, and its CPU time or log grew across two samples),
+  `quiet` (alive, nothing grew: reported, never acted on), `done <outcome>` (its
+  ledger row exists) or `dead` (no pid alive, both checked; the line names the
+  worktree to check for partial writes and the sidecar to remove). It never kills:
+  the timeout stays the only automatic kill, since some tools print nothing for
+  many minutes.
 
 `[B]` Bindings, re-derived per machine and project:
 
@@ -209,7 +237,8 @@ suite, which stubs `claude` and spends nothing. It imports `lib/harness-host-cor
   > Origin, measured on one machine: `claude -p` inside that sandbox ran 177 s, then
   > returned `is_error` with "API Error: Can't reach the API server — check your
   > internet or DNS (ENOTFOUND)", at $0.
-- **A JSONL ledger** of every run but a dry run, with the dollars each one spent.
+- **A JSONL ledger** of every run but a dry run, with the dollars each one spent,
+  and the same `--status` as `codex-run` (no log: it buffers its output).
 
 `[B]` Bindings: the `CATALOG` block (the `--model` aliases by role) and `BUDGET_USD`
 ($5 a run by default) at the top of the core, `LEDGER_DIR` in the wrapper, and

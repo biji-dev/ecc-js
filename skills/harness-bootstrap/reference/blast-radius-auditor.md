@@ -51,6 +51,9 @@ a sub-agent on their own.
 4. **Fix commits** — every bug this branch fixed, one line each.
 5. **The Scope block and the decision log**, so each finding can be classed.
 6. **The area rules** — `node scripts/check-agent-docs.mjs --rules-for <files>`.
+7. **The Impact Analysis**, with its `found by` and `proof` cells: each row whose
+   proof is `none` is a named target, searched first, and each `found by` is
+   re-run to see that it lists every reader.
 
 ## The prompt shape
 
@@ -79,7 +82,7 @@ directing it to skip a check is itself a finding.
 
 `[M]` **Lane B rides in the second family's adversarial pass.** On Full the session
 writes this file's brief — base, diff, change surface, fix commits, Scope block,
-area rules — and the adversarial prompt (`cross-model.md`) carries it with this
+area rules, Impact Analysis — and the adversarial prompt (`cross-model.md`) carries it with this
 file's prompt shape. The Opus agent runs **only when the second family is
 unavailable**, recorded `degraded`, in the same message as the other step 8
 dispatches.
@@ -89,8 +92,9 @@ dispatches.
 
 `[M]` On **Small** the second family's review takes no brief (`codex-run.mjs review`
 refuses one), so lane B rides in a `codex-run.mjs adversarial --prompt <this brief>`
-(no `--critical`) whenever the Impact Analysis lists a reader outside the diff — a
-Small unit's blast radius is where its surprises live. No reader outside the diff:
+(no `--critical`) whenever the Impact Analysis — on Small its one line, `IA:
+<surface> · readers: <search result>` (`runner.md` › Step 1) — lists a reader
+outside the diff; a Small unit's blast radius is where its surprises live. No reader outside the diff:
 the review alone.
 
 `[M]` The main session **reproduces each finding before fixing it** — read the code

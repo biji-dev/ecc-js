@@ -329,7 +329,7 @@
   },
   "overrides": {
     "fast-uri": "3.1.9",
-    "markdown-it": "14.3.1",
+    "markdown-it": "14.3.3",
     "js-yaml": "4.3.2",
     "@humanfs/node": "0.16.8",
     "brace-expansion": "5.0.12",
@@ -338,7 +338,7 @@
   },
   "resolutions": {
     "fast-uri": "3.1.9",
-    "markdown-it": "14.3.1",
+    "markdown-it": "14.3.3",
     "js-yaml": "4.3.2",
     "@humanfs/node": "0.16.8",
     "brace-expansion": "5.0.12",

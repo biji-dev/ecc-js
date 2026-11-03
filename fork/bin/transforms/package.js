@@ -29,7 +29,32 @@ function npmRunRefs(command) {
   return [...command.matchAll(/npm run(?:-script)?(?:\s+--?[\w-]+)*\s+([\w:.-]+)/g)].map(match => match[1]);
 }
 
-function transformPackage() {
+function exactVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value || '');
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function isNewer(a, b) {
+  const i = a.findIndex((part, index) => part !== b[index]);
+  return i !== -1 && a[i] > b[i];
+}
+
+/**
+ * slim.pins raise overrides/resolutions to at least the fork's version; an upstream pin
+ * already past it wins, so a later sync never downgrades a security pin.
+ */
+function applyPins(pkg, pins = {}) {
+  for (const field of ['overrides', 'resolutions']) {
+    if (!pkg[field]) continue;
+    for (const [name, version] of Object.entries(pins)) {
+      const upstream = exactVersion(pkg[field][name]);
+      const fork = exactVersion(version);
+      if (!(upstream && fork && isNewer(upstream, fork))) pkg[field][name] = version;
+    }
+  }
+}
+
+function transformPackage(slim = {}) {
   trackedExists = null;
   const pkgPath = path.join(REPO_ROOT, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
@@ -74,6 +99,7 @@ function transformPackage() {
     removed.scripts.push('pi (package block)');
   }
   Object.assign(pkg.scripts, FORK_SCRIPTS);
+  applyPins(pkg, slim.pins);
   // Upstream tests exercise upstream hook gating; the fork allowlist is covered by tests/fork.
   const testPrefix = 'export ECC_HOOK_ALLOWLIST=off && ';
   if (pkg.scripts.test && !pkg.scripts.test.startsWith(testPrefix)) {
@@ -143,4 +169,4 @@ function transformAgentYaml() {
   return { skills: skills.length, commands: commands.length };
 }
 
-module.exports = { transformPackage, transformAgentYaml, FORK_SCRIPTS };
+module.exports = { transformPackage, transformAgentYaml, applyPins, FORK_SCRIPTS };

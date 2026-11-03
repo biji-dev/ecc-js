@@ -1287,6 +1287,10 @@
     "manifests/context-profiles/lean@1.json",
     "manifests/context-profiles/full@1.json"
   ],
+  "pins": {
+    "fast-uri": "3.1.9",
+    "markdown-it": "14.3.3"
+  },
   "queueHints": {
     "keepRegex": "react|next|typescript|javascript|bun|node|vite|expo|react-native|prisma|drizzle|postgres|redis|tailwind|playwright|vitest|jest|docker|security|review|test|agent|llm|mcp|api",
     "dropRegex": "django|laravel|rails|golang|go-|kotlin|java|swift|rust|cpp|csharp|php|perl|dotnet|flutter|dart|quarkus|spring|python|pytorch|vue|nuxt|angular|ito-|nasiko|taste|healthcare|homelab|network-|investor|marketing|jira|social|seo-outreach",

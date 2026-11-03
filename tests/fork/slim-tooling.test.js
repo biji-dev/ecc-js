@@ -12,6 +12,7 @@ const { globToRegExp, createMatcher } = require('../../fork/bin/lib/glob');
 const { buildDropMatcher, keptItemMatcher, removedNames, isTestDropActive, FORK_OWNED, forkOwnedPatterns } = require('../../fork/bin/lib/config');
 const { diffInventory } = require('../../fork/bin/lib/inventory');
 const { pruneDecided, suggest } = require('../../fork/bin/lib/queue');
+const { applyPins } = require('../../fork/bin/transforms/package');
 
 let passed = 0;
 let failed = 0;
@@ -300,6 +301,27 @@ test('library drift reports unmaterialised items and stray files', () => {
     'library agents:a11y-architect is not materialised at library/agents/a11y-architect.md (gone upstream? move it to drop)',
     'library/ holds files of no library item (1): library/skills/stray/SKILL.md'
   ]);
+});
+
+console.log('\n=== fork package pins ===\n');
+
+test('pins raise overrides and resolutions to the fork version', () => {
+  const pkg = { overrides: { 'fast-uri': '3.1.8', 'js-yaml': '4.3.2' }, resolutions: { 'fast-uri': '3.1.8' } };
+  applyPins(pkg, { 'fast-uri': '3.1.9' });
+  assert.deepStrictEqual(pkg, { overrides: { 'fast-uri': '3.1.9', 'js-yaml': '4.3.2' }, resolutions: { 'fast-uri': '3.1.9' } });
+});
+
+test('an upstream pin past the fork pin wins, compared numerically', () => {
+  const pkg = { overrides: { 'markdown-it': '14.10.0', 'fast-uri': '3.1.9' } };
+  applyPins(pkg, { 'markdown-it': '14.3.3', 'fast-uri': '3.1.9' });
+  assert.deepStrictEqual(pkg.overrides, { 'markdown-it': '14.10.0', 'fast-uri': '3.1.9' });
+});
+
+test('pins leave a package without overrides or resolutions alone', () => {
+  const pkg = { name: 'x' };
+  applyPins(pkg, { 'fast-uri': '3.1.9' });
+  applyPins(pkg);
+  assert.deepStrictEqual(pkg, { name: 'x' });
 });
 
 console.log(`\nPassed: ${passed}`);

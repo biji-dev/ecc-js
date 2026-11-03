@@ -34,7 +34,9 @@
  * --sample-ms, default 5000), `quiet` (alive, no growth: reported, never acted on), `dead` (no pid
  * alive: check the worktree, then remove the sidecar it names) or `done <outcome>` (its ledger row
  * is in); with --out, only that run, from the ledger once it finished. It exits 0, never kills and
- * never deletes. A run in flight is <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs).
+ * never deletes. A run in flight, from its router call on (`auto`, --route), is
+ * <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs); its ledger row carries that
+ * stem as `run`, and every row carries --out as `out`.
  *
  * exit: 0 ok (non-empty verdict, recovered retries allowed) | 1 failed | 2 usage | 3 unavailable
  * (quota/login/missing binary -> take the Claude fallback, ledger row `unavailable`) | 4 reserved
@@ -294,8 +296,8 @@ async function showStatus(a) {
   return EXIT.ok;
 }
 
-/** Ask the router model; on any failure fall back to the table row. */
-async function askRouter(kind, brief, a, scratch) {
+/** Ask the router model; on any failure fall back to the table row. `onSpawn` gets the router's pid. */
+async function askRouter(kind, brief, a, scratch, onSpawn) {
   const r = resolveRoute('route');
   const invocation = `${process.pid}-${Date.now()}`;
   const schema = path.join(scratch, `router-schema.${invocation}.json`);
@@ -310,6 +312,7 @@ async function askRouter(kind, brief, a, scratch) {
     logFile: `${out}.log`,
     errFile: `${out}.stderr.log`,
     timeoutMin: 5,
+    onSpawn,
   });
   try {
     const answer = validateRouterAnswer(
@@ -375,62 +378,76 @@ async function main() {
   const prompt = a.prompt ? fs.readFileSync(a.prompt, 'utf8') : '';
 
   const limitsBefore = knownLimits(ledger);
-  const { route, budget, routerReason } = await planRun(a, limitsBefore, () =>
-    askRouter(a.kind, prompt, a, scratch),
-  );
-  const fullPrompt = prompt + rulesText(a.rulesFor, a.cwd);
-  const argv = codexArgv(route, a, outFile);
-
-  if (a.flags.has('dry-run')) {
-    console.log(
-      JSON.stringify(
-        {
-          route,
-          budget,
-          limitsBefore,
-          argv: [CODEX, ...argv],
-          promptBytes: Buffer.byteLength(fullPrompt),
-        },
-        null,
-        2,
-      ),
-    );
-    return EXIT.ok;
-  }
-
-  const startedAt = Date.now();
-  const base = {
-    at: new Date(startedAt).toISOString(),
-    kind: a.kind,
-    model: route.model,
-    effort: route.effort,
-    sandbox: route.sandbox,
-    cwd: a.cwd,
-    routerReason,
-    clampNotes: route.notes,
-    limitsBefore,
+  // The run's sidecar says it is in flight (--status): written before the router call when there is
+  // one, else once the budget guard lets the run go; the finally removes it once the ledger row is in.
+  // A dry run and a reserved run write none.
+  let sidecar = null;
+  const inFlight = async (at) => {
+    const { openSidecar } = await runStatus();
+    sidecar = openSidecar(ledger, {
+      at,
+      kind: a.kind,
+      cwd: a.cwd,
+      out: outFile,
+      log: `${outFile}.log`,
+      wrapperPid: process.pid,
+      wrapperStart: new Date(performance.timeOrigin).toISOString(),
+      childPid: null,
+      childStart: null,
+    });
   };
-  if (!budget.run) {
-    appendLedger(ledger, { ...base, outcome: 'reserved', reason: budget.reason });
-    console.log(`codex-run: reserved kind=${a.kind} — ${budget.reason}`);
-    return EXIT.reserved;
-  }
-
-  // The run's sidecar says it is in flight (--status); the finally removes it once the ledger row is in.
-  const { writeSidecar, removeSidecar } = await runStatus();
-  const running = {
-    at: base.at,
-    kind: a.kind,
-    cwd: a.cwd,
-    out: outFile,
-    log: `${outFile}.log`,
-    wrapperPid: process.pid,
-    wrapperStart: new Date(performance.timeOrigin).toISOString(),
-    childPid: null,
-    childStart: null,
-  };
-  const sidecar = writeSidecar(ledger, running);
+  const childSpawned = (pid) =>
+    sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
   try {
+    const { route, budget, routerReason } = await planRun(a, limitsBefore, async () => {
+      await inFlight(new Date().toISOString());
+      return askRouter(a.kind, prompt, a, scratch, childSpawned);
+    });
+    // Routing is done: the router's pid goes, the model's child takes its place at the spawn.
+    sidecar?.update({ kind: route.kind, childPid: null, childStart: null });
+    const fullPrompt = prompt + rulesText(a.rulesFor, a.cwd);
+    const argv = codexArgv(route, a, outFile);
+
+    if (a.flags.has('dry-run')) {
+      console.log(
+        JSON.stringify(
+          {
+            route,
+            budget,
+            limitsBefore,
+            argv: [CODEX, ...argv],
+            promptBytes: Buffer.byteLength(fullPrompt),
+          },
+          null,
+          2,
+        ),
+      );
+      return EXIT.ok;
+    }
+
+    const startedAt = Date.now();
+    if (budget.run && !sidecar) await inFlight(new Date(startedAt).toISOString());
+    // Every row carries --out; a row written while the sidecar exists carries its run and its start
+    // (a routed run's is the router call's).
+    const base = {
+      ...(sidecar ? { run: sidecar.record.run } : {}),
+      at: sidecar ? sidecar.record.at : new Date(startedAt).toISOString(),
+      kind: a.kind,
+      model: route.model,
+      effort: route.effort,
+      sandbox: route.sandbox,
+      cwd: a.cwd,
+      out: outFile,
+      routerReason,
+      clampNotes: route.notes,
+      limitsBefore,
+    };
+    if (!budget.run) {
+      appendLedger(ledger, { ...base, outcome: 'reserved', reason: budget.reason });
+      console.log(`codex-run: reserved kind=${a.kind} — ${budget.reason}`);
+      return EXIT.reserved;
+    }
+
     fs.rmSync(outFile, { force: true });
     const writes = route.sandbox === 'workspace-write';
     const before = writes ? worktreeState(a.cwd) : null;
@@ -442,8 +459,7 @@ async function main() {
       logFile,
       errFile,
       timeoutMin: a.timeoutMin,
-      onSpawn: (pid) =>
-        writeSidecar(ledger, { ...running, childPid: pid, childStart: new Date().toISOString() }),
+      onSpawn: childSpawned,
     });
     const events = parseEvents(fs.readFileSync(logFile, 'utf8'));
     const verdict = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
@@ -476,7 +492,7 @@ async function main() {
     if (leftovers) {
       const outReal = path.join(fs.realpathSync(scratch), path.basename(outFile));
       const own = new Set([outReal, `${outReal}.log`, `${outReal}.stderr.log`]);
-      const sidecars = `${fs.realpathSync(path.dirname(sidecar))}${path.sep}`;
+      const sidecars = `${fs.realpathSync(path.dirname(sidecar.file))}${path.sep}`;
       const topReal = fs.realpathSync(after.top);
       const mine = (f) => !own.has(path.join(topReal, f)) && !path.join(topReal, f).startsWith(sidecars);
       leftovers.files = leftovers.files.filter(mine);
@@ -493,7 +509,6 @@ async function main() {
       ms,
       limitsAfter,
       verdict: outFile,
-      out: outFile,
       ...(leftovers ? { leftovers } : {}),
     });
 
@@ -507,7 +522,7 @@ async function main() {
     );
     return result.exit;
   } finally {
-    removeSidecar(sidecar);
+    sidecar?.remove();
   }
 }
 

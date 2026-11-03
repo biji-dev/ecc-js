@@ -28,7 +28,8 @@
  * default 5000), `quiet` (alive, no growth: reported, never acted on), `dead` (no pid alive: remove
  * the sidecar it names) or `done <outcome>` (its ledger row is in); with --out, only that run, from
  * the ledger once it finished. It runs on any host, exits 0, never kills and never deletes. A run in
- * flight is <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs).
+ * flight is <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs); its ledger row
+ * carries that stem as `run`, and every row carries the verdict's path as `out`.
  *
  * review writes `git diff --merge-base <base>` (the working tree against the merge base) beside
  * the verdict and has the reviewer Read it: commit or stage new files first, an untracked file is
@@ -61,7 +62,6 @@ import {
   resolveRoute,
   reviewPrompt,
 } from './lib/claude-run-core.mjs';
-import { removeSidecar, status, writeSidecar } from './lib/run-status.mjs';
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.claude-runs';
@@ -70,6 +70,9 @@ const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 
 const USAGE =
   'usage: node scripts/claude-run.mjs <kind> [--prompt <file>] [--base <ref>] [--out <file>] [options] | --status [--out <file>] (see the file header)';
+
+// Loaded on first use: --help, a dry run, a usage error and a reserved run need only the core.
+const runStatus = () => import('./lib/run-status.mjs');
 
 function usage(msg) {
   process.stderr.write(`claude-run: ${msg}\n${USAGE}\n`);
@@ -187,7 +190,6 @@ function record({ a, run, res, result, ms, ledger, base }) {
     turns: result.turns ?? null,
     ms,
     verdict: ok ? run.outFile : null,
-    out: run.outFile,
   });
   const cost = Number.isFinite(result.costUsd) ? `$${result.costUsd.toFixed(2)}` : '?';
   console.log(
@@ -198,6 +200,7 @@ function record({ a, run, res, result, ms, ledger, base }) {
 
 /** `--status`: each run in flight beside this checkout's ledger, or the ledger's word on --out. */
 async function showStatus(a) {
+  const { status } = await runStatus();
   const cwd = path.resolve(a.cwd ?? process.cwd());
   const { lines } = await status({ wrapper: 'claude-run', ledgerFile: ledgerPath(cwd), out: a.out ? path.resolve(a.out) : null, sampleMs: a.sampleMs });
   for (const line of lines) console.log(line);
@@ -236,7 +239,8 @@ async function main() {
   }
 
   const ledger = ledgerPath(a.cwd);
-  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd };
+  // Every row carries the verdict's path, so `--status --out` finds a run that stopped before the model.
+  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd, out: run.outFile };
   const stop = !budget.run ? ['reserved', budget.reason] : !network.ok ? ['unavailable', network.why] : null;
   if (stop) {
     appendLedger(ledger, { ...base, outcome: stop[0], reason: stop[1] });
@@ -251,11 +255,11 @@ async function main() {
   fs.mkdirSync(run.scratch, { recursive: true });
   fs.rmSync(run.outFile, { force: true });
   const startedAt = Date.now();
-  // The run's sidecar says it is in flight (--status); the finally removes it once the ledger row is in.
-  const running = { at: base.at, kind: a.kind, cwd: a.cwd, out: run.outFile, log: null, wrapperPid: process.pid, wrapperStart: new Date(performance.timeOrigin).toISOString(), childPid: null, childStart: null };
-  const sidecar = writeSidecar(ledger, running);
+  // The run's sidecar says it is in flight (--status); the finally removes it once the ledger row, with its run, is in.
+  const { openSidecar } = await runStatus();
+  const sidecar = openSidecar(ledger, { at: base.at, kind: a.kind, cwd: a.cwd, out: run.outFile, log: null, wrapperPid: process.pid, wrapperStart: new Date(performance.timeOrigin).toISOString(), childPid: null, childStart: null });
   try {
-    const onSpawn = (pid) => writeSidecar(ledger, { ...running, childPid: pid, childStart: new Date().toISOString() });
+    const onSpawn = (pid) => sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
     const res = await runClaude(run.argv, { cwd: a.cwd, stdin: run.brief, timeoutMin: a.timeoutMin, onSpawn });
     const result = classify({
       exitCode: res.code,
@@ -266,9 +270,9 @@ async function main() {
       budgetUsd: a.budgetUsd,
       binary: CLAUDE,
     });
-    return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base });
+    return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base: { ...base, run: sidecar.record.run } });
   } finally {
-    removeSidecar(sidecar);
+    sidecar.remove();
   }
 }
 

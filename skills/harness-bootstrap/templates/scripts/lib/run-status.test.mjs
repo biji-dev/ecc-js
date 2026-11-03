@@ -12,11 +12,13 @@ import {
   START_SLACK_MS,
   cpuSeconds,
   formatAge,
+  openSidecar,
   parseLstart,
   parseProcStat,
   parsePsTime,
   readSidecars,
   removeSidecar,
+  runId,
   runVerdict,
   sameProcess,
   sidecarDir,
@@ -138,6 +140,21 @@ test('the sidecar: named <startMs>-<wrapperPid>.json, rewritten in place, read b
   assert.deepEqual(readSidecars(path.join(f.dir, 'nowhere')), []);
 });
 
+test('openSidecar: written with its run id as its stem, rewritten in place by update, gone after remove', () => {
+  const dir = tmpDir('run-status-open-');
+  const ledgerFile = path.join(dir, 'ledger.jsonl');
+  const record = { at: iso(T0), kind: 'auto', cwd: dir, out: path.join(dir, 'v.md'), log: null, wrapperPid: 301, wrapperStart: iso(T0), childPid: null, childStart: null };
+  const s = openSidecar(ledgerFile, record);
+  assert.equal(runId(record), `${T0}-301`);
+  assert.equal(s.file, path.join(dir, 'running', `${T0}-301.json`));
+  assert.deepEqual(readSidecars(sidecarDir(ledgerFile)), [{ file: s.file, sidecar: { run: `${T0}-301`, ...record } }]);
+  s.update({ kind: 'investigate', childPid: 302, childStart: iso(T0 + 500) });
+  const [only] = readSidecars(sidecarDir(ledgerFile));
+  assert.deepEqual([only.file, only.sidecar.run, only.sidecar.kind, only.sidecar.childPid], [s.file, `${T0}-301`, 'investigate', 302]);
+  s.remove();
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'running')), []);
+});
+
 test('runVerdict: a ledger row wins, then no pid alive is dead, then growth tells running from quiet', () => {
   const sidecar = { at: iso(T0), kind: 'review' };
   const rows = [{ at: iso(T0), kind: 'docs', outcome: 'ok' }];
@@ -213,6 +230,48 @@ test('status: ps failing leaves kill -0 alone, and the line says (start unchecke
   assert.match(lines[0], / pids=101\/102 out=\S+ log=\S+ \+0B \(start unchecked\)$/);
   const gone = await run(fixture(), procs({}, { psFails: true }));
   assert.equal(gone.runs[0].verdict, 'dead');
+});
+
+test('status: a sidecar takes the ledger row that carries its run, not one that shares its at and kind', async () => {
+  // Two invocations of one kind in the same millisecond, or two worktrees on the one ledger.
+  const f = fixture({ run: `${T0 + 1000}-101` });
+  writeSidecar(f.ledgerFile, { ...f.record, run: `${T0 + 1000}-201`, out: path.join(f.dir, 'w.md'), wrapperPid: 201, childPid: 202 });
+  fs.writeFileSync(f.ledgerFile, `${JSON.stringify({ run: f.record.run, at: f.record.at, kind: 'investigate', outcome: 'ok', out: f.record.out })}\n`);
+  const { runs } = await run(f, procs({ 201: { start: T0, cpu: [1, 2] }, 202: { start: T0 + 1500, cpu: [4] } }));
+  assert.deepEqual(Object.fromEntries(runs.map((r) => [r.sidecar.run, r.verdict])), { [`${T0 + 1000}-101`]: 'done ok', [`${T0 + 1000}-201`]: 'running' });
+});
+
+test('status: a ledger row appended while the run is sampled makes it done, not running', async () => {
+  const f = fixture({ run: `${T0 + 1000}-101` });
+  const p = procs({ 101: { start: T0, cpu: [1, 2] }, 102: { start: T0 + 1500, cpu: [4, 5] } });
+  // The run appends its row once status has read the ledger and taken the first sample.
+  let appended = false;
+  const ps = (args) => {
+    if (args[1] === 'time=' && !appended) {
+      appended = true;
+      fs.appendFileSync(f.ledgerFile, `${JSON.stringify({ run: f.record.run, at: f.record.at, kind: 'investigate', outcome: 'failed', out: f.record.out })}\n`);
+    }
+    return p.ps(args);
+  };
+  const { lines, runs } = await run(f, { ps, kill: p.kill });
+  assert.equal(appended, true);
+  assert.equal(runs[0].verdict, 'done failed');
+  assert.match(lines[0], /^codex-run: done failed kind=investigate /);
+});
+
+test('status: a run whose pids exit while it is sampled is dead, not quiet', async () => {
+  const f = fixture();
+  const table = { 101: { start: T0, cpu: [1] }, 102: { start: T0 + 1500, cpu: [4] } };
+  const p = procs(table);
+  // Each pid exits once its first CPU sample is taken: the probe after the wait finds neither.
+  const ps = (args) => {
+    const text = p.ps(args);
+    if (args[1] === 'time=') delete table[Number(args.at(-1))];
+    return text;
+  };
+  const { lines, runs } = await run(f, { ps, kill: p.kill });
+  assert.equal(runs[0].verdict, 'dead');
+  assert.match(lines[0], / pids=101✗\/102✗ .* — check /);
 });
 
 test('status --out: the sidecar for that path, else the ledger\'s last row for it, else unknown', async () => {

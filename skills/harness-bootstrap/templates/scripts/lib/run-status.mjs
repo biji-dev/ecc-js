@@ -1,12 +1,14 @@
 // harness-bootstrap run-status (generated YYYY-MM-DD). Shared by scripts/codex-run.mjs and scripts/claude-run.mjs.
 // [M] mechanism (ships as-is): everything.
 /**
- * The run sidecar and `--status`. A wrapper writes <ledger dir>/running/<startMs>-<wrapperPid>.json
- * before it spawns its model, rewrites it with the child's pid once spawned, and removes it after
- * the run's ledger row is appended; a wrapper killed outright leaves it behind. `--status` reads the
- * sidecars and the ledger and says, per run: `done <outcome>` (the row is there), `dead` (no pid
- * alive), `running` (CPU time or the log grew between two samples) or `quiet` (alive, no growth).
- * It never kills and never deletes. The verdict is a pure function; the I/O helpers take an
+ * The run sidecar and `--status`. A wrapper writes <ledger dir>/running/<run>.json, `run` being
+ * <startMs>-<wrapperPid>, before it spawns its model (codex-run: before its router call), rewrites
+ * it with the child's pid once spawned, and removes it after the run's ledger row, which carries the
+ * same `run`, is appended; a wrapper killed outright leaves it behind. `--status` reads the sidecars
+ * and the ledger and says, per run: `done <outcome>` (the row is there), `dead` (no pid alive),
+ * `running` (CPU time or the log grew between two samples) or `quiet` (alive, no growth); the row
+ * and the pids are read again after the samples, so a run that ends between them is not reported
+ * alive. It never kills and never deletes. The verdict is a pure function; the I/O helpers take an
  * injected `ps` and `kill`, so `run-status.test.mjs` can pin every verdict without real processes.
  *
  * WHY. Owners asked "is it still running, done or dead?" about 18 times in three weeks, and a
@@ -31,9 +33,14 @@ export function sidecarDir(ledgerFile) {
   return path.join(path.dirname(ledgerFile), 'running');
 }
 
-/** A run's sidecar: `<startMs>-<wrapperPid>.json`, the start being the ledger row's `at`. */
-export function sidecarFile(ledgerFile, { at, wrapperPid }) {
-  return path.join(sidecarDir(ledgerFile), `${Date.parse(at)}-${wrapperPid}.json`);
+/** A run's id, `<startMs>-<wrapperPid>`, the start being the ledger row's `at`: its sidecar's stem and its ledger rows' `run`. */
+export function runId({ at, wrapperPid }) {
+  return `${Date.parse(at)}-${wrapperPid}`;
+}
+
+/** A run's sidecar: `<run>.json`. */
+export function sidecarFile(ledgerFile, record) {
+  return path.join(sidecarDir(ledgerFile), `${runId(record)}.json`);
 }
 
 /** Write (or rewrite) a run's sidecar through a temp file and a rename, so no reader sees half of one; returns its path. */
@@ -53,6 +60,22 @@ export function removeSidecar(file) {
   } catch {
     /* --status names the file to remove */
   }
+}
+
+/**
+ * A wrapper's run sidecar, written now with its `run` id: `update` rewrites it with changed fields
+ * (the child's pid, the routed kind; never `at` or `wrapperPid`, which name the file), `remove`
+ * takes it away. Returns { file, record, update, remove }.
+ */
+export function openSidecar(ledgerFile, record) {
+  const sidecar = { record: { run: runId(record), ...record } };
+  sidecar.file = writeSidecar(ledgerFile, sidecar.record);
+  sidecar.update = (changes) => {
+    sidecar.record = { ...sidecar.record, ...changes };
+    writeSidecar(ledgerFile, sidecar.record);
+  };
+  sidecar.remove = () => removeSidecar(sidecar.file);
+  return sidecar;
 }
 
 /** The sidecars in `dir` as [{ file, sidecar }], oldest first; a torn or foreign file is skipped. */
@@ -117,12 +140,14 @@ export function sameProcess({ startedMs, recordedIso, slackMs = START_SLACK_MS }
   return Number.isFinite(startedMs) && Number.isFinite(recorded) && Math.abs(startedMs - recorded) <= slackMs;
 }
 
-/** The ledger row of a sidecar's run (same `at` and `kind`), or null. */
+/**
+ * The ledger row of a sidecar's run, or null: the row that carries its `run`. Two runs of one kind
+ * can share an `at` (the same millisecond, or two worktrees on one ledger), so `at` and `kind` match
+ * only for a sidecar written before runs had an id.
+ */
 export function rowFor(sidecar, ledgerRows) {
-  for (let i = ledgerRows.length - 1; i >= 0; i--) {
-    const r = ledgerRows[i];
-    if (r.at === sidecar.at && r.kind === sidecar.kind) return r;
-  }
+  const mine = sidecar.run ? (r) => r.run === sidecar.run : (r) => r.at === sidecar.at && r.kind === sidecar.kind;
+  for (let i = ledgerRows.length - 1; i >= 0; i--) if (mine(ledgerRows[i])) return ledgerRows[i];
   return null;
 }
 
@@ -273,20 +298,27 @@ function growth(before, after) {
 
 /**
  * `--status`: every sidecar beside `ledgerFile` (only the one whose `out` is `out`, when given),
- * each pid probed, the alive ones and the log sampled twice `sampleMs` apart. Returns
+ * each pid probed, the alive ones and the log sampled twice `sampleMs` apart, then the pids probed
+ * and the ledger read again: the verdict is on the facts after the wait. Returns
  * { lines, runs: [{ verdict, line, file, sidecar }] }. Never kills, never deletes.
  */
 export async function status({ wrapper, ledgerFile, out = null, sampleMs = SAMPLE_MS, now = Date.now(), ps = realPs, kill = realKill, sizeOf = fileSize }) {
-  const rows = readLedger(ledgerFile);
+  let rows = readLedger(ledgerFile);
   const found = readSidecars(sidecarDir(ledgerFile)).filter(({ sidecar }) => !out || samePath(sidecar.out, out));
   if (found.length === 0) return { lines: [noRunLine({ wrapper, ledgerFile, rows, out, now })], runs: [] };
+  const probe = (r) => {
+    const w = probePid(r.sidecar.wrapperPid, r.sidecar.wrapperStart, { ps, kill });
+    const c = probePid(r.sidecar.childPid, r.sidecar.childStart, { ps, kill });
+    r.alive = { wrapper: w.alive, child: c.alive };
+    r.unchecked = (w.alive && w.unchecked) || (c.alive && c.unchecked);
+  };
   const runs = found.map(({ file, sidecar }) => {
-    const w = probePid(sidecar.wrapperPid, sidecar.wrapperStart, { ps, kill });
-    const c = probePid(sidecar.childPid, sidecar.childStart, { ps, kill });
-    const pids = [w.alive ? sidecar.wrapperPid : null, c.alive ? sidecar.childPid : null].filter((p) => p !== null);
+    const r = { file, sidecar };
+    probe(r);
+    const pids = [r.alive.wrapper ? sidecar.wrapperPid : null, r.alive.child ? sidecar.childPid : null].filter((p) => p !== null);
     // A run whose row is in needs no sample: it is done whatever its pids do.
-    const sampled = rowFor(sidecar, rows) || pids.length === 0 ? [] : pids;
-    return { file, sidecar, sampled, alive: { wrapper: w.alive, child: c.alive }, unchecked: (w.alive && w.unchecked) || (c.alive && c.unchecked) };
+    r.sampled = rowFor(sidecar, rows) || pids.length === 0 ? [] : pids;
+    return r;
   });
   const take = (r) => ({ cpu: r.sampled.map((pid) => cpuSeconds(pid, ps)), log: r.sidecar.log ? sizeOf(r.sidecar.log) : null });
   const toSample = runs.filter((r) => r.sampled.length > 0);
@@ -296,7 +328,10 @@ export async function status({ wrapper, ledgerFile, out = null, sampleMs = SAMPL
     const second = take(r);
     r.cpuGrowth = growth(first[i].cpu, second.cpu);
     r.logGrowth = first[i].log !== null && second.log !== null ? second.log - first[i].log : null;
+    // The run can end during the wait: its pids are probed again, then its row looked for again.
+    probe(r);
   });
+  if (toSample.length > 0) rows = readLedger(ledgerFile);
   const results = runs.map((r) => {
     const grew = (r.cpuGrowth ?? 0) > 0 || (r.logGrowth ?? 0) > 0;
     const verdict = runVerdict({ sidecar: r.sidecar, ledgerRows: rows, alive: r.alive.wrapper || r.alive.child, grew });

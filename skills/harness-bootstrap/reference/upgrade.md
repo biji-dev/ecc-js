@@ -448,9 +448,10 @@ proposals. The foundation stage is unchanged: every unit is still Full.
 whichever wrapper the project has: both wrappers import it, so a wrapper copied
 without it fails every run. `MAIN_CHECKOUT_STEPS` in `unit-step-core.mjs` (`0a`,
 `0` and `10`): an install whose step ids differ, such as an eleven-step runner that
-lands at `11`, binds its resume, claim and teardown steps there. Both ledgers gain
-an `out` field, and their `running/` directories sit inside the ignored ledger
-directories.
+lands at `11`, binds its resume, claim and teardown steps there. Both ledgers' rows
+gain `out` and `run` fields, and their `running/` directories sit inside the ignored
+ledger directories. Where the review workflow is installed, its new template gives
+the Full quality reviewer the simplicity lens.
 
 `[M]` **What the owner reviews again.** `unit-step.mjs` exits 1 on a marker outside
 `MAIN_CHECKOUT_STEPS` when the branch carries neither the unit id nor the one the

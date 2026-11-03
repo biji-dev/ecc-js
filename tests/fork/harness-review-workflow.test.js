@@ -171,6 +171,15 @@ test('prompts carry plan, scope, impact and the lane B outside-the-diff instruct
   assert.ok(prompt('review:quality').includes('You did not write this code. Read-only'));
 });
 
+test('the quality prompt carries the simplicity lens on Full only', async () => {
+  for (const tier of ['small', 'full']) {
+    const { calls } = await run({ diff: diffFor('src/app.tsx'), tier, secondFamily: 'unavailable' });
+    const prompt = label => calls.find(c => c.opts.label === label).prompt;
+    assert.strictEqual(prompt('review:quality').includes('Simplicity: name each component'), tier === 'full', `quality (${tier})`);
+    assert.ok(!prompt('review:blastRadius').includes('Simplicity:'), `blastRadius (${tier})`);
+  }
+});
+
 // ── selection ────────────────────────────────────────────────────────────────
 
 console.log('\nreview workflow: dimension selection');

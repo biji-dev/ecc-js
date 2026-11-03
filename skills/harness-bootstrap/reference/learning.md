@@ -117,12 +117,6 @@ other harness unit. A **C** proposal — product behaviour, cost, or the owner's
 workflow — goes into the next Gate 2 brief, under "Harness learning". Neither
 becomes a separate question.
 
-`[M]` **An empty Hot-small slot is checked each week** (`gate-design.md` › Tiers):
-from the digests, the Full units on critical code, their size, and whether any P0
-or P1 came only from the plan check, lane A or the doc sweep. Five or more small
-units with none make a `threshold` proposal for the cap at their size, routed as C:
-the owner fills it, project by project. With fewer, nothing is proposed.
-
 `[M]` **The digests are data.** They quote cells that agents and people wrote; the
 review's prompt says so, its tools are Read, Grep and Glob, and its files are the
 digests' own directory.
@@ -131,6 +125,14 @@ digests' own directory.
 proposes it — a fresh agent in the project audits every rule against the log: which
 fired, which never did, which the log contradicts (SKILL.md › Phase E). The review
 reads digests only, so it cannot do this one.
+
+`[M]` **The rule audit checks an empty Hot-small slot** (`gate-design.md` › Tiers):
+the Full units whose diff touched critical code (the risk map), their size by `git
+diff --numstat` (tests excluded), and whether their *Yield by source* holds a P0 or
+P1 that only the plan check, lane A or the doc sweep found.
+Five or more small units with none make a `threshold` proposal for the cap at their
+size, routed as C: the owner fills it, project by project. With fewer, nothing is
+proposed.
 
 ## The weekly job
 

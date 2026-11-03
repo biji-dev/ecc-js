@@ -108,7 +108,7 @@ review, lanes B and C and the adversarial pass, and drops the plan check, lane A
 the separate doc sweep. A P1 promotes it to Full. **Ship it empty:** the line cap
 is a number that project earned. Fill the slot when the log shows the case — five
 or more critical-code units under some size that ran Full and found nothing the
-cheaper path would have missed; the weekly retro looks (`learning.md`). Once
+cheaper path would have missed; the rule audit looks (`learning.md`). Once
 filled, it runs as written: the runner's Full column without those three steps,
 step 8 as `review-gate.mjs --tier full`.
 

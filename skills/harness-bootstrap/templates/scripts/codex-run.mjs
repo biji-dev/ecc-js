@@ -28,6 +28,14 @@
  *   --timeout-min <n>      kill the run after n minutes (default 45)
  *   --dry-run              print the resolved route and the codex argv, run nothing
  *
+ *   node scripts/codex-run.mjs --status [--out <file>] [--cwd <dir>] [--sample-ms <n>]
+ *
+ * --status says of each run in flight whether it is `running` (CPU time or its log grew over
+ * --sample-ms, default 5000), `quiet` (alive, no growth: reported, never acted on), `dead` (no pid
+ * alive: check the worktree, then remove the sidecar it names) or `done <outcome>` (its ledger row
+ * is in); with --out, only that run, from the ledger once it finished. It exits 0, never kills and
+ * never deletes. A run in flight is <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs).
+ *
  * exit: 0 ok (non-empty verdict, recovered retries allowed) | 1 failed | 2 usage | 3 unavailable
  * (quota/login/missing binary -> take the Claude fallback, ledger row `unavailable`) | 4 reserved
  * by the budget guard or the owner's switch (-> do it with Claude).
@@ -50,6 +58,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import {
   EXIT,
@@ -97,7 +106,10 @@ const SCRIPT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const RULES_RESOLVER = path.join(SCRIPT_REPO, RULES_FOR[0]);
 
 const USAGE =
-  'usage: node scripts/codex-run.mjs <kind> --prompt <file> --out <file> [options] (see the file header)';
+  'usage: node scripts/codex-run.mjs <kind> --prompt <file> --out <file> [options] | --status [--out <file>] (see the file header)';
+
+// Loaded on first use: a dry run, a usage error and a reserved run need only the core.
+const runStatus = () => import('./lib/run-status.mjs');
 
 function usage(msg) {
   process.stderr.write(`codex-run: ${msg}\n${USAGE}\n`);
@@ -229,11 +241,12 @@ function rulesText(files, cwd) {
 }
 
 /** SIGTERM alone can be ignored; escalation and settlement must not depend on `close`. */
-export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawnProcess = spawn }) {
+export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawnProcess = spawn, onSpawn }) {
   return new Promise((resolve) => {
     const log = fs.openSync(logFile, 'w');
     const err = fs.openSync(errFile, 'w');
     const child = spawnProcess(CODEX, argv, { cwd, stdio: ['pipe', log, err] });
+    if (onSpawn && child.pid) onSpawn(child.pid);
     let timedOut = false;
     let settled = false;
     let killTimer;
@@ -265,6 +278,20 @@ export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawn
     child.stdin.on('error', () => {});
     child.stdin.end(stdin);
   });
+}
+
+/** `--status`: each run in flight beside this checkout's ledger, or the ledger's word on --out. */
+async function showStatus(a) {
+  const { status } = await runStatus();
+  const cwd = path.resolve(a.cwd ?? process.cwd());
+  const { lines } = await status({
+    wrapper: 'codex-run',
+    ledgerFile: ledgerPath(cwd),
+    out: a.out ? path.resolve(a.out) : null,
+    sampleMs: a.sampleMs,
+  });
+  for (const line of lines) console.log(line);
+  return EXIT.ok;
 }
 
 /** Ask the router model; on any failure fall back to the table row. */
@@ -312,6 +339,7 @@ async function main() {
   } catch (e) {
     usage(e.message);
   }
+  if (a.status) return showStatus(a);
   if (!a.kind || !ROUTES[a.kind] || a.kind === 'route')
     usage(
       `kind must be one of: ${Object.keys(ROUTES)
@@ -388,77 +416,99 @@ async function main() {
     return EXIT.reserved;
   }
 
-  fs.rmSync(outFile, { force: true });
-  const writes = route.sandbox === 'workspace-write';
-  const before = writes ? worktreeState(a.cwd) : null;
-  const logFile = `${outFile}.log`;
-  const errFile = `${outFile}.stderr.log`;
-  const res = await runCodex(argv, {
+  // The run's sidecar says it is in flight (--status); the finally removes it once the ledger row is in.
+  const { writeSidecar, removeSidecar } = await runStatus();
+  const running = {
+    at: base.at,
+    kind: a.kind,
     cwd: a.cwd,
-    stdin: fullPrompt,
-    logFile,
-    errFile,
-    timeoutMin: a.timeoutMin,
-  });
-  const events = parseEvents(fs.readFileSync(logFile, 'utf8'));
-  const verdict = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
-  const stderr = fs.readFileSync(errFile, 'utf8');
-  const result = res.timedOut
-    ? { outcome: 'failed', exit: EXIT.failed, reason: `timed out after ${a.timeoutMin} min` }
-    : classify({
-        exitCode: res.code,
-        events,
-        verdict,
-        stderr,
-        mode: route.mode,
-        spawnError: res.spawnError,
-        binary: CODEX,
-      });
-  const limitsAfter = newestRolloutLimits(startedAt)?.limits ?? null;
-  const tokenUsage = runUsage(route.mode, events.usage);
-  const ms = Date.now() - startedAt;
-  const after = writes ? worktreeState(a.cwd) : null;
-  const leftovers = writes
-    ? worktreeLeftovers({
-        before: before.files,
-        after: after.files,
-        headBefore: before.head,
-        headAfter: after.head,
-      })
-    : null;
-  // The wrapper's own verdict and logs are not the slice's work. Real paths: a /tmp or
-  // /var scratchpad is a symlink on macOS, and git reports paths under the real root.
-  if (leftovers) {
-    const outReal = path.join(fs.realpathSync(scratch), path.basename(outFile));
-    const own = new Set([outReal, `${outReal}.log`, `${outReal}.stderr.log`]);
-    const topReal = fs.realpathSync(after.top);
-    const mine = (f) => !own.has(path.join(topReal, f));
-    leftovers.files = leftovers.files.filter(mine);
-    leftovers.dirtyBefore = leftovers.dirtyBefore.filter(mine);
+    out: outFile,
+    log: `${outFile}.log`,
+    wrapperPid: process.pid,
+    wrapperStart: new Date(performance.timeOrigin).toISOString(),
+    childPid: null,
+    childStart: null,
+  };
+  const sidecar = writeSidecar(ledger, running);
+  try {
+    fs.rmSync(outFile, { force: true });
+    const writes = route.sandbox === 'workspace-write';
+    const before = writes ? worktreeState(a.cwd) : null;
+    const logFile = `${outFile}.log`;
+    const errFile = `${outFile}.stderr.log`;
+    const res = await runCodex(argv, {
+      cwd: a.cwd,
+      stdin: fullPrompt,
+      logFile,
+      errFile,
+      timeoutMin: a.timeoutMin,
+      onSpawn: (pid) =>
+        writeSidecar(ledger, { ...running, childPid: pid, childStart: new Date().toISOString() }),
+    });
+    const events = parseEvents(fs.readFileSync(logFile, 'utf8'));
+    const verdict = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+    const stderr = fs.readFileSync(errFile, 'utf8');
+    const result = res.timedOut
+      ? { outcome: 'failed', exit: EXIT.failed, reason: `timed out after ${a.timeoutMin} min` }
+      : classify({
+          exitCode: res.code,
+          events,
+          verdict,
+          stderr,
+          mode: route.mode,
+          spawnError: res.spawnError,
+          binary: CODEX,
+        });
+    const limitsAfter = newestRolloutLimits(startedAt)?.limits ?? null;
+    const tokenUsage = runUsage(route.mode, events.usage);
+    const ms = Date.now() - startedAt;
+    const after = writes ? worktreeState(a.cwd) : null;
+    const leftovers = writes
+      ? worktreeLeftovers({
+          before: before.files,
+          after: after.files,
+          headBefore: before.head,
+          headAfter: after.head,
+        })
+      : null;
+    // The wrapper's own verdict, logs and run sidecars are not the slice's work. Real paths: a
+    // /tmp or /var scratchpad is a symlink on macOS, and git reports paths under the real root.
+    if (leftovers) {
+      const outReal = path.join(fs.realpathSync(scratch), path.basename(outFile));
+      const own = new Set([outReal, `${outReal}.log`, `${outReal}.stderr.log`]);
+      const sidecars = `${fs.realpathSync(path.dirname(sidecar))}${path.sep}`;
+      const topReal = fs.realpathSync(after.top);
+      const mine = (f) => !own.has(path.join(topReal, f)) && !path.join(topReal, f).startsWith(sidecars);
+      leftovers.files = leftovers.files.filter(mine);
+      leftovers.dirtyBefore = leftovers.dirtyBefore.filter(mine);
+    }
+
+    appendLedger(ledger, {
+      ...base,
+      outcome: result.outcome,
+      reason: result.reason,
+      codexExit: res.code,
+      threadId: events.threadId,
+      usage: tokenUsage,
+      ms,
+      limitsAfter,
+      verdict: outFile,
+      out: outFile,
+      ...(leftovers ? { leftovers } : {}),
+    });
+
+    const weekly = (l) => (l ? `${l.usedPercent}%` : '?');
+    const notes = route.notes.length ? ` clamp=[${route.notes.join('; ')}]` : '';
+    const left = !leftovers
+      ? ''
+      : `${leftovers.commits ? ` commits=${leftovers.commits}` : ''}${leftovers.files.length ? ` uncommitted=${leftovers.files.length}` : ''}${leftovers.dirtyBefore.length ? ` dirty-before=${leftovers.dirtyBefore.length}` : ''}`;
+    console.log(
+      `codex-run: ${result.outcome} kind=${a.kind} model=${route.model} effort=${route.effort} tokens=${formatTokens(tokenUsage?.total ?? null)} weekly=${weekly(limitsBefore)}→${weekly(limitsAfter)} ${formatDuration(ms)} verdict=${outFile}${left}${notes}${result.reason ? ` — ${result.reason}` : ''}`,
+    );
+    return result.exit;
+  } finally {
+    removeSidecar(sidecar);
   }
-
-  appendLedger(ledger, {
-    ...base,
-    outcome: result.outcome,
-    reason: result.reason,
-    codexExit: res.code,
-    threadId: events.threadId,
-    usage: tokenUsage,
-    ms,
-    limitsAfter,
-    verdict: outFile,
-    ...(leftovers ? { leftovers } : {}),
-  });
-
-  const weekly = (l) => (l ? `${l.usedPercent}%` : '?');
-  const notes = route.notes.length ? ` clamp=[${route.notes.join('; ')}]` : '';
-  const left = !leftovers
-    ? ''
-    : `${leftovers.commits ? ` commits=${leftovers.commits}` : ''}${leftovers.files.length ? ` uncommitted=${leftovers.files.length}` : ''}${leftovers.dirtyBefore.length ? ` dirty-before=${leftovers.dirtyBefore.length}` : ''}`;
-  console.log(
-    `codex-run: ${result.outcome} kind=${a.kind} model=${route.model} effort=${route.effort} tokens=${formatTokens(tokenUsage?.total ?? null)} weekly=${weekly(limitsBefore)}→${weekly(limitsAfter)} ${formatDuration(ms)} verdict=${outFile}${left}${notes}${result.reason ? ` — ${result.reason}` : ''}`,
-  );
-  return result.exit;
 }
 
 // Run only as the entry script (the tests import knownLimits/runCodex). Compare REAL paths:

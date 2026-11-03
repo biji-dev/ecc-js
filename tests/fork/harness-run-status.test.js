@@ -1,0 +1,250 @@
+/**
+ * Tests for the harness-bootstrap run sidecar and `--status` (skills/harness-bootstrap/templates/scripts):
+ * runs the shipped run-status suite hermetically, proves it can fail by mutating the liveness rules,
+ * and runs both wrappers against a stub that sleeps: the sidecar is there and `--status` sees the run
+ * while it works, the sidecar is gone and `--status --out` reads `done <outcome>` once it ends.
+ */
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn, spawnSync } = require('child_process');
+
+const ROOT = path.join(__dirname, '..', '..');
+const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
+const TEST_REL = path.join('lib', 'run-status.test.mjs');
+const CORE_REL = path.join('lib', 'run-status.mjs');
+const CODEX_RUN = path.join(SCRIPTS, 'codex-run.mjs');
+const CLAUDE_RUN = path.join(SCRIPTS, 'claude-run.mjs');
+
+// The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
+const EXPECTED_TESTS = 15;
+
+let passed = 0;
+let failed = 0;
+
+async function test(name, fn) {
+  try {
+    await fn();
+    console.log(`  ✓ ${name}`);
+    passed += 1;
+  } catch (error) {
+    console.log(`  ✗ ${name}`);
+    console.log(`    Error: ${error.message}`);
+    failed += 1;
+  }
+}
+
+function tmp(prefix) {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+/**
+ * Env with a fresh HOME and CODEX_HOME, no CODEX_RUN*, CLAUDE_RUN*, GIT_* or host variable and no
+ * global git config: the real quota, the host this runs under and a hook environment never matter.
+ */
+function hermeticEnv(cleanup, extra = {}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^(CODEX_RUN|CLAUDE_RUN|GIT_|ZCODE_|CODEX_)/.test(key)) delete env[key];
+  }
+  for (const key of ['CLAUDECODE', 'HARNESS_HOST', 'CLAUDE_BIN']) delete env[key];
+  env.HOME = tmp('run-status-home-');
+  env.CODEX_HOME = tmp('run-status-codex-');
+  env.GIT_CONFIG_GLOBAL = os.devNull;
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  cleanup.push(env.HOME, env.CODEX_HOME);
+  return { ...env, ...extra };
+}
+
+function tapCount(output, key) {
+  const match = output.match(new RegExp(`^# ${key} (\\d+)$`, 'm'));
+  assert.ok(match, `no "# ${key} <n>" line in the TAP output:\n${output.slice(-600)}`);
+  return Number(match[1]);
+}
+
+function runSuite(scriptsDir, cleanup) {
+  return spawnSync(
+    process.execPath,
+    ['--test', '--test-reporter=tap', path.join(scriptsDir, TEST_REL)],
+    { encoding: 'utf8', env: hermeticEnv(cleanup), timeout: 120_000 },
+  );
+}
+
+const cleanup = [];
+const started = [];
+
+/** Copy the shipped scripts, apply a one-line mutation to run-status.mjs, and assert the suite fails. */
+function mutantFails(name, needle, replacement) {
+  return test(`mutant: ${name} makes the suite fail`, () => {
+    const copy = tmp('run-status-mutant-');
+    cleanup.push(copy);
+    fs.cpSync(SCRIPTS, copy, { recursive: true });
+    const filePath = path.join(copy, CORE_REL);
+    const before = fs.readFileSync(filePath, 'utf8');
+    const mutated = before.replace(needle, replacement);
+    assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+    fs.writeFileSync(filePath, mutated);
+    const res = runSuite(copy, cleanup);
+    const out = res.stdout + res.stderr;
+    assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
+    assert.ok(tapCount(out, 'fail') > 0, out.slice(-800));
+  });
+}
+
+/** Run node on `args`; resolves { code, stdout, stderr }. */
+function node(args, opts) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+    started.push(child);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+/** Poll `probe` every 50 ms until it returns a value, for at most `ms`. */
+async function waitFor(probe, ms, what) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const value = probe();
+    if (value) return value;
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** The one sidecar in `dir` once its child pid is in, or null. */
+function spawnedSidecar(dir) {
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  if (names.length !== 1) return null;
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(dir, names[0]), 'utf8'));
+    return s.childPid ? { file: path.join(dir, names[0]), sidecar: s } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start a wrapper run on a stub that sleeps, check the sidecar and `--status` while it works, then
+ * the exit, the removal, the ledger row and `--status --out` once it ended.
+ */
+async function wrapperRun(opts) {
+  const stub = { pid: null };
+  try {
+    await checkRun(opts, stub);
+  } catch (error) {
+    // The wrapper is killed at the end; its stub would outlive it.
+    if (stub.pid) spawnSync('kill', ['-9', String(stub.pid)]);
+    throw error;
+  }
+}
+
+async function checkRun({ wrapper, script, args, env, dir, out, ledgerDir, log }, stub) {
+  const run = node([script, ...args], { cwd: dir, env });
+  const running = path.join(ledgerDir, 'running');
+  const { file, sidecar } = await waitFor(() => spawnedSidecar(running), 5000, 'the sidecar with the child pid');
+  stub.pid = sidecar.childPid;
+  assert.deepStrictEqual(Object.keys(sidecar).sort(), ['at', 'childPid', 'childStart', 'cwd', 'kind', 'log', 'out', 'wrapperPid', 'wrapperStart']);
+  assert.strictEqual(sidecar.out, out);
+  assert.strictEqual(sidecar.log, log);
+  assert.strictEqual(path.basename(file), `${Date.parse(sidecar.at)}-${sidecar.wrapperPid}.json`);
+  const status = (...extra) => node([script, '--status', '--cwd', dir, '--sample-ms', '300', ...extra], { cwd: dir, env });
+  const live = await status();
+  assert.strictEqual(live.code, 0, live.stdout + live.stderr);
+  const pids = `pids=${sidecar.wrapperPid}/${sidecar.childPid} out=`;
+  assert.match(live.stdout, new RegExp(`^${wrapper}: (running|quiet) kind=investigate started=${sidecar.at} \\(\\d+s\\) ${pids}`));
+  const byOut = await status('--out', out);
+  assert.match(byOut.stdout, new RegExp(`^${wrapper}: (running|quiet) kind=investigate `));
+  const res = await run;
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  stub.pid = null;
+  assert.deepStrictEqual(fs.readdirSync(running), [], 'the sidecar outlived the run');
+  const rows = fs.readFileSync(path.join(ledgerDir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 1);
+  assert.deepStrictEqual([rows[0].at, rows[0].outcome, rows[0].out, rows[0].verdict], [sidecar.at, 'ok', out, out]);
+  const done = await status('--out', out);
+  assert.strictEqual(done.code, 0, done.stdout + done.stderr);
+  assert.match(done.stdout, new RegExp(`^${wrapper}: done ok kind=investigate started=${sidecar.at} `));
+  assert.strictEqual((await status()).stdout.trim(), `${wrapper}: no run in flight (${ledgerDir})`);
+}
+
+async function main() {
+  console.log('\nharness-bootstrap run sidecar and --status');
+
+  await test('the shipped run-status suite passes with the pinned test count', () => {
+    const res = runSuite(SCRIPTS, cleanup);
+    const out = res.stdout + res.stderr;
+    assert.strictEqual(res.status, 0, out.slice(-1500));
+    assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
+    assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
+    assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+  });
+
+  await mutantFails('a pid that counts without its start time (pid reuse)', 'Math.abs(startedMs - recorded) <= slackMs', 'true');
+  await mutantFails('a run judged by the wrapper pid alone', 'alive: r.alive.wrapper || r.alive.child', 'alive: r.alive.wrapper');
+
+  await test('codex-run: a sidecar and --status while the stub works; gone, and done ok, once it ends', async () => {
+    const dir = tmp('run-status-codex-run-');
+    cleanup.push(dir);
+    fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+    const stub = path.join(tmp('run-status-stub-'), 'codex');
+    cleanup.push(path.dirname(stub));
+    fs.writeFileSync(
+      stub,
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\n' +
+        'echo \'{"type":"thread.started","thread_id":"t-1"}\'\nsleep 3\n' +
+        'echo \'{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}\'\necho "No findings." > "$out"\n',
+      { mode: 0o755 },
+    );
+    const out = path.join(dir, 'v.md');
+    await wrapperRun({
+      wrapper: 'codex-run',
+      script: CODEX_RUN,
+      args: ['investigate', '--prompt', 'p.md', '--out', out, '--cwd', dir],
+      env: hermeticEnv(cleanup, { CODEX_BIN: stub }),
+      dir,
+      out,
+      ledgerDir: path.join(dir, '.codex-runs'),
+      log: `${out}.log`,
+    });
+  });
+
+  await test('claude-run: a sidecar and --status while the stub works; gone, and done ok, once it ends', async () => {
+    const dir = tmp('run-status-claude-run-');
+    cleanup.push(dir);
+    fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+    const stub = path.join(tmp('run-status-stub-'), 'claude');
+    cleanup.push(path.dirname(stub));
+    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.01, result: 'No findings.' });
+    fs.writeFileSync(stub, `#!/bin/sh\ncat > /dev/null\nsleep 3\nprintf '%s\\n' '${result}'\n`, { mode: 0o755 });
+    const out = path.join(dir, 'v.md');
+    await wrapperRun({
+      wrapper: 'claude-run',
+      script: CLAUDE_RUN,
+      args: ['investigate', '--prompt', 'p.md', '--out', out, '--cwd', dir],
+      env: hermeticEnv(cleanup, { CLAUDE_BIN: stub, HARNESS_HOST: 'codex' }),
+      dir,
+      out,
+      ledgerDir: path.join(dir, '.claude-runs'),
+      log: null,
+    });
+  });
+}
+
+main().finally(() => {
+  for (const child of started) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`\nPassed: ${passed}`);
+  console.log(`Failed: ${failed}`);
+  process.exit(failed > 0 ? 1 : 0);
+});

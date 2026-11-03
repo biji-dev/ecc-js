@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   MAIN_CHECKOUT_STEPS,
   MAX_ROUND,
+  STEPS_DIR,
   UNIT_ID_SOURCE,
   branchCheck,
   branchMatchesUnit,
@@ -23,6 +24,8 @@ import {
   parseArgs,
   parseSteps,
   parseWorktrees,
+  shellQuote,
+  stateBranchOf,
   stepIntervals,
   stepLine,
 } from './unit-step-core.mjs';
@@ -263,11 +266,11 @@ test('parseWorktrees reads each porcelain block; a detached or bare worktree has
     '',
   ].join('\n');
   assert.deepEqual(parseWorktrees(text), [
-    { path: '/repo', branch: 'main', head: '1111111111111111111111111111111111111111', detached: false, bare: false },
-    { path: '/repo/.worktrees/ep-7', branch: 'task/EP-7-login', head: '2222222222222222222222222222222222222222', detached: false, bare: false },
-    { path: '/repo/.worktrees/snap', branch: null, head: '3333333333333333333333333333333333333333', detached: true, bare: false },
+    { path: '/repo', branch: 'main', head: '1111111111111111111111111111111111111111', detached: false, bare: false, prunable: false },
+    { path: '/repo/.worktrees/ep-7', branch: 'task/EP-7-login', head: '2222222222222222222222222222222222222222', detached: false, bare: false, prunable: false },
+    { path: '/repo/.worktrees/snap', branch: null, head: '3333333333333333333333333333333333333333', detached: true, bare: false, prunable: true },
   ]);
-  assert.deepEqual(parseWorktrees('worktree /bare.git\nbare\n'), [{ path: '/bare.git', branch: null, head: null, detached: false, bare: true }]);
+  assert.deepEqual(parseWorktrees('worktree /bare.git\nbare\n'), [{ path: '/bare.git', branch: null, head: null, detached: false, bare: true, prunable: false }]);
   assert.deepEqual(parseWorktrees(''), []);
 });
 
@@ -422,6 +425,125 @@ test('--check passes on the unit\'s branch and refuses everywhere else, writing 
   assert.ok(main.stderr.includes(`cd ${w.a}\n`), main.stderr);
   assert.equal(cli(w.b, ['--check', 'lane-a']).status, 1);
   assert.equal(fs.existsSync(path.join(w.main, PLANS, 'lane-a.steps.jsonl')), false);
+});
+
+test('branchCheck lets a branch with no unit id through when it is the one the state file names', () => {
+  assert.deepEqual(branchCheck({ unit: 'fix-login-bug', step: '2', branch: 'fix/login', stateBranch: 'fix/login' }), { ok: true });
+  assert.deepEqual(branchCheck({ unit: 'fix-login-bug', step: null, branch: 'fix/login', stateBranch: 'fix/login' }), { ok: true });
+  assert.deepEqual(branchCheck({ unit: 'fix-login-bug', step: '2', branch: 'fix/login', stateBranch: 'fix/other' }), {
+    ok: false,
+    reason: 'fix-login-bug runs on its own branch; this checkout is on fix/login',
+  });
+  assert.equal(branchCheck({ unit: 'fix-login-bug', step: '2', branch: 'fix/login', stateBranch: null }).ok, false);
+  assert.equal(branchCheck({ unit: 'fix-login-bug', step: '2', branch: 'fix/login' }).ok, false);
+});
+
+test('stateBranchOf reads the first Branch: header line before the first ##, unquoted; a placeholder or an empty value is null', () => {
+  assert.equal(stateBranchOf('Unit: fix-login-bug\nBranch: fix/login\nWorktree: x\n\n## Scope\n'), 'fix/login');
+  assert.equal(stateBranchOf('Branch:   `fix/login`  \n'), 'fix/login');
+  assert.equal(stateBranchOf('Unit: x\r\nBranch: task/EP-7\r\n'), 'task/EP-7');
+  assert.equal(stateBranchOf('Branch: one\nBranch: two\n'), 'one');
+  assert.equal(stateBranchOf('Unit: x\n## Scope\nBranch: fix/login\n'), null);
+  assert.equal(stateBranchOf('Branch: <b>\n'), null);
+  assert.equal(stateBranchOf('Branch:\n'), null);
+  assert.equal(stateBranchOf('Branch: ``\n'), null);
+  assert.equal(stateBranchOf('Unit: x\n'), null);
+  assert.equal(stateBranchOf(''), null);
+  assert.equal(stateBranchOf(null), null);
+});
+
+test('shellQuote leaves a plain path bare and single-quotes any other, closing and reopening around an embedded quote', () => {
+  assert.equal(shellQuote('/repo/.worktrees/ep-7_b'), '/repo/.worktrees/ep-7_b');
+  assert.equal(shellQuote('/tmp/fix login'), "'/tmp/fix login'");
+  assert.equal(shellQuote("/tmp/it's"), "'/tmp/it'\\''s'");
+  assert.equal(shellQuote('/tmp/a$b'), "'/tmp/a$b'");
+});
+
+test('parseWorktrees marks a worktree git lists as prunable, branch kept', () => {
+  const text = ['worktree /repo', 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '', 'worktree /gone', 'HEAD 2222222222222222222222222222222222222222', 'branch refs/heads/task/EP-7', 'prunable gitdir file points to non-existent location', ''].join('\n');
+  assert.deepEqual(
+    parseWorktrees(text).map((w) => [w.path, w.branch, w.prunable]),
+    [
+      ['/repo', 'main', false],
+      ['/gone', 'task/EP-7', true],
+    ],
+  );
+});
+
+test('a worktree whose directory is gone is no candidate and no hint', () => {
+  const w = lanes();
+  fs.rmSync(w.a, { recursive: true, force: true });
+  const where = cli(w.main, ['--where', 'lane-a', '--dir', PLANS]);
+  assert.equal(where.status, 1, where.stdout);
+  assert.equal(where.stdout, '');
+  assert.match(where.stderr, /^unit-step: no worktree is on a branch for lane-a$/m);
+  const all = cli(w.main, ['--where', '--dir', PLANS]);
+  assert.equal(all.status, 0, all.stderr);
+  assert.equal(all.stdout, `harness/lane-b · harness/lane-b · ${w.b} · 1 r1 done 2026-10-26T01:05:00.000Z\n`);
+  const refused = cli(w.main, ['lane-a', WORK_STEP, 'start', '--dir', PLANS]);
+  assert.equal(refused.status, 1);
+  assert.doesNotMatch(refused.stderr, /cd /);
+  assert.match(refused.stderr, /^unit-step: no worktree is on a branch for lane-a$/m);
+});
+
+/**
+ * A change unit whose branch carries no id: fix-login-bug on fix/login, at a worktree path with a space,
+ * its committed state file naming the branch; and fix-other-bug on fix/other, whose state file names
+ * another branch. Both state files sit in the [B] STEPS_DIR, where --check looks.
+ */
+function changeUnits() {
+  const root = tmpDir('unit-step-change-');
+  const main = path.join(root, 'main');
+  fs.mkdirSync(main);
+  gitRepo(main, 'main');
+  const units = {};
+  for (const [unit, branch, dirName, named] of [
+    ['fix-login-bug', 'fix/login', 'fix login', '`fix/login`'],
+    ['fix-other-bug', 'fix/other', 'fix-other', 'fix/elsewhere'],
+  ]) {
+    const wt = path.join(root, dirName);
+    const r = git(main, 'worktree', 'add', '-q', wt, '-b', branch);
+    assert.equal(r.status, 0, `git worktree add: ${r.stderr}`);
+    const state = path.join(wt, STEPS_DIR, `${unit}.state.md`);
+    fs.mkdirSync(path.dirname(state), { recursive: true });
+    fs.writeFileSync(state, `Unit: ${unit}\nMode: change\nBranch: ${named}\nWorktree: ${dirName}\n\n## Scope\nBranch: ${branch}\n`);
+    git(wt, 'add', '-A');
+    assert.equal(git(wt, 'commit', '-q', '-m', `claim ${unit}`).status, 0, 'commit the state file');
+    units[unit] = { wt, steps: path.join(wt, STEPS_DIR, `${unit}.steps.jsonl`) };
+  }
+  return { main, login: units['fix-login-bug'], other: units['fix-other-bug'] };
+}
+
+test('a unit whose branch carries no id runs on the branch its state file names, and only there', () => {
+  const c = changeUnits();
+  const own = cli(c.login.wt, ['fix-login-bug', WORK_STEP, 'start', '--dir', STEPS_DIR]);
+  assert.equal(own.status, 0, own.stderr);
+  assert.equal(own.stderr, '');
+  assert.equal(lineCount(c.login.steps), 1);
+  const check = cli(c.login.wt, ['--check', 'fix-login-bug']);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(check.stdout, `unit-step: fix-login-bug on fix/login (${c.login.wt})\n`);
+  const fromMain = cli(c.main, ['fix-login-bug', WORK_STEP, 'done', '--dir', STEPS_DIR]);
+  assert.equal(fromMain.status, 1, fromMain.stderr);
+  assert.match(fromMain.stderr, /^unit-step: refused: fix-login-bug runs on its own branch; this checkout is on main$/m);
+  assert.ok(fromMain.stderr.includes(`unit-step: the unit's checkout: cd '${c.login.wt}'\n`), fromMain.stderr);
+  assert.equal(cli(c.main, ['--check', 'fix-login-bug']).status, 1);
+  const where = cli(c.main, ['--where', 'fix-login-bug', '--dir', STEPS_DIR]);
+  assert.equal(where.status, 0, where.stderr);
+  assert.equal(where.stdout, `fix-login-bug · fix/login · ${c.login.wt} · ${WORK_STEP} r1 start ${JSON.parse(fs.readFileSync(c.login.steps, 'utf8')).t}\n`);
+  assert.equal(lineCount(c.login.steps), 1);
+  assert.equal(fs.existsSync(path.join(c.main, STEPS_DIR, 'fix-login-bug.steps.jsonl')), false);
+});
+
+test('a state file that names another branch does not open the check', () => {
+  const c = changeUnits();
+  const r = cli(c.other.wt, ['fix-other-bug', WORK_STEP, 'start', '--dir', STEPS_DIR]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /^unit-step: refused: fix-other-bug runs on its own branch; this checkout is on fix\/other$/m);
+  assert.match(r.stderr, /^unit-step: no worktree is on a branch for fix-other-bug$/m);
+  assert.equal(fs.existsSync(c.other.steps), false);
+  assert.equal(cli(c.other.wt, ['--check', 'fix-other-bug']).status, 1);
+  assert.equal(cli(c.main, ['--where', 'fix-other-bug', '--dir', STEPS_DIR]).status, 1);
 });
 
 test('the wrapper appends one line per marker to <dir>/<unit>.steps.jsonl and --list prints the intervals', () => {

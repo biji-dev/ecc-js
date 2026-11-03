@@ -114,20 +114,46 @@ export function branchMatchesUnit(branch, unit) {
 /**
  * Whether a marker for `step` (null: `--check`, nothing exempt) may be written on `branch`. A step in
  * `mainCheckoutSteps` runs anywhere; a null branch (no git checkout) or `HEAD` (detached) cannot be
- * wrong, and the CLI warns. Git never checks one branch out twice, so the unit's branch is its worktree.
+ * wrong, and the CLI warns. Otherwise the branch must carry the unit id, or be the one its state file
+ * names (`stateBranch`: a change unit on `fix/login`). Git never checks one branch out twice, so the
+ * unit's branch is its worktree.
  */
-export function branchCheck({ unit, step, branch, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {
+export function branchCheck({ unit, step, branch, stateBranch = null, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {
   if (step !== null && mainCheckoutSteps.includes(step)) return { ok: true };
   if (branch === null || branch === 'HEAD') return { ok: true };
   if (branchMatchesUnit(branch, unit)) return { ok: true };
+  if (stateBranch !== null && stateBranch === branch) return { ok: true };
   return { ok: false, reason: `${unit} runs on its own branch; this checkout is on ${branch}` };
 }
 
-/** `git worktree list --porcelain` text -> `[{ path, branch, head, detached, bare }]`; branch null when detached or bare. */
+/**
+ * The `Branch:` of a state file's text: the first such header line before the first `##`, trimmed and
+ * out of one pair of backticks; null when there is none, it is empty, or it is a `<b>` placeholder.
+ */
+export function stateBranchOf(text) {
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (line.startsWith('##')) break;
+    const m = /^Branch:(.*)$/.exec(line);
+    if (!m) continue;
+    const value = m[1].trim().replace(/^`(.*)`$/, '$1').trim();
+    return value === '' || /^<.*>$/.test(value) ? null : value;
+  }
+  return null;
+}
+
+/** A path as one shell word: bare when it is only `[A-Za-z0-9_./-]`, else single-quoted. */
+export function shellQuote(p) {
+  return /^[A-Za-z0-9_./-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * `git worktree list --porcelain` text -> `[{ path, branch, head, detached, bare, prunable }]`; branch
+ * null when detached or bare. A prunable worktree (its directory deleted by hand) keeps its branch.
+ */
 export function parseWorktrees(porcelain) {
   const worktrees = [];
   for (const block of String(porcelain ?? '').split(/\r?\n\r?\n/)) {
-    const w = { path: null, branch: null, head: null, detached: false, bare: false };
+    const w = { path: null, branch: null, head: null, detached: false, bare: false, prunable: false };
     for (const line of block.split(/\r?\n/)) {
       const sp = line.indexOf(' ');
       const key = sp === -1 ? line : line.slice(0, sp);
@@ -137,6 +163,7 @@ export function parseWorktrees(porcelain) {
       else if (key === 'branch') w.branch = value.replace(/^refs\/heads\//, '');
       else if (key === 'detached') w.detached = true;
       else if (key === 'bare') w.bare = true;
+      else if (key === 'prunable') w.prunable = true;
     }
     if (w.path === null) continue;
     if (w.detached || w.bare) w.branch = null;

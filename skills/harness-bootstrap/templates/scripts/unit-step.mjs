@@ -20,14 +20,17 @@
  *   --list        print the unit's step intervals and anything out of order; append nothing
  *   --check       refuse unless this checkout is on the unit's branch; append nothing, read no steps file
  *   --where       list the worktrees on a unit's branch (any unit with a steps file there, without one)
- *                 with each one's last marker; exit 0 only for exactly one
+ *                 with each one's last marker; exit 0 only for exactly one. A worktree git still lists
+ *                 but whose directory is gone (prunable) is never a candidate nor a `cd` hint
  *
  * The file is `<dir>/<unit>.steps.jsonl`, one `{t, unit, step, event, round}` line per marker. A
  * marker out of order (a done with no open start, a repeated start) is appended anyway and warned
  * about on stderr: the file is evidence, and the runner never stops for a marker out of order. A
- * marker on the wrong branch is refused: a step outside the [B] MAIN_CHECKOUT_STEPS runs only on a
- * branch that names the unit (the branch is read in the current directory, not `--dir`), and the
- * refusal names the worktree that is on one. `--list` is never refused.
+ * marker on the wrong branch is refused: a step outside the [B] MAIN_CHECKOUT_STEPS runs only on the
+ * unit's branch -- the branch must carry the unit id, or be the one its state file names (`Branch:` in
+ * `<steps dir>/<unit>.state.md`, for a change branch such as `fix/login`). The branch is read in the
+ * current directory, not `--dir`, and the refusal names the worktree that is on the unit's branch.
+ * `--list` is never refused.
  *
  * exit: 0 ok, warnings included | 1 refused (the checkout is not the unit's, or --where found not
  * exactly one candidate) | 2 usage (bad arguments, unreadable or unwritable steps file).
@@ -47,6 +50,8 @@ import {
   parseArgs,
   parseSteps,
   parseWorktrees,
+  shellQuote,
+  stateBranchOf,
   stepIntervals,
   stepLine,
 } from './lib/unit-step-core.mjs';
@@ -54,6 +59,7 @@ import {
 const USAGE =
   'usage: node scripts/unit-step.mjs <unit> <step> start|done [--round <n>] [--dir <dir>] [--at <ISO>] | <unit> --list [--dir <dir>] | --check <unit> | --where [<unit>] [--dir <dir>]';
 const SUFFIX = '.steps.jsonl';
+const STATE_SUFFIX = '.state.md';
 const UNIT_ID = new RegExp(`^${UNIT_ID_SOURCE}$`);
 
 function usage(msg) {
@@ -79,7 +85,23 @@ function currentBranch() {
   return git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() || null;
 }
 
-const worktrees = () => parseWorktrees(git('worktree', 'list', '--porcelain') ?? '');
+/** The worktrees git lists, less those whose directory is gone (prunable, or deleted since). */
+const worktrees = () => parseWorktrees(git('worktree', 'list', '--porcelain') ?? '').filter((w) => !w.prunable && fs.existsSync(w.path));
+
+/** The `Branch:` of `<dir>/<unit>.state.md`; null when the file is missing, unreadable or names none. */
+function stateBranch(dir, unit) {
+  try {
+    return stateBranchOf(fs.readFileSync(path.join(dir, `${unit}${STATE_SUFFIX}`), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Whether worktree `w` is on unit `u`'s branch: the id in it, or named by that worktree's own state file. */
+function onUnitBranch(w, u, dirArg) {
+  if (w.branch === null) return false;
+  return branchMatchesUnit(w.branch, u) || stateBranch(path.resolve(w.path, dirArg ?? STEPS_DIR), u) === w.branch;
+}
 
 function readSteps(file) {
   try {
@@ -91,22 +113,26 @@ function readSteps(file) {
 }
 
 /** Prints the refusal and where the unit's checkout is; exit 1. */
-function refuse(unit, reason) {
+function refuse(unit, reason, dirArg) {
   const lines = [`unit-step: refused: ${reason}`];
-  const own = worktrees().filter((w) => w.branch !== null && branchMatchesUnit(w.branch, unit));
-  for (const w of own) lines.push(`unit-step: the unit's checkout: cd ${w.path}`);
+  const own = worktrees().filter((w) => onUnitBranch(w, unit, dirArg));
+  for (const w of own) lines.push(`unit-step: the unit's checkout: cd ${shellQuote(w.path)}`);
   if (own.length === 0) lines.push(`unit-step: no worktree is on a branch for ${unit}`);
   process.stderr.write(`${lines.join('\n')}\n`);
   process.exitCode = 1;
 }
 
-/** The branch check for `step` (null for --check): `{ ok, branch }`, the refusal or the warning already printed. */
-function branchGate(unit, step) {
+/**
+ * The branch check for `step` (null for --check): `{ ok, branch }`, the refusal or the warning already
+ * printed. `dir` is the steps directory, where the unit's state file is read when the id is not in the branch.
+ */
+function branchGate(unit, step, dir, dirArg) {
   if (step !== null && MAIN_CHECKOUT_STEPS.includes(step)) return { ok: true, branch: null };
   const branch = currentBranch();
-  const verdict = branchCheck({ unit, step, branch });
+  const named = branch !== null && branch !== 'HEAD' && !branchMatchesUnit(branch, unit) ? stateBranch(dir, unit) : null;
+  const verdict = branchCheck({ unit, step, branch, stateBranch: named });
   if (!verdict.ok) {
-    refuse(unit, verdict.reason);
+    refuse(unit, verdict.reason, dirArg);
     return { ok: false, branch };
   }
   if (branch === null) process.stderr.write('unit-step: warning: not in a git checkout, branch not checked\n');
@@ -148,7 +174,7 @@ function where(unit, dirArg) {
     if (w.branch === null) continue;
     const dir = path.resolve(w.path, dirArg ?? STEPS_DIR);
     for (const u of unit === null ? stepsUnits(dir) : [unit]) {
-      if (branchMatchesUnit(w.branch, u)) candidates.push({ unit: u, branch: w.branch, path: w.path, file: path.join(dir, `${u}${SUFFIX}`) });
+      if (onUnitBranch(w, u, dirArg)) candidates.push({ unit: u, branch: w.branch, path: w.path, file: path.join(dir, `${u}${SUFFIX}`) });
     }
   }
   const lines = [];
@@ -180,15 +206,14 @@ function main() {
   }
   if (args.where) return where(args.unit, args.dir);
   if (args.check) {
-    const gate = branchGate(args.unit, null);
+    const gate = branchGate(args.unit, null, path.join(repoTop(), STEPS_DIR), null);
     if (gate.ok) process.stdout.write(`unit-step: ${args.unit} on ${gate.branch ?? 'no branch'} (${repoTop()})\n`);
     return;
   }
-  let file;
+  const dir = args.dir ? path.resolve(args.dir) : path.join(repoTop(), STEPS_DIR);
+  const file = path.join(dir, `${args.unit}${SUFFIX}`);
   let markers;
   try {
-    const dir = args.dir ? path.resolve(args.dir) : path.join(repoTop(), STEPS_DIR);
-    file = path.join(dir, `${args.unit}${SUFFIX}`);
     markers = parseSteps(readSteps(file));
   } catch (e) {
     return usage(e.message);
@@ -197,7 +222,7 @@ function main() {
     process.stdout.write(formatIntervals(stepIntervals(markers, Date.now())));
     return;
   }
-  if (!branchGate(args.unit, args.step).ok) return;
+  if (!branchGate(args.unit, args.step, dir, args.dir).ok) return;
   const t = args.at ? new Date(args.at).toISOString() : new Date().toISOString();
   const next = { t, ts: Date.parse(t), unit: args.unit, step: args.step, event: args.event, round: args.round };
   const warning = checkNext(markers, next);

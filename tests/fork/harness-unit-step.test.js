@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'unit-step-core.mjs');
 const CLI_REL = 'unit-step.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 22;
+const EXPECTED_TESTS = 29;
 
 let passed = 0;
 let failed = 0;
@@ -98,7 +98,7 @@ mutantFails('sorting markers by file order instead of time', 'x.m.ts - y.m.ts ||
 mutantFails('accepting a path that climbs out of the steps directory in a unit id', "export const UNIT_ID_SOURCE = '[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';", "export const UNIT_ID_SOURCE = '[A-Za-z0-9.][A-Za-z0-9._-]*(?:/[A-Za-z0-9.][A-Za-z0-9._-]*)?';");
 mutantFails('refusing a harness/<slug> unit id', "(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?';", "';");
 mutantFails('dropping the warning for a done with no start', "if (!open) return `no step is open, so done of ${label(next)} has no start`;", "if (!open) return '';");
-mutantFails('letting a marker through on any branch', 'export function branchCheck({ unit, step, branch, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {', 'export function branchCheck({ unit, step, branch, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {\n  return { ok: true };');
+mutantFails('letting a marker through on any branch', 'export function branchCheck({ unit, step, branch, stateBranch = null, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {', 'export function branchCheck({ unit, step, branch, stateBranch = null, mainCheckoutSteps = MAIN_CHECKOUT_STEPS }) {\n  return { ok: true };');
 mutantFails('refusing an out-of-order marker instead of appending it', 'if (warning) process.stderr.write', 'if (warning) return usage(warning);\n  if (warning) process.stderr.write', CLI_REL);
 
 test('CLI smoke: a start and a done land in <dir>/<unit>.steps.jsonl and --list reads them back', () => {

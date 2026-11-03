@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'machine-sweep-core.mjs');
 const CLI_REL = path.join('scripts', 'machine-sweep.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 32;
+const EXPECTED_TESTS = 34;
 
 let passed = 0;
 let failed = 0;

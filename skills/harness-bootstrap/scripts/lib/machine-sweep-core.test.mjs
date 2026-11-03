@@ -595,6 +595,62 @@ test('the CLI: a recorded process is stopped once idle and still the same proces
   }
 });
 
+/** A `ps` first on PATH that appends its arguments, one call per line, to `log`, then runs the real one. */
+function loggingPs(log) {
+  const realPs = spawnSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(realPs, 'no ps on PATH');
+  const bin = tmpDir('machine-sweep-bin-');
+  fs.writeFileSync(path.join(bin, 'ps'), `#!/bin/sh\necho "$*" >> '${log}'\nexec '${realPs}' "$@"\n`, { mode: 0o755 });
+  return bin;
+}
+
+test('the CLI: every ps call that reads a command asks for unlimited width, or an exported COLUMNS cuts it differently in each call', posixOnly, async () => {
+  const h = fakeHome();
+  const state = path.join(h.home, '.agents', 'harness');
+  const log = path.join(tmpDir('machine-sweep-log-'), 'ps.log');
+  const env = { ...cleanEnv(), PATH: `${loggingPs(log)}${path.delimiter}${process.env.PATH}` };
+  const sweep = (args) => spawnSync(process.execPath, [CLI, '--home', h.home, ...args], { cwd: h.home, env, encoding: 'utf8', timeout: 120_000 });
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
+  try {
+    assert.equal(sweep(['--record', String(child.pid)]).status, 0);
+    assert.match(sweep(['--status']).stdout, /1 of 1 recorded still running/);
+    const file = path.join(state, 'pids.jsonl');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8').trim());
+    fs.writeFileSync(file, `${JSON.stringify({ ...record, t: past(7).toISOString() })}\n`);
+    assert.equal(sweep(['--approve', 'recorded-pids']).status, 0);
+    const res = sweep(['--apply-approved', '--only', 'recorded-pids']);
+    assert.match(res.stdout, /^done {3}recorded-pids: 1 stopped$/m);
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').filter((l) => l.includes('command='));
+    // the record, the status, the recorded-pids measurement and the recheck before the signal
+    assert.deepEqual(calls.map((l) => l.split(' ').slice(0, 3).join(' ')).sort(), ['-ww -o command=', '-ww -o pid=,lstart=,command=', '-ww -o pid=,lstart=,command=', '-ww -o pid=,lstart=,time=,command=']);
+  } finally {
+    child.kill();
+  }
+});
+
+test('the CLI: --status says which recorded processes run only when ps answers; a ps that selected none (exit 1, silent) is none, any other silence is unknown', posixOnly, () => {
+  const h = fakeHome();
+  const state = path.join(h.home, '.agents', 'harness');
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, 'pids.jsonl'), `${JSON.stringify({ t: past(1).toISOString(), pid: 4242, lstart: 'Mon Oct 26 9:00:00 2026', command: 'node server.js', repo: null })}\n`);
+  const status = (script) => {
+    const bin = tmpDir('machine-sweep-bin-');
+    fs.writeFileSync(path.join(bin, 'ps'), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    return spawnSync(process.execPath, [CLI, '--home', h.home, '--status'], { cwd: h.home, env: { ...cleanEnv(), PATH: `${bin}${path.delimiter}${process.env.PATH}` }, encoding: 'utf8', timeout: 120_000 });
+  };
+  const unknown = 'machine-sweep: 1 recorded; could not tell which still run (ps failed)\n';
+  for (const [why, script, out] of [
+    ['killed by a signal', 'kill -9 $$', unknown],
+    ['exit 2, silent', 'exit 2', unknown],
+    ['exit 1 with a message', 'echo denied >&2; exit 1', unknown],
+    ['exit 1, silent: no process selected', 'exit 1', 'machine-sweep: 0 of 1 recorded still running\n'],
+  ]) {
+    const res = status(script);
+    assert.equal(res.status, 0, `${why}: ${res.stderr}`);
+    assert.equal(res.stdout, out, why);
+  }
+});
+
 test('the CLI: a registered repository\'s worktree is removed only when it is residue; one holding a hand-written ignored file stays', { ...posixOnly, skip: posixOnly.skip || (WORKTREE_IDLE_HOURS > 48 && 'WORKTREE_IDLE_HOURS is over the fixture\'s 2 days') }, () => {
   const h = fakeHome();
   const repo = tmpDir('machine-sweep-repo-');
@@ -699,8 +755,8 @@ test('the CLI: a recorded process is not stopped when the last ps before the sig
   const realPs = spawnSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).stdout.trim();
   assert.ok(realPs, 'no ps on PATH');
   const bin = tmpDir('machine-sweep-bin-');
-  // `ps -o command= -p <pid>` prints the real answer, then exits 1; every other call is the real ps
-  const stub = `#!/bin/sh\nif [ "$#" -eq 4 ] && [ "$1" = "-o" ] && [ "$2" = "command=" ] && [ "$3" = "-p" ]; then\n  '${realPs}' "$@"\n  exit 1\nfi\nexec '${realPs}' "$@"\n`;
+  // `ps -ww -o command= -p <pid>` prints the real answer, then exits 1; every other call is the real ps
+  const stub = `#!/bin/sh\nif [ "$#" -eq 5 ] && [ "$1" = "-ww" ] && [ "$2" = "-o" ] && [ "$3" = "command=" ] && [ "$4" = "-p" ]; then\n  '${realPs}' "$@"\n  exit 1\nfi\nexec '${realPs}' "$@"\n`;
   fs.writeFileSync(path.join(bin, 'ps'), stub, { mode: 0o755 });
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' });
   try {

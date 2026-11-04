@@ -204,11 +204,11 @@ Templates for every kind are in `reference/spec-templates.md`.
 9. **Another session may be working in the same clone.** A file outside every list
    may be theirs: look before reverting.
    **Whether a run is still alive comes from commands, never memory:** the host's
-   background-task list and each executor's task output, the wrapper's `--status`
-   (`codex-run`, `claude-run`), `machine-sweep --status` where it is installed. A
-   live run is never relaunched; an executor with no report is checked in its task
-   output before a re-dispatch, never two writers on one slice; a dead one's partial
-   writes are looked at first.
+   background-task list and each executor's task output; in a harness, the wrapper's
+   `--status` (`codex-run`, `claude-run`) and `machine-sweep --status` where it is
+   installed. A live run is never relaunched; an executor with no report is checked
+   in its task output before a re-dispatch, never two writers on one slice; a dead
+   one's partial writes are looked at first.
 10. **The full suite stays with the session.** List it as not yet covered until it
     has run once.
 

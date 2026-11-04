@@ -20,7 +20,7 @@ const CODEX_RUN = path.join(SCRIPTS, 'codex-run.mjs');
 const CLAUDE_RUN = path.join(SCRIPTS, 'claude-run.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 20;
+const EXPECTED_TESTS = 21;
 
 let passed = 0;
 let failed = 0;

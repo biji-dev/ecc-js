@@ -16,7 +16,9 @@ import {
   parseLstart,
   parseProcStat,
   parsePsTime,
+  probePid,
   readSidecars,
+  realPs,
   removeSidecar,
   runId,
   runVerdict,
@@ -80,6 +82,7 @@ function fixture(over = {}) {
   const dir = tmpDir('run-status-');
   const ledgerFile = path.join(dir, 'ledger.jsonl');
   const record = {
+    run: `${T0 + 1000}-${over.wrapperPid ?? 101}`,
     at: iso(T0 + 1000),
     kind: 'investigate',
     cwd: dir,
@@ -156,9 +159,9 @@ test('openSidecar: written with its run id as its stem, rewritten in place by up
 });
 
 test('runVerdict: a ledger row wins, then no pid alive is dead, then growth tells running from quiet', () => {
-  const sidecar = { at: iso(T0), kind: 'review' };
-  const rows = [{ at: iso(T0), kind: 'docs', outcome: 'ok' }];
-  assert.equal(runVerdict({ sidecar, ledgerRows: [...rows, { at: iso(T0), kind: 'review', outcome: 'failed' }], alive: true, grew: true }), 'done failed');
+  const sidecar = { run: `${T0}-101`, at: iso(T0), kind: 'review' };
+  const rows = [{ run: `${T0}-201`, at: iso(T0), kind: 'review', outcome: 'ok' }];
+  assert.equal(runVerdict({ sidecar, ledgerRows: [...rows, { run: `${T0}-101`, at: iso(T0), kind: 'review', outcome: 'failed' }], alive: true, grew: true }), 'done failed');
   assert.equal(runVerdict({ sidecar, ledgerRows: rows, alive: false, grew: false }), 'dead');
   assert.equal(runVerdict({ sidecar, ledgerRows: rows, alive: true, grew: true }), 'running');
   assert.equal(runVerdict({ sidecar, ledgerRows: [], alive: true, grew: false }), 'quiet');
@@ -190,7 +193,7 @@ test('status: quiet when every alive pid and the log stood still -- reported, no
 
 test('status: done <outcome> when the run\'s ledger row is in (the wrapper died between the append and the removal)', async () => {
   const f = fixture();
-  fs.writeFileSync(f.ledgerFile, `${JSON.stringify({ at: f.record.at, kind: 'investigate', outcome: 'ok', out: f.record.out })}\n`);
+  fs.writeFileSync(f.ledgerFile, `${JSON.stringify({ run: f.record.run, at: f.record.at, kind: 'investigate', outcome: 'ok', out: f.record.out })}\n`);
   const { lines, runs } = await run(f, procs({}));
   assert.equal(runs[0].verdict, 'done ok');
   assert.match(lines[0], /^codex-run: done ok kind=investigate .* pids=101✗\/102✗ out=\S+$/);
@@ -324,6 +327,27 @@ test('status --out: the sidecar for that path, else the ledger\'s last row for i
   assert.deepEqual((await run(f, table(), { out: none })).lines, [`codex-run: unknown — no run recorded for ${none}`]);
   for (const r of readSidecars(sidecarDir(f.ledgerFile))) removeSidecar(r.file);
   assert.deepEqual((await run(f, table())).lines, [`codex-run: no run in flight (${f.dir})`]);
+});
+
+test('realPs: no process only on a silent exit 1; any other failure makes the probe unchecked; ps runs in the C locale', () => {
+  const bin = tmpDir('run-status-ps-');
+  const savedPath = process.env.PATH;
+  const kill = (pid, signal) => process.kill(pid, signal);
+  const withPs = (body, fn) => {
+    fs.writeFileSync(path.join(bin, 'ps'), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    try {
+      return fn();
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  };
+  const live = () => probePid(process.pid, iso(Date.now()), { ps: realPs, kill });
+  withPs('exit 1', () => assert.deepEqual(live(), { alive: false, unchecked: false }, 'a silent exit 1 selected no process'));
+  withPs(`echo "ps: invalid option -- 'p'" >&2; exit 1`, () => assert.deepEqual(live(), { alive: true, unchecked: true }, 'a message on exit 1'));
+  withPs('exit 2', () => assert.deepEqual(live(), { alive: true, unchecked: true }, 'another status'));
+  withPs('kill -9 $$', () => assert.deepEqual(live(), { alive: true, unchecked: true }, 'a signal'));
+  withPs('echo "$LC_ALL"', () => assert.equal(realPs(['-o', 'lstart=', '-p', '1']).trim(), 'C'));
 });
 
 test('cpuSeconds: an injected ps answers; a Linux /proc/<pid>/stat line is read in clock ticks', () => {

@@ -142,12 +142,11 @@ export function sameProcess({ startedMs, recordedIso, slackMs = START_SLACK_MS }
 
 /**
  * The ledger row of a sidecar's run, or null: the row that carries its `run`. Two runs of one kind
- * can share an `at` (the same millisecond, or two worktrees on one ledger), so `at` and `kind` match
- * only for a sidecar written before runs had an id.
+ * can share an `at` (the same millisecond, or two worktrees on one ledger), so `at` never decides.
  */
 export function rowFor(sidecar, ledgerRows) {
-  const mine = sidecar.run ? (r) => r.run === sidecar.run : (r) => r.at === sidecar.at && r.kind === sidecar.kind;
-  for (let i = ledgerRows.length - 1; i >= 0; i--) if (mine(ledgerRows[i])) return ledgerRows[i];
+  if (!sidecar.run) return null;
+  for (let i = ledgerRows.length - 1; i >= 0; i--) if (ledgerRows[i].run === sidecar.run) return ledgerRows[i];
   return null;
 }
 
@@ -163,12 +162,16 @@ export function runVerdict({ sidecar, ledgerRows = [], alive, grew }) {
   return grew ? 'running' : 'quiet';
 }
 
-/** `ps <args>`'s stdout, '' when ps ran and found no such process; throws when ps cannot run. */
+/**
+ * `ps <args>`'s stdout, in the C locale (`lstart` parses in no other); '' when ps selected no process,
+ * which is exit 1 with nothing printed. Throws on anything else that fails (ps missing, a signal,
+ * another status, a message), so the probe says `unchecked` instead of calling a live run dead.
+ */
 export function realPs(args) {
   try {
-    return execFileSync('ps', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return execFileSync('ps', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' } });
   } catch (e) {
-    if (typeof e.status === 'number') return String(e.stdout ?? '');
+    if (e.status === 1 && !String(e.stdout ?? '').trim() && !String(e.stderr ?? '').trim()) return '';
     throw e;
   }
 }
@@ -333,7 +336,8 @@ export async function status({ wrapper, ledgerFile, out = null, sampleMs = SAMPL
     r.sidecar = readSidecars(path.dirname(r.file)).find(({ file }) => file === r.file)?.sidecar ?? r.sidecar;
     probe(r);
   });
-  if (toSample.length > 0) rows = readLedger(ledgerFile);
+  // Read again for every run, sampled or not: a row appended during the first probe is a done run.
+  rows = readLedger(ledgerFile);
   const results = runs.map((r) => {
     const grew = (r.cpuGrowth ?? 0) > 0 || (r.logGrowth ?? 0) > 0;
     const verdict = runVerdict({ sidecar: r.sidecar, ledgerRows: rows, alive: r.alive.wrapper || r.alive.child, grew });

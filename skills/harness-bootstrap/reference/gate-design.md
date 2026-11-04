@@ -148,9 +148,10 @@ that must list every form it catches, such as a text-search wiring detector or a
 regex reader of config files; the fix is a hand list plus a duty on the unit that
 changes what it lists. At fix-round triage, findings that only teach such a
 heuristic one more form wait on that question; they are not fixed one by one. At
-the plan merge, at equal merit, the smaller plan wins. Small, Hot-small and Trivial
-run no lens: the second family's `review` takes no brief, and a session checking
-its own diff is self-evaluation (› Do not adopt).
+the plan merge, at equal merit, the smaller plan wins. Hot-small runs no plan
+check, so only its step 8 `code-reviewer` carries the lens. Small and Trivial run
+none: the second family's `review` takes no brief, and a session checking its own
+diff is self-evaluation (› Do not adopt).
 > Origin: a unit meant to make a one-line change cheaper built 563 lines, 427 of
 > them a text-search detector's test; its plan check added 9 required changes and
 > its review 12 IN findings, most of them one more form for the detector.

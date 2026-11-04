@@ -96,11 +96,11 @@ the recommendation and why, two or three options with pros, cons, reversal cost 
 the data behind them, and the default. **Each fact carries its source**, a
 `file:line` or the search that found it; a claim of absence ("no secrets there",
 "no other caller") without its search is marked `unchecked`. Approval accepts every
-default the owner does not change.
+default the owner does not change. **T** decisions are taken now and listed under
+*Decided* — one line each with its reversal cost — so the owner can strike one;
+**H** never appears.
 > Origin: an owner's choice rested on an agent's unchecked "that folder holds no
-> secrets"; the next step's investigation found a live key there. **T** decisions are taken now and listed under *Decided* — one
-line each with its reversal cost — so the owner can strike one; **H** never
-appears.
+> secrets"; the next step's investigation found a live key there.
 
 `[M]` A P or C question found later is batched — at most one owner round per
 working day — unless it blocks the next step or decides a never-auto category; then

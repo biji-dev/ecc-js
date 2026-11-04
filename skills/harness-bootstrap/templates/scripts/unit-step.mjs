@@ -112,6 +112,12 @@ function readSteps(file) {
   }
 }
 
+/** `dir` relative to the repository top when it lies inside it, where every worktree has it; else as is. */
+function repoRelative(dir) {
+  const rel = path.relative(repoTop(), dir);
+  return rel.startsWith('..') || path.isAbsolute(rel) ? dir : rel || '.';
+}
+
 /** Prints the refusal and where the unit's checkout is; exit 1. */
 function refuse(unit, reason, dirArg) {
   const lines = [`unit-step: refused: ${reason}`];
@@ -222,7 +228,7 @@ function main() {
     process.stdout.write(formatIntervals(stepIntervals(markers, Date.now())));
     return;
   }
-  if (!branchGate(args.unit, args.step, dir, args.dir).ok) return;
+  if (!branchGate(args.unit, args.step, dir, args.dir ? repoRelative(dir) : null).ok) return;
   const t = args.at ? new Date(args.at).toISOString() : new Date().toISOString();
   const next = { t, ts: Date.parse(t), unit: args.unit, step: args.step, event: args.event, round: args.round };
   const warning = checkNext(markers, next);

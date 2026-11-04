@@ -528,6 +528,11 @@ test('a unit whose branch carries no id runs on the branch its state file names,
   assert.match(fromMain.stderr, /^unit-step: refused: fix-login-bug runs on its own branch; this checkout is on main$/m);
   assert.ok(fromMain.stderr.includes(`unit-step: the unit's checkout: cd '${c.login.wt}'\n`), fromMain.stderr);
   assert.equal(cli(c.main, ['--check', 'fix-login-bug']).status, 1);
+  // A --dir relative to a subdirectory still finds the state file in each worktree for the hint.
+  fs.mkdirSync(path.join(c.main, 'src'));
+  const fromSub = cli(path.join(c.main, 'src'), ['fix-login-bug', WORK_STEP, 'done', '--dir', path.join('..', STEPS_DIR)]);
+  assert.equal(fromSub.status, 1, fromSub.stderr);
+  assert.ok(fromSub.stderr.includes(`unit-step: the unit's checkout: cd '${c.login.wt}'\n`), fromSub.stderr);
   const where = cli(c.main, ['--where', 'fix-login-bug', '--dir', STEPS_DIR]);
   assert.equal(where.status, 0, where.stderr);
   assert.equal(where.stdout, `fix-login-bug · fix/login · ${c.login.wt} · ${WORK_STEP} r1 start ${JSON.parse(fs.readFileSync(c.login.steps, 'utf8')).t}\n`);

@@ -7,6 +7,7 @@
  *   node scripts/machine-sweep.mjs --approve <ids> | --unapprove <ids> [--home <dir>]
  *   node scripts/machine-sweep.mjs --apply-approved [--only <ids>] [--dry-run] [--json] [--home <dir>]
  *   node scripts/machine-sweep.mjs --record <pid> [--home <dir>]
+ *   node scripts/machine-sweep.mjs --status [--json] [--home <dir>]
  *
  *   --report          the default: each category's size, what freeing it runs and what it keeps,
  *                     and the orphaned dev processes. It changes nothing
@@ -18,12 +19,14 @@
  *                     and appends one line to <home>/.agents/harness/sweep-log.jsonl; --dry-run
  *                     prints what it would run instead
  *   --record <pid>    records a process a harness run started, in <home>/.agents/harness/pids.jsonl
+ *   --status          lists the recorded processes that still run (pid, start, when recorded, CPU time,
+ *                     repository, command), and counts the rest; it runs alone and changes nothing
  *   --only <ids>      these categories alone: comma-separated ids, or `all`
  *   --home <dir>      the home directory to sweep and keep state in (default the user's); another
  *                     home leaves out the categories its tools keep in the real one
  *
- * exit: 0 done | 1 a category failed, a recorded PID is gone, or another sweep holds the lock |
- * 2 usage, or run as root.
+ * exit: 0 done (--status always) | 1 a category failed, a recorded PID is gone, or another sweep holds
+ * the lock | 2 usage, or run as root.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -42,8 +45,10 @@ import {
   etimeMs,
   fmtBytes,
   formatReport,
+  formatStatus,
   heldRows,
   inUse,
+  liveRecords,
   lockDecision,
   lockEntry,
   logEntry,
@@ -61,12 +66,13 @@ import {
   recordedToStop,
   settled,
   staleStores,
+  statusRow,
   unusedBrowsers,
   worktreeVerdict,
 } from './lib/machine-sweep-core.mjs';
 
 const USAGE =
-  'usage: node scripts/machine-sweep.mjs [--report | --apply-approved [--dry-run]] [--only <ids>] [--json] [--home <dir>] | --approve <ids> | --unapprove <ids> | --record <pid>';
+  'usage: node scripts/machine-sweep.mjs [--report | --apply-approved [--dry-run]] [--only <ids>] [--json] [--home <dir>] | --approve <ids> | --unapprove <ids> | --record <pid> | --status [--json] [--home <dir>]';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // what --approve installs, relative to HERE
 const COPIED = ['machine-sweep.mjs', path.join('lib', 'machine-sweep-core.mjs')];
@@ -80,7 +86,7 @@ function usage(msg) {
 
 function run(cmd, args, { cwd, timeout = 120_000, env = {} } = {}) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C', ...env } });
-  return { ok: r.status === 0, out: r.stdout ?? '', err: (r.stderr || r.error?.message || '').trim(), missing: r.error?.code === 'ENOENT' };
+  return { ok: r.status === 0, status: r.status, signal: r.signal, out: r.stdout ?? '', err: (r.stderr || r.error?.message || '').trim(), missing: r.error?.code === 'ENOENT' };
 }
 function git(args, cwd) {
   const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
@@ -162,7 +168,7 @@ function machine(home, now) {
     foreign: path.resolve(home) !== path.resolve(os.homedir()),
     get rows() {
       return once('rows', () => {
-        const r = run('ps', ['-axo', 'pid=,ppid=,etime=,rss=,command=']);
+        const r = run('ps', ['-ww', '-axo', 'pid=,ppid=,etime=,rss=,command=']);
         return r.ok ? parsePs(r.out) : null;
       });
     },
@@ -439,7 +445,7 @@ const MEASURE = {
   'recorded-pids'(m) {
     const records = parseRecords(read(path.join(m.home, '.agents', 'harness', 'pids.jsonl')));
     if (!records.length) return { count: 0, plan: [], detail: 'none recorded' };
-    const ps = run('ps', ['-o', 'pid=,lstart=,command=', '-p', records.map((r) => r.pid).join(',')]);
+    const ps = run('ps', ['-ww', '-o', 'pid=,lstart=,command=', '-p', records.map((r) => r.pid).join(',')]);
     if (!ps.ok) return { count: 0, plan: [], detail: `${records.length} recorded; could not tell which still run (ps failed): none stopped` };
     const live = parseLstart(ps.out);
     // the registry is the main checkout's; a repository that is gone, or that git cannot place, counts as held
@@ -484,7 +490,7 @@ function step(p, m) {
   }
   if (p.kill) {
     // only an ok ps that still names the planned command: a failed one is unknown, and stops nothing
-    const now = run('ps', ['-o', 'command=', '-p', String(p.kill)]);
+    const now = run('ps', ['-ww', '-o', 'command=', '-p', String(p.kill)]);
     if (!now.ok || now.out.trim() !== p.command.trim()) return 0;
     process.kill(p.kill, 'SIGTERM');
     return 1;
@@ -622,7 +628,7 @@ function approve(args, state) {
 }
 
 function record(args, state) {
-  const live = parseLstart(run('ps', ['-o', 'pid=,lstart=,command=', '-p', String(args.record)]).out)[0];
+  const live = parseLstart(run('ps', ['-ww', '-o', 'pid=,lstart=,command=', '-p', String(args.record)]).out)[0];
   if (!live) {
     process.stderr.write(`machine-sweep: no process ${args.record}\n`);
     return 1;
@@ -631,6 +637,20 @@ function record(args, state) {
   fs.mkdirSync(state, { recursive: true });
   fs.appendFileSync(path.join(state, 'pids.jsonl'), `${JSON.stringify({ t: new Date().toISOString(), ...live, repo })}\n`);
   process.stdout.write(`machine-sweep: recorded ${live.pid} (${live.command.slice(0, 80)})\n`);
+  return 0;
+}
+
+/** The recorded processes that still run, from one ps; `running` is null when ps failed. */
+function status(args, state) {
+  const records = parseRecords(read(path.join(state, 'pids.jsonl')));
+  let running = [];
+  if (records.length) {
+    const ps = run('ps', ['-ww', '-o', 'pid=,lstart=,time=,command=', '-p', records.map((r) => r.pid).join(',')]);
+    // a ps that selects no process exits 1 and says nothing; a signal, another status or any message is a failure
+    const none = ps.status === 1 && !ps.out.trim() && !ps.err;
+    running = ps.ok || none ? liveRecords(records, parseLstart(ps.out, { cpu: true })) : null;
+  }
+  process.stdout.write(args.json ? `${JSON.stringify({ recorded: records.length, running: running && running.map(statusRow) }, null, 2)}\n` : formatStatus(records.length, running));
   return 0;
 }
 
@@ -668,6 +688,7 @@ function main() {
   if (args.mode === 'apply') return apply(args, m, state);
   if (args.mode === 'approve' || args.mode === 'unapprove') return approve(args, state);
   if (args.mode === 'record') return record(args, state);
+  if (args.mode === 'status') return status(args, state);
   return report(args, m, state);
 }
 

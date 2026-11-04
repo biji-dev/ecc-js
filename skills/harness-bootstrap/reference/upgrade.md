@@ -214,7 +214,7 @@ change (then register the repository for the weekly job, `learning.md` › The w
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 6, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 7, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -333,11 +333,12 @@ entry is stale, and the sheet's list of what the owner reviews again.
 | 4 | 2.2.3-js.4 | owner questions by class (`gate-design.md` › Who decides): P and C asked as decision cards, T decided and listed at Gate 2 as *Decided for you*, H turned into rules; the decision row's `Class` and `Reversal cost`; deliverables with `Demo:` lines, one per coordinator context; the second family as the first builder of cold work and fixes, `--writer` required on every `review-gate.mjs` kind (claude, codex, sonnet or mixed), the `executor:` override; the sandbox section (`cross-model.md`); `run-gates.sh` result reuse by tree, single-flight lock and instant-fail note; `unit-cost.mjs` and `estimate.mjs`; the log's Deliverable, Owner wait and Cost columns and a `unit-record.mjs` row that fits them; three rules (owner decides only the owner's, never re-run a passed tree, deliverables); hazard `agent-model-unpinned`. Generated blocks, agents and scripts from v3 are replaced or get section proposals; the policy and gate-table blocks are `reviewed`, so their rows are proposals the owner re-reviews |
 | 5 | 2.2.3-js.5 | step markers (`unit-step.mjs`), `unit-cost.mjs --times` and `--by-step`, `unit-record.mjs --steps`; the learning loop: `retro.mjs` and `run-sources.mjs`, Phase E's weekly retro and Phase F, the skill's own `retro-weekly.mjs` (`learning.md`); the context defaults (`context.md`): the budget hook warns at 220K, sits 40K under the auto-compact window, says nothing after a compaction until the next reply, and past 150K sends an owner gate as text; `check-agent-docs.mjs`'s base and citations checks (its ninth and tenth); due-checks at steps 0 and 9 (`harness-due.mjs`), the P3 batch and the hygiene unit (`hygiene.md`); the machine sweep (`machine.md`, the skill's own script) and the optional leftover-processes hook; `run-counted.mjs` behind every counted gate, `run-gates.sh --snapshot` and its colour strip; the edit guard; the tests of the guards, the budget hook and `run-gates.sh`, shipped to `scripts/lib/` and run by the counted `harness` gate; `unit-stack.sh`, bound to the commit guard's registry path; a `Traps:` line in every brief; the Intake type (`intake.md`, `intake.mjs`: unit 1's Gate 1 automatic while the approved request and its Scope block are unchanged); per-host models (`.agents/harness-models.json`, `harness-host.mjs`), `claude-run.mjs` as the second family under another host, `.codex/agents/<name>.toml` where Codex is a target; `review-gate.mjs --writer` by role on any host (`main`, `bounded`, `second` or `mixed`; on Claude Code `claude`, `sonnet` and `codex` still name them) and `--host`, and its P3 decision `p3-batch` (was `sweep`); hazards `preflight-missing`, `sweep-overdue`, `retro-overdue`, `hygiene-overdue`, `p3-queue-aging`, `host-models-missing` and `second-family-absent`. Generated blocks, agents and scripts from v4 are replaced or get section proposals |
 | 6 | 2.2.3-js.8 | the fixes from the v5 installs. The guards refuse what v5 let through: `push --no-verify`, a hook path set through the environment, `git` behind `command`, `exec` or `time`, a second-family run sent to the background with `&` (built-in rule `codex-background`), an indented patch header, every env-file form, and in either scope the merge of a branch that still holds a row; each hook file runs the guard first and passes its refusal on. The review gate reviews tests and the harness's instruction files (a unit of only those under a critical path at the full tier), and a P3 batch over critical code gets the Opus reviewer. `run-counted.mjs` fails a test file that registered no tests and forwards a stop signal; `run-gates.sh` keys reuse on `NODE_OPTIONS`; `unit-cost.mjs` counts a streamed message by its fullest copy and both run ledgers by the unit's worktree; the retro warns where a figure reads zero for a fixable reason, dates rows past re-indents and moves, and reads the follow-ups' columns as bound; step ids take one `/`; the FULL verify ends step 8a; `codex-run.mjs` keeps `max` behind `--allow-max`; each CLI in `scripts/` takes `--help`, and `check-agent-docs.mjs` refuses an argument it does not know; `harness-status.js` reports each entry's template state and prints its base (`--base`). Template-backed entries from v5 merge three-way (Step 2); the rest of an upgrade to v6 is in *Upgrading to v6* below |
+| 7 | 2.2.3-js.10 | the owner's eight: **decision first** at the claim, each card fact with its source (`scope-guard.md` › The decision sheet); OUT **filed or dropped** (› Filing OUT), the close-out listing the new rows only; the Impact Analysis's `found by` and `proof` cells and Small's one-line IA; the plan's **Drawbacks** and one **plan critique** by the other family (`cross-model.md` › The plan critique); the **simplicity lens**, once per family (`gate-design.md` › Review lineup); Hot-small runnable once its cap is filled, the rule audit looking (`learning.md`); `unit-step.mjs` refuses a marker on the wrong checkout (exit 1), with `--check` and `--where`; the state file's `Worktree:` line and the resume command naming the unit; `codex-run.mjs` and `claude-run.mjs --status` over a run sidecar (`lib/run-status.mjs`), `machine-sweep.mjs --status`, and "is it still running" answered from those commands. The rest of an upgrade to v7 is in *Upgrading to v7* below |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v5 install the v6 row, a v3 install the v4 to v6
-rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v6 install the v7 row, a v5 install the v6 and v7
+rows, a v3 install the v4 to v7 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
@@ -348,7 +349,7 @@ with no manifest starts from the fingerprints (Step 1): its entries are `legacy`
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 6.
+`skillVersion` 7.
 
 ### Upgrading to v6
 
@@ -427,3 +428,38 @@ know, so a gate that passes one fails until it goes. The FULL verify ends step 8
 so its time moves from step 8 to 8a in the by-step figures: compare the two steps
 together across the upgrade. Once per machine, run `retro-weekly.mjs --install`
 again (`learning.md` › The weekly job), so the job carries `CODEX_HOME`.
+
+### Upgrading to v7
+
+`[M]` **What regenerates.** The `scope` block (`scope-guard.md`: OUT filed or
+dropped), the runner skill and the implementer agent (`runner.md`: decision first,
+the checkout first at step 0a, the marker refusal, the Impact Analysis cells, the
+Drawbacks and plan critique, step 10's still-running line), the blocks Phase C
+writes from `gate-design.md` (the simplicity lens in the code-reviewer's brief,
+Hot-small), and the `context` block (`context.md`: the resume command names the
+unit). Each regenerated block is written no longer than the one it replaces, so a
+base at its budget stays there: check it with `check-agent-docs.mjs --base`. A
+project that wrote decision first itself, as a step 0 item of its own, ends with
+one copy: the three-way merge takes v7's where the two say the same. The `gates`
+and `risk-map` blocks are `reviewed`: what v7 changes there reaches the owner as
+proposals. The foundation stage is unchanged: every unit is still Full.
+
+`[M]` **New files and bindings.** `scripts/lib/run-status.mjs` and its test, with
+whichever wrapper the project has: both wrappers import it, so a wrapper copied
+without it fails every run. `MAIN_CHECKOUT_STEPS` in `unit-step-core.mjs` (`0a`,
+`0` and `10`): an install whose step ids differ, such as an eleven-step runner that
+lands at `11`, binds its resume, claim and teardown steps there. Both ledgers' rows
+gain `out` and `run` fields, and their `running/` directories sit inside the ignored
+ledger directories. Where the review workflow is installed, its new template gives
+the Full quality reviewer the simplicity lens. Once per machine, run
+`machine-sweep.mjs --approve <ids>` again with the categories already approved: it
+refreshes the installed copy (`machine.md`), which gains `--status`.
+
+`[M]` **What the owner reviews again.** `unit-step.mjs` exits 1 on a marker outside
+`MAIN_CHECKOUT_STEPS` when the branch carries neither the unit id nor the one the
+state file's `Branch:` names, where it used to exit 0 or 2; a marker outside a git
+checkout warns. A unit in flight from v6 already has its `Branch:` line, so its own
+checkout passes and only a wrong one is refused. Follow-up rows are filed only as
+Filing OUT says, so the follow-ups doc grows slower; the upgrade drops nothing
+already filed. **Land it between runs**, so that no step meets the new refusal
+halfway.

@@ -46,6 +46,17 @@ test('parseArgs: the kind as a word or --kind; review needs --base, the others a
   assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--write']), /unknown option --write/);
 });
 
+test('parseArgs --status: no kind, only --out, --cwd and --sample-ms (default 5000), and the env is not read', () => {
+  assert.deepEqual(parseArgs(['--status']), { status: true, out: null, cwd: null, sampleMs: 5000 });
+  assert.deepEqual(parseArgs(['--status', '--out', 'v.md', '--cwd', '/w', '--sample-ms', '250'], { CLAUDE_RUN: 'of' }), { status: true, out: 'v.md', cwd: '/w', sampleMs: 250 });
+  assert.throws(() => parseArgs(['review', '--status']), /--status takes no kind \(got "review"\)/);
+  assert.throws(() => parseArgs(['--status', '--kind', 'review']), /--status takes only --out, --cwd and --sample-ms, not --kind/);
+  assert.throws(() => parseArgs(['--status', '--sample-ms']), /--sample-ms needs a value/);
+  for (const value of ['abc', '-1', 'Infinity']) assert.throws(() => parseArgs(['--status', '--sample-ms', value]), /--sample-ms must be/);
+  assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--sample-ms', '10']), /unknown option --sample-ms/);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p']).status, undefined);
+});
+
 test('resolveRoute: the table row, the critical effort, then an explicit override', () => {
   assert.deepEqual(resolveRoute(parseArgs(['review', '--base', 'main'])), { model: CATALOG.judgment, effort: 'high' });
   assert.deepEqual(resolveRoute(parseArgs(['lane-a', '--prompt', 'p'])), { model: CATALOG.bounded, effort: 'high' });

@@ -48,6 +48,9 @@ const LENS = {
   blastRadius: 'blast radius (lane B): what else is affected by this change that the diff does not show.'
 };
 
+// The simplicity lens (harness-bootstrap's reference/gate-design.md › Review lineup): the quality reviewer's, on Full only.
+const SIMPLICITY = 'Simplicity: name each component the scope\'s "Done when" does not need — an abstraction with one caller, an option nobody sets, a generic layer, a new dependency, a helper that already exists (cite it). P2 when it adds a public surface, a dependency or a config key, else P3; the fix deletes or inlines. A heuristic that must list every form it catches, such as a text-search wiring detector or a regex reader of config files, is always one such finding: its fix is a hand list plus a duty on the unit that changes what it lists.';
+
 const FINDINGS_SCHEMA = {
   type: 'object',
   properties: {
@@ -188,6 +191,7 @@ function reviewPrompt(dimension, input) {
   if (dimension === 'blastRadius') {
     parts.push('', 'Look OUTSIDE the diff: every reader of each changed export, field, route, column, config key or env var; sibling occurrences of each fixed bug.');
   }
+  if (dimension === 'quality' && input.tier === 'full') parts.push('', SIMPLICITY);
   parts.push(
     '',
     'Report each finding with file:line, why it is wrong, and how to reproduce it; then list what you checked and found clean.',

@@ -21,9 +21,8 @@ one starts in a clean context, not on top of the last one's reports. After a uni
 lands: close its state file, offer the same `/clear`, announce the next unit in one
 line, and start it only if the owner's instruction covers it. Never ask the owner to
 open a session, paste a hand-off note or say what is next.
-> Origin: plan mode first shipped "one task per session, then exit". In the third
-> project 28 of 118 sessions ended in a hand-off, about 90% of them triggered by a
-> budget rule that said "start a new session" (`rules.md` §3).
+> Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
+> forced by a "start a new session" budget rule (`rules.md` §3).
 
 `[M]` **The main session coordinates and reviews.** It owns the tier, the gates,
 the plan text, the slicing, every brief, the critique of every report, triage, the
@@ -117,6 +116,12 @@ rounds, not step rounds, so its `--round 1` runs inside step 8's round 2. The st
 sits beside the state file (`scope-guard.md`); `--list` prints what it holds. Small and
 Full; Trivial needs none.
 
+`[M]` **A marker refuses the wrong checkout** — exit 1, the unit's `cd` printed:
+outside `MAIN_CHECKOUT_STEPS` (`0a`, `0`, `10`) the branch carries the unit id or is
+the state file's `Branch:`, and git checks a branch out in one worktree only.
+`--check <unit>` is the check alone, chained before the gates and each dispatch.
+> Origin: resumed sessions ran on `main`, or in another lane's worktree.
+
 `[M]` **Every dispatch's description starts with the tag `[<unit> s<step> r<n>]`** —
 `[EP-7 s8 r2] codex review` — so `unit-cost.mjs --by-step` puts each subagent's cost on its
 step. An untagged dispatch goes by when it started.
@@ -124,9 +129,8 @@ step. An untagged dispatch goes by when it started.
 `[M]` **Step 8b reads them:** `unit-record.mjs --steps` puts each step's time in the
 record, and `unit-cost.mjs --times --by-step <steps file>` gives the wall, owner-wait and
 work time and the dollars per step (`log-format.md`).
-> Origin: ledger rows carried no times and were written in one batch at the end. One
-> measured unit's record step took 19% of its $78.41, found only by rebuilding its steps
-> from the transcripts by hand.
+> Origin: one unit's record step took 19% of its $78.41, found only by rebuilding its
+> steps from the transcripts by hand.
 
 ## Due-checks
 
@@ -148,12 +152,9 @@ that is due stays due until its report is committed, and nothing has to remember
 it. Reports are committed at `REPORTS.<kind>` in `harness-due-core.mjs` (default
 `docs/harness/reports/<file>`), never in a gitignored directory: a report nobody can
 count does not exist for the next check.
-> Origin: 13 preflights and sweeps in two projects caught real problems, and each
-> ran because someone asked: the owner asked six times, two sweeps ran overdue
-> ("overdue by four days and fourteen landings"), one project kept its
-> reports in a gitignored directory, and another's note that a sweep was due lived
-> in a session's memory only. On 2026-10-26 the check read 10 landings since
-> one project's last sweep, five days earlier.
+> Origin: 13 preflights and sweeps in two projects caught real problems, each one
+> because someone asked; two ran overdue, and one "sweep due" note lived in a
+> session's memory only.
 
 `[B]` In `scripts/lib/harness-due-core.mjs`: `MAIN`, `LOG`, `FOLLOW_UPS`, `REPORTS`
 (`null` for a kind the project does not run), `PHASE_OF`, `CADENCE`, `P3_AGE_DAYS`,
@@ -161,12 +162,9 @@ count does not exist for the next check.
 
 ## The hygiene unit
 
-`[M]` **`DUE hygiene` queues a `harness/hygiene-<date>` unit: the P3 batch over the
-follow-ups doc's oldest P3s, dead code and unused dependencies, docs drift over the
-whole tree, the archive, and the residue** (`hygiene.md`). It is a Code unit with
-the tiers, Full when it deletes in critical code. It ends by committing
-`docs/harness/reports/hygiene-<date>.md`, which restarts the count. With no
-hygiene unit bound, `DUE p3` queues the P3 batch alone.
+`[M]` **`DUE hygiene` queues a `harness/hygiene-<date>` unit** (`hygiene.md`): the P3
+batch, dead code, docs drift, the archive and the residue. With no hygiene unit
+bound, `DUE p3` queues the P3 batch alone.
 
 ## Which steps each tier runs
 
@@ -189,12 +187,15 @@ hygiene unit bound, `DUE p3` queues the P3 batch alone.
 
 `[M]` **A P0 or P1 from review promotes Small to Full** — the unit then runs the
 plan check, lane A against a written plan, lane C and the adversarial pass.
+**Hot-small**, once its cap is filled (`gate-design.md`), runs Full's column
+without the plan check, lane A and the separate doc sweep; step 8 is `--tier full`.
 
 ## Per-step notes
 
 **Step 0a — resume.** `[M]` A held row or an existing unit branch means resume, not
-start. Read the state file; the row's `Step` says where the run *thought* it got
-to — **verify, do not trust the marker.** Restart from the earliest step you cannot
+start. **The checkout first:** `node scripts/unit-step.mjs --where [<unit>]`; one
+candidate, `cd` there; several, ask — never pick by plan file. Read the state file;
+the row's `Step` says where the run *thought* it got to — **verify, do not trust the marker.** Restart from the earliest step you cannot
 evidence; redoing a step is cheap and never wrong. Commit uncommitted work first,
 as its own commit. Never reclaim a row you do not own.
 
@@ -207,20 +208,17 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
   role, and on Small the Scope block.
+- `[M]` **Decision first.** A change that hangs on a P or C decision nobody has taken
+  (an `Owner decides:` follow-up row, an open card) asks it as one card, before
+  any step 1 work that depends on it. Until it is answered the claim carries the
+  stricter tier; after it, re-tier for what remains. An answer on record is reused.
+  > Origin: a one-line guard edit ran Full; the line only applied an owner's choice.
 - `[M]` **The lock is also the concurrency guard.** One row per active unit, held
   for the whole run, its `Step` updated at every boundary. The commit guard reads
   it (`commit-guard.md`); in `SCOPE=checkout` the row names its worktree.
 - `[M]` **The registry is also a resource lock** where units share machines —
-  ports, isolated stacks, migration slots in the same row. Where units run live
-  stacks side by side, `templates/unit-stack.sh` (installed to `scripts/`) is that
-  lock: one slot per unit, claimed as `slot N` in the row's Resources cell, and
-  every port, database and container project of the slot derives from N. Its `up`
-  refuses the main checkout, a slot another row holds, a slot whose stack serves
-  another checkout (a stale state file would otherwise remove that unit's data), a
-  port another process holds and a disk below its floor; `down` checks the ports
-  are free after. Three projects each built this lock their own way.
-  `[B]` the registry's path (the commit guard's `REGISTRY`), the slot range, the
-  floor and what a slot owns (its block).
+  ports, isolated stacks, migration slots in the same row; `scripts/unit-stack.sh`
+  holds live stacks side by side (`commit-guard.md` › The registry).
 - `[M]` Compare this unit's write set against every other held row. Overlap means
   sequence, not parallelise — say so and stop.
 - `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
@@ -242,6 +240,7 @@ as its own commit. Never reclaim a row you do not own.
   > Origin: the local mainline was four commits ahead, and no step looked.
 - `[M]` Read the follow-ups doc: rows scheduled for this unit are part of its
   requirement. Verify the dependency list before presenting it.
+- `[M]` The IA, plan check and Drawbacks as in change mode, in the plan document.
 
 **Step 1 — ground, change mode.**
 - `[M]` **Investigate.** A bug: no fix without the root cause, decided by Opus or the
@@ -251,9 +250,14 @@ as its own commit. Never reclaim a row you do not own.
   measurements in the repo still win.
 - `[M]` **Plan + Impact Analysis** (Full): files, functions, data flow, edge cases,
   tests; for every caller, invariant and dependent flow, how it is preserved, with
-  function names and line ranges. The plan opens with the **Scope block**.
+  function names and line ranges, **found by** (the search that listed them; required
+  on an "every" or "no other" claim) and **proof** (its test, or `none`: lane B's
+  targets). Small writes `IA: <surface> · readers: <search result>` or `IA: none — no
+  shared surface`. The plan opens with the **Scope block**.
 - `[M]` **Plan check** (Full): the blind dual plan (`cross-model.md`), then a plan
-  comparison the session merges. **A failed plan is revised, never carried on.**
+  comparison the session merges. **A failed plan is revised, never carried on.** Then
+  its **Drawbacks** and one **plan critique** by the other family (`cross-model.md` ›
+  The plan critique).
 - `[M]` **Nobody reads the plan whole.** Grep the section; paste the slice verbatim
   into its brief.
 
@@ -306,9 +310,8 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
   script slice counts the package manager), or `Traps: none`. `--rules-for` finds
   rule files by their `paths:` globs, never a trap skill, and one no brief names
   goes unused.
-  > Origin: one project names them in every slice brief; 14 briefs named one and agents
-  > read them 45 times, while the four user-global vendor skills, which no brief
-  > named, were invoked 0 times and read once (2026-10-05 to 26).
+  > Origin: in one project agents read the trap skills its briefs named 45 times, and
+  > the four no brief named once (2026-10-05 to 26).
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
   --writer <role>` (the role that wrote it) and dispatch what it names — the
@@ -329,10 +332,8 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
   session runs a scoped verify after a slice that crossed packages, and the FULL
   verify once, at the end of step 8a — **never once per slice**. Tests a later step
   adds (a doc-sweep test, a parity test) land **before** that FULL run, not after it.
-  > Origin: one change request ran the full suite 39 times, 8.4 hours. The v4 usage
-  > study: implementers ran 3,758 single-file test runs (18.6 h) in 14 days, and one
-  > project's tests step came after its FULL verify, so a second FULL was nearly
-  > always owed.
+  > Origin: one change request ran the full suite 39 times, 8.4 hours; implementers
+  > ran 3,758 single-file test runs (18.6 h) in 14 days (the v4 usage study).
 - `[M]` Commit at every meaningful step, naming paths, never `git add -A`.
 - `[M]` Mutation runs follow `rules.md` §1.
 
@@ -366,20 +367,17 @@ DOM snapshot; send screenshots to a model that reads images.
 - `[M]` **Reproduce before fixing.** Read the cited line, run the single test or
   probe the endpoint. A finding that does not reproduce is **retracted**, never
   "fixed".
-  > Origin: about 6% of claimed gaps in the third project were artefacts — a
-  > scaled measurement, harness timing, another worktree's test run.
-- `[M]` **Triage by scope class, then severity**: OUT → follow-ups whatever its
-  severity; P3 → **the P3 batch**, never a fix round, unless on a line this round
-  already changes.
+  > Origin: about 6% of claimed gaps in the third project were artefacts, such as
+  > another worktree's test run.
+- `[M]` **Triage by scope class, then severity**: OUT → filed or dropped
+  (`scope-guard.md`) whatever its severity; P3 → **the P3 batch**, never a fix round,
+  unless on a line this round already changes.
 - `[M]` **Fix rounds** are bounded by `gate-design.md`, and each fix gets a
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
-  fix diff only — `--writer` is the role that wrote the fix: `main | bounded |
-  second | mixed` (on Claude Code also `claude | sonnet | codex`; each role's model
-  per host in `gate-design.md` › Model and effort), required on every kind, with
-  `mixed` and `bounded` as for the unit.
+  fix diff only; `--writer` is the role that wrote the fix, as for the unit.
   `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
   and run the adversarial pass only for the round the owner orders.
 - `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
@@ -471,6 +469,9 @@ waits on the owner, offer `/clear` with the resume command (`context.md`).
 loop. Each long-running process was recorded at its start; where the machine sweep
 is installed, also with `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
 --record <pid>`, so one a dead run leaves behind is still stopped (`machine.md`).
+**What is still running comes from commands, never memory:** the host's task list,
+`codex-run.mjs --status` (or `claude-run.mjs`), `machine-sweep.mjs --status`; a live
+run is never relaunched, a dead one's partial writes are checked first.
 Stop everything started, by recorded PID only (a unit stack with
 `bash scripts/unit-stack.sh down`), and
 confirm nothing still listens on the claimed ports. If a library behaved contrary to
@@ -486,9 +487,8 @@ version or release step · where artifacts live.
 `tools: Read, Edit, Write, Grep, Glob, Bash`, `autoCompactWindow: 250000` — a
 backstop; the slice keeps it small (`context.md` › The window, the gate wait and
 the base). The frontmatter window only lowers: it applies when 250000 is below the
-window the subagent inherits, so a session whose window is at or under 250K makes
-it a no-op; `CLAUDE_CODE_AUTO_COMPACT_WINDOW` disables it; it needs Claude Code
-v2.1.296 or later and a plain integer (`250000`, not `250k`). Dispatched with
+window the subagent inherits; it needs Claude Code v2.1.296 or later and a plain
+integer (`250000`, not `250k`). Dispatched with
 `model` and `effort` passed explicitly — `"sonnet"` for a cold slice. Its file
 carries the **Tool discipline** section verbatim
 (`context.md`) and says:

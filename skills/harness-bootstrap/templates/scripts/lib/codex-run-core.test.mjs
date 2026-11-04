@@ -163,6 +163,22 @@ test('parseArgs takes --allow-max as a flag', () => {
   assert.equal(parseArgs(['investigate', '--allow-max']).flags.has('allow-max'), true);
 });
 
+test('parseArgs --status: no kind, only --out, --cwd and --sample-ms (default 5000), and the env is not read', () => {
+  assert.deepEqual(parseArgs(['--status']), { status: true, out: null, cwd: null, sampleMs: 5000 });
+  assert.deepEqual(
+    parseArgs(['--status', '--out', 'v.md', '--cwd', '/w', '--sample-ms', '0'], { CODEX_RUN: 'of' }),
+    { status: true, out: 'v.md', cwd: '/w', sampleMs: 0 },
+  );
+  assert.equal(parseArgs(['--out', 'v.md', '--status']).out, 'v.md');
+  assert.throws(() => parseArgs(['investigate', '--status']), /--status takes no kind \(got "investigate"\)/);
+  assert.throws(() => parseArgs(['--status', '--dry-run']), /--status takes only --out, --cwd and --sample-ms, not --dry-run/);
+  assert.throws(() => parseArgs(['--status', '--out']), /--out needs a value/);
+  for (const value of ['abc', '-1', 'Infinity', '9999999999'])
+    assert.throws(() => parseArgs(['--status', '--sample-ms', value]), /--sample-ms must be/);
+  assert.throws(() => parseArgs(['investigate', '--sample-ms', '10']), /unknown option --sample-ms/);
+  assert.equal(parseArgs(['investigate']).status, undefined);
+});
+
 test('an explicit override beats the router answer', () => {
   const r = resolveRoute('auto', {
     routed: { model: CATALOG.router, effort: 'low' },

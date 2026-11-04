@@ -16,7 +16,7 @@ const CORE_REL = path.join('lib', 'codex-run-core.mjs');
 const WRAPPER_REL = 'codex-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 54;
+const EXPECTED_TESTS = 55;
 
 let passed = 0;
 let failed = 0;

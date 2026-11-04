@@ -156,8 +156,37 @@ export const EXIT = { ok: 0, failed: 1, usage: 2, unavailable: 3, reserved: 4 };
  */
 export const RUN_MODES = ['on', 'essential', 'off'];
 
+const STATUS_FLAGS = new Map([
+  ['--out', 'out'],
+  ['--cwd', 'cwd'],
+  ['--sample-ms', 'sampleMs'],
+]);
+
+/** `--status [--out <file>] [--cwd <dir>] [--sample-ms <n>]`: no kind and no run option; the env is not read. */
+function parseStatusArgs(argv) {
+  const a = { status: true, out: null, cwd: null, sampleMs: '5000' };
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    if (t === '--status') continue;
+    if (!STATUS_FLAGS.has(t))
+      throw new Error(
+        t.startsWith('--')
+          ? `--status takes only --out, --cwd and --sample-ms, not ${t}`
+          : `--status takes no kind (got "${t}")`,
+      );
+    const v = argv[++i];
+    if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
+    a[STATUS_FLAGS.get(t)] = v;
+  }
+  a.sampleMs = Number(a.sampleMs);
+  if (!Number.isFinite(a.sampleMs) || a.sampleMs < 0 || a.sampleMs > 2_147_483_647)
+    throw new Error('--sample-ms must be a number of milliseconds from 0 that fits a Node timer');
+  return a;
+}
+
 /** Reject bad numeric flags before NaN can silently reserve every task or disable the timeout. */
 export function parseArgs(argv, env = {}) {
+  if (argv.includes('--status')) return parseStatusArgs(argv);
   const a = { flags: new Set(), rulesFor: [], images: [], kind: argv[0] };
   for (let i = 1; i < argv.length; i++) {
     const t = argv[i];

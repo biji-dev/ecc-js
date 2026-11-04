@@ -126,6 +126,14 @@ proposes it — a fresh agent in the project audits every rule against the log: 
 fired, which never did, which the log contradicts (SKILL.md › Phase E). The review
 reads digests only, so it cannot do this one.
 
+`[M]` **The rule audit checks an empty Hot-small slot** (`gate-design.md` › Tiers):
+the Full units whose diff touched critical code (the risk map), their size by `git
+diff --numstat` (tests excluded), and whether their *Yield by source* holds a P0 or
+P1 that only the plan check, lane A or the doc sweep found.
+Five or more small units with none make a `threshold` proposal for the cap at their
+size, routed as C: the owner fills it, project by project. With fewer, nothing is
+proposed.
+
 ## The weekly job
 
 `[M]` `node <skill dir>/scripts/retro-weekly.mjs` runs both halves for every

@@ -73,7 +73,9 @@ never the server itself, only a launcher.
 `[M]` **A recorded process** is one a run named at its start:
 `node ~/.agents/harness/machine-sweep/machine-sweep.mjs --record <pid>` appends its
 start time and command to `~/.agents/harness/pids.jsonl` (`runner.md` › Step 10).
-The sweep stops it only while the same process still holds that PID.
+The sweep stops it only while the same process still holds that PID. `--status`
+(`--json`) lists each recorded process still running, by the same rule, with its
+start, CPU time, repository and command; it runs alone, reads only and exits 0.
 
 `[M]` **Never:** sudo; the agents' sessions and transcripts, which the retro reads,
 or the harness's own state under `~/.agents/harness`; any path outside its

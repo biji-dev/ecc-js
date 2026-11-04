@@ -82,7 +82,8 @@ new session is the owner's choice alone. The work never waits on a `/compact`.
   committed, after findings are written down. Never mid-debug, mid-edit series, or
   with a decision not yet written down.
 - **At a gate that waits on the owner, or at a deliverable's boundary, offer
-  `/clear` instead** — with the resume command ready to paste (`/task-runner <unit>`).
+  `/clear` instead** — with the resume command ready to paste, which names the unit
+  (`/task-runner <unit>`), never a plan path: two lanes can share one plan.
   Each deliverable's Gate 2 is that boundary: the next deliverable starts in a clean
   coordinator context (`gate-design.md` › Milestone size).
   The state file is the resume point, so a cleared context resumes from about 8 KB

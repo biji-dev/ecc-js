@@ -181,6 +181,16 @@ is harmless.
 step's **release commit** — one that touches only the registry and removes this
 task's row. Exclude the file from the formatter either way.
 
+`[M]` **Live stacks side by side.** Where units run them, `templates/unit-stack.sh`
+(installed to `scripts/`) is the resource lock: one slot per unit, claimed as
+`slot N` in the row's Resources cell, and every port, database and container
+project of the slot derives from N. Its `up` refuses the main checkout, a slot
+another row holds, a slot whose stack serves another checkout (a stale state file
+would otherwise remove that unit's data), a port another process holds and a disk
+below its floor; `down` checks the ports are free after. Three projects each built
+this lock their own way. `[B]` the registry's path (the guard's `REGISTRY`), the
+slot range, the floor and what a slot owns (its block).
+
 ## Migrating a legacy registry
 
 `[M]` An older registry without markers (`harness-status.js` reports

@@ -22,6 +22,15 @@
  *   --timeout-min <n>      kill the run after n minutes (default 45)
  *   --dry-run              print the route and the claude argv, run and write nothing
  *
+ *   node scripts/claude-run.mjs --status [--out <file>] [--cwd <dir>] [--sample-ms <n>]
+ *
+ * --status says of each run in flight whether it is `running` (CPU time grew over --sample-ms,
+ * default 5000), `quiet` (alive, no growth: reported, never acted on), `dead` (no pid alive: remove
+ * the sidecar it names) or `done <outcome>` (its ledger row is in); with --out, only that run, from
+ * the ledger once it finished. It runs on any host, exits 0, never kills and never deletes. A run in
+ * flight is <ledger dir>/running/<startMs>-<pid>.json (scripts/lib/run-status.mjs); its ledger row
+ * carries that stem as `run`, and every row carries the verdict's path as `out`.
+ *
  * review writes `git diff --merge-base <base>` (the working tree against the merge base) beside
  * the verdict and has the reviewer Read it: commit or stage new files first, an untracked file is
  * not in the diff.
@@ -39,6 +48,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import {
   EXIT,
@@ -59,7 +69,10 @@ const LEDGER_DIR = '.claude-runs';
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 
 const USAGE =
-  'usage: node scripts/claude-run.mjs <kind> [--prompt <file>] [--base <ref>] [--out <file>] [options] (see the file header)';
+  'usage: node scripts/claude-run.mjs <kind> [--prompt <file>] [--base <ref>] [--out <file>] [options] | --status [--out <file>] (see the file header)';
+
+// Loaded on first use: --help, a dry run, a usage error and a reserved run need only the core.
+const runStatus = () => import('./lib/run-status.mjs');
 
 function usage(msg) {
   process.stderr.write(`claude-run: ${msg}\n${USAGE}\n`);
@@ -86,9 +99,10 @@ function appendLedger(file, row) {
 }
 
 /** SIGTERM alone can be ignored; escalation and settlement must not depend on `close`. */
-export function runClaude(argv, { cwd, stdin, timeoutMin, spawnProcess = spawn }) {
+export function runClaude(argv, { cwd, stdin, timeoutMin, spawnProcess = spawn, onSpawn }) {
   return new Promise((resolve) => {
     const child = spawnProcess(CLAUDE, argv, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (onSpawn && child.pid) onSpawn(child.pid);
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -184,6 +198,15 @@ function record({ a, run, res, result, ms, ledger, base }) {
   return result.exit;
 }
 
+/** `--status`: each run in flight beside this checkout's ledger, or the ledger's word on --out. */
+async function showStatus(a) {
+  const { status } = await runStatus();
+  const cwd = path.resolve(a.cwd ?? process.cwd());
+  const { lines } = await status({ wrapper: 'claude-run', ledgerFile: ledgerPath(cwd), out: a.out ? path.resolve(a.out) : null, sampleMs: a.sampleMs });
+  for (const line of lines) console.log(line);
+  return EXIT.ok;
+}
+
 async function main() {
   if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
     process.stdout.write(`${USAGE}\n`);
@@ -193,6 +216,11 @@ async function main() {
   let run;
   try {
     a = parseArgs(process.argv.slice(2), process.env);
+  } catch (e) {
+    return usage(e.message);
+  }
+  if (a.status) return showStatus(a);
+  try {
     const host = hostCheck(process.env);
     if (!host.ok) throw new Error(host.why);
     a.cwd = path.resolve(a.cwd ?? process.cwd());
@@ -211,7 +239,8 @@ async function main() {
   }
 
   const ledger = ledgerPath(a.cwd);
-  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd };
+  // Every row carries the verdict's path, so `--status --out` finds a run that stopped before the model.
+  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd, out: run.outFile };
   const stop = !budget.run ? ['reserved', budget.reason] : !network.ok ? ['unavailable', network.why] : null;
   if (stop) {
     appendLedger(ledger, { ...base, outcome: stop[0], reason: stop[1] });
@@ -226,17 +255,25 @@ async function main() {
   fs.mkdirSync(run.scratch, { recursive: true });
   fs.rmSync(run.outFile, { force: true });
   const startedAt = Date.now();
-  const res = await runClaude(run.argv, { cwd: a.cwd, stdin: run.brief, timeoutMin: a.timeoutMin });
-  const result = classify({
-    exitCode: res.code,
-    stdout: res.stdout,
-    spawnError: res.spawnError,
-    timedOut: res.timedOut,
-    timeoutMin: a.timeoutMin,
-    budgetUsd: a.budgetUsd,
-    binary: CLAUDE,
-  });
-  return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base });
+  // The run's sidecar says it is in flight (--status); the finally removes it once the ledger row, with its run, is in.
+  const { openSidecar } = await runStatus();
+  const sidecar = openSidecar(ledger, { at: base.at, kind: a.kind, cwd: a.cwd, out: run.outFile, log: null, wrapperPid: process.pid, wrapperStart: new Date(performance.timeOrigin).toISOString(), childPid: null, childStart: null });
+  try {
+    const onSpawn = (pid) => sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
+    const res = await runClaude(run.argv, { cwd: a.cwd, stdin: run.brief, timeoutMin: a.timeoutMin, onSpawn });
+    const result = classify({
+      exitCode: res.code,
+      stdout: res.stdout,
+      spawnError: res.spawnError,
+      timedOut: res.timedOut,
+      timeoutMin: a.timeoutMin,
+      budgetUsd: a.budgetUsd,
+      binary: CLAUDE,
+    });
+    return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base: { ...base, run: sidecar.record.run } });
+  } finally {
+    sidecar.remove();
+  }
 }
 
 // Run only as the entry script (the tests may import runClaude). Compare REAL paths: macOS /tmp

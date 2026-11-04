@@ -7,7 +7,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SKILL = path.join(ROOT, 'skills', 'harness-bootstrap');
@@ -16,7 +16,7 @@ const CORE_REL = path.join('scripts', 'lib', 'machine-sweep-core.mjs');
 const CLI_REL = path.join('scripts', 'machine-sweep.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 29;
+const EXPECTED_TESTS = 34;
 
 let passed = 0;
 let failed = 0;
@@ -131,6 +131,35 @@ test('CLI smoke: the report on an empty home says each category is absent and wr
   assert.match(res.stdout, /^worktrees +- +absent: no registered repository/m);
   assert.match(res.stdout, /^recorded-pids +0 proc +none recorded$/m);
   assert.deepStrictEqual(fs.readdirSync(home), []);
+});
+
+test('CLI --status lists a recorded process while it runs and counts it once it is gone', () => {
+  const home = tmp('machine-sweep-status-');
+  cleanup.push(home);
+  const env = hermeticEnv(cleanup);
+  const sweep = (...args) => spawnSync(process.execPath, [path.join(SKILL, CLI_REL), '--home', home, ...args], { cwd: home, encoding: 'utf8', env });
+  const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},20000)'], { stdio: 'ignore' });
+  try {
+    const recorded = sweep('--record', String(child.pid));
+    assert.strictEqual(recorded.status, 0, recorded.stderr);
+    const text = sweep('--status');
+    assert.strictEqual(text.status, 0, text.stderr);
+    assert.match(text.stdout, new RegExp(`^${child.pid}  started .+  recorded \\S+  cpu \\S+  .+  ${process.execPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} -e setTimeout`, 'm'));
+    assert.match(text.stdout, /^machine-sweep: 1 of 1 recorded still running$/m);
+    const json = JSON.parse(sweep('--status', '--json').stdout);
+    assert.strictEqual(json.recorded, 1);
+    assert.strictEqual(json.running.length, 1);
+    assert.strictEqual(json.running[0].pid, child.pid);
+    child.kill();
+    const deadline = Date.now() + 5000;
+    while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},50)']);
+    const gone = sweep('--status');
+    assert.strictEqual(gone.status, 0, gone.stderr);
+    assert.strictEqual(gone.stdout, 'machine-sweep: 0 of 1 recorded still running\n');
+    assert.strictEqual(sweep('--status', '--only', 'npm').status, 2);
+  } finally {
+    child.kill();
+  }
 });
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

@@ -914,9 +914,10 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 6 for 2.2.3-js.8, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 7 for 2.2.3-js.10, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
+  assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -925,7 +926,7 @@ test("upgrade.md has a version row 6 for 2.2.3-js.8, and both skills, the manife
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v5 install the v6 row, a v3 install the v4 to v6 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v5 or a v3 install to v6');
+  assert.ok(flat.includes('a v6 install the v7 row, a v5 install the v6 and v7 rows, a v3 install the v4 to v7 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v6, v5 or v3 install to v7');
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {
@@ -1111,6 +1112,20 @@ test("upgrade.md's v6 section regenerates the Codex file of each agent it regene
   assert.match(v6, /each regenerated agent's\s+`\.codex\/agents\/<name>\.toml` takes the new brief as `developer_instructions`/);
   const targets = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'harness-targets.md'), 'utf8');
   assert.match(targets, /the agent file's brief as\s+`developer_instructions`/, 'harness-targets.md no longer embeds the brief');
+});
+
+test("upgrade.md's v7 section states MAIN_CHECKOUT_STEPS as the core binds it, installs run-status with the wrappers and says to land between runs", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('The rest of an upgrade to v7 is in *Upgrading to v7* below') && /^### Upgrading to v7$/m.test(upgradeMd()), 'row 7 points to no Upgrading to v7 section');
+  const v7 = text.slice(text.indexOf('### Upgrading to v7'));
+  const { MAIN_CHECKOUT_STEPS } = exported('scripts/lib/unit-step-core.mjs', ['MAIN_CHECKOUT_STEPS']);
+  const steps = MAIN_CHECKOUT_STEPS.map(step => `\`${step}\``);
+  assert.ok(v7.includes(`\`MAIN_CHECKOUT_STEPS\` in \`unit-step-core.mjs\` (${steps.slice(0, -1).join(', ')} and ${steps[steps.length - 1]})`), 'the v7 section does not state MAIN_CHECKOUT_STEPS as the core binds it');
+  for (const wrapper of ['codex-run.mjs', 'claude-run.mjs']) {
+    assert.match(fs.readFileSync(path.join(TEMPLATES, 'scripts', wrapper), 'utf8'), /['"]\.\/lib\/run-status\.mjs['"]/, `${wrapper} no longer imports run-status`);
+  }
+  assert.ok(v7.includes('`scripts/lib/run-status.mjs` and its test, with whichever wrapper the project has'), 'the v7 section does not install run-status with the wrappers');
+  assert.ok(v7.includes('**Land it between runs**'), 'the v7 section does not say to land between runs');
 });
 
 console.log(`\nPassed: ${passed}`);

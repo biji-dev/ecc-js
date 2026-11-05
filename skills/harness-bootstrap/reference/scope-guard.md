@@ -180,7 +180,7 @@ Owner wait: <e.g. 1h20m>
 ## Next             the step done and the step next
 ```
 
-`Deliverable:` and `Demo:` name the deliverable this coordinator context is on
+`Deliverable:` and `Demo:` name the deliverable the run is on
 (`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
 each new deliverable; the record measures the row's time from it.
 

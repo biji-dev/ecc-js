@@ -52,8 +52,8 @@ hook's figure line gives (`context.md` › The window, the gate wait and the bas
 
 - **Under 150K:** the question tool — `AskUserQuestion`, or `ExitPlanMode` for a plan.
 - **At 150K or more:** write each open card to the state file's decision log as a
-  `Q-n` row, give the cards as text after the `/clear` offer and its resume command,
-  and **end the turn**. The answer comes back as text, and the `Q-n` rows become
+  `Q-n` row, give the cards as text and **end the turn**; never offer `/clear` with
+  them (`context.md` › No hand-off). The answer comes back as text, and the `Q-n` rows become
   `DEC` rows. In plan mode, `ExitPlanMode` follows the answer, while the owner is
   there.
 
@@ -189,11 +189,12 @@ upgrade`). A deliverable holds one or more slices; **inside it the slices stay
 technical** — disjoint file sets, contract first, twins in parallel. A unit too small
 to split is one deliverable.
 
-`[M]` **One deliverable per coordinator context.** Each has its own slicing table,
+`[M]` **One deliverable at a time.** Each has its own slicing table,
 its own step 8 over its own diff, its own Gate 2 with the demo evidence (a
-screenshot, the named tests, the live-walk transcript) and its own `/clear`
-boundary at that Gate 2 (`context.md`); the state file keeps only the current
-deliverable, and closed ones move to the decision log and the follow-ups doc.
+screenshot, the named tests, the live-walk transcript); the state file keeps only
+the current deliverable, and closed ones move to the decision log and the follow-ups
+doc. The next deliverable starts from the state file, not the chat: past the warning
+figure its reading goes to subagents (`context.md`).
 > Origin, the v4 usage study: slices already ran in fresh sub-agents; the
 > coordinator was the polluted context (207K tokens on average, 78 full rebuilds),
 > and slices were cut by layer — contract, mock, shell, labels — so the owner saw
@@ -273,8 +274,8 @@ loosen push.** A pushed merge is the one step the harness cannot take back.
 5. Gate 2 when the merge policy says ask, and before every push;
 6. an Ops step — the runbook is approved once, for the SHA and the rollback it names.
 
-`[M]` **Not a stop:** finishing a step, a full context (offer `/compact` and keep
-working, `context.md`), the second family being unavailable (degraded, recorded),
+`[M]` **Not a stop:** finishing a step, a full context (persist and keep working;
+auto-compaction is the reset, `context.md`), the second family being unavailable (degraded, recorded),
 findings arriving (triage is the session's), a red gate that can be attributed, a
 T decision (decide, log, list it at Gate 2), a non-blocking P or C question (its
 default goes in a `default` row, batched), and "what next?" — announce the next step

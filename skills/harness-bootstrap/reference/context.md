@@ -54,7 +54,7 @@ a never-auto surface and the decision to deploy stay with Opus; the runbook that
 carries out an approved deploy runs on Sonnet (below).
 
 `[M]` **A switch line before each step**, one line, then continue:
-`Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / compact or clear offered) · Reason`.
+`Unit · Type/Tier · Step · Model · Effort · Context (figure + continue / to a subagent) · Reason`.
 Model and Effort are the host's, from `harness-host.mjs`'s first line. The main
 session runs at `high`. An `Effort` above `high` with no reason in the line
 is itself a finding: say so and ask the owner to lower it (`/effort high`) — a
@@ -66,36 +66,31 @@ deployed API, a red on a never-auto surface) come back to the Opus session.
 
 ## No hand-off — the compaction rule
 
-`[M]` **Never stop for a compact and never ask the owner to open a new session.** A
-new session is the owner's choice alone. The work never waits on a `/compact`.
+`[M]` **The owner never manages the context.** Never stop for a compact, never
+offer `/compact` or `/clear`, and never ask the owner to open a new session; a new
+session is the owner's choice alone. Automatic compaction is the reset, and the
+state file is what survives it. The model cannot compact or clear itself; what it
+can judge is what the main thread reads.
 
-- **At every step boundary, from the hook's figure:** under the warning budget,
-  continue. Past it — or before a heavy step — **offer a `/compact`** with the
-  keep-line ready to paste, and keep working. If the owner compacts, the next turn
-  resumes from the state file; if they are away, carry on until the platform's
-  automatic compaction takes over.
 - **Persist first, every boundary.** The state file is current and work is
-  committed at **every** step boundary, not only when compacting — automatic
-  compaction can land on any turn. A compaction replaces the chat with a summary;
-  files survive, the chat does not.
-- **Offer only at a step boundary:** after Gate 1, after implementation is
-  committed, after findings are written down. Never mid-debug, mid-edit series, or
-  with a decision not yet written down.
-- **At a gate that waits on the owner, or at a deliverable's boundary, offer
-  `/clear` instead** — with the resume command ready to paste, which names the unit
-  (`/task-runner <unit>`), never a plan path: two lanes can share one plan.
-  Each deliverable's Gate 2 is that boundary: the next deliverable starts in a clean
-  coordinator context (`gate-design.md` › Milestone size).
-  The state file is the resume point, so a cleared context resumes from about 8 KB
-  instead of a 200–400K compaction summary, and it never waits out a cache expiry.
-  It is an offer, like `/compact`; the work never stops for it, and nothing needs
-  pasting but the command.
-- **The keep-line:**
-  `/compact keep: unit <id>, branch <b>, worktree <path>, tier, plan <path>, state file <path>, step <n> done / next, the unit's decision ids, open findings, commands to rerun`.
-  A post-compaction or post-clear turn starts from the state file and continues the
-  next step itself.
+  committed at **every** step boundary — automatic compaction can land on any turn.
+  A compaction replaces the chat with a summary; files survive, the chat does not.
+- **Past the warning figure, reading goes to subagents.** Grounding, run-and-report
+  steps and doc sweeps read far more than they hand back; a subagent pays for that
+  reading in its own context and returns the summary. The main thread keeps the
+  judgment: Gate 1, the diagnosis, the merge decision.
+- **After a compaction, a clear or a resume, the turn starts from the state file**
+  and continues the next step itself. On Claude Code the session-resume hook puts
+  the unit's resume point into that turn (below); on other hosts the turn reads the
+  state file first.
 - Reviewer hand-backs live in files (`.review-work/<name>/`), not only in the chat
   — a compaction lost them once and they were recovered from the transcript.
+
+> Origin: v3 to v7 offered `/compact` with a keep-line, and `/clear` at gates and
+> deliverable boundaries. Over 2026-10-23 to 11-06 (127 sessions, 10 installs) the
+> owner pasted 94 keep-lines and typed 38 `/clear`s. A clear came at a median 170K
+> and the cleared session cost 85–111K (median 90K) before its first step, so it
+> freed about 80K, not a resume "from about 8 KB" (`rules.md` §3).
 
 `[M]` **The registry `Step` plus the state file are the resume point** after a
 crash or a compaction. Both plan-mode projects resumed from them after machine
@@ -131,16 +126,15 @@ compaction compacts a conversation left idle about 54 minutes, before the cache
 expires, so the owner's answer does not rewrite it all — but only after an ended
 turn: **0 of 44 idle compactions came while an `AskUserQuestion` or `ExitPlanMode`
 was pending.** So at an owner gate with the context at **150K or more**, the cards
-go to the state file as `Q-n` rows and out as text, the `/clear` offer first, and
-the turn ends (`gate-design.md` › Who decides). Under 150K the question tool stays:
+go to the state file as `Q-n` rows and out as text, the unit parks, and when
+nothing else is ready the turn ends (`gate-design.md` › Who decides). Under 150K the question tool stays:
 rewriting the context costs less than compacting it below about 125K (the $0.15
 compaction call against rewriting what lies above the 106K base at $8 a million).
 
 `[M]` **Idle compaction** is on by default for a conversation of 200K or more;
 `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=150000`, a machine setting, lowers that to the
-gate wait's figure, and `/config` › Idle compaction turns it off. Taking the `/clear`
-offer at the gate is better still: the state file is the resume point, so there is
-nothing left to compact.
+gate wait's figure, and `/config` › Idle compaction turns it off. It needs no owner
+action: it runs while the owner is away.
 
 `[M]` **The base budget.** Each 10K tokens trimmed from what every session loads
 saves about 2% of main-thread spend and $0.08 per compaction. The repository's share
@@ -172,18 +166,18 @@ re-measures them (`learning.md`).
 
 ## The budget hook — opt-in
 
-`templates/context-budget.mjs` — a Claude Code hook on `Stop`, `UserPromptSubmit`
-and `PostToolUse`. It reads the main thread's last `usage` record from the
+`templates/context-budget.mjs` — a Claude Code hook on `UserPromptSubmit` and
+`PostToolUse`. It reads the main thread's last `usage` record from the
 transcript tail and:
 
 - below the warning budget, gives the model a one-line figure for the switch line
-  (on `UserPromptSubmit`), and from 150K adds that an owner gate goes out as text
-  and the turn ends — on `PostToolUse` too, so a long autonomous turn hears it
+  (on `UserPromptSubmit`), and from 150K adds that an owner gate goes out as text,
+  not a question tool — on `PostToolUse` too, so a long autonomous turn hears it
   before it reaches the gate;
-- past it, tells the user on `Stop` and the model on the other two to offer a
-  `/compact` at the next step boundary — or `/clear` and the runner's resume command
-  when the run is waiting on the owner — and keep working, never to ask for a new
-  session;
+- past it, tells the model to keep the state file current, send reading-heavy steps
+  to subagents and keep working, never to offer `/compact` or `/clear` or ask for a
+  new session. On `Stop` it says nothing: up to v7 it spoke to the owner there, and a
+  v7 settings entry still runs it harmlessly;
 - takes its limit from the auto-compact window, 40K under it, read where Claude
   Code reads it: `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then `.claude/settings.local.json`,
   `.claude/settings.json` and the user's settings (`$CLAUDE_CONFIG_DIR/settings.json`
@@ -207,7 +201,6 @@ the installed hook at the project's own figures), and add to `.claude/settings.j
 ```json
 {
   "hooks": {
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 }] }]
   }

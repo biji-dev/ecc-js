@@ -20,7 +20,7 @@ const SUITES = {
   'command-guard': 17,
   'edit-guard': 9,
   'harness-guard': 12,
-  'context-budget': 7,
+  'context-budget': 8,
   'run-gates': 10,
 };
 

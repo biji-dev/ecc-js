@@ -326,10 +326,10 @@ test('under the warning budget: the model gets the figure, Stop prints nothing',
   assert.strictEqual(runHook('Stop', file).out, null);
 });
 
-test('past the warning budget: Stop tells the user to plan a compaction', () => {
+test('past the warning budget: Stop stays silent, the owner never manages the context', () => {
   const { status, out } = runHook('Stop', transcript(221_000));
   assert.strictEqual(status, 0);
-  assert.match(out.systemMessage, /past 220K/);
+  assert.strictEqual(out, null);
 });
 
 test('past the limit: the model is told to persist state and keep working, never to hand off', () => {

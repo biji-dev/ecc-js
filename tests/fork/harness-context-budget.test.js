@@ -125,7 +125,7 @@ test('PostToolUse below GATE_TEXT prints nothing', () => {
 
 test('past GATE_TEXT and under WARN: the gate line, once per band on PostToolUse, never on Stop', () => {
   const dir = tmp('ctx-budget-s-');
-  const line = /^\[context-budget\] ~(\d+)K \(under 220K; past 150K an owner gate goes out as text, then the turn ends\)\.$/;
+  const line = /^\[context-budget\] ~(\d+)K \(under 220K; past 150K an owner gate goes out as text, not a question tool\)\.$/;
   assert.match(runHook('UserPromptSubmit', 180_000, dir).hookSpecificOutput.additionalContext, line);
   assert.match(runHook('PostToolUse', 151_000, dir).hookSpecificOutput.additionalContext, line);
   assert.strictEqual(runHook('PostToolUse', 160_000, dir), null, 'quiet within the 150-175K band');
@@ -141,10 +141,17 @@ test('past the limit on UserPromptSubmit: quotable figure, never a new session',
   assert.match(ctx, /never ask for a new session/i);
 });
 
-test('Stop past WARN: systemMessage names the mark and never a new session', () => {
-  const out = runHook('Stop', 221_000, tmp('ctx-budget-s-'));
-  assert.match(out.systemMessage, /past 220K/);
-  assert.doesNotMatch(out.systemMessage, /new session/i);
+test('Stop says nothing at any figure: no owner-facing compact or clear offer', () => {
+  for (const tokens of [221_000, 261_000, 420_000]) assert.strictEqual(runHook('Stop', tokens, tmp('ctx-budget-s-')), null, `${tokens}`);
+});
+
+test('past WARN and over the limit: the model sends reading to subagents and never offers /compact or /clear', () => {
+  const warn = runHook('UserPromptSubmit', 221_000, tmp('ctx-budget-s-')).hookSpecificOutput.additionalContext;
+  assert.match(warn, /reading-heavy steps .* to subagents/);
+  for (const ctx of [warn, runHook('PostToolUse', 261_000, tmp('ctx-budget-s-')).hookSpecificOutput.additionalContext]) {
+    assert.match(ctx, /park the unit with its cards as text/);
+    assert.doesNotMatch(ctx.replace(/never offer the owner \/compact or \/clear/i, ''), /\/compact|\/clear|keep-line|resume command/i);
+  }
 });
 
 test('below GATE_TEXT: only UserPromptSubmit speaks', () => {
@@ -239,8 +246,8 @@ test('the first reply after the compaction is the figure', () => {
 test("a subagent's compaction, or a record that only names one, is not a boundary", () => {
   const markers = [boundary({ isSidechain: true }), { type: 'user', message: { content: 'compact_boundary' } }, { type: 'user', subtype: 'compact_boundary' }];
   for (const marker of markers) {
-    const out = runHook('Stop', 0, tmp('ctx-budget-s-'), { records: [reading(300_000), marker] });
-    assert.match(text(out), /Context 300K - over the 260K budget/, JSON.stringify(marker));
+    const out = runHook('UserPromptSubmit', 0, tmp('ctx-budget-s-'), { records: [reading(300_000), marker] });
+    assert.match(text(out), /context is ~300K tokens, over the 260K budget/, JSON.stringify(marker));
   }
 });
 

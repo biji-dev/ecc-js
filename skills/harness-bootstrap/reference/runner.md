@@ -14,15 +14,18 @@ same.
 file (`scope-guard.md`) — so any session picks up cold and a crash or a compaction
 loses nothing but the current step.
 
-`[M]` **No hand-off, and one deliverable per coordinator context.** After a
-deliverable's Gate 2 — an owner wait anyway — offer `/clear` with the resume
-command (`context.md`): the state file carries the next deliverable, so the next
-one starts in a clean context, not on top of the last one's reports. After a unit
-lands: close its state file, offer the same `/clear`, announce the next unit in one
-line, and start it only if the owner's instruction covers it. Never ask the owner to
-open a session, paste a hand-off note or say what is next.
+`[M]` **No hand-off: a queue run.** `/task-runner` resumes what is held, then the
+queue; `/task-runner <unit>` runs that unit, then the queue; `/task-runner <unit>
+only`, that unit alone. A kickoff may carry a `Grant:` line and a stop line
+(`gate-design.md` › The run grant). After a land, announce the next ready unit in
+one line and start it: answered parked units, then due-checks, then the next ready
+row. Stop only on a command's word — an empty queue, all left waiting on the owner
+(`gate-design.md` › Parking a unit), the stop line, a `codex-run` or `claude-run`
+quota line, `DUE disk` or a memory refusal, an `escalate`, a tripwire — and end the
+turn on the state line (`rules.md` §1).
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
-> forced by a "start a new session" budget rule (`rules.md` §3).
+> forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
+> `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
 
 `[M]` **The main session coordinates and reviews.** It owns the tier, the gates,
 the plan text, the slicing, every brief, the critique of every report, triage, the
@@ -87,7 +90,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
                                                           ══ GATE 2 ══  by the merge policy
 9  land        guard → land commit → release the lock → merge → push on the owner's word → due-checks
-10 teardown    stop what was started; close the state file; offer /compact; next unit
+10 teardown    stop what was started; close the state file; start the next ready unit
 ```
 
 `[M]` 3 → 4 order matters: audit the merged reality, not the pre-sync diff.
@@ -280,7 +283,7 @@ as its own commit. Never reclaim a row you do not own.
    implementer. The owner may change any executor cell in the reply (› Executor
    override).
 
-Gate 1 waits on the owner: offer `/clear` with the resume command (`context.md`).
+A Gate 1 that waits on the owner parks the unit (`gate-design.md` › Parking a unit).
 
 `[M]` **Unit 1 of an approved intake runs `node scripts/intake.mjs --gate1 <request>
 --state <state file>` first.** `Gate 1: auto — …` skips the sheet, quoted in the
@@ -441,8 +444,8 @@ the P and C cards still open · verdicts · unresolved findings · diffstat · *
 against the Gate 1 estimate**: the deliverable's window (the record's Cost line) and the
 unit's total since the claim (`unit-cost.mjs`; `--by-step` for where it went) · what is still running · **the step
 ledger and its lists** (`context.md`). Never presented while a
-review round is outstanding. Decided by the merge policy (`gate-design.md`). When it
-waits on the owner, offer `/clear` with the resume command (`context.md`).
+review round is outstanding. Decided by the merge policy and the run grant
+(`gate-design.md`); one that waits on the owner parks the unit.
 
 **Step 9 — land.**
 - `[M]` **Order:** run the guard → land commit **on the unit branch** (status,

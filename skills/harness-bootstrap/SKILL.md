@@ -90,14 +90,15 @@ orient:
 - **The record is written last, from the diff — fields generated, prose audited at Full by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
-- **Never ask the owner for a new session or a hand-off.**
+- **Never hand the context to the owner: no new session, hand-off, `/compact` or
+  `/clear`.** Start the next ready unit; never make the owner say what is next.
 - **An implementer may always raise a gate, never lower one.**
 - **P3s never start a fix round; a re-review reads the fix diff.** Review cost goes
   where the risk is (`gate-design.md` › Review lineup).
 - **Ask the owner only what only the owner can decide.** Product and confirmation
   decisions as decision cards; technical ones decided, logged and listed at Gate 2
   (`gate-design.md` › Who decides).
-- **One deliverable per coordinator context, each with a `Demo:` line** the owner
+- **One deliverable at a time, each with a `Demo:` line** the owner
   can open and check (`gate-design.md` › Milestone size).
 - **Never re-run a gate on a tree it already passed** (`run-gates.sh` reuses it).
 

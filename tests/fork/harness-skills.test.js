@@ -914,10 +914,11 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 7 for 2.2.3-js.10, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 8 for 2.2.3-js.11, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
+  assert.match(text, /^\| 8 \| 2\.2\.3-js\.11 \| /m, 'the version table has no row 8 for 2.2.3-js.11');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -926,7 +927,7 @@ test("upgrade.md has a version row 7 for 2.2.3-js.10, and both skills, the manif
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v6 install the v7 row, a v5 install the v6 and v7 rows, a v3 install the v4 to v7 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v6, v5 or v3 install to v7');
+  assert.ok(flat.includes('a v7 install the v8 row, a v6 install the v7 and v8 rows, a v3 install the v4 to v8 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v7, v6 or v3 install to v8');
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {
@@ -1126,6 +1127,39 @@ test("upgrade.md's v7 section states MAIN_CHECKOUT_STEPS as the core binds it, i
   }
   assert.ok(v7.includes('`scripts/lib/run-status.mjs` and its test, with whichever wrapper the project has'), 'the v7 section does not install run-status with the wrappers');
   assert.ok(v7.includes('**Land it between runs**'), 'the v7 section does not say to land between runs');
+});
+
+test("upgrade.md's v8 section removes the Stop entry, binds the session-resume hook, adds the parked section with no row held and says to land between runs", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('The rest of an upgrade to v8 is in *Upgrading to v8* below') && /^### Upgrading to v8$/m.test(upgradeMd()), 'row 8 points to no Upgrading to v8 section');
+  const v8 = text.slice(text.indexOf('### Upgrading to v8'));
+  for (const part of [
+    'a v7 settings entry on `Stop` runs and says nothing, and the upgrade removes it',
+    'its `REGISTRY` bound with the guard\'s and `STATE_DIR` with `unit-step-core.mjs`\'s `STEPS_DIR`',
+    'The registry gains the parked section after the active one',
+    'added while no row is held',
+    'Push stays the owner\'s unless a kickoff\'s `Grant:` line covers it',
+    '**Land it between runs**',
+  ]) assert.ok(v8.includes(part), `the v8 section lacks: ${part}`);
+  const context = squashed('reference/context.md');
+  assert.ok(!/"Stop": \[\{ "hooks"/.test(context), 'context.md still installs the budget hook on Stop');
+  assert.ok(context.includes('"SessionStart": [{ "matcher": "startup|resume|clear|compact"'), 'context.md has no session-resume settings entry');
+});
+
+test('no reference or template offers the owner /compact, /clear or a keep-line any more', () => {
+  const offer = /offer (a )?`?\/(compact|clear)|keep-line ready|`\/compact keep:/i;
+  const files = [
+    ...fs.readdirSync(path.join(BOOTSTRAP, 'reference')).map(f => path.join(BOOTSTRAP, 'reference', f)),
+    path.join(BOOTSTRAP, 'SKILL.md'),
+    path.join(TEMPLATES, 'agents-rules.md'),
+    path.join(TEMPLATES, 'context-budget.mjs'),
+  ];
+  for (const file of files) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      // upgrade.md's history rows and the Origin and section-3 lines record the old offers.
+      if (offer.test(line)) assert.match(line, /^\| \d|^>|^\| \*"|never|Origin|v3 to v7|no `\/clear` offer|no keep-line/i, `${path.relative(BOOTSTRAP, file)}: ${line.trim()}`);
+    }
+  }
 });
 
 console.log(`\nPassed: ${passed}`);

@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 7
+  version: 8
 ---
 
 # Harness bootstrap
@@ -309,7 +309,8 @@ answer when the owner just accepts:
 
 | Component | From | Needs | Default |
 |---|---|---|---|
-| `.claude/hooks/context-budget.mjs` + settings entry + `scripts/lib/context-budget.test.mjs` | `context.md`, `templates/context-budget.mjs`, `templates/scripts/lib/context-budget.test.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
+| `.claude/hooks/context-budget.mjs` + settings entry + `scripts/lib/context-budget.test.mjs` | `context.md`, `templates/context-budget.mjs`, `templates/scripts/lib/context-budget.test.mjs` | gives the model the context figure; past the warning, reading goes to subagents and nobody is offered `/compact` | yes, on Claude Code |
+| `.claude/hooks/session-resume.mjs` + settings entry + `scripts/lib/session-resume.test.mjs` | `context.md` › The session-resume hook, `templates/session-resume.mjs`, `templates/scripts/lib/session-resume.test.mjs` | puts the held and parked units and their state files into every new or compacted context, so nobody pastes a keep-line | yes, on Claude Code |
 | `.claude/hooks/leftover-processes.mjs` + settings entry, on Stop and UserPromptSubmit | `machine.md`, `templates/leftover-processes.mjs` | checks that start dev servers, emulators or browsers; bind `WORKTREES` and `MACHINE_WIDE` | yes, on Claude Code, where they do |
 | `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh`, + `scripts/lib/run-gates.test.mjs` + `scripts/run-counted.mjs` + `scripts/lib/run-counted-core.mjs` + its test | `context.md`, `templates/run-gates.sh`, `templates/scripts/lib/run-gates.test.mjs`, `templates/scripts/run-counted.mjs`, `templates/scripts/lib/run-counted-core.mjs`, `templates/scripts/lib/run-counted-core.test.mjs` | no existing runner that reports every gate and never bails; test gates bound through run-counted, so a skip, a filter that matched nothing or zero tests is a FAIL (the runner's test holds every counted gate to it; `UNCOUNTED` names the exceptions); `SNAPSHOT_COPY` bound where untracked files would reach the FULL verify | yes, unless such a runner exists |
 | `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test + `scripts/lib/run-status.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs`, `templates/scripts/lib/run-status.mjs`, `templates/scripts/lib/run-status.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
@@ -471,4 +472,4 @@ approves; the upgrade lands between runs and writes the manifest.
   pinned model otherwise wins, and the riskiest unit silently gets the cheapest
   reviewer. Every generated agent pins `effort: high`; never leave a session at
   `max` (`rules.md` §1 › Cost).
-- Never ask the owner to open a new session or paste a hand-off.
+- Never ask the owner to open a new session, paste a hand-off, `/compact` or `/clear`.

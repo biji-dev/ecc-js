@@ -1,6 +1,6 @@
 // harness-bootstrap harness-due tests (generated YYYY-MM-DD). Run: node --test scripts/lib/harness-due-core.test.mjs
 // [M] mechanism (ships as-is): every test but the [B] one. [B] binding: the ids of the fixtures' rows (ROW and
-// PHASE_EXAMPLE, below); the rest reads the bindings of this core (MAIN, LOG, REPORTS, CADENCE, WORKTREE_IDLE_HOURS ...)
+// PHASE_EXAMPLE, below); the rest reads the bindings of this core (MAIN, LOG, REGISTRY, REPORTS, CADENCE, WORKTREE_IDLE_HOURS ...)
 // and of estimate-core (the log's columns, a tier word), never their values. A wrapper test a binding cannot
 // express asserts that binding's own behaviour, never skips.
 // Hermetic: the wrapper tests run in a temp git repo with every GIT_* variable stripped,
@@ -22,17 +22,20 @@ import {
   MAIN,
   PHASE_OF,
   REBUILDABLE,
+  REGISTRY,
   REPORTS,
   WORKTREE_IDLE_HOURS,
   cadenceDue,
   checkAll,
   diskDue,
   formatDue,
+  inboxLines,
   markSeen,
   matchReports,
   newestProposals,
   p3Due,
   p3Note,
+  parkedUnits,
   parseArgs,
   parseWorktrees,
   phaseOf,
@@ -40,6 +43,7 @@ import {
   projectName,
   proposalCounts,
   proposalsDue,
+  registryWorktrees,
   reportShape,
   worktreesDue,
 } from './harness-due-core.mjs';
@@ -452,6 +456,103 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   assert.equal(formatDue([]), 'harness-due: nothing due\n');
 });
 
+// ---- the registry: the parked table is the owner's inbox
+// A registry as the commit guard reads it, with the parked table after the active one (commit-guard.md › The registry).
+const activeSection = (rows) =>
+  ['<!-- harness:active -->', '| # | Unit | Step | Branch | Worktree | Resources | Claimed (UTC) |', '|---|---|---|---|---|---|---|', '| 0 | mainline — never claimed | | | main | | |', ...rows, '<!-- /harness:active -->'].join('\n');
+const PARKED_HEAD = ['| Unit | Gate | Parked (UTC) | Branch | Worktree | Cards |', '|---|---|---|---|---|---|'];
+const parkedSection = (rows, head = PARKED_HEAD) => ['<!-- harness:parked -->', ...head, ...rows, '<!-- /harness:parked -->'].join('\n');
+const registryFile = (...sections) => `# Registry\n\n${sections.join('\n\n')}\n`;
+const CR_ROW = '| CR-021 | Gate 2 | 2026-11-06T04:10Z | change/cr-021 | ../wt-cr-021 | Q-1 merge or hold · Q-2 button copy |';
+const CR_LINE = 'INBOX CR-021 Gate 2 since 2026-11-06T04:10Z · Q-1 merge or hold · Q-2 button copy';
+
+test('inboxLines: one `INBOX <unit> <gate> since <Parked> · <Cards>` line per parked row, in table order, and nothing from the active table', () => {
+  const held = '| 1 | P2-16 | 2 implement | task/p2-16 | main | | 2026-11-06T03:00:00Z |';
+  const text = registryFile(activeSection([held]), parkedSection([CR_ROW, '| P2-17 | Gate 1 | 2026-11-06T05:30Z | task/p2-17 | main | Q-1 scope |']));
+  assert.deepEqual(inboxLines(text), [CR_LINE, 'INBOX P2-17 Gate 1 since 2026-11-06T05:30Z · Q-1 scope']);
+  assert.deepEqual(inboxLines(registryFile(activeSection([held]))), [], 'a held row is not parked');
+  assert.deepEqual(inboxLines(registryFile(parkedSection([]))), [], 'a parked table with no row');
+});
+
+test('inboxLines reads the columns by header name, tolerates empty cells, and drops the words of a cell that is empty', () => {
+  const reordered = parkedSection(['| Q-1 merge | `CR-021` | 2026-11-06T04:10Z | Gate 2 | note |'], ['| Cards | Unit | Parked | Gate | Notes |', '|---|---|---|---|---|']);
+  assert.deepEqual(inboxLines(registryFile(reordered)), ['INBOX CR-021 Gate 2 since 2026-11-06T04:10Z · Q-1 merge']);
+  const sparse = parkedSection(['| CR-021 | | | | | |', '| CR-022 | Gate 2 |', '| CR-023 | | 2026-11-06T04:10Z | | | Q-1 |', '| | Gate 1 | 2026-11-06T04:10Z | | | Q-2 |', '|  |  |  |  |  |  |']);
+  assert.deepEqual(inboxLines(registryFile(sparse)), ['INBOX CR-021', 'INBOX CR-022 Gate 2', 'INBOX CR-023 since 2026-11-06T04:10Z · Q-1']);
+  // a table with no Cards, Gate or Parked column still lists its units; CRLF line ends and an escaped pipe in a cell read as text
+  assert.deepEqual(inboxLines(registryFile(parkedSection(['| CR-021 |'], ['| Unit |', '|---|']))), ['INBOX CR-021']);
+  const crlf = registryFile(parkedSection(['| CR-021 | Gate 2 | 2026-11-06T04:10Z | b | w | Q-1 a\\|b |'])).replace(/\n/g, '\r\n');
+  assert.deepEqual(inboxLines(crlf), ['INBOX CR-021 Gate 2 since 2026-11-06T04:10Z · Q-1 a|b']);
+});
+
+test('inboxLines: a section that is missing or malformed is no inbox, and rows outside the markers are never read', () => {
+  const rows = [CR_ROW];
+  for (const [what, text] of [
+    ['no text', null],
+    ['an empty file', ''],
+    ['no parked section', registryFile(activeSection([]))],
+    ['no end marker', registryFile(['<!-- harness:parked -->', ...PARKED_HEAD, ...rows].join('\n'))],
+    ['no begin marker', registryFile([...PARKED_HEAD, ...rows, '<!-- /harness:parked -->'].join('\n'))],
+    ['the end marker before the begin marker', registryFile(['<!-- /harness:parked -->', '<!-- harness:parked -->', ...PARKED_HEAD, ...rows].join('\n'))],
+    ['no header', registryFile(['<!-- harness:parked -->', ...rows, '<!-- /harness:parked -->'].join('\n'))],
+    ['no separator row', registryFile(['<!-- harness:parked -->', PARKED_HEAD[0], ...rows, '<!-- /harness:parked -->'].join('\n'))],
+    ['no Unit column', registryFile(parkedSection(['| Gate 2 | 2026-11-06T04:10Z |'], ['| Gate | Parked (UTC) |', '|---|---|']))],
+    ['a header above the begin marker', registryFile([...PARKED_HEAD, '<!-- harness:parked -->', ...rows, '<!-- /harness:parked -->'].join('\n'))],
+    ['a marker cited in a line of prose', registryFile('Parked units sit between `<!-- harness:parked -->` and `<!-- /harness:parked -->`.', activeSection([]))],
+  ]) assert.deepEqual(inboxLines(text), [], what);
+  // rows above and below the markers belong to no table; a prose line naming the markers does not open one
+  const around = registryFile(`${PARKED_HEAD.join('\n')}\n${rows[0]}`, 'The parked units sit between `<!-- harness:parked -->` and `<!-- /harness:parked -->`.', parkedSection(['| CR-022 | Gate 1 | 2026-11-06T04:11Z | b | w | Q-1 |']), `${PARKED_HEAD.join('\n')}\n${rows[0]}`);
+  assert.deepEqual(inboxLines(around), ['INBOX CR-022 Gate 1 since 2026-11-06T04:11Z · Q-1']);
+});
+
+test('parkedUnits gives each row by column with the command filled for its unit; a parked table needs no other column than Unit', () => {
+  assert.deepEqual(parkedUnits(registryFile(parkedSection([CR_ROW])), 'resume <unit> (<unit>)'), [
+    { unit: 'CR-021', gate: 'Gate 2', parked: '2026-11-06T04:10Z', branch: 'change/cr-021', worktree: '../wt-cr-021', cards: 'Q-1 merge or hold · Q-2 button copy', command: 'resume CR-021 (CR-021)' },
+  ]);
+  const bound = parkedUnits(registryFile(parkedSection([CR_ROW])))[0].command;
+  assert.ok(typeof bound === 'string' && bound !== '' && !bound.includes('<unit>'), `the bound command: ${bound}`);
+  assert.deepEqual(parkedUnits(registryFile(parkedSection(['| CR-021 |'], ['| Unit |', '|---|'])), 'x'), [
+    { unit: 'CR-021', gate: '', parked: '', branch: '', worktree: '', cards: '', command: 'x' },
+  ]);
+});
+
+test('registryWorktrees: the checkouts named by a held row or a parked row, from the main checkout; row 0, main and a placeholder name none', () => {
+  const text = registryFile(
+    ['<!-- harness:active -->', '| # | Unit | Step | Branch | Worktree | Claimed (UTC) |', '|---|---|---|---|---|---|', '| 0 | mainline | | | .worktrees/zero | |', '| 1 | P2-16 | 2 | task/p2-16 | .worktrees/p2-16 | |', '| 2 | P2-18 | 3 | task/p2-18 | main | |', '| 3 | P2-19 | 3 | task/p2-19 | - | |', '| 4 | P2-20 | 3 | task/p2-20 | `.worktrees/p2-20` · note | |', '<!-- /harness:active -->'].join('\n'),
+    parkedSection([CR_ROW, '| CR-022 | Gate 1 | 2026-11-06T04:11Z | change/cr-022 | /abs/wt-cr-022 | Q-1 |', '| CR-023 | Gate 1 | | | | |', '| CR-024 | Gate 1 | | | n/a | |', '| CR-025 | Gate 1 | | | . | |']),
+  );
+  assert.deepEqual(registryWorktrees(text, '/r/main'), ['/r/main/.worktrees/p2-16', '/r/main/.worktrees/p2-20', '/r/wt-cr-021', '/abs/wt-cr-022']);
+  assert.deepEqual(registryWorktrees(registryFile(parkedSection([CR_ROW])), '/r/main'), ['/r/wt-cr-021']);
+  // no registry, no root, or no Worktree column: none
+  assert.deepEqual(registryWorktrees(null, '/r'), []);
+  assert.deepEqual(registryWorktrees(text, ''), []);
+  assert.deepEqual(registryWorktrees(registryFile(parkedSection(['| CR-021 |'], ['| Unit |', '|---|'])), '/r'), []);
+});
+
+test('worktreesDue never names a worktree that a registry row names; checkAll takes the rows from the registry it is given', () => {
+  const idle = NOW - (WORKTREE_IDLE_HOURS + 1) * HOUR;
+  const done = { merged: true, own: true, clean: true, ignored: [], active: idle };
+  const worktrees = [{ path: '/r', head: 'a1', branch: MAIN }, ...['a', 'b', 'c'].map((n) => ({ ...done, path: `/r/.worktrees/${n}` }))];
+  const named = ['/r/.worktrees/b', '/r/.worktrees/c/'];
+  const due = worktreesDue({ worktrees, now: NOW, top: '/r', named });
+  assert.equal(due.why, `1 worktree merged into ${MAIN}, clean and idle over ${WORKTREE_IDLE_HOURS} h: .worktrees/a`);
+  assert.equal(worktreesDue({ worktrees, now: NOW, top: '/r', named: ['/r/.worktrees/a', '/r/.worktrees/b', '/r/.worktrees/c'] }), null);
+  assert.equal(worktreesDue({ worktrees, now: NOW, top: '/r' }).why.split(': ')[1], '.worktrees/a, .worktrees/b, .worktrees/c');
+  const facts = { now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees, top: '/r', proposals: null, seen: {}, project: 'p' };
+  const text = registryFile(parkedSection(['| CR-021 | Gate 2 | 2026-11-06T04:10Z | change/cr-021 | .worktrees/b | Q-1 |']));
+  const line = (f) => checkAll(f).find((i) => i.kind === 'worktrees')?.why.split(': ')[1];
+  assert.equal(line(facts), '.worktrees/a, .worktrees/b, .worktrees/c');
+  assert.equal(line({ ...facts, registry: { text, root: '/r' } }), '.worktrees/a, .worktrees/c');
+});
+
+test('formatDue puts the inbox lines last, and nothing due stays nothing due while the owner has an inbox', () => {
+  const item = { kind: 'sweep', subject: null, why: '8 d', command: 'run the sweep', blocking: false };
+  assert.equal(formatDue([item], [CR_LINE, 'INBOX P2-17']), `DUE sweep — 8 d — run the sweep\n${CR_LINE}\nINBOX P2-17\n`);
+  assert.equal(formatDue([], [CR_LINE]), `harness-due: nothing due\n${CR_LINE}\n`);
+  assert.equal(formatDue([], []), 'harness-due: nothing due\n');
+  assert.equal(formatDue([item]), 'DUE sweep — 8 d — run the sweep\n');
+});
+
 // ---- the wrapper, in a temp repo with dated commits and a temp --home
 
 function cleanEnv(extra = {}) {
@@ -635,6 +736,90 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
   const named = (line?.why.split(': ')[1] ?? '').split(', ').map((p) => path.basename(p)).sort();
   const residue = ['done', 'ff', 'linked', ...(REBUILDABLE.test('node_modules/') ? ['built'] : []), ...(REBUILDABLE.test('.env.local') ? ['keys'] : [])].sort();
   assert.deepEqual(named, residue, res.stdout);
+});
+
+test('the wrapper: the parked units follow the due lines, with a claim or without, and never change the exit code', () => {
+  const f = fixture();
+  const second = 'INBOX P2-17 Gate 1 since 2026-11-06T05:30Z · Q-1 scope';
+  f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW, '| P2-17 | Gate 1 | 2026-11-06T05:30Z | task/p2-17 | main | Q-1 scope |'])));
+  const inbox = (res) => res.stdout.trimEnd().split('\n').filter((l) => l.startsWith('INBOX '));
+  const plain = run(f, []);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.deepEqual(inbox(plain), [CR_LINE, second]);
+  assert.deepEqual(plain.stdout.trimEnd().split('\n').slice(-2), [CR_LINE, second], 'the inbox is last');
+  if (REPORTS.sweep !== null) assert.match(plain.stdout, DUE_SWEEP);
+  // a claim that stops (exit 1) still prints the inbox; one that does not stop exits 0
+  const stops = REPORTS.preflight !== null && PH2 !== null;
+  const claimed = run(f, ['--claim', ROW(2, 1)]);
+  assert.equal(claimed.status, stops ? 1 : 0, claimed.stdout + claimed.stderr);
+  assert.deepEqual(claimed.stdout.trimEnd().split('\n').slice(-2), [CR_LINE, second]);
+  const json = JSON.parse(run(f, ['--json']).stdout);
+  assert.deepEqual(json.inbox.map((p) => [p.unit, p.gate, p.parked, p.branch, p.worktree, p.cards]), [
+    ['CR-021', 'Gate 2', '2026-11-06T04:10Z', 'change/cr-021', '../wt-cr-021', 'Q-1 merge or hold · Q-2 button copy'],
+    ['P2-17', 'Gate 1', '2026-11-06T05:30Z', 'task/p2-17', 'main', 'Q-1 scope'],
+  ]);
+  assert.ok(json.inbox.every((p) => p.command !== '' && !p.command.includes('<unit>')));
+});
+
+test('the wrapper: a registry that is missing, unreadable or without a parked section prints no INBOX line and fails nothing', () => {
+  const f = fixture();
+  const sans = (res) => {
+    assert.equal(res.status, 0, res.stderr);
+    assert.doesNotMatch(res.stdout, /INBOX/);
+    assert.equal(JSON.parse(run(f, ['--json']).stdout).inbox.length, 0);
+  };
+  sans(run(f, []));
+  f.write(REGISTRY, registryFile(activeSection(['| 1 | P2-16 | 2 implement | task/p2-16 | main | | 2026-11-06T03:00:00Z |'])));
+  sans(run(f, []));
+  f.write(REGISTRY, registryFile(['<!-- harness:parked -->', '| Unit | Gate |'].join('\n')));
+  sans(run(f, []));
+  fs.rmSync(path.join(f.repo, REGISTRY));
+  fs.mkdirSync(path.join(f.repo, REGISTRY), { recursive: true });
+  sans(run(f, []));
+});
+
+test('the wrapper: run from a linked worktree it reads the registry of the main checkout', () => {
+  const f = fixture();
+  f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW])));
+  const linked = path.join(f.repo, '.worktrees', 'linked');
+  f.git(['worktree', 'add', '-q', '-b', 'task/linked', linked, MAIN]);
+  assert.ok(!fs.existsSync(path.join(linked, REGISTRY)), 'the registry is untracked: only the main checkout has it');
+  const res = run(f, [], linked);
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(res.stdout.split('\n').includes(CR_LINE), res.stdout);
+});
+
+test('the wrapper: a worktree that a held row or a parked row names is never residue, whatever its state', () => {
+  const f = fixture();
+  const names = ['plain', 'held', 'parked'];
+  for (const name of names) {
+    const dir = path.join(f.repo, '.worktrees', name);
+    f.git(['worktree', 'add', '-q', '-b', `task/${name}`, dir, MAIN]);
+    fs.writeFileSync(path.join(dir, `${name}.txt`), name);
+    f.git(['-C', dir, 'add', '.']);
+    f.git(['-C', dir, 'commit', '-q', '-m', name], '2026-10-23T12:00:00Z');
+    f.git(['merge', '-q', '--no-ff', '-m', `Merge task/${name}`, `task/${name}`], '2026-10-23T13:00:00Z');
+  }
+  const past = new Date('2026-10-24T00:00:00Z');
+  for (const name of names) {
+    fs.utimesSync(path.join(f.repo, '.worktrees', name, '.git'), past, past);
+    fs.utimesSync(path.join(f.repo, '.git', 'worktrees', name, 'logs', 'HEAD'), past, past);
+  }
+  const now = new Date(past.getTime() + (WORKTREE_IDLE_HOURS + 12) * HOUR).toISOString();
+  const residue = () => {
+    const res = run(f, ['--json', '--now', now]);
+    assert.equal(res.status, 0, res.stderr);
+    const line = JSON.parse(res.stdout).due.find((d) => d.kind === 'worktrees');
+    return (line?.why.split(': ')[1] ?? '').split(', ').map((p) => path.basename(p)).filter(Boolean).sort();
+  };
+  assert.deepEqual(residue(), names.slice().sort(), 'with no registry all three are residue');
+  const held = '| 1 | P2-16 | 2 implement | task/held | .worktrees/held | | 2026-11-06T03:00:00Z |';
+  const parked = '| CR-021 | Gate 2 | 2026-11-06T04:10Z | task/parked | .worktrees/parked | Q-1 merge or hold |';
+  f.write(REGISTRY, registryFile(activeSection([held]), parkedSection([parked])));
+  assert.deepEqual(residue(), ['plain']);
+  // the same rows outside their markers name nothing
+  f.write(REGISTRY, `${activeSection([])}\n\n${parkedSection([])}\n\n${held}\n${parked}\n`);
+  assert.deepEqual(residue(), names.slice().sort());
 });
 
 test('the wrapper exits 2 with a usage line on a bad flag and outside a repository', () => {

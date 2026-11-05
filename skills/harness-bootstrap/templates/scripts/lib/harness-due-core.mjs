@@ -1,7 +1,7 @@
 // harness-bootstrap harness-due core (generated YYYY-MM-DD). Pure core of scripts/harness-due.mjs.
 // [M] mechanism (ships as-is): everything below the [B] block. [B] binding: the block right
-// below -- the mainline, where the log, the follow-ups doc and each kind's reports live, the phase
-// in a row id, the cadences, the limits and what each line tells the runner to run, each
+// below -- the mainline, where the log, the follow-ups doc, the registry and each kind's reports live,
+// the phase in a row id, the cadences, the limits and what each line tells the runner to run, each
 // re-derived from the project.
 /**
  * Due-checks: what the harness owes before the next unit -- a phase's preflight, a sweep, a retro,
@@ -15,6 +15,12 @@
  * is enforced by nothing mechanical"), and one project's note that a sweep was due lived in a
  * session's memory only. A check the runner runs at every claim and every landing is the trigger
  * those runs lacked.
+ *
+ * THE INBOX. A unit that reaches an owner gate does not hold the run: the runner parks it, its cards
+ * go to its state file and its row moves from the registry's active table to the parked one. A held
+ * row is what makes the commit guard refuse a mainline merge under SCOPE=repo, so a unit waiting on
+ * the owner would stop every other unit; a parked row locks nothing. `inboxLines` lists the parked
+ * rows, so the runner and the owner see what waits. It is not a check: it never blocks.
  */
 import path from 'node:path';
 import { followUpsSummary, logRecords } from './retro-core.mjs';
@@ -25,6 +31,8 @@ import { followUpsSummary, logRecords } from './retro-core.mjs';
 export const MAIN = 'main';
 export const LOG = 'docs/harness/log.md';
 export const FOLLOW_UPS = 'docs/harness/follow-ups.md';
+// [B] The commit guard's lock file, relative to the main checkout: its parked table is the owner's inbox.
+export const REGISTRY = '.claude/registry.md';
 // [B] Each kind's committed reports. The file name carries `<phase>`, `<date>` (YYYY-MM-DD) or
 // `<week>` (YYYY-Www); a kind the project does not run is null and is never due.
 export const REPORTS = {
@@ -58,8 +66,8 @@ export const WORKTREE_IDLE_HOURS = 6;
 // deletes ignored files without a word. A link never counts: removing one never touches what it
 // points to.
 export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-results|playwright-report|\.next|\.turbo|\.expo|\.vite|\.cache|\.husky\/_)\/?$|\.DS_Store$|\.tsbuildinfo$/;
-// [B] What each line tells the runner to run; `<phase>`, `<date>`, `<file>`, `<week>` and
-// `<paths>` are filled in. The defaults cite harness-bootstrap's references, which hold the
+// [B] What each line tells the runner to run; `<phase>`, `<date>`, `<file>`, `<week>`, `<paths>` and
+// `<unit>` are filled in. The defaults cite harness-bootstrap's references, which hold the
 // procedures; bind each one to the project's own skill where the project generated one.
 export const COMMANDS = {
   preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',
@@ -70,6 +78,7 @@ export const COMMANDS = {
   disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',
   worktrees: 'git worktree remove <paths>, each once no registry row names it',
   proposals: 'read <file>; route each proposal (T: a harness/<slug> unit, C: the next Gate 2 brief), then node scripts/harness-due.mjs --seen <week>',
+  inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',
 };
 // ---- end [B]
 
@@ -247,13 +256,16 @@ export function parseWorktrees(text) {
  * in them, no ignored file that is not REBUILDABLE, and untouched for WORKTREE_IDLE_HOURS. Each
  * comes with `merged`, `own`, `clean`, `ignored` (its ignored paths) and `active` (its last
  * activity, ms) as the CLI measured them; the main worktree, a locked one and a prunable one are
- * never residue. The rails are one project's, earned: a branch cut from the mainline and not yet
- * started is an ancestor of it too, hence `own`.
+ * never residue, nor is one a registry row names (`named`, absolute paths: registryWorktrees). The
+ * rails are one project's, earned: a branch cut from the mainline and not yet started is an
+ * ancestor of it too, hence `own`.
  */
-export function worktreesDue({ worktrees = [], now, idleHours = WORKTREE_IDLE_HOURS, rebuildable = REBUILDABLE, top = null, command = COMMANDS.worktrees }) {
+export function worktreesDue({ worktrees = [], now, idleHours = WORKTREE_IDLE_HOURS, rebuildable = REBUILDABLE, top = null, named = [], command = COMMANDS.worktrees }) {
+  const kept = new Set(named.map((p) => path.resolve(p)));
   const stale = worktrees
     .slice(1)
     .filter((w) => !w.bare && !w.locked && !w.prunable && w.merged && w.own && w.clean)
+    .filter((w) => !kept.has(path.resolve(w.path)))
     .filter((w) => (w.ignored ?? []).every((p) => rebuildable.test(p)))
     .filter((w) => Number.isFinite(w.active) && now - w.active >= idleHours * HOUR);
   if (!stale.length) return null;
@@ -308,11 +320,80 @@ export function projectName(registry, mainTop) {
   return entry?.project ?? path.basename(mainTop);
 }
 
+// ---- the registry: its tables are read by header name, whatever the order or the extra columns
+const SEPARATOR = /^\s*\|[\s:|-]*-[\s:|-]*$/;
+// a cell without its padding and backticks; `\|` is a pipe inside a cell
+const cellsOf = (row) =>
+  row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').replace(/^[\s`]+|[\s`]+$/g, ''));
+
+/**
+ * The table between `<!-- harness:<name> -->` and `<!-- /harness:<name> -->`, each alone on its line (a
+ * line of prose that cites a marker is none), as { head, rows }: the header is the row above the
+ * section's first |---| separator, lowercased and without a trailing `(UTC)`-like note. No marker
+ * pair, or no header, is no table: rows outside the markers are never read.
+ */
+function registryTable(text, name) {
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
+  const begin = lines.findIndex((l) => l.trim() === `<!-- harness:${name} -->`);
+  const end = lines.findIndex((l, i) => i > begin && l.trim() === `<!-- /harness:${name} -->`);
+  if (begin === -1 || end === -1) return null;
+  const rows = lines.slice(begin + 1, end).filter((l) => /^\s*\|/.test(l));
+  const sep = rows.findIndex((l) => SEPARATOR.test(l));
+  if (sep < 1) return null;
+  return {
+    head: cellsOf(rows[sep - 1]).map((h) => h.replace(/\s*\(.*\)$/, '').toLowerCase()),
+    rows: rows.slice(sep + 1).filter((l) => !SEPARATOR.test(l)).map(cellsOf),
+  };
+}
+
+/**
+ * The units parked at an owner gate, in table order, from the registry's parked table (Unit, Gate,
+ * Parked (UTC), Branch, Worktree, Cards): [{ unit, gate, parked, branch, worktree, cards, command }].
+ * A row with no unit is skipped, an empty cell is ''; no table, or one with no Unit column, is [].
+ */
+export function parkedUnits(registryText, command = COMMANDS.inbox) {
+  const table = registryTable(registryText, 'parked');
+  const unit = table ? table.head.indexOf('unit') : -1;
+  if (unit === -1) return [];
+  return table.rows
+    .filter((row) => (row[unit] ?? '') !== '')
+    .map((row) => {
+      const cell = (name) => row[table.head.indexOf(name)] ?? '';
+      return { unit: row[unit], gate: cell('gate'), parked: cell('parked'), branch: cell('branch'), worktree: cell('worktree'), cards: cell('cards'), command: fill(command, { unit: row[unit] }) };
+    });
+}
+
+/** One line per parked unit, `INBOX <unit> <gate> since <Parked> · <Cards>`; a cell that is empty leaves its words out. */
+export function inboxLines(registryText) {
+  return parkedUnits(registryText).map((p) => `INBOX ${p.unit}${p.gate ? ` ${p.gate}` : ''}${p.parked ? ` since ${p.parked}` : ''}${p.cards ? ` · ${p.cards}` : ''}`);
+}
+
+/**
+ * The linked worktrees the registry's rows name, as absolute paths from `root` (the main checkout):
+ * every held row of the active table (first cell 1 or more) and every parked row. The Worktree cell's
+ * first word is the path; empty, `main`, `.` and a placeholder (-, n/a, none) name the main checkout.
+ */
+export function registryWorktrees(registryText, root) {
+  if (typeof root !== 'string' || root === '') return [];
+  const out = new Set();
+  for (const [name, held] of [['active', (row) => /^[1-9]\d*$/.test(row[0] ?? '')], ['parked', () => true]]) {
+    const table = registryTable(registryText, name);
+    const w = table ? table.head.indexOf('worktree') : -1;
+    if (w === -1) continue;
+    for (const row of table.rows.filter(held)) {
+      const cell = (row[w] ?? '').replaceAll('`', '').trim().split(/\s/)[0].split('·')[0];
+      if (!['', 'main', '.', '-', '—', 'n/a', 'none'].includes(cell.toLowerCase())) out.add(path.resolve(root, cell));
+    }
+  }
+  return [...out];
+}
+
 /**
  * Every check, in KINDS order, from what the CLI read: `log` and `followUps` as { text, dates }
  * (line -> commit ms) or null; `reports` by kind as [{ rel, time }]; `merges` the mainline's
  * merges as [{ t, subject }]; `disk` { free, approved, last }; `worktrees` measured; `proposals`
- * { newest, text, file }; `seen`; `project`. Nothing here reads a file.
+ * { newest, text, file }; `seen`; `project`; `registry` { text, root } (the registry's text and the
+ * main checkout) or null. Nothing here reads a file.
  */
 export function checkAll(f) {
   const now = f.now;
@@ -329,14 +410,19 @@ export function checkAll(f) {
     ),
     p3Due({ summary, now }),
     f.disk ? diskDue(f.disk) : null,
-    worktreesDue({ worktrees: f.worktrees ?? [], now, top: f.top ?? null }),
+    worktreesDue({ worktrees: f.worktrees ?? [], now, top: f.top ?? null, named: registryWorktrees(f.registry?.text, f.registry?.root) }),
     proposalsDue({ newest: f.proposals?.newest ?? null, text: f.proposals?.text ?? '', seen: f.seen ?? {}, project: f.project, file: f.proposals?.file ?? '' }),
   ];
   return items.filter(Boolean);
 }
 
-/** One line per item, `DUE <kind> [<subject>] — <why> — <command>` (`NEW` for proposals); or the all-clear. */
-export function formatDue(items) {
-  if (!items.length) return 'harness-due: nothing due\n';
-  return items.map((i) => `${i.tag ?? 'DUE'} ${i.kind}${i.subject ? ` ${i.subject}` : ''} — ${i.why} — ${i.command}\n`).join('');
+/**
+ * One line per item, `DUE <kind> [<subject>] — <why> — <command>` (`NEW` for proposals); or the
+ * all-clear. The inbox lines (inboxLines) come last and are no item: what waits on the owner is
+ * not due, so they leave the all-clear in place.
+ */
+export function formatDue(items, inbox = []) {
+  const lines = items.map((i) => `${i.tag ?? 'DUE'} ${i.kind}${i.subject ? ` ${i.subject}` : ''} — ${i.why} — ${i.command}\n`);
+  if (!items.length) lines.push('harness-due: nothing due\n');
+  return [...lines, ...inbox.map((l) => `${l}\n`)].join('');
 }

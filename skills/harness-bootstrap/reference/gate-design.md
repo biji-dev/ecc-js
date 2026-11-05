@@ -48,20 +48,58 @@ Default if unanswered: <option> (park-and-carry: work that depends on it waits)
 > in one line: "use your recommendation". A sheet nobody reads is not a review.
 
 `[M]` **How the cards reach the owner depends on the context**, which the budget
-hook's figure line gives (`context.md` › The window, the gate wait and the base):
+hook's figure line gives (`context.md` › The window, the gate wait and the base),
+and on whether another unit can run:
 
-- **Under 150K:** the question tool — `AskUserQuestion`, or `ExitPlanMode` for a plan.
-- **At 150K or more:** write each open card to the state file's decision log as a
-  `Q-n` row, give the cards as text and **end the turn**; never offer `/clear` with
-  them (`context.md` › No hand-off). The answer comes back as text, and the `Q-n` rows become
-  `DEC` rows. In plan mode, `ExitPlanMode` follows the answer, while the owner is
-  there.
+- **Under 150K, with no other unit ready:** the question tool — `AskUserQuestion`,
+  or `ExitPlanMode` for a plan.
+- **At 150K or more, or while another unit can run:** park the unit (› Parking a
+  unit): each open card becomes a `Q-n` row in the state file's decision log and
+  goes out as text, never with a `/clear` offer (`context.md` › No hand-off). The
+  answer comes back as text, and the `Q-n` rows become `DEC` rows. In plan mode,
+  `ExitPlanMode` follows the answer, while the owner is there.
 
 > Origin, the v5 context study (21 days, nine installs): 183 requests after a gap
 > of more than an hour rewrote their whole context — $267, 9.6% of main-thread
 > spend. Past about 125K an idle compaction costs less than the rewrite it saves,
 > but it runs only after an ended turn: 0 of 44 idle compactions came while a
 > question was pending, and 39 of the 183 waits were on one.
+
+## Parking a unit — the gate inbox
+
+`[M]` **An owner gate parks its unit, and the run moves on.** At a Gate 1 ask, an
+owner Gate 2, a blocking P or C card, or a push the run grant does not cover:
+
+1. write the brief and the open cards to the state file — the cards as `Q-n` rows
+   in the decision log, the header line `Parked: <gate> <ISO time>` — and commit it
+   on the unit branch;
+2. move the unit's row from the registry's active table to its parked table, below.
+   A held row would block every other unit's merge under `SCOPE=repo`
+   (`commit-guard.md` › Land order); the guard reads the active table only;
+3. post the gate as text with its cards in full, and a `PushNotification` where the
+   host has one;
+4. start the next ready unit whose write set overlaps no held or parked unit's
+   (`runner.md` › Shape). With none, end the turn on `WAITING ON YOU:` and the inbox.
+
+```markdown
+<!-- harness:parked -->
+| Unit | Gate | Parked (UTC) | Branch | Worktree | Cards |
+|---|---|---|---|---|---|
+<!-- /harness:parked -->
+```
+
+`[M]` **The inbox is a command's output, never memory:** `harness-due.mjs` prints
+one `INBOX` line per parked row, and the session-resume hook puts them into every new
+or compacted context (`context.md`).
+
+`[M]` **Answers come in one message, for any number of units.** Each answered unit
+moves back to the active table (a claim, `runner.md` › Step 0), its `Q-n` rows
+become `DEC` rows, its `Parked:` line goes, and it resumes through step 0a. A card
+left unanswered keeps its unit parked: park-and-carry, never consent.
+> Origin, the v8 session study (2026-10-23 to 11-06, 127 sessions, 10 installs):
+> owner wait per unit exceeded work per unit in two of three measured repositories
+> (1h57m against 1h44m, 8h27m against 1h01m), because a Full gate stopped the whole
+> run; at least 9 `/clear`s re-opened a unit only to hand it one answer.
 
 ## The intake sheet — Gate 1 ahead of time
 
@@ -254,10 +292,38 @@ generated default:
   `degraded`, the diff touches no path the coverage map leaves uncovered, and the run
   re-verified if the mainline moved since.
 - **Full, any never-auto category, any taste call: the owner merges.**
-- **Push is always the owner's**, every tier.
+- **Push is the owner's**, every tier, unless a run grant covers it.
 
-`[M]` The owner may tighten the default (no auto-merge at all) at review. **Never
-loosen push.** A pushed merge is the one step the harness cannot take back.
+`[M]` The owner may tighten the default (no auto-merge at all) at review. **Push is
+the owner's; the owner may grant it for one run, never for never-auto work.** A
+pushed merge is the one step the harness cannot take back, so the grant is explicit,
+written in the kickoff and quoted in the ledger.
+
+## The run grant
+
+`[M]` **A kickoff may grant, for one run, what the owner would otherwise approve
+unread.** One line in the `/task-runner` message, with an optional stop line
+(`until 18:00`, `3 units`):
+`Grant: merge clean Full · push after merge · recommendation on reversible P cards`.
+The runner copies it into each covered unit's state file as its `Grant:` line and
+quotes it in the ledger's Gate 2 row.
+
+- **merge clean Full** — a Full unit merges on its own when it passes the Small
+  test above: no blocking conformance gap, no unresolved P0 or P1, no `FALSE
+  CLAIMS`, nothing `degraded`, every required step `ran`, this round's FULL verify
+  all PASS, re-verified if the mainline moved.
+- **push after merge** — a merge the policy or the grant made is pushed.
+- **recommendation on reversible P cards** — a P card whose reversal is a revert
+  takes its recommendation, logged `By: grant` and listed at Gate 2 under **Decided
+  for you**.
+
+`[M]` **A grant never covers** a never-auto category, a taste call, a C card, an Ops
+step, a re-tier, an `escalate` or a tripwire: each of those parks the unit. A grant
+ends with its run.
+> Origin, the v8 session study: in 14 days the owner typed 66 bare "yes", 38 "your
+> recommendation" and 22 "merge / push", and picked the option marked Recommended 41
+> times — approvals given unread. The owner's v7 rollout prompt already pre-approved
+> its clean rows. A grant up front, explicit and logged, replaces the rubber stamp.
 
 ## Owner stops — and what is not one
 
@@ -271,8 +337,12 @@ loosen push.** A pushed merge is the one step the harness cannot take back.
 3. a P or C decision that blocks the next step — a never-auto decision, a hidden
    cost that is a one-way door (`scope-guard.md`), spend past the Gate 1 estimate's upper bound;
 4. a third fix round on critical code (`escalate-adversarial`, below);
-5. Gate 2 when the merge policy says ask, and before every push;
+5. Gate 2 when the merge policy and the run grant say ask, and before every push
+   the grant does not cover;
 6. an Ops step — the runbook is approved once, for the SHA and the rollback it names.
+
+Each stop parks its unit (› Parking a unit), and the run goes on with what else is
+ready.
 
 `[M]` **Not a stop:** finishing a step, a full context (persist and keep working;
 auto-compaction is the reset, `context.md`), the second family being unavailable (degraded, recorded),
@@ -291,8 +361,8 @@ in one line and start it.
 - **Summaries and records** are written at the step that owns them, never asked.
 - **★ Missed by harness** is filled from what the owner volunteered at Gate 2;
   nothing volunteered → `—`, not a question.
-- **Merge** goes by the merge policy; **push** stays the owner's, asked once with
-  Gate 2.
+- **Merge** goes by the merge policy and the run grant; **push** stays the owner's
+  unless the grant covers it, asked once with Gate 2.
 
 ## Severity — one scale
 

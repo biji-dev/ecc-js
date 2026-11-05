@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap harness-due (generated YYYY-MM-DD). What the harness owes before the next unit.
-// [M] mechanism (ships as-is): everything. The [B] bindings (the mainline, the paths, the phase in a
-// row id, the cadences, the limits, the commands) live at the top of scripts/lib/harness-due-core.mjs.
+// [M] mechanism (ships as-is): everything. The [B] bindings (the mainline, the paths, the registry, the
+// phase in a row id, the cadences, the limits, the commands) live at the top of scripts/lib/harness-due-core.mjs.
 /**
  * The runner runs it at step 0, before the claim, and at step 9, after the merge (harness-bootstrap's
  * reference/runner.md › Due-checks):
@@ -11,7 +11,8 @@
  *
  * options:
  *   --claim <id>   also check the row about to be claimed: the preflight of the phase it opens
- *   --json         { due: [{ kind, subject, why, command, blocking }], blocking } instead of lines
+ *   --json         { due: [{ kind, subject, why, command, blocking }], blocking, inbox: [{ unit, gate,
+ *                  parked, branch, worktree, cards, command }] } instead of lines
  *   --now <ISO>    the time to check against (default now)
  *   --home <dir>   the directory holding .agents/harness (default the home directory): the machine
  *                  sweep's approvals and log, the weekly job's registry and its proposals
@@ -19,9 +20,14 @@
  *                  <home>/.agents/harness/retro/seen.json; it checks nothing else
  *
  * One line per thing due -- `DUE <kind> [<subject>] — <why> — <what to run>`, `NEW proposals
- * <week> — …` for the week's unread proposals -- or `harness-due: nothing due`. It reads files and
- * git (`log`, `blame`, `worktree list`, `merge-base`, `rev-list`, `reflog`, `status`) and writes
- * nothing but --seen's file: it starts no sweep itself, the runner does what each line says.
+ * <week> — …` for the week's unread proposals -- or `harness-due: nothing due`. After them, the
+ * owner's inbox: one `INBOX <unit> <gate> since <parked> · <cards>` line for each row of the parked
+ * table of the commit guard's registry (REGISTRY, in the main checkout), the units the run set
+ * aside at an owner gate and moved on from. An inbox line is no due-check: it never changes the
+ * exit code, and a registry that is missing or unreadable prints none. A worktree a registry row
+ * names, held or parked, is never listed as `DUE worktrees`. It reads files and git (`log`,
+ * `blame`, `worktree list`, `merge-base`, `rev-list`, `reflog`, `status`) and writes nothing but
+ * --seen's file: it starts no sweep itself, the runner does what each line says.
  *
  * exit: 0 nothing blocks | 1 the claimed row opens a phase with no preflight report | 2 usage.
  */
@@ -32,12 +38,15 @@ import {
   FOLLOW_UPS,
   LOG,
   MAIN,
+  REGISTRY,
   REPORTS,
   checkAll,
   formatDue,
+  inboxLines,
   markSeen,
   matchReports,
   newestProposals,
+  parkedUnits,
   parseArgs,
   parseWorktrees,
   projectName,
@@ -64,6 +73,14 @@ const git = (args, cwd) => {
 const readJson = (file) => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+// The registry's text in the main checkout, or null: a missing or unreadable one is no inbox, never a failure.
+const readRegistry = (root) => {
+  try {
+    return fs.readFileSync(path.join(root, REGISTRY), 'utf8');
   } catch {
     return null;
   }
@@ -227,7 +244,8 @@ function main() {
   const harness = path.join(path.resolve(args.home ?? os.homedir()), '.agents', 'harness');
   const registry = readJson(path.join(harness, 'repos.json'));
   const repos = Array.isArray(registry?.repos) ? registry.repos.map((r) => ({ ...r, path: real(String(r?.path ?? '')) })) : [];
-  const project = projectName({ repos }, real(mainCheckout(top)));
+  const mainTop = real(mainCheckout(top));
+  const project = projectName({ repos }, mainTop);
   const seenFile = path.join(harness, 'retro', 'seen.json');
   if (args.seen !== null) {
     try {
@@ -240,6 +258,7 @@ function main() {
     return;
   }
   let items;
+  const registryText = readRegistry(mainTop);
   try {
     const facts = {
       now: args.now === null ? Date.now() : Date.parse(args.now),
@@ -253,6 +272,7 @@ function main() {
       disk: readDisk(top, harness),
       worktrees: readWorktrees(top),
       proposals: readProposals(harness),
+      registry: registryText === null ? null : { text: registryText, root: mainTop },
       seen: readJson(seenFile) ?? {},
     };
     items = checkAll(facts);
@@ -260,7 +280,7 @@ function main() {
     return usage(e.message);
   }
   const blocking = items.filter((i) => i.blocking).length;
-  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking }, null, 2)}\n` : formatDue(items));
+  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, inbox: parkedUnits(registryText) }, null, 2)}\n` : formatDue(items, inboxLines(registryText)));
   if (blocking) process.exitCode = 1;
 }
 

@@ -149,6 +149,7 @@ and never asks a question. What each line makes the runner do:
 | `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
 | `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
 | `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
+| `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; the owner's answers resume it, ahead of the queue |
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a unit
 that is due stays due until its report is committed, and nothing has to remember
@@ -195,8 +196,8 @@ without the plan check, lane A and the separate doc sweep; step 8 is `--tier ful
 
 ## Per-step notes
 
-**Step 0a — resume.** `[M]` A held row or an existing unit branch means resume, not
-start. **The checkout first:** `node scripts/unit-step.mjs --where [<unit>]`; one
+**Step 0a — resume.** `[M]` A held row, an answered parked one (moved back to the
+active table first) or an existing unit branch means resume, not start. **The checkout first:** `node scripts/unit-step.mjs --where [<unit>]`; one
 candidate, `cd` there; several, ask — never pick by plan file. Read the state file;
 the row's `Step` says where the run *thought* it got to — **verify, do not trust the marker.** Restart from the earliest step you cannot
 evidence; redoing a step is cheap and never wrong. Commit uncommitted work first,
@@ -222,10 +223,9 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **The registry is also a resource lock** where units share machines —
   ports, isolated stacks, migration slots in the same row; `scripts/unit-stack.sh`
   holds live stacks side by side (`commit-guard.md` › The registry).
-- `[M]` Compare this unit's write set against every other held row. Overlap means
-  sequence, not parallelise — say so and stop.
-- `[M]` **One unit in flight**, plus hotfixes. Planning the next (step 1) may start
-  while this one waits on Gate 2; its step 2 waits.
+- `[M]` Compare this unit's write set against every other held or parked row.
+  Overlap means sequence, not parallelise: take the next ready unit instead.
+- `[M]` **One unit in flight**, plus hotfixes; a parked unit is not in flight.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
   worktree convention. **Every kind of unit has a branch form:** plan items carry
   their id; the code half of an approved change request carries the request's id (or runs on

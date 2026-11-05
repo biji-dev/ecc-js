@@ -106,9 +106,10 @@ critical ones off is how a later session finds them unplaced and has to file it.
 ## The merge policy
 
 Draft the default from `gate-design.md` — Small merges locally on its own when
-clean; Full, never-auto and taste calls wait for the owner; push is always the
-owner's — and state any tightening the documents imply (a regulated project may
-want no auto-merge at all). Never loosen push.
+clean; Full, never-auto and taste calls wait for the owner; push is the owner's —
+and state any tightening the documents imply (a regulated project may want no
+auto-merge at all). Only a run grant loosens it, for one run (`gate-design.md` ›
+The run grant).
 
 ## Where it goes, and what not to do
 

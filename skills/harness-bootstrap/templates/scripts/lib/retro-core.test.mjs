@@ -34,6 +34,8 @@ import {
   buildRetro,
   candidates,
   claimRows,
+  contextCommand,
+  contextCommands,
   dispatchOwners,
   fitDigest,
   followUpsSummary,
@@ -43,6 +45,7 @@ import {
   logKpis,
   logRecords,
   markerUnits,
+  ownerKpis,
   parseArgs,
   parseDefects,
   previousData,
@@ -376,6 +379,40 @@ test('markerUnits reads the unit of each unit-step command in a raw transcript, 
   assert.equal(markerUnits(tool('node scripts/unit-step.mjs a/b/c 0 start')).size, 0);
 });
 
+test('contextCommand and contextCommands take a /clear or /compact the owner typed by the line\'s markup, never by words', () => {
+  const u = (content, extra = {}) => ({ type: 'user', message: { content }, ...extra });
+  const clear = '<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>';
+  assert.equal(contextCommand(u(clear)), 'clear');
+  assert.equal(contextCommand(u('<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args>keep the plan</command-args>')), 'compact', 'the other tag first, with arguments');
+  assert.equal(contextCommand(u([{ type: 'text', text: clear }])), 'clear');
+  assert.equal(contextCommand(u('<command-name>/clear</command-name>', { origin: { kind: 'human' } })), 'clear');
+  // Not one: another command, a namespaced one, the tag in a sentence, plain words, a tool result, an assistant turn, a
+  // sidechain line, a peer's message, an injected line, nothing.
+  assert.equal(contextCommand(u('<command-name>/review</command-name>')), null);
+  assert.equal(contextCommand(u('<command-name>/ecc:clear</command-name>')), null);
+  assert.equal(contextCommand(u('I typed <command-name>/clear</command-name> and lost the plan')), null);
+  assert.equal(contextCommand(u('clear the context and compact it')), null);
+  assert.equal(contextCommand(u([{ type: 'tool_result', tool_use_id: 't1', content: clear }])), null);
+  assert.equal(contextCommand({ type: 'assistant', message: { content: clear } }), null);
+  assert.equal(contextCommand(u(clear, { isSidechain: true })), null);
+  assert.equal(contextCommand(u(clear, { origin: { kind: 'peer' } })), null);
+  assert.equal(contextCommand(u(clear, { isMeta: true })), null);
+  assert.equal(contextCommand(null), null);
+  const line = (o) => JSON.stringify({ timestamp: '2026-10-20T10:00:00Z', ...o });
+  const text = [
+    line({ type: 'user', message: { content: clear } }),
+    'a line that is no JSON but says command-name',
+    line({ type: 'user', message: { content: '<command-name>/compact</command-name>' }, timestamp: '2026-10-20T11:00:00Z' }),
+    JSON.stringify({ type: 'user', message: { content: clear } }), // no time
+    line({ type: 'user', message: { content: 'plain' } }),
+  ].join('\n');
+  assert.deepEqual(contextCommands(text), [
+    { ts: at('20T10:00:00'), name: 'clear' },
+    { ts: at('20T11:00:00'), name: 'compact' },
+  ]);
+  assert.deepEqual(contextCommands(''), []);
+});
+
 test('stepOfDescription: the tag of this unit wins, another unit\'s tag is not ours, else the step words, by whole id', () => {
   assert.equal(stepOfDescription('[EP-7 s8b r2] codex review', 'EP-7'), '8b');
   assert.equal(stepOfDescription('[EP-8 s8 r1] review', 'EP-7'), null);
@@ -503,6 +540,41 @@ test('transcriptKpis: spend, sessions, questions, compactions and the expiry-rew
     rewriteUsd: 4,
     rewriteShare: 40,
   });
+});
+
+test('ownerKpis: prompts and /clear and /compact per unit landed, and the median run from a prompt to the last record before the next, per session', () => {
+  const t = at('20T10:00:00');
+  const min = (m) => t + m * 60_000;
+  const ev = (session, m, type) => ({ session, ts: min(m), type });
+  const events = [
+    // a: a prompt, a question asked at 3 and answered at 20 (a tool result, which ends no run), turns to 22; a prompt at 60, records to 70
+    ev('a', 0, 'prompt'), ev('a', 2, 'turn'), ev('a', 3, 'ask'), ev('a', 20, 'result'), ev('a', 22, 'turn'),
+    ev('a', 60, 'prompt'), ev('a', 65, 'turn'), ev('a', 70, 'note'),
+    // b, at the same time: a run of 4 (its records listed out of order), then a prompt with nothing after it
+    ev('b', 4, 'turn'), ev('b', 0, 'prompt'), ev('b', 100, 'prompt'), ev('b', 100, 'note'),
+    // c is from before the window: its prompt is not the window's
+    ev('c', -3 * 24 * 60, 'prompt'), ev('c', -3 * 24 * 60 + 9, 'turn'),
+    // d prompts at the window's end and runs on past it: the prompt's window owns the run
+    ev('d', 150, 'prompt'), ev('d', 160, 'turn'),
+  ];
+  const commands = [
+    { session: 'a', ts: min(60), name: 'compact' },
+    { session: 'b', ts: min(100), name: 'clear' },
+    { session: 'c', ts: min(-3 * 24 * 60), name: 'clear' },
+  ];
+  const w = { since: new Date(min(-60)).toISOString(), until: new Date(min(150)).toISOString() };
+  // The runs are 22, 4 and 10 minutes, the median 10; a's /compact at 60 and b's /clear at 100 are prompts with no run.
+  assert.deepEqual(ownerKpis(events, commands, { ...w, units: 2 }), { prompts: 5, clears: 1, compacts: 1, promptsPerUnit: 2.5, commandsPerUnit: 1, runMin: 10 });
+  assert.equal(ownerKpis(events, commands, { ...w, units: 3 }).promptsPerUnit, 1.7, 'to a tenth');
+  const none = ownerKpis(events, commands, { ...w, units: 0 });
+  assert.deepEqual([none.prompts, none.promptsPerUnit, none.commandsPerUnit, none.runMin], [5, null, null, 10], 'no unit landed: the counts stand, the per-unit figures are missing');
+  assert.equal(ownerKpis(events, commands, { since: '2026-11-01T00:00:00Z', until: '2026-11-08T00:00:00Z', units: 2 }), null, 'no record in the window');
+  // Records and no prompt: a window the owner never touched. Untagged events are one session's.
+  assert.deepEqual(ownerKpis([{ ts: min(0), type: 'turn' }], [], { ...w, units: 1 }), { prompts: 0, clears: 0, compacts: 0, promptsPerUnit: 0, commandsPerUnit: 0, runMin: null });
+  assert.equal(ownerKpis([{ ts: min(0), type: 'prompt' }, { ts: min(0) + 100_000, type: 'turn' }], [], { ...w, units: 1 }).runMin, 1.7, 'minutes to a tenth');
+  // A run of 30 then a typed /clear: the median is 30, not the 15 that a zero-minute command run would make it.
+  const typed = ownerKpis([ev('e', 0, 'prompt'), ev('e', 30, 'turn'), ev('e', 40, 'prompt')], [{ session: 'e', ts: min(40), name: 'clear' }], { ...w, units: 1 });
+  assert.deepEqual([typed.prompts, typed.clears, typed.runMin], [2, 1, 30], 'a typed command counts as a prompt, never as a run');
 });
 
 test('previousKpis: each transcript KPI\'s median over the newest four earlier weeks; this week and later never count', () => {
@@ -679,6 +751,35 @@ test("buildRetro: a dispatch tagged for a unit counts whole, its turns after the
   };
   const ep2 = buildRetro(g, { project: 'demo', now: NOW }).steps.find((u) => u.unit === 'EP-2');
   assert.deepEqual([ep2.total, ep2.steps.find((s) => s.step === '8b').usd], [18, 15]);
+});
+
+test('buildRetro and formatDigest: the owner rows per unit landed against the earlier weeks, and none when the window holds no record', () => {
+  const t = at('22T10:00:00');
+  const min = (m) => t + m * 60_000;
+  const ev = (m, type) => ({ session: 's1', ts: min(m), type });
+  const g = gatherOf({
+    log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10), logRow('EP-2', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00', '23T10:00:00') },
+    events: [ev(0, 'prompt'), ev(8, 'turn'), ev(30, 'prompt'), ev(30, 'note'), ev(60, 'prompt'), ev(66, 'turn')],
+    commands: [{ session: 's1', ts: min(30), name: 'clear' }],
+    previous: [{ week: '2026-W43', since: 'x', until: '2026-10-19T12:00:00.000Z', kpis: { owner: { prompts: 20, clears: 4, compacts: 2, promptsPerUnit: 6, commandsPerUnit: 1.5, runMin: 0.4 } } }],
+  });
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  // Runs of 8 and 6 minutes; the /clear at 30 is a prompt with no run.
+  assert.deepEqual(d.kpis.owner, { prompts: 3, clears: 1, compacts: 0, promptsPerUnit: 1.5, commandsPerUnit: 0.5, runMin: 7 });
+  assert.equal(d.baseline.owner.promptsPerUnit, 6);
+  const text = formatDigest(d);
+  assert.match(text, /^\| Owner prompts per unit \| 1\.5 \(3 ÷ 2 units\) \| 6 \|$/m);
+  assert.match(text, /^\| \/clear · \/compact per unit \| 0\.5 \(1 · 0\) \| 1\.5 \|$/m);
+  assert.match(text, /^\| Agent run between owner prompts \(median\) \| 7m \| 24s \|$/m, 'a run under a minute is said in seconds');
+  assert.ok(text.indexOf('Owner prompts per unit') < text.indexOf('\n## Outliers'), 'the rows are in the KPI table');
+  assert.deepEqual(previousData(text).kpis.owner, d.kpis.owner);
+  const one = buildRetro({ ...g, log: { text: table(LOG_HEAD, [logRow('EP-1', CELL_A, 60, 10)]), dates: datesFor('22T10:00:00') }, previous: [] }, { project: 'demo', now: NOW });
+  assert.match(formatDigest(one), /^\| Owner prompts per unit \| 3 \(3 ÷ 1 unit\) \| — \|$/m);
+  assert.match(formatDigest(buildRetro({ ...g, log: { text: table(LOG_HEAD, []), dates: new Map() } }, { project: 'demo', now: NOW })), /^\| Owner prompts per unit \| — \(3 ÷ 0 units\) \|/m);
+  // No record in the window, or a gather from before the owner figures: no rows.
+  const bare = buildRetro(gatherOf(), { project: 'demo', now: NOW });
+  assert.equal(bare.kpis.owner, null);
+  assert.doesNotMatch(formatDigest(bare), /Owner prompts|\/clear/);
 });
 
 /** A Codex rollout line, and a token_count with the thread's running total and a weekly quota reading. */
@@ -1049,6 +1150,46 @@ test('the wrapper writes only the digest by default, only one JSON file with --e
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'retro-2026-W44.json'), 'utf8')).kpis.log.units, 2);
   const json = run(f, [...WINDOW, '--projects-dir', f.projects, '--json']);
   assert.equal(JSON.parse(json.stdout).project, path.basename(f.repo));
+});
+
+test("the wrapper counts the owner's prompts, /clear and /compact and the median run from the transcripts' structure, per session", () => {
+  const f = fixture();
+  const dir = path.join(f.projects, f.repo.replace(/[^A-Za-z0-9]/g, '-'));
+  const rec = (type, min, message, extra = {}) => JSON.stringify({ type, timestamp: `2026-10-23T11:${String(min).padStart(2, '0')}:00Z`, cwd: f.repo, message, ...extra });
+  const user = (min, content, extra) => rec('user', min, { role: 'user', content }, extra);
+  const turn = (min, content = []) => rec('assistant', min, { role: 'assistant', content });
+  const text = (s) => [{ type: 'text', text: s }];
+  const clear = '<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>';
+  // s3: a prompt whose question is answered at 20 (a tool result: no prompt), turns to 25 = a run of 25; a /compact at 30 and its
+  // output at 31, then a sidechain prompt at 40 that belongs to no run (a command: no run); a prompt at 45 that runs to 55, a turn that quotes
+  // the clear tag and a tool result that holds it, neither a command = 10.
+  const ask = [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: {} }];
+  fs.writeFileSync(
+    path.join(dir, 's3.jsonl'),
+    `${[
+      user(0, 'run the unit'),
+      turn(2, ask),
+      user(20, [{ type: 'tool_result', tool_use_id: 'q1', content: 'go' }]),
+      turn(25),
+      user(30, '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+      user(31, '<local-command-stdout>Compacted</local-command-stdout>'),
+      user(40, 'a subagent prompt', { isSidechain: true }),
+      user(45, 'now the tests'),
+      turn(46, text(`run ${clear} if the context fills`)),
+      user(50, [{ type: 'tool_result', tool_use_id: 'x1', content: clear }]),
+      turn(55),
+    ].join('\n')}\n`,
+  );
+  // s4 runs beside it: a run of 4, then a /clear with nothing after it (a command: no run).
+  fs.writeFileSync(path.join(dir, 's4.jsonl'), `${[user(10, 'look at the failing test'), turn(14), user(40, clear), user(40, '<local-command-stdout></local-command-stdout>')].join('\n')}\n`);
+  const res = run(f, [...WINDOW, '--projects-dir', f.projects, '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  // The runs are 25, 10 and 4 minutes over the 2 units the log landed in the window; the /compact and the /clear are
+  // prompts with no run.
+  assert.deepEqual(JSON.parse(res.stdout).kpis.owner, { prompts: 5, clears: 1, compacts: 1, promptsPerUnit: 2.5, commandsPerUnit: 1, runMin: 10 });
+  const dry = run(f, [...WINDOW, '--projects-dir', f.projects, '--dry-run']);
+  assert.match(dry.stdout, /^\| Owner prompts per unit \| 2\.5 \(5 ÷ 2 units\) \| — \|$/m);
+  assert.match(dry.stdout, /^\| Agent run between owner prompts \(median\) \| 10m \| — \|$/m);
 });
 
 test('the wrapper exits 2 with a usage line on a bad flag, outside a repository and without a log', () => {

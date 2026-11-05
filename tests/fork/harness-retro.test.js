@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 52;
+const EXPECTED_TESTS = 56;
 
 let passed = 0;
 let failed = 0;
@@ -232,6 +232,13 @@ mutantFails('leaving the log rows no table took unmentioned', 'if (leftOut.lengt
 mutantFails('keeping stop-word pairs as friction themes', ' && !STOP.has(a) && !STOP.has(b)', '');
 mutantFails("taking a sibling repository's Codex thread", 'return hostRollouts(dir, sinceMs).filter(({ meta }) => inside(meta.cwd));', 'return hostRollouts(dir, sinceMs);', SOURCES_REL);
 mutantFails("leaving claude-run's ledger unread", 'if (fs.existsSync(claudeFile)) g.claudeRuns = parseLedger(readText(claudeFile));', '', GATHER_REL);
+mutantFails("reading a command tag quoted in a sentence as the owner's /clear", 'const COMMAND_START = /^\\s*<command-(?:name|message)>/;', 'const COMMAND_START = /<command-/;');
+mutantFails('counting a /clear that is no owner prompt', 'if (!isOwnerPrompt(d)) return null;', '');
+mutantFails("ending an agent run at the owner's answer to a question", "if (e.type === 'prompt') {\n        close();", "if (e.type === 'prompt' || e.type === 'result') {\n        close();");
+mutantFails('ending an agent run at the next prompt, not at the last record before it', "if (e.type === 'prompt') {\n        close();", "if (e.type === 'prompt') {\n        end = e.ts;\n        close();");
+mutantFails('counting a prompt from before the window', 'if (start === null || !inWindow(start, since, until)) return;', 'if (start === null) return;');
+mutantFails('counting a typed /clear or /compact as an agent run', 'if (!typedAt.has(`${session}|${start}`)) runs.push(end - start);', 'runs.push(end - start);');
+mutantFails("running two sessions' records together", 'g.events.push({ ...e, session: id });', 'g.events.push(e);', GATHER_REL);
 mutantFails("taking the Codex host's baseline from the transcripts'", "codexHost: previousKpis(g.previous, win.week, 'codexHost'),", 'codexHost: previousKpis(g.previous, win.week),');
 
 /** What the shipped suite no longer pins: it builds its fixtures from the bound values, so the template's own are read here. */

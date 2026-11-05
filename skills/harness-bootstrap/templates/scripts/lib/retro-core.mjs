@@ -3,9 +3,10 @@
 // below -- where the digests, the log, the follow-ups doc and the plans live, the log columns the
 // retro adds, the outlier rule, the alert levels and the step words, each re-derived from the project.
 /**
- * The retro: what the last week of units cost and where it went, against the four weeks before it,
- * from the harness log, the steps and state files, the follow-ups doc, the transcripts, a Codex
- * host's threads and the two run ledgers, codex-run's and claude-run's. No I/O here (scripts/lib/retro-gather.mjs reads the files), so `retro-core.test.mjs` can
+ * The retro: what the last week of units cost and where it went, and how much the owner had to touch
+ * the sessions, against the four weeks before it, from the harness log, the steps and state files, the
+ * follow-ups doc, the transcripts, a Codex host's threads and the two run ledgers, codex-run's and
+ * claude-run's. No I/O here (scripts/lib/retro-gather.mjs reads the files), so `retro-core.test.mjs` can
  * pin each rule.
  *
  * WHY A DIGEST. Every harness round so far started because the owner asked: the learning loop was
@@ -19,6 +20,7 @@ import {
   dedupeRows,
   fmtTokens,
   inWindow,
+  isOwnerPrompt,
   parseTag,
   summarizeCache,
   summarizeClaude,
@@ -103,6 +105,12 @@ const VALUE_FLAGS = {
 const DATA_BLOCK = /<!-- retro-data (\{.*\}) -->/;
 // A main thread's step-marker command names the unit it ran: `unit-step.mjs <unit> <step> start`.
 const MARKER_CMD = new RegExp(`unit-step\\.mjs\\s+(${UNIT_ID_SOURCE})(?=[\\s"\\\\]|$)`, 'g');
+// A slash command the owner typed is a user line that opens with command markup (`<command-name>/clear</command-name>`;
+// transcripts hold the `<command-message>` tag first as well). The same tag inside a tool result, an assistant turn
+// or a sentence is not one. The two that reset the context are counted.
+const COMMAND_START = /^\s*<command-(?:name|message)>/;
+const COMMAND_NAME = /<command-name>\s*\/([^<\s]+)\s*<\/command-name>/;
+const CONTEXT_COMMANDS = new Set(['clear', 'compact']);
 // Words too common to start or end a friction theme.
 const STOP = new Set(
   'about above after again also because been before being between both could does doing done during each from have having here into just like made make many more most much must need never only other over same should since some such than that their them then there these they this those through under until very were what when where which while with would your unit units step steps time times owner the and for was but not its one two all any can did had has how out own see set per via new off are'.split(
@@ -115,6 +123,7 @@ const round1 = (v) => Math.round(v * 10) / 10;
 const round2 = (v) => Math.round(v * 100) / 100;
 const usd = (v) => `$${Number(v ?? 0).toFixed(2)}`;
 const minutes = (m) => (Number.isFinite(m) ? fmtMinutes(m) : '—');
+const span = (m) => (Number.isFinite(m) && m < 1 ? `${Math.round(m * 60)}s` : minutes(m)); // a run can be seconds
 const clip = (s, n) => (s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s);
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const clean = (cell) => (EMPTY.test(oneLine(cell)) ? '' : oneLine(cell));
@@ -326,6 +335,38 @@ export function markerUnits(text) {
   return new Set([...String(text ?? '').matchAll(MARKER_CMD)].map((m) => m[1]));
 }
 
+/**
+ * The context command (`clear` or `compact`) a parsed transcript line is, when the owner typed it; else
+ * null. The line must be an owner prompt (unit-cost-core's isOwnerPrompt, the one definition: a tool result,
+ * a sidechain line, an assistant turn or a peer's message never is) and open with command markup.
+ */
+export function contextCommand(d) {
+  if (!isOwnerPrompt(d)) return null;
+  const c = d.message?.content;
+  const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((x) => x?.type === 'text').map((x) => String(x.text ?? '')).join('') : '';
+  if (!COMMAND_START.test(text)) return null;
+  const name = COMMAND_NAME.exec(text)?.[1];
+  return CONTEXT_COMMANDS.has(name) ? name : null;
+}
+
+/** A main-thread transcript's text -> its context commands in file order: [{ ts, name }]. A line with no readable time is skipped. */
+export function contextCommands(text) {
+  const out = [];
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.includes('command-name')) continue; // most lines: not parsed
+    let d;
+    try {
+      d = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = Date.parse(d?.timestamp);
+    const name = Number.isFinite(ts) ? contextCommand(d) : null;
+    if (name) out.push({ ts, name });
+  }
+  return out;
+}
+
 // A description names a unit when its id stands alone: `EP-27.0` is not named by `EP-27.04`.
 const namesUnit = (unit) => new RegExp(`(?:^|[^A-Za-z0-9.])${escapeRe(unit)}(?![A-Za-z0-9]|\\.[A-Za-z0-9])`);
 
@@ -496,6 +537,60 @@ export function transcriptKpis(rows, events, { since, until }) {
     rewrites: cache.rewrites,
     rewriteUsd: round2(cache.rewriteDollars),
     rewriteShare: claude.main > 0 ? round1((cache.rewriteDollars / claude.main) * 100) : 0,
+  };
+}
+
+/**
+ * How much the owner had to touch the window's main-thread transcripts: the prompts typed (isOwnerPrompt),
+ * the /clear and /compact among them (`commands`: contextCommands, tagged like the events), and the median
+ * agent run -- from a prompt to the last main-thread record before the next prompt of the same session, or
+ * before its end, in minutes. A run belongs to the window its prompt is in, whenever it ends. An answer to
+ * a question tool is a tool result, not a prompt, so it does not end a run; a typed /clear is a prompt
+ * with a run of about nothing. `events` are parseEvents' of every session, each tagged `session` (retro-gather).
+ * Per unit: over the `units` landed in the window, null with none. Null when the window holds no event.
+ */
+export function ownerKpis(events, commands, { since, until, units }) {
+  if (!events.some((e) => inWindow(e.ts, since, until))) return null;
+  const threads = new Map();
+  for (const e of events) {
+    const key = e.session ?? null;
+    if (!threads.has(key)) threads.set(key, []);
+    threads.get(key).push(e);
+  }
+  // A typed /clear or /compact is an owner prompt, but no work follows it: it counts as a prompt
+  // and stays out of the run median, which it would otherwise pull towards zero.
+  const typedAt = new Set(commands.map((c) => `${c.session ?? null}|${c.ts}`));
+  const runs = [];
+  let prompts = 0;
+  for (const [session, list] of threads) {
+    let start = null;
+    let end = null;
+    const close = () => {
+      if (start === null || !inWindow(start, since, until)) return;
+      prompts += 1;
+      if (!typedAt.has(`${session}|${start}`)) runs.push(end - start);
+    };
+    for (const e of list.sort((x, y) => x.ts - y.ts)) {
+      if (e.type === 'prompt') {
+        close();
+        start = e.ts;
+      }
+      end = e.ts;
+    }
+    close();
+  }
+  const typed = commands.filter((c) => inWindow(c.ts, since, until));
+  const clears = typed.filter((c) => c.name === 'clear').length;
+  const compacts = typed.filter((c) => c.name === 'compact').length;
+  const perUnit = (n) => (units > 0 ? round1(n / units) : null);
+  const mid = median(runs);
+  return {
+    prompts,
+    clears,
+    compacts,
+    promptsPerUnit: perUnit(prompts),
+    commandsPerUnit: perUnit(clears + compacts),
+    runMin: mid === null ? null : round1(mid / 60_000),
   };
 }
 
@@ -714,8 +809,9 @@ function warningsFor(d, records, claudeRows, leftOut = []) {
 /**
  * Everything the digest and the export say, from what retro-gather read: `g` is { log: { text,
  * dates }, followUps: { text, dates } | null, states: [{ text, changed }], steps: Map unit -> markers,
- * rows, events, sessionUnits: Map session -> Set of units, sessions, ledger: entries | null, codex:
- * [parsed Codex threads], claudeRuns: entries | null, previous: [data] }; `columns` as for logRecords.
+ * rows, events (each tagged with its session), commands (contextCommands, tagged the same), sessionUnits:
+ * Map session -> Set of units, sessions, ledger: entries | null, codex: [parsed Codex threads],
+ * claudeRuns: entries | null, previous: [data] }; `columns` as for logRecords.
  */
 export function buildRetro(g, { project, now, since = null, until = null, columns = undefined }) {
   const win = windowFor({ since, until, now, previous: g.previous });
@@ -740,6 +836,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
   }
   const states = g.states.map((s) => ({ ...stateSummary(s.text), changed: s.changed }));
   const recent = states.filter((s) => inWin(s.changed));
+  const log = logKpis(records, win.since, win.until);
   const sum = (list, pick) => list.reduce((acc, s) => {
     for (const [k, v] of Object.entries(pick(s))) acc[k] = (acc[k] ?? 0) + v;
     return acc;
@@ -754,8 +851,9 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     generated: iso(now),
     sources: readCounts(g, records),
     kpis: {
-      log: logKpis(records, win.since, win.until),
+      log,
       transcripts: g.rows.length ? transcriptKpis(g.rows, g.events, win) : null,
+      owner: ownerKpis(g.events ?? [], g.commands ?? [], { ...win, units: log.units }),
       codex: g.ledger ? summarizeLedger(g.ledger, { since: win.since, until: win.until }) : null,
       codexHost: g.codex?.length ? codexHostKpis(g.codex, win) : null,
       claudeRuns: g.claudeRuns ? claudeRunKpis(g.claudeRuns, win) : null,
@@ -763,6 +861,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     baseline: {
       log: logKpis(records, win.baselineSince, win.since),
       transcripts: previousKpis(g.previous, win.week),
+      owner: previousKpis(g.previous, win.week, 'owner'),
       codexHost: previousKpis(g.previous, win.week, 'codexHost'),
     },
     unitOutliers: unitOutliers(records, win),
@@ -820,6 +919,17 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
       `| Cache hit · expiry rewrites | ${t.cacheHit}% · ${t.rewrites} (${usd(t.rewriteUsd)}, ${t.rewriteShare}% of main) | ${base('cacheHit', (v) => `${v}%`)} · ${base('rewriteShare', (v) => `${v}% of main`)} |`,
     );
   } else L.push('| Transcripts | none found for this repository | — |');
+  const o = d.kpis.owner;
+  if (o) {
+    const bo = d.baseline.owner;
+    const ob = (key, fmt = String) => (bo && bo[key] !== null && bo[key] !== undefined ? fmt(bo[key]) : '—');
+    const per = (v) => (v === null || v === undefined ? '—' : String(v));
+    L.push(
+      `| Owner prompts per unit | ${per(o.promptsPerUnit)} (${o.prompts} ÷ ${k.units} unit${k.units === 1 ? '' : 's'}) | ${ob('promptsPerUnit')} |`,
+      `| /clear · /compact per unit | ${per(o.commandsPerUnit)} (${o.clears} · ${o.compacts}) | ${ob('commandsPerUnit')} |`,
+      `| Agent run between owner prompts (median) | ${span(o.runMin)} | ${ob('runMin', span)} |`,
+    );
+  }
   const r = d.kpis.claudeRuns;
   if (r) L.push(`| Claude runs (claude-run) · spend | ${r.runs} · ${usd(r.usd)} | — |`);
   const c = d.kpis.codex;

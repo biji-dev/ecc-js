@@ -110,8 +110,8 @@ call it; never maintain the same sequence in three skill files.
   `plan-conformance-auditor.md`, `blast-radius-auditor.md`, `claim-auditor.md`,
   `implementer.md`.
 - **Hooks:** the commit guard is a git hook, not a Claude hook, so every agent
-  and every human is guarded. The context-budget hook is Claude-only
-  (`context.md`).
+  and every human is guarded. The context-budget and session-resume hooks are
+  Claude-only (`context.md`).
 - **Hooks read their stdin JSON** (`tool_name`, `tool_input`, `cwd`, the transcript
   path). Never an environment variable the hook documentation does not list: an
   inline hook reading `$CLAUDE_FILE_PATHS` depends on something no release promises
@@ -154,9 +154,10 @@ call it; never maintain the same sequence in three skill files.
   { "hooks": { "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/edit-guard.mjs\"", "timeout": 10 }] }] } }
   ```
 - **Each hook ships with its test** (`templates/scripts/lib/command-guard.test.mjs`,
-  `edit-guard.test.mjs`, `context-budget.test.mjs`), installed to `scripts/lib/`. The
-  test drives the installed hook with the payload the host sends, so the project's
-  counted `harness` gate fails the day an edit breaks it.
+  `edit-guard.test.mjs`, `context-budget.test.mjs`, `session-resume.test.mjs`),
+  installed to `scripts/lib/`. The test drives the installed hook with the payload
+  the host sends, so the project's counted `harness` gate fails the day an edit
+  breaks it.
 - **The review workflow** (optional, Full tier) — `templates/workflows/review.workflow.js`,
   installed to `.claude/workflows/review.workflow.js` and run by name with the Workflow
   tool. Its `MODELS`, `AGENTS` and `TRIGGERS` block is `[B]`; it passes `model` and

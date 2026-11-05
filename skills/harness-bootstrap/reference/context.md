@@ -212,6 +212,41 @@ Merge into existing `hooks` arrays; never replace them. `CONTEXT_BUDGET_WARN` an
 band state (default: the system temp directory). Other agents have no equivalent
 hook surface yet — the switch line and the compaction rule still apply there.
 
+## The session-resume hook — opt-in
+
+`templates/session-resume.mjs` — a Claude Code `SessionStart` hook. After a
+compaction, a `/clear`, a resume or a startup it reads the registry's held and parked
+rows and each one's state file, and puts the resume point into the new context: per
+unit its step, branch and worktree, the state file's `## Next`, its open `Q-n` cards,
+its `Grant:` and `Stop:` lines, then the inbox (`gate-design.md` › Parking a unit).
+After a compaction it says to continue the held unit's next step through step 0a; on
+the other sources it is context only, so opening a session never starts work.
+
+- reads files only, plus `git rev-parse` for the main checkout; never writes,
+  never blocks, exits 0 on any error, and says nothing when no row is held or parked;
+- caps its text at `MAX_BYTES`, held rows first;
+- never sets `initialUserMessage`: a session that starts work on its own is a run
+  the owner did not start.
+
+`CLAUDE.md` and `AGENTS.md` are re-read after a compaction; the unit's state is not,
+which is why the owner used to paste it as a keep-line. Other hosts keep the rule: a
+post-compaction turn reads the state file first.
+
+Install only when the owner agrees: copy it to `.claude/hooks/session-resume.mjs`, its
+test `templates/scripts/lib/session-resume.test.mjs` to `scripts/lib/`, and add to
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-resume.mjs\"", "timeout": 10 }] }]
+  }
+}
+```
+
+`[B]` `REGISTRY` (the guard's), `STATE_DIR` (`unit-step-core.mjs`'s `STEPS_DIR`) and
+`MAX_BYTES`.
+
 `[M]` **No per-turn model-calling hooks.** A plugin that ran a model review on
 every stop was 5–8% of spend in the measured project.
 

@@ -1,6 +1,6 @@
 /**
  * Tests for the harness-bootstrap project tests (skills/harness-bootstrap/templates/scripts/lib):
- * the command-guard, edit-guard, commit-guard, context-budget and run-gates suites a project runs
+ * the command-guard, edit-guard, commit-guard, context-budget, session-resume and run-gates suites a project runs
  * against its installed copies. Lays the templates out as an install does, binds the [B] lines a
  * fresh install binds, runs each suite hermetically with its count pinned, then proves each can
  * fail by mutating the installed copy it tests.
@@ -21,6 +21,7 @@ const SUITES = {
   'edit-guard': 9,
   'harness-guard': 12,
   'context-budget': 8,
+  'session-resume': 8,
   'run-gates': 10,
 };
 
@@ -29,6 +30,7 @@ const LAYOUT = [
   ['command-guard.mjs', '.claude/hooks/command-guard.mjs'],
   ['edit-guard.mjs', '.claude/hooks/edit-guard.mjs'],
   ['context-budget.mjs', '.claude/hooks/context-budget.mjs'],
+  ['session-resume.mjs', '.claude/hooks/session-resume.mjs'],
   ['harness-guard.sh', '.githooks/pre-commit'],
   ['harness-guard.sh', '.githooks/pre-merge-commit'],
   ['run-gates.sh', 'scripts/run-gates.sh'],
@@ -316,6 +318,24 @@ mutantFails(
   '.claude/hooks/context-budget.mjs',
   'const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 220_000);',
   'const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 900_000);',
+);
+mutantFails(
+  'a session resume that counts row 0, the mainline, as held',
+  '.claude/hooks/session-resume.mjs',
+  'if (!/^[1-9][0-9]*$/.test(',
+  'if (!/^[0-9]+$/.test(',
+);
+mutantFails(
+  'a session resume that also reads rows outside the marked sections',
+  '.claude/hooks/session-resume.mjs',
+  'const body = lines.slice(begin + 1, end).filter(',
+  'const body = lines.filter(',
+);
+mutantFails(
+  'a session resume whose STATE_DIR was rebound, which its own suite would read back',
+  '.claude/hooks/session-resume.mjs',
+  "export const STATE_DIR = 'docs/plans';",
+  "export const STATE_DIR = 'docs/state';",
 );
 mutantFails(
   'a runner that matches the count regex on the coloured log',

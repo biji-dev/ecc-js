@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+// harness-bootstrap session-resume hook (generated YYYY-MM-DD). Claude Code, SessionStart.
+// [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding: REGISTRY, STATE_DIR
+// and MAX_BYTES below, re-derived per project: the commit guard's REGISTRY, the directory its state
+// files sit in (unit-step-core.mjs's STEPS_DIR) and the cap on what this puts into the context.
+// Auto-compaction is the reset; this restores the unit. On a compaction, a clear, a resume or a
+// startup it reads the registry's held and parked rows and each unit's state file, and hands the
+// model the resume point the owner used to paste by hand:
+//   compact                 -> continue the held unit's next step (Step 0a: verify, do not trust the marker)
+//   startup, resume, clear  -> context only: nothing starts until the owner asks
+// The registry and the state files are the record; a compaction summary is not (harness-bootstrap's
+// reference/context.md). Reads files and runs `git rev-parse` only: never writes, never blocks, never
+// starts work, and says nothing when no row is held or parked, or when anything fails.
+import { execFileSync } from 'node:child_process';
+import { readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+export const REGISTRY = '.claude/registry.md'; // [B] the lock file, relative to the main checkout (the guard's REGISTRY)
+export const STATE_DIR = 'docs/plans'; // [B] where <unit>.state.md sits in the unit's checkout (unit-step-core.mjs's STEPS_DIR)
+export const MAX_BYTES = 4000; // [B] the cap on the text put into the context
+
+const SOURCES = ['startup', 'resume', 'clear', 'compact'];
+const NEXT_LINES = 3; // the first non-empty lines of `## Next` that are quoted
+const CLIP = 160; // characters of any one quoted cell or line
+const GIT_TIMEOUT_MS = 2000;
+// A unit id names a file (unit-step-core.mjs's UNIT_ID_SOURCE): one `/` at most, each segment starting
+// with a letter or digit, so an absolute id never matches; `..` inside a segment is refused on its own.
+const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+const PLACEHOLDER = /^(?:-|—|n\/a|none)$/i;
+const QID = /^Q-\d+$/;
+// A table with no header row reads in the documented column order (harness-bootstrap's
+// reference/commit-guard.md › The registry) (harness-bootstrap's reference/gate-design.md › Parking a unit).
+const DEFAULT_HEADER = {
+  active: ['#', 'unit', 'step', 'branch', 'worktree', 'resources', 'claimed (utc)'],
+  parked: ['unit', 'gate', 'parked (utc)', 'branch', 'worktree', 'cards'],
+};
+const CLOSING = {
+  compact: "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
+  parkedOnly: "No unit is held; parked units wait for the owner's answers.",
+  context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the queue.',
+};
+
+const clip = (value) => {
+  const s = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return s.length > CLIP ? `${s.slice(0, CLIP - 1)}…` : s;
+};
+const cellsOf = (line) => (/^\s*\|/.test(line) ? line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()) : null);
+const isSep = (line) => /^\s*\|[\s:|-]*-[\s:|-]*$/.test(line);
+const trimCell = (value) => String(value ?? '').replace(/^[\s`]+|[\s`]+$/g, '');
+
+/**
+ * The table between `<!-- harness:<name> -->` and `<!-- /harness:<name> -->`, read as the commit guard
+ * reads the active one: the header is the row right above a |---| row inside the markers, else the
+ * table header right above the begin marker (markers around the data rows only), else the documented
+ * order. { header: lower-cased names, rows: cells } or null without both markers. Nothing outside is read.
+ */
+export function section(text, name) {
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  const begin = lines.findIndex((l) => l.includes(`<!-- harness:${name} -->`));
+  const end = lines.findIndex((l, i) => i > begin && l.includes(`<!-- /harness:${name} -->`));
+  if (begin < 0 || end < 0) return null;
+  const above = begin >= 2 && isSep(lines[begin - 1]) && cellsOf(lines[begin - 2]) ? lines[begin - 2] : null;
+  const body = lines.slice(begin + 1, end).filter((l) => cellsOf(l));
+  const at = body.findIndex((l, i) => i + 1 < body.length && isSep(body[i + 1]));
+  const header = at >= 0 ? body[at] : above;
+  const rows = body.filter((l, i) => i !== at && !isSep(l)).map(cellsOf);
+  return { header: header ? cellsOf(header).map((c) => trimCell(c).toLowerCase()) : DEFAULT_HEADER[name], rows };
+}
+
+/** A Worktree cell as the guard reads it: the first word, a placeholder (-, n/a, none) read as empty. */
+function worktreeCell(value) {
+  const wt = String(value ?? '').replace(/`/g, '').trim().split(/\s/)[0].split('·')[0];
+  return PLACEHOLDER.test(wt) ? '' : wt;
+}
+
+/** Each row's cells by header name: Unit (Task in an older registry), Step, Branch, Worktree, Gate, Parked, Cards. */
+function byName(header, cells) {
+  const at = (...names) => {
+    const i = header.findIndex((h) => names.some((n) => h === n || h.startsWith(`${n} `)));
+    return i >= 0 ? trimCell(cells[i]) : '';
+  };
+  return { unit: at('unit', 'task'), step: at('step'), branch: at('branch'), worktree: worktreeCell(at('worktree')), gate: at('gate'), since: at('parked'), cards: at('cards') };
+}
+
+/** The registry's held rows, then its parked ones. Held: a first cell of 1 or more (row 0 is the mainline, never held). */
+export function registryRows(text) {
+  const out = [];
+  const active = section(text, 'active');
+  for (const cells of active?.rows ?? []) {
+    if (!/^[1-9][0-9]*$/.test((cells[0] ?? '').replace(/\s/g, ''))) continue;
+    out.push({ kind: 'held', ...byName(active.header, cells) });
+  }
+  const parked = section(text, 'parked');
+  for (const cells of parked?.rows ?? []) {
+    const row = byName(parked.header, cells);
+    if (row.unit && !PLACEHOLDER.test(row.unit)) out.push({ kind: 'parked', ...row });
+  }
+  return out;
+}
+
+/**
+ * A state file's `Key: value` header lines (before the first `##`, keys lower-cased, the first of each
+ * kept) and its sections by the heading's first word (harness-bootstrap's reference/scope-guard.md › The state file).
+ */
+export function readState(text) {
+  const head = {};
+  const sections = {};
+  let at = null;
+  for (const line of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+    const h = /^##\s+(\w+)/.exec(line);
+    if (h) {
+      at = h[1].toLowerCase();
+      sections[at] ??= [];
+    } else if (at !== null) {
+      sections[at].push(line);
+    } else {
+      const kv = /^([A-Za-z][A-Za-z ]*?):\s*(.*)$/.exec(line);
+      if (kv && !(kv[1].toLowerCase() in head)) head[kv[1].toLowerCase()] = kv[2].trim();
+    }
+  }
+  return { head, sections };
+}
+
+/**
+ * The open owner questions in `## Decisions`: lines whose first table cell or first word is Q-<n>. A
+ * card is a Q-n row until it is answered and becomes a DEC row, so every Q row present is open. A table
+ * row is quoted by its Question or Decision cell, else its other cells.
+ */
+export function openQuestions(lines = []) {
+  const out = [];
+  let header = null;
+  lines.forEach((line, i) => {
+    const cells = cellsOf(line);
+    if (cells) {
+      if (isSep(line)) return;
+      if (i + 1 < lines.length && isSep(lines[i + 1])) {
+        header = cells.map((c) => c.toLowerCase());
+        return;
+      }
+      const id = trimCell(cells[0]);
+      if (!QID.test(id)) return;
+      const q = header ? header.findIndex((h, j) => j > 0 && /^(?:question|decision)\b/.test(h)) : -1;
+      out.push(`${id} ${clip(q > 0 && cells[q] ? cells[q] : cells.slice(1).filter(Boolean).join(' · '))}`.trim());
+      return;
+    }
+    const m = /^\s*(?:[-*+]\s+)?(Q-\d+)\b[\s·:.,—–-]*(.*)$/.exec(line);
+    if (m) out.push(`${m[1]} ${clip(m[2])}`.trim());
+  });
+  return out;
+}
+
+const nextLines = (lines = []) => lines.map((l) => clip(l.replace(/^\s*[-*+]\s+/, ''))).filter(Boolean).slice(0, NEXT_LINES);
+
+/** A row's state file, read from the checkout its Worktree cell names: { head, sections } or { note }. */
+function stateOf(row, root) {
+  if (!UNIT_ID.test(row.unit) || row.unit.includes('..')) return { note: `state file not read: '${clip(row.unit)}' is not a unit id` };
+  const checkout = !row.worktree || row.worktree === 'main' || row.worktree === '.' ? root : resolve(root, row.worktree);
+  const file = join(checkout, STATE_DIR, `${row.unit}.state.md`);
+  try {
+    return readState(readFileSync(file, 'utf8'));
+  } catch {
+    return { note: `state file not found: ${relative(root, file).split(sep).join('/')}` };
+  }
+}
+
+/** One row's lines: its head line, then what its state file says (or why it says nothing). */
+export function unitLines(row, { head = {}, sections = {}, note } = {}) {
+  const parts = (list) => list.filter(Boolean).map(clip).join(' · ');
+  const lines = [];
+  if (row.kind === 'held') {
+    lines.push(`HELD ${parts([row.unit, row.step && `step ${row.step}`, row.branch, row.worktree || 'main', head.tier && `tier ${head.tier}`])}`);
+  } else {
+    const gate = [row.gate, row.since && `since ${row.since}`].filter(Boolean).join(' ') || head.parked;
+    lines.push(`PARKED ${parts([row.unit, gate, row.cards])}`);
+  }
+  if (note) return [...lines, `  ${note}`];
+  const next = nextLines(sections.next);
+  if (next.length) lines.push(`  next: ${next.join(' / ')}`);
+  // a parked row's Cards cell already names its open cards
+  const open = row.kind === 'parked' && row.cards ? [] : openQuestions(sections.decisions);
+  if (open.length) lines.push(`  open: ${open.join(' · ')}`);
+  // `; ` between these: a Grant line lists its own terms with ` · `
+  const terms = [row.kind === 'held' && head.parked && `parked: ${head.parked}`, head.grant && `grant: ${head.grant}`, head.stop && `stop: ${head.stop}`];
+  if (terms.some(Boolean)) lines.push(`  ${terms.filter(Boolean).map(clip).join('; ')}`);
+  return lines;
+}
+
+/** The first line, the body and the closing line, held to `max` bytes: whole body lines while they fit, then how many were cut. */
+export function capped(first, body, last, max = MAX_BYTES) {
+  const size = (ls) => Buffer.byteLength(ls.join('\n'));
+  if (size([first, ...body, last]) <= max) return [first, ...body, last].join('\n');
+  const tail = (n) => `… ${n} more lines: read ${REGISTRY} and the state files`;
+  const kept = [];
+  for (const line of body) {
+    if (size([first, ...kept, line, tail(body.length - kept.length - 1), last]) > max) break;
+    kept.push(line);
+  }
+  return [first, ...kept, tail(body.length - kept.length), last].join('\n');
+}
+
+/** The text for a SessionStart from `source`, or null with no held or parked row. */
+export function resumeText(source, rows, root) {
+  if (!rows.length) return null;
+  const first = `[session-resume] ${source}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
+  const body = rows.flatMap((row) => unitLines(row, stateOf(row, root)));
+  const held = rows.some((row) => row.kind === 'held');
+  return capped(first, body, source !== 'compact' ? CLOSING.context : held ? CLOSING.compact : CLOSING.parkedOnly);
+}
+
+/** The main checkout, as the commit guard finds it: the parent of git's common dir when that is a .git, else the top level. */
+export function mainCheckout(dir) {
+  const git = (cwd, arg) => execFileSync('git', ['rev-parse', arg], { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const top = git(dir, '--show-toplevel');
+  const common = resolve(top, git(top, '--git-common-dir'));
+  return realpathSync(basename(common) === '.git' ? dirname(common) : top);
+}
+
+async function main() {
+  try {
+    let raw = '';
+    for await (const chunk of process.stdin) raw += chunk;
+    const input = JSON.parse(raw || '{}');
+    if (input.hook_event_name !== 'SessionStart') return;
+    const dir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
+    if (!dir) return;
+    // the registry lives in the main checkout, so every linked worktree reads the same lock
+    const root = mainCheckout(dir);
+    const rows = registryRows(readFileSync(join(root, REGISTRY), 'utf8'));
+    const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root);
+    if (text) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }));
+  } catch {
+    // No registry, not a checkout, or anything else: a resume note must never break a session's start.
+  }
+}
+
+// import.meta.url is a realpath, so compare against the realpath of argv[1] (a symlinked hooks
+// or project dir, or macOS /var -> /private/var, would otherwise make the hook silently do nothing).
+function isMain() {
+  const arg = process.argv[1] ?? '';
+  let resolved = arg;
+  try {
+    resolved = realpathSync(arg);
+  } catch {
+    // keep the plain path
+  }
+  return import.meta.url === pathToFileURL(resolved).href;
+}
+
+if (isMain()) {
+  await main();
+  process.exit(0);
+}

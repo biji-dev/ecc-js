@@ -457,7 +457,8 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
 });
 
 // ---- the registry: the parked table is the owner's inbox
-// A registry as the commit guard reads it, with the parked table after the active one (commit-guard.md › The registry).
+// A registry as the commit guard reads it, with the parked table after the active one
+// (harness-bootstrap's reference/commit-guard.md › The registry).
 const activeSection = (rows) =>
   ['<!-- harness:active -->', '| # | Unit | Step | Branch | Worktree | Resources | Claimed (UTC) |', '|---|---|---|---|---|---|---|', '| 0 | mainline — never claimed | | | main | | |', ...rows, '<!-- /harness:active -->'].join('\n');
 const PARKED_HEAD = ['| Unit | Gate | Parked (UTC) | Branch | Worktree | Cards |', '|---|---|---|---|---|---|'];

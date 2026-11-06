@@ -31,6 +31,7 @@ const FORK_OWNED = [
   'library/**',
   'FORK.md',
   'docs/ECC-JS.md',
+  'docs/HARNESS.md',
   '.github/workflows/fork-*.yml',
   '.claude/rules/ecc-js-fork.md',
   'skills/biji-*/**',

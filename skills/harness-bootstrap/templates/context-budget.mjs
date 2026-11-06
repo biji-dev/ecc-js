@@ -1,26 +1,26 @@
 #!/usr/bin/env node
-// harness-bootstrap context-budget hook (generated YYYY-MM-DD). Claude Code, Stop + UserPromptSubmit + PostToolUse.
+// harness-bootstrap context-budget hook (generated YYYY-MM-DD). Claude Code, UserPromptSubmit + PostToolUse.
 // [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding: the WARN, GATE_TEXT,
 // MARGIN and DEFAULT_LIMIT figures and BAND below, re-derived per project from its harness file's
 // Context budget section.
 // Every API call re-reads the whole context, so a session at 900K costs ~4x one at 200K per
 // turn. This reads the main thread's last `usage` from the transcript (none since a compaction: it
 // stays silent until the next reply) and:
-//   Stop             -> systemMessage to the user (a /compact is welcome; the work continues)
-//   UserPromptSubmit -> additionalContext to the model (offer a /compact at a step boundary; keep working)
+//   UserPromptSubmit -> additionalContext to the model (keep the state file current; keep working)
 //   PostToolUse      -> the same, so a session that runs on while the owner is away (no prompts)
 //                       still sees the figure; past GATE_TEXT only, once per BAND or level change
-// Below WARN only the model hears: the figure (UserPromptSubmit), and past GATE_TEXT that an owner gate
-// goes out as text so idle compaction can run while it waits. The limit sits MARGIN under the
-// auto-compact window Claude Code uses, so "compaction imminent" arrives before the compaction does.
+//   Stop             -> nothing: the owner never manages the context (v8); kept so v7 settings still run
+// Only the model hears: the figure (UserPromptSubmit), and past GATE_TEXT that an owner gate goes out
+// as text so idle compaction can run while it waits. The limit sits MARGIN under the auto-compact
+// window Claude Code uses, so "compaction imminent" arrives before the compaction does.
 // Never blocks; never fails the turn.
 import { openSync, readSync, fstatSync, closeSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 220_000); // [B] past this, the model and the owner are told
-export const GATE_TEXT = 150_000; // [B] past this, an owner gate goes out as text and the turn ends
+const WARN = Number(process.env.CONTEXT_BUDGET_WARN ?? 220_000); // [B] past this, the model sends reading to subagents
+export const GATE_TEXT = 150_000; // [B] past this, an owner gate goes out as text, not a question tool
 const MARGIN = 40_000; // [B] the limit sits this far under the auto-compact window (compaction fired ~33K under it)
 const DEFAULT_LIMIT = 260_000; // [B] with no window set: the harness's 300K window less MARGIN
 const TAIL_BYTES = 4 * 1024 * 1024;
@@ -127,22 +127,15 @@ export function budgetMessage(event, ctx, { warn = WARN, limit = DEFAULT_LIMIT, 
   const gate = Math.min(GATE_TEXT, warn);
   if (ctx < warn) {
     if (event !== 'UserPromptSubmit' && !(event === 'PostToolUse' && ctx >= gate)) return null;
-    const note = ctx < gate ? '' : `; past ${gate / 1000}K an owner gate goes out as text, then the turn ends`;
+    const note = ctx < gate ? '' : `; past ${gate / 1000}K an owner gate goes out as text, not a question tool`;
     return { hookSpecificOutput: { hookEventName: event, additionalContext: `[context-budget] ~${k} (under ${warn / 1000}K${note}).` } };
   }
   const over = ctx >= limit;
   const basis = window ? `${(window - limit) / 1000}K under the ${window / 1000}K auto-compact window` : 'harness file, "Context budget"';
-  if (event === 'Stop') {
-    return {
-      systemMessage: over
-        ? `Context ${k} - over the ${limit / 1000}K budget; every turn re-reads ~${k} tokens. /compact at a step boundary if you are here; otherwise the session continues and auto-compaction takes over.`
-        : `Context ${k} - past ${warn / 1000}K. A /compact at the next step boundary helps if you are here (or /clear and the runner's resume command while it waits on you at a gate); the work does not wait for it.`,
-    };
-  }
   if (event === 'UserPromptSubmit' || event === 'PostToolUse') {
     const additionalContext = over
-      ? `[context-budget] Main-thread context is ~${k} tokens, over the ${limit / 1000}K budget (${basis}). Auto-compaction ${window ? 'is imminent' : 'can land on any turn'}: make sure the state file is current (decision log, step done / next, open findings) and keep working. At an owner gate, the cards go out as text and the turn ends. Do not stop, and never ask for a new session.`
-      : `[context-budget] Main-thread context is ~${k} tokens, past the ${warn / 1000}K mark; the budget is ${limit / 1000}K (${basis}). At the next step boundary, update the state file and offer the owner a /compact with the keep-line ready to paste, then continue without waiting. At an owner gate, give the cards as text with /clear and the runner's resume command, and end the turn. Never ask for a new session; delegate bulk reading to subagents.`;
+      ? `[context-budget] Main-thread context is ~${k} tokens, over the ${limit / 1000}K budget (${basis}). Auto-compaction ${window ? 'is imminent' : 'can land on any turn'}: make sure the state file is current (decision log, step done / next, open findings) and keep working; the compaction is the reset. At an owner gate, park the unit with its cards as text and go on. Never offer the owner /compact or /clear, and never ask for a new session.`
+      : `[context-budget] Main-thread context is ~${k} tokens, past the ${warn / 1000}K mark; the budget is ${limit / 1000}K (${basis}). Keep the state file current at every step boundary, send reading-heavy steps (grounding, run-and-report, doc sweeps) to subagents, and keep working: auto-compaction is the reset. At an owner gate, park the unit with its cards as text and go on. Never offer the owner /compact or /clear, and never ask for a new session.`;
     return { hookSpecificOutput: { hookEventName: event, additionalContext } };
   }
   return null;

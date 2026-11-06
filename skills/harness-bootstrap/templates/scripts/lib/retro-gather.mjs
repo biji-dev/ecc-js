@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { markerUnits, previousData } from './retro-core.mjs';
+import { contextCommands, markerUnits, previousData } from './retro-core.mjs';
 import {
   CLAUDE_LEDGER_DIR,
   codexProjectSessions,
@@ -228,7 +228,8 @@ function addSteps(steps, markers, fallback) {
  * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` (a path or a list, see
  * readFollowUps) and `plansDirs` are relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
- * `top` and its worktrees whose main file changed since `sinceMs`, and so are a Codex host's threads
+ * `top` and its worktrees whose main file changed since `sinceMs` (a main thread's events and its typed
+ * /clear and /compact commands carry the session's id), and so are a Codex host's threads
  * (rollouts under `codexDir`, streamed: one can pass 512 MB).
  */
 export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, codexDir = codexSessionsDir(), ledger = null, claudeLedger = null, sinceMs = 0 }) {
@@ -241,6 +242,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     steps: new Map(),
     rows: [],
     events: [],
+    commands: [],
     sessionUnits: new Map(),
     sessions: 0,
     ledger: null,
@@ -266,7 +268,8 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
       const text = readText(file);
       for (const r of parseTranscript(text, ctx)) g.rows.push(r); // a loop: a long session overflows a spread
       if (ctx.kind !== 'main') continue;
-      for (const e of parseEvents(text)) g.events.push(e);
+      for (const e of parseEvents(text)) g.events.push({ ...e, session: id }); // a run ends with its own session's records
+      for (const c of contextCommands(text)) g.commands.push({ ...c, session: id });
       const units = markerUnits(text);
       if (units.size) g.sessionUnits.set(id, units);
     }

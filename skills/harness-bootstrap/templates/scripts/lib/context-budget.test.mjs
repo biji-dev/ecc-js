@@ -77,9 +77,12 @@ test('from the gate line up, the model hears that an owner gate goes out as text
   assert.doesNotMatch(at(GATE - 1_000, 'UserPromptSubmit'), /as text/);
 });
 
-test('at the warning mark Stop tells the owner; below it Stop is silent', () => {
-  assert.match(at(WARN, 'Stop'), /^Context /);
-  assert.equal(at(WARN - 1_000, 'Stop'), null);
+test('Stop is silent at every figure: the owner never manages the context', () => {
+  for (const tokens of [GATE - 1_000, WARN, LIMIT + 40_000]) assert.equal(at(tokens, 'Stop'), null, K(tokens));
+});
+
+test('past the warning mark the model is never told to offer /compact or /clear', () => {
+  for (const tokens of [WARN, LIMIT]) assert.doesNotMatch(at(tokens, 'UserPromptSubmit').replace(/never offer the owner \/compact or \/clear/i, ''), /\/compact|\/clear/);
 });
 
 test('at the limit the model hears it is over the budget, and PostToolUse says so once per band', () => {
@@ -100,5 +103,5 @@ test('a compaction since the last reply silences every event until the next repl
 test("subagent and synthetic records are not readings, and a subagent's compaction is not a boundary", () => {
   const synthetic = { type: 'assistant', message: { model: '<synthetic>', role: 'assistant', content: [], usage: { input_tokens: 0, output_tokens: 0 } } };
   const records = [user('hi'), reply(LIMIT + 40_000), reply(1_000, { isSidechain: true }), synthetic, compacted({ isSidechain: true })];
-  assert.match(said(run(records, 'Stop')), new RegExp(`over the ${K(LIMIT)} budget`));
+  assert.match(said(run(records, 'UserPromptSubmit')), new RegExp(`over the ${K(LIMIT)} budget`));
 });

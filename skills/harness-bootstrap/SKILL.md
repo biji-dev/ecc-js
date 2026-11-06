@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 7
+  version: 8
 ---
 
 # Harness bootstrap
@@ -90,14 +90,15 @@ orient:
 - **The record is written last, from the diff — fields generated, prose audited at Full by someone else.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
-- **Never ask the owner for a new session or a hand-off.**
+- **Never hand the context to the owner: no new session, hand-off, `/compact` or
+  `/clear`.** Start the next ready unit; never make the owner say what is next.
 - **An implementer may always raise a gate, never lower one.**
 - **P3s never start a fix round; a re-review reads the fix diff.** Review cost goes
   where the risk is (`gate-design.md` › Review lineup).
 - **Ask the owner only what only the owner can decide.** Product and confirmation
   decisions as decision cards; technical ones decided, logged and listed at Gate 2
   (`gate-design.md` › Who decides).
-- **One deliverable per coordinator context, each with a `Demo:` line** the owner
+- **One deliverable at a time, each with a `Demo:` line** the owner
   can open and check (`gate-design.md` › Milestone size).
 - **Never re-run a gate on a tree it already passed** (`run-gates.sh` reuses it).
 
@@ -148,7 +149,7 @@ decision sheet** — or of the Phase A assessment when nothing is installed.
 - **Never install alongside.** An existing runner keeps its name through the
   manifest's `roles`; two files governing the same steps is the drift the rules
   warn about. A log with rows in it is the strongest signal to preserve.
-- Apply only what the sheet approved, **only while no unit holds a registry row**,
+- Apply only what the sheet approved, **only while no registry row is held or parked**,
   then write `.agents/harness-manifest.json`.
 
 ### Phase A — Assess, route, and be willing to refuse
@@ -238,7 +239,7 @@ examples whose right answers differed, and how the same test yields the **risk
 map** (hot modules, critical code, cold modules, each entry citing its evidence)
 and the **merge policy** (the generated default: Small merges locally when clean;
 Full, never-auto and taste calls — copy, naming, visual identity — wait for the
-owner; push is always the owner's).
+owner; push is the owner's unless a run grant covers it).
 This is the piece that cannot be templated.
 
 Write all three into the **harness file** — the instruction file every agent reads,
@@ -278,7 +279,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |
 | `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); with `--times` and `--by-step`, where the time and money went; bind the price table and the dollars-per-percent calibration |
 | `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`): KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
-| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
+| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, `REGISTRY` (the guard's), the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
 | `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts, a Codex host's threads and the two run ledgers are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does and `CLAUDE_LEDGER_DIR` as `claude-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `scripts/intake.mjs` + `scripts/lib/intake-core.mjs` + its test | `templates/scripts/intake.mjs`, `templates/scripts/lib/intake-core.mjs`, `templates/scripts/lib/intake-core.test.mjs` | the Intake type: `--check` holds a drafted request to the owner sheet's properties, and `--gate1` makes unit 1's Gate 1 automatic while its approval still matches the claim (`intake.md`); bind `STRAY` |
@@ -308,7 +309,8 @@ answer when the owner just accepts:
 
 | Component | From | Needs | Default |
 |---|---|---|---|
-| `.claude/hooks/context-budget.mjs` + settings entry + `scripts/lib/context-budget.test.mjs` | `context.md`, `templates/context-budget.mjs`, `templates/scripts/lib/context-budget.test.mjs` | warns at a token budget and offers `/compact` instead of a hand-off | yes, on Claude Code |
+| `.claude/hooks/context-budget.mjs` + settings entry + `scripts/lib/context-budget.test.mjs` | `context.md`, `templates/context-budget.mjs`, `templates/scripts/lib/context-budget.test.mjs` | gives the model the context figure; past the warning, reading goes to subagents and nobody is offered `/compact` | yes, on Claude Code |
+| `.claude/hooks/session-resume.mjs` + settings entry + `scripts/lib/session-resume.test.mjs` | `context.md` › The session-resume hook, `templates/session-resume.mjs`, `templates/scripts/lib/session-resume.test.mjs` | puts the held and parked units and their state files into every new or compacted context, so nobody pastes a keep-line | yes, on Claude Code |
 | `.claude/hooks/leftover-processes.mjs` + settings entry, on Stop and UserPromptSubmit | `machine.md`, `templates/leftover-processes.mjs` | checks that start dev servers, emulators or browsers; bind `WORKTREES` and `MACHINE_WIDE` | yes, on Claude Code, where they do |
 | `scripts/run-gates.sh`, run as `bash scripts/run-gates.sh`, + `scripts/lib/run-gates.test.mjs` + `scripts/run-counted.mjs` + `scripts/lib/run-counted-core.mjs` + its test | `context.md`, `templates/run-gates.sh`, `templates/scripts/lib/run-gates.test.mjs`, `templates/scripts/run-counted.mjs`, `templates/scripts/lib/run-counted-core.mjs`, `templates/scripts/lib/run-counted-core.test.mjs` | no existing runner that reports every gate and never bails; test gates bound through run-counted, so a skip, a filter that matched nothing or zero tests is a FAIL (the runner's test holds every counted gate to it; `UNCOUNTED` names the exceptions); `SNAPSHOT_COPY` bound where untracked files would reach the FULL verify | yes, unless such a runner exists |
 | `scripts/codex-run.mjs` + `scripts/lib/codex-run-core.mjs` + its test + `scripts/lib/run-status.mjs` + its test | `cross-model.md`, `templates/scripts/codex-run.mjs`, `templates/scripts/lib/codex-run-core.mjs`, `templates/scripts/lib/codex-run-core.test.mjs`, `templates/scripts/lib/run-status.mjs`, `templates/scripts/lib/run-status.test.mjs` | a second model family's CLI installed and logged in | yes when it is; else skip and record cross-model passes `degraded` |
@@ -470,4 +472,4 @@ approves; the upgrade lands between runs and writes the manifest.
   pinned model otherwise wins, and the riskiest unit silently gets the cheapest
   reviewer. Every generated agent pins `effort: high`; never leave a session at
   `max` (`rules.md` §1 › Cost).
-- Never ask the owner to open a new session or paste a hand-off.
+- Never ask the owner to open a new session, paste a hand-off, `/compact` or `/clear`.

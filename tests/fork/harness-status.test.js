@@ -1131,6 +1131,19 @@ test('12b. v5\'s project files are lineage-neutral legacy entries too', () => {
   }
 });
 
+test("12c. v8's session-resume hook is a lineage-neutral legacy entry, known as the context-budget hook is", () => {
+  const hooks = ['.claude/hooks/session-resume.mjs', '.claude/hooks/context-budget.mjs'];
+  const rep = report(mk(Object.fromEntries(hooks.map(f => [f, 'x\n']))));
+  assert.strictEqual(rep.lineage.verdict, 'none');
+  const [resume, budget] = hooks.map(f => rep.entries.find(e => e.path === f));
+  assert.ok(resume, `no entry for ${hooks[0]}`);
+  assert.deepStrictEqual({ ...resume, path: budget.path }, budget);
+  assert.strictEqual(resume.status, 'legacy');
+  // with a manifest it is not invented as an entry
+  const man = mk({ [hooks[0]]: 'x\n', '.agents/harness-manifest.json': JSON.stringify({ schema: 1, modes: ['plan'], entries: [] }) });
+  assert.deepStrictEqual(report(man).entries, []);
+});
+
 test('13. a gitignored scaffold that is absent reads ignored, not missing', () => {
   const manifest = JSON.stringify({ schema: 1, modes: ['plan'], entries: [{ path: '.claude/registry.md', kind: 'scaffold' }, { path: 'docs/log.md', kind: 'scaffold' }] });
   const repo = mk({ '.agents/harness-manifest.json': manifest, '.gitignore': '.claude/registry.md\n' });
@@ -1270,6 +1283,53 @@ test('id-pattern: mutant that drops the character-after-the-match test changes t
   assert.ok(ids(report(cut)).includes('id-pattern-truncates'));
   const mutantCut = mutantOf('/[A-Z0-9.]/.test(ch)', 'false');
   assert.deepStrictEqual(idPatternIds(report(cut, mutantCut)), []);
+});
+
+// ── the registry's parked table ──────────────────────────────────────────────
+
+console.log("\nharness-status: the registry's parked table");
+
+const REGISTRY_HAZARDS = ['registry-no-markers', 'guard-missing', 'guard-snippet-only', 'merge-unguarded', 'lock-missing', 'id-pattern-truncates', 'id-pattern-invalid'];
+
+/** A registry: row 0 and `active` in the active table, then a parked table holding `parked` (gate-design.md › Parking a unit). */
+const parkedRegistry = (active, parked) => [
+  '# Registry', '<!-- harness:active -->',
+  '| # | Unit | Step | Branch | Worktree | Resources | Claimed (UTC) |', '|---|---|---|---|---|---|---|',
+  '| 0 | mainline — never claimed | | | main | | |', ...active,
+  '<!-- /harness:active -->', '',
+  '<!-- harness:parked -->',
+  '| Unit | Gate | Parked (UTC) | Branch | Worktree | Cards |', '|---|---|---|---|---|---|', ...parked,
+  '<!-- /harness:parked -->', '',
+].join('\n');
+
+/** A repo with the guard run by both hooks (core.hooksPath .githooks) and the given registry. */
+function guardedRepo(registryText) {
+  const run = '#!/bin/sh\nsh .githooks/harness-guard.sh\n';
+  const repo = mk({
+    '.githooks/harness-guard.sh': `#!/bin/sh\nREGISTRY='.claude/registry.md'\nID_PATTERN='${DEFAULT_ID_PATTERN}'  # [B]\nexit 0\n`,
+    '.githooks/pre-commit': run,
+    '.githooks/pre-merge-commit': run,
+    '.claude/registry.md': registryText,
+  });
+  git(repo, ['config', 'core.hooksPath', '.githooks']);
+  return repo;
+}
+
+test("a parked table after the active one trips no registry hazard, and its rows are neither held nor read as registry ids", () => {
+  const held = '| 1 | CR-021 | 5 implement | change/cr-021 | ../wt-cr-021 | | 2026-11-06T02:00Z |';
+  // EP-27.01 is an id the default ID_PATTERN cuts short; 3 is a number in the first cell
+  const parked = [
+    '| EP-27.01 | Gate 2 | 2026-11-06T04:10Z | ep-27.01-contract | ../wt-ep-27.01 | Q-1 merge or hold · Q-2 button copy |',
+    '| 3 | Gate 1 | 2026-11-06T05:00Z | change/cr-022 | main | Q-1 the copy |',
+  ];
+  const repo = guardedRepo(parkedRegistry([held], parked));
+  const rep = report(repo);
+  assert.deepStrictEqual(ids(rep).filter(id => REGISTRY_HAZARDS.includes(id)), []);
+  assert.deepStrictEqual(rep.registry, { path: '.claude/registry.md', held: 1, scope: 'active-markers' });
+  assert.ok(run(repo, ['--text']).stdout.includes('registry: 1 held row(s)'));
+  // the same id in the active table is read, so the check above is not merely off
+  const active = guardedRepo(parkedRegistry([held, '| 2 | EP-27.01 | 1 | ep-27.01-contract | main | | |'], []));
+  assert.ok(ids(report(active)).includes('id-pattern-truncates'), ids(report(active)).join());
 });
 
 // ── due-checks ───────────────────────────────────────────────────────────────

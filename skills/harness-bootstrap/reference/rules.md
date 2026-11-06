@@ -232,8 +232,7 @@ together in one message; several patterns go in one search (`rg -e a -e b`).
 
 **Split a milestone that will not fit one session.** At Gate 1 a slicing table past
 the cap becomes deliverables the owner can see, each with its own `Demo:` line, its
-own step 8, its own Gate 2 and its own `/clear` boundary — one deliverable per
-coordinator context.
+own step 8 and its own Gate 2, one deliverable at a time.
 > Origin, the cost study: one milestone of 59.6k lines and 50 slices ran in one main
 > session — 20 compactions, a 211K average context, and a state file that grew to
 > 493 KB.
@@ -247,9 +246,10 @@ second run of the same gates waits for the first.
 > always owed. No run repeated after a merge whose tree equalled the verified tip;
 > the merges were never the waste.
 
-**At an owner gate past 150K, the cards go out as text and the turn ends.** The
-open cards go to the state file as `Q-n` rows first; under 150K the question tool
-stays (`gate-design.md` › Who decides).
+**At an owner gate past 150K, the cards go out as text.** The open cards go to the
+state file as `Q-n` rows first, and the turn ends once nothing else is ready. Under
+150K they go out as text too while another unit can run; otherwise the question tool
+stays (`gate-design.md` › Parking a unit).
 > Origin, the v5 context study: 183 requests after a gap of more than an hour
 > rewrote their whole context, 9.6% of main-thread spend. Idle compaction runs only
 > after an ended turn — 0 of 44 came while a question was pending.
@@ -289,12 +289,27 @@ not something remembered.**
 
 **Harness changes land between runs, never during one.**
 
-**Never ask the owner for a new session or a hand-off.** State lives in files; past
-the budget, update the state file, offer a `/compact` — or, at a gate that waits on
-the owner, `/clear` and the runner's resume command — and keep working
-(`context.md`).
+**Never hand the context to the owner: no new session, hand-off, `/compact` or
+`/clear`.** State lives in files; past the budget, update the state file, send
+reading to subagents and keep working. Auto-compaction is the reset (`context.md`).
 > Origin, the third project: 28 of 118 sessions ended in a hand-off, about 90% of
-> them triggered by a budget rule that said to start a new session (§3).
+> them triggered by a budget rule that said to start a new session (§3). Then the
+> v8 session study (2026-10-23 to 11-06, 127 sessions, 10 installs): the offers that
+> replaced it drew 94 keep-line pastes and 38 `/clear`s from the owner (§3).
+
+**Start the next ready unit; never make the owner say what is next.** After a land,
+the runner announces the next ready unit in one line and starts it (`runner.md` ›
+Shape); it stops only on a command's word.
+> Origin, the v8 session study: v7 started the next unit only if the owner's
+> instruction covered it. About 12 `/clear`s chained housekeeping units by hand —
+> sweep, hygiene, follow-ups — 0–9 minutes apart.
+
+**A run's turn ends on a state line: `RUNNING`, `WAITING ON YOU`, `DONE` or
+`BLOCKED`.** `RUNNING: <what>, nothing needed from you` · `WAITING ON YOU: <the
+inbox>` · `DONE: <units landed>` · `BLOCKED: <cause, what you must do>`.
+> Origin, the v8 session study: a turn that ended did not say whether the run was
+> done, waiting or still running; the owner asked "are we done / what's next" 33
+> times in 14 days.
 
 **Search, then read once; one slice per agent.** Grep first, then read what you
 need in one call — the file whole, or a range of 150 lines or more — never page it
@@ -381,7 +396,8 @@ This section exists so a generator does not repeat the pattern.
 |---|---|
 | *"Size is a poor effort proxy"* | Written at n=2. At n=19 size ordered correctly at the median and the large bucket had the **tightest** spread of any. Retracted. |
 | *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Tiers now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
-| *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`). |
+| *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`); v8 dropped the offer too (next row). |
+| *"Offer `/compact` with a keep-line; offer `/clear` at gates and deliverable boundaries"* | v3 to v7. Over 14 days and 127 sessions the owner pasted 94 keep-lines and typed 38 `/clear`s; 58% of 530 owner prompts carried no decision. A clear came at a median 170K and the new session cost a median 90K before its first step, so a clear freed about 80K, not a resume "from about 8 KB". The model cannot compact or clear itself; auto-compaction does it, and the session-resume hook restores the unit. Reversed: never offer either (§1, `context.md`). |
 | An Opus code-reviewer over every slice | 63 per-slice runs in one milestone found no P0 or P1; both of its P1s came from the silent-failure lens and the second family. Across 14 days the code-reviewer cost the most of any Opus reviewer and found 8 unique P0/P1. The second family reviews each slice now; one Opus reviewer reads the whole unit diff at step 8 (`gate-design.md`). |
 | Fix every finding at once, nits included | 20 of one milestone's 50 fix rounds were opened by P3s alone, each re-reviewed. P3s wait for one P3 batch now (§1). |
 | A generic language reviewer, a blast-radius auditor and a docs lane as separate Opus reviewers on every Full unit | Over 14 days they found 1, 0 and 3 unique P0/P1 between them; the docs lane's findings were mostly P3 drift. The language lens folds into the code-reviewer's brief, lane B rides in the second family's adversarial pass, and docs drift is a script (`docs-drift.mjs`). |

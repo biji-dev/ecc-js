@@ -105,6 +105,20 @@ function setRegistryAround(dir, above, inside) {
   );
 }
 
+const PARKED_HEADER = '| Unit | Gate | Parked (UTC) | Branch | Worktree | Cards |';
+
+/** The registry with the parked section after the active one (reference/commit-guard.md): `active` and `parked` are data rows. */
+function setRegistryParked(dir, active, parked) {
+  const sep = (header) => `|${header.split('|').slice(1, -1).map(() => '---').join('|')}|`;
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'registry.md'),
+    [
+      '# Registry', '<!-- harness:active -->', WT_HEADER, sep(WT_HEADER), '| 0 | mainline, never claimed | | | main | |', active, '<!-- /harness:active -->',
+      '', '<!-- harness:parked -->', PARKED_HEADER, sep(PARKED_HEADER), parked, '<!-- /harness:parked -->', '',
+    ].join('\n')
+  );
+}
+
 function addWorktree(dir, rel, branch) {
   const target = path.resolve(dir, rel);
   const result = git(dir, ['worktree', 'add', '-q', target, '-b', branch]);
@@ -986,6 +1000,36 @@ if (!hasGit) {
         throw error;
       } finally { cleanup(s.dir, ...s.extra); }
     }
+  });
+
+  // A unit parked at an owner gate keeps its row in the parked section, which locks nothing: the active row
+  // is released, so a mainline commit goes through. The same row in the active section is the control.
+  const HELD_UNIT = '| 1 | CR-021 | 2 | change/cr-021 | main | 2026-11-06T04:10Z |';
+  const PARKED_UNIT = '| CR-021 | Gate 2 | 2026-11-06T04:10Z | change/cr-021 | main | Q-1 merge or hold |';
+  for (const scope of ['repo', 'checkout']) {
+    test(`${scope} scope: a mainline commit goes through when the only unit row is in the parked section`, () => {
+      const dir = guardedRepo(guardText(scope));
+      try {
+        setRegistryParked(dir, '', PARKED_UNIT);
+        assertAllowed(tryCommit(dir));
+      } finally { cleanup(dir); }
+    });
+
+    test(`${scope} scope: the same row inside the active section refuses the mainline commit`, () => {
+      const dir = guardedRepo(guardText(scope));
+      try {
+        setRegistryParked(dir, HELD_UNIT, '');
+        assertRefused(tryCommit(dir), /not its task branch/);
+      } finally { cleanup(dir); }
+    });
+  }
+
+  test('repo scope: a parked row beside a held row does not release the held one', () => {
+    const dir = guardedRepo(guardText('repo'));
+    try {
+      setRegistryParked(dir, '| 1 | CR-022 | 2 | change/cr-022 | main | 2026-11-06T04:20Z |', PARKED_UNIT);
+      assertRefused(tryCommit(dir), /not its task branch/);
+    } finally { cleanup(dir); }
   });
 }
 

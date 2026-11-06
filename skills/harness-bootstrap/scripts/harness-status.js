@@ -72,6 +72,8 @@ const NEUTRAL_FILES = [
   'scripts/unit-step.mjs', 'scripts/retro.mjs', 'scripts/harness-due.mjs', 'scripts/run-counted.mjs', 'scripts/unit-stack.sh',
   'scripts/intake.mjs', 'scripts/harness-host.mjs', 'scripts/claude-run.mjs', '.agents/harness-models.json',
   '.claude/hooks/edit-guard.mjs', '.claude/hooks/leftover-processes.mjs',
+  // v8
+  '.claude/hooks/session-resume.mjs',
 ];
 // harness-due's checks, from files alone: where its reports are, the phase in a row id, and each
 // cadence in days. A report's date is in its name. The places below are the defaults

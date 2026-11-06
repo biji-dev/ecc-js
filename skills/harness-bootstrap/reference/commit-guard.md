@@ -177,6 +177,11 @@ no circularity at land.
 The `Worktree` column is needed only with `SCOPE=checkout`; under `SCOPE=repo` it
 is harmless.
 
+`[M]` **The parked table follows the active one** (`gate-design.md` › Parking a
+unit): a unit waiting on the owner moves its row there, so it holds nothing. The
+guard reads the active table only; `harness-due.mjs` prints the parked rows as the
+inbox and keeps their worktrees.
+
 `[M]` If the project insists on tracking the registry, the guard allows the land
 step's **release commit** — one that touches only the registry and removes this
 task's row. Exclude the file from the formatter either way.

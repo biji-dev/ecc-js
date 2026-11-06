@@ -18,7 +18,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 25;
+const EXPECTED_TESTS = 36;
 
 let passed = 0;
 let failed = 0;
@@ -147,6 +147,7 @@ const INSTALL = [
   [DUE_CORE, "export const MAIN = 'main';", "export const MAIN = 'trunk';"],
   [DUE_CORE, "export const LOG = 'docs/harness/log.md';", "export const LOG = 'docs/harness-log.md';"],
   [DUE_CORE, "export const FOLLOW_UPS = 'docs/harness/follow-ups.md';", FOLLOW_UPS_LIST],
+  [DUE_CORE, "export const REGISTRY = '.claude/registry.md';", "export const REGISTRY = 'harness/registry.md';"],
   [DUE_CORE, "  preflight: 'docs/harness/reports/preflight-<phase>.md',", "  preflight: 'docs/preflight/<phase>.md',"],
   [DUE_CORE, "  sweep: 'docs/harness/reports/sweep-<date>.md',", "  sweep: 'docs/sweeps/<date>.md',"],
   [DUE_CORE, 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;', 'export const PHASE_OF = (id) => /^(M\\d+)\\.\\d/.exec(id)?.[1] ?? null;'],
@@ -168,6 +169,7 @@ const INSTALL = [
   [DUE_CORE, "  disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',", "  disk: 'run /free-disk, in the background',"],
   [DUE_CORE, "  worktrees: 'git worktree remove <paths>, each once no registry row names it',", "  worktrees: 'run /prune-worktrees <paths>, each once no registry row names it',"],
   [DUE_CORE, "  proposals: 'read <file>; route each proposal (T: a harness/<slug> unit, C: the next Gate 2 brief), then node scripts/harness-due.mjs --seen <week>',", "  proposals: 'run /read-proposals <file>, then node scripts/harness-due.mjs --seen <week>',"],
+  [DUE_CORE, String.raw`  inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',`, "  inbox: 'carry on; /resume-parked <unit> once the owner has answered',"],
   // the suite's [B] block: how the fixtures spell a row id, and an example of the phase PHASE_OF gives one
   [DUE_TEST, "const ROW = (p, n) => `P${p}-${String(n).padStart(2, '0')}`;", 'const ROW = (p, n) => `M${p}.${n}`;'],
   [DUE_TEST, "const PHASE_EXAMPLE = [ROW(2, 16), 'P2'];", "const PHASE_EXAMPLE = [ROW(2, 16), 'M2'];"],
@@ -205,6 +207,7 @@ console.log(JSON.stringify({
   main: c.MAIN,
   log: c.LOG,
   followUps: c.FOLLOW_UPS,
+  registry: c.REGISTRY,
   reports: c.REPORTS,
   phases: ['P2-16', 'EP-27.04', 'p3-12a', 'T-DATA-037', 'CR-021', 'P2'].map((id) => c.phaseOf(id)),
   cadence: c.CADENCE,
@@ -219,6 +222,7 @@ console.log(JSON.stringify({
   assert.strictEqual(got.main, 'main', 'the template MAIN');
   assert.strictEqual(got.log, 'docs/harness/log.md', 'the template LOG');
   assert.strictEqual(got.followUps, 'docs/harness/follow-ups.md', 'the template FOLLOW_UPS');
+  assert.strictEqual(got.registry, '.claude/registry.md', 'the template REGISTRY');
   assert.deepStrictEqual(
     got.reports,
     {
@@ -305,6 +309,17 @@ mutantFails('dating a line not committed yet by the time of the blame', 'committ
 mutantFails('counting every merge subject as naming a function-bound phase', '.some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())', '.some(() => true)');
 mutantFails('reading only separator-joined words of a merge subject as ids', 'const ID_TOKEN = /[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/g;', 'const ID_TOKEN = /[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)+/g;');
 mutantFails('exiting 0 when the claim is blocked', 'if (blocking) process.exitCode = 1;', '', CLI_REL);
+mutantFails('letting the inbox change the exit code', 'if (blocking) process.exitCode = 1;', 'if (blocking || inboxLines(registryText).length) process.exitCode = 1;', CLI_REL);
+mutantFails('reading the registry of the linked worktree instead of the main checkout', 'readRegistry(mainTop)', 'readRegistry(top)', CLI_REL);
+mutantFails('printing the inbox before the due lines', "return [...lines, ...inbox.map((l) => `${l}\\n`)].join('');", "return [...inbox.map((l) => `${l}\\n`), ...lines].join('');");
+mutantFails('reading the active table as the parked one', "registryTable(registryText, 'parked');", "registryTable(registryText, 'active');");
+mutantFails('reading the rows outside the markers', 'else if (on && row) rows.push(line);', 'else if (row) rows.push(line);');
+mutantFails('naming a worktree that a parked row names', "['parked', () => true]", "['parked', () => false]");
+mutantFails('naming a worktree that a held row names', "['active', (row) =>", "['activ', (row) =>");
+mutantFails('dropping the table header right above the begin marker', 'if (run && run.length > 1 && SEPARATOR.test(run.at(-1))) above = run.at(-2);', '');
+mutantFails('reading a held row number with a space in it as no row', "/^[1-9]\\d*$/.test((row[0] ?? '').replace(/\\s/g, ''))", "/^[1-9]\\d*$/.test(row[0] ?? '')");
+mutantFails('missing the worktree the guard reads in a row with an escaped pipe','.flatMap((l) => [cellsOf(l), guardCellsOf(l)])', '.map(cellsOf)');
+mutantFails('comparing the worktrees a row names as written, not as real paths', '{ text: registryText, root: mainTop, real }', '{ text: registryText, root: mainTop }', CLI_REL);
 
 test('the shipped suite never skips: bound to no preflight and a 72 h idle time it still passes with skipped 0 and todo 0', () => {
   const copy = tmp('harness-due-binding-');
@@ -332,9 +347,10 @@ test('the COMMANDS defaults cite the references that hold the procedures, not sk
   const lines = block[1].split('\n');
   const line = (kind) => lines.find((l) => l.trim().startsWith(`${kind}:`)) ?? '';
   for (const word of ['phase-preflight', 'workstream-sweep', 'task-runner']) assert.ok(!block[1].includes(word), `COMMANDS still names ${word}`);
-  for (const [kind, reference] of [['preflight', 'preflight'], ['sweep', 'sweep'], ['hygiene', 'hygiene'], ['p3', 'hygiene']]) {
+  for (const [kind, reference] of [['preflight', 'preflight'], ['sweep', 'sweep'], ['hygiene', 'hygiene'], ['p3', 'hygiene'], ['inbox', 'runner']]) {
     assert.ok(line(kind).includes(`harness-bootstrap\\'s reference/${reference}.md`), `COMMANDS.${kind} does not cite reference/${reference}.md: ${line(kind)}`);
   }
+  assert.ok(line('inbox').includes('<unit>'), `COMMANDS.inbox does not name the unit it resumes: ${line('inbox')}`);
   assert.match(text, /bind each one to the project's own skill/, 'the comment does not say to bind each to the project\'s own skill');
 });
 

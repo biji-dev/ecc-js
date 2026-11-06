@@ -35,6 +35,17 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
   spend (main thread and subagents), questions asked, compactions, cache hit and
   expiry rewrites, Codex runs, claude-run's runs and dollars, and a Codex host's
   sessions, turns, questions, compactions, tokens and share of the weekly quota.
+- **How often the owner had to touch the sessions**, per unit landed in the window:
+  the owner prompts typed, the `/clear` and `/compact` among them, and the median
+  agent run between prompts — counted from the transcripts' structure, never their
+  words, and measured, never judged. A prompt is what `unit-cost-core.mjs`'s
+  `isOwnerPrompt` takes; a run lasts from a prompt to the last main-thread record
+  before the session's next prompt; a typed command counts as a prompt and never as a
+  run. Per week, not per unit: the transcripts carry no unit. Answering a question
+  tool ends no run, so a gate's wait sits inside it; a resumed session's copied
+  prompts count twice; a Codex host's threads and claude-run's runs are not counted.
+  > Origin, the v8 session study: 530 owner touches in 14 days, 58% of them carrying
+  > no decision, and a median of 8 minutes of agent work between them.
 - **Outliers**: a unit whose cost or work is at least `OUTLIER_X` times its tier's
   median, and a step whose share of its unit's dollars is at least `OUTLIER_X`
   times that step's median share — each only in a cohort of `MIN_COHORT`, and a

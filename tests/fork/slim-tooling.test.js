@@ -132,6 +132,7 @@ test('own biji-* items are fork-owned and never dropped', () => {
   assert.ok(isForkOwned('.agents/skills/biji-flow/agents/openai.yaml'));
   assert.ok(isForkOwned('agents/biji-reviewer.md'));
   assert.ok(isForkOwned('docs/ECC-JS.md'));
+  assert.ok(isForkOwned('docs/HARNESS.md'));
   assert.ok(!isForkOwned('skills/react-patterns/SKILL.md'));
   const isDropped = buildDropMatcher({ ...slim, paths: { ...slim.paths, drop: [...slim.paths.drop, 'skills/biji-*/**'] } }, { entries: [] });
   assert.ok(!isDropped('skills/biji-flow/SKILL.md'));

@@ -7,9 +7,10 @@ takes upstream releases through a scripted merge.
 
 - **What the fork contains, why, install and hooks:** [docs/ECC-JS.md](docs/ECC-JS.md).
 - **This file:** how to maintain it (sync, review queue, releases, repo rules).
+- **The gated harness the own skills build:** [docs/HARNESS.md](docs/HARNESS.md).
 
 Everything upstream-authored keeps upstream prose. Fork documentation lives only
-in fork-owned files (`FORK.md`, `docs/ECC-JS.md`, `.claude/rules/ecc-js-fork.md`)
+in fork-owned files (`FORK.md`, `docs/ECC-JS.md`, `docs/HARNESS.md`, `.claude/rules/ecc-js-fork.md`)
 and in the README banner rendered by `fork/bin/transforms/overlays.js`, so
 upstream README/AGENTS edits merge without conflicts.
 
@@ -60,7 +61,7 @@ Every path falls into one of four classes during a sync:
    `workflows/orch-review.workflow.js`, `scripts/codex/*`, `.codex/AGENTS.md`,
    `mcp-configs/mcp-servers.json` and some tests). Merged 3-way by git with rerere.
 4. **Fork-owned:** `fork/`, `tests/fork/`, `ecc/`, `FORK.md`, `docs/ECC-JS.md`,
-   `.github/workflows/fork-*.yml`, `.claude/rules/ecc-js-fork.md` and every
+   `docs/HARNESS.md`, `.github/workflows/fork-*.yml`, `.claude/rules/ecc-js-fork.md` and every
    `biji-*` skill, agent, command and rule pack. Restored from the fork after
    every merge.
 
@@ -225,7 +226,7 @@ List them under `own` in `fork/slim.json`. The `biji-` prefix is optional: every
 own name is fork-owned, and `verify.js` and the sync refuse an upstream item with
 the same name. Own skills are claimed by the `fork-own` install module
 automatically. Current own skills: `skill-advisor`, `harness-bootstrap`,
-`delegate-tasks`.
+`delegate-tasks`. [docs/HARNESS.md](docs/HARNESS.md) documents the last two.
 
 ## Releases and versions
 
@@ -237,6 +238,11 @@ automatically. Current own skills: `skill-advisor`, `harness-bootstrap`,
   `verify.js` enforces this against a base ref: `--since <ref>` locally,
   `FORK_VERIFY_BASE` in fork-ci (previous main tip on push, PR base, or the
   merge-base with main on sync/slim branches).
+- A harness round (any change to `harness-bootstrap` or `delegate-tasks`) also
+  updates `docs/HARNESS.md`: its `**Describes:**` line, the version table, and
+  whatever the round changed. `tests/fork/harness-doc.test.js` fails when the
+  stated skills version falls behind, and a round that keeps the number relies on
+  this line. `docs/` does not ship, so the doc needs no bump of its own.
 - No tags. `fork/state.json` (`lastUpstreamTag`, `lastUpstreamRef`) and the
   `chore(sync): merge upstream vX.Y.Z` merge commits are the record of each
   sync. Never push the `upstream/v*` tags to origin (never `git push --tags`).

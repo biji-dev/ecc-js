@@ -3,6 +3,7 @@
 This repository is the slim ECC fork `biji-dev/ecc-js`. `CLAUDE.md` and the
 other files in `.claude/rules/` are upstream text; these rules take precedence
 where they differ. Maintainer guide: `FORK.md`. Scope and install: `docs/ECC-JS.md`.
+The gated harness (`harness-bootstrap`, `delegate-tasks`): `docs/HARNESS.md`.
 
 ## Tests
 
@@ -20,9 +21,10 @@ where they differ. Maintainer guide: `FORK.md`. Scope and install: `docs/ECC-JS.
   `npm run fork:apply`.
 - Keep edits to upstream files small; every changed line can conflict on the
   next upstream sync. Prefer fork-owned files (`fork/`, `tests/fork/`, `ecc/`,
-  `FORK.md`, `docs/ECC-JS.md`, own items).
+  `FORK.md`, `docs/ECC-JS.md`, `docs/HARNESS.md`, own items).
 - Every change that ships (skills, agents, commands, rules, hooks, scripts,
   `ecc/`, MCP configs, plugin manifests) needs `npm run fork:bump`.
+- A change to `harness-bootstrap` or `delegate-tasks` also updates `docs/HARNESS.md`.
 - New own skills, agents, commands and rule packs are listed under `own` in
   `fork/slim.json`. The `biji-` prefix is optional; the own-name collision check
   refuses an upstream item with the same name.

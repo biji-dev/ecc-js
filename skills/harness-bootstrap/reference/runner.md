@@ -20,9 +20,10 @@ only`, that unit alone. A kickoff may carry a `Grant:` line and a stop line
 (`gate-design.md` › The run grant). After a land, announce the next ready unit in
 one line and start it: answered parked units, then due-checks, then the next ready
 row. Stop only on a command's word — an empty queue, all left waiting on the owner
-(`gate-design.md` › Parking a unit), the stop line, a `codex-run` or `claude-run`
-quota line, `DUE disk` or a memory refusal, an `escalate`, a tripwire — and end the
-turn on the state line (`rules.md` §1).
+(`gate-design.md` › Parking a unit), the stop line, the host's own usage limit —
+and end the turn on the state line (`rules.md` §1). An `escalate-adversarial`, a
+tripwire or a memory refusal at a live step parks its unit; a second family out of
+quota is `degraded`, never a stop.
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
@@ -89,7 +90,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8b record      written last, from the diff, as fields
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
                                                           ══ GATE 2 ══  by the merge policy
-9  land        guard → land commit → release the lock → merge → push on the owner's word → due-checks
+9  land        guard → land commit → release the lock → merge → push on the owner's word or the grant → due-checks
 10 teardown    stop what was started; close the state file; start the next ready unit
 ```
 
@@ -145,11 +146,11 @@ and never asks a question. What each line makes the runner do:
 | Line | The runner |
 |---|---|
 | `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
-| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit, a `harness/<slug>` unit |
+| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit after any answered parked one (› Shape), a `harness/<slug>` unit |
 | `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
 | `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
 | `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
-| `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; the owner's answers resume it, ahead of the queue |
+| `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; once answered (its Cards cell), it is the next unit claimed |
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a unit
 that is due stays due until its report is committed, and nothing has to remember
@@ -450,8 +451,8 @@ review round is outstanding. Decided by the merge policy and the run grant
 **Step 9 — land.**
 - `[M]` **Order:** run the guard → land commit **on the unit branch** (status,
   evidence, log row, closed state file) → release the row → merge with `--no-ff` →
-  push only on the owner's word. Releasing after the merge cannot work under
-  `SCOPE=repo`: the guard refuses a mainline commit while any row is held.
+  push only on the owner's word or the run grant. Releasing after the merge cannot
+  work under `SCOPE=repo`: the guard refuses a mainline commit while any row is held.
 - `[M]` **Re-verify if the mainline moved** since step 8a's verify, before an
   auto-merge — on the merged tree; `run-gates.sh` reuses the step 8a result when the
   tree is unchanged, so an unmoved mainline costs nothing. Never re-run after a
@@ -465,7 +466,7 @@ review round is outstanding. Decided by the merge policy and the run grant
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file; `git merge` does not read stdin.
 - `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
-  unit the close announces.
+  unit the close announces, after any answered parked unit (› Shape).
 
 **Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
 — ran in the background and were awaited by their completion notice, never a sleep

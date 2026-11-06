@@ -171,6 +171,9 @@ Worktree: <path, or main>
 Base: <merge-base sha>
 Claimed: <ISO time from the registry row>
 Owner wait: <e.g. 1h20m>
+Grant: <the kickoff's grant line, when one covers the unit>
+Stop: <the kickoff's stop line>
+Parked: <gate> <ISO time, while the unit is parked>
 
 ## Scope            the block, verbatim
 ## Ledger           | Step | Status | Evidence |
@@ -182,7 +185,10 @@ Owner wait: <e.g. 1h20m>
 
 `Deliverable:` and `Demo:` name the deliverable the run is on
 (`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
-each new deliverable; the record measures the row's time from it.
+each new deliverable; the record measures the row's time from it. `Grant:` and
+`Stop:` are copied from the kickoff at the claim and `Parked:` is written when the
+unit parks (`gate-design.md` › The run grant, › Parking a unit); each is left out
+when it does not apply.
 
 Header lines come before the first `##`, one `Key: value` each. `Source` is the
 reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,

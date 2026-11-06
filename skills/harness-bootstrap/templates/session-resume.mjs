@@ -9,8 +9,9 @@
 //   compact                 -> continue the held unit's next step (Step 0a: verify, do not trust the marker)
 //   startup, resume, clear  -> context only: nothing starts until the owner asks
 // The registry and the state files are the record; a compaction summary is not (harness-bootstrap's
-// reference/context.md). Reads files and runs `git rev-parse` only: never writes, never blocks, never
-// starts work, and says nothing when no row is held or parked, or when anything fails.
+// reference/context.md). Reads files and runs `git rev-parse` and `git show` only: never writes, never
+// blocks, never starts work, and says nothing when anything fails, or when no row is held or parked
+// but on a compaction, which points a queue run at its next unit.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -29,16 +30,13 @@ const GIT_TIMEOUT_MS = 2000;
 const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 const PLACEHOLDER = /^(?:-|—|n\/a|none)$/i;
 const QID = /^Q-\d+$/;
-// A table with no header row reads in the documented column order (harness-bootstrap's
-// reference/commit-guard.md › The registry) (harness-bootstrap's reference/gate-design.md › Parking a unit).
-const DEFAULT_HEADER = {
-  active: ['#', 'unit', 'step', 'branch', 'worktree', 'resources', 'claimed (utc)'],
-  parked: ['unit', 'gate', 'parked (utc)', 'branch', 'worktree', 'cards'],
-};
+// A Branch cell git may take as a branch name: no option, no range, no revision syntax.
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const CLOSING = {
   compact: "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
-  parkedOnly: "No unit is held; parked units wait for the owner's answers.",
-  context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the queue.',
+  parkedOnly: "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).",
+  none: "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).",
+  context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.',
 };
 
 const clip = (value) => {
@@ -52,8 +50,9 @@ const trimCell = (value) => String(value ?? '').replace(/^[\s`]+|[\s`]+$/g, '');
 /**
  * The table between `<!-- harness:<name> -->` and `<!-- /harness:<name> -->`, read as the commit guard
  * reads the active one: the header is the row right above a |---| row inside the markers, else the
- * table header right above the begin marker (markers around the data rows only), else the documented
- * order. { header: lower-cased names, rows: cells } or null without both markers. Nothing outside is read.
+ * table header right above the begin marker (markers around the data rows only), else none: no column
+ * is named, as the guard names none. { header: lower-cased names or null, rows: cells } or null without
+ * both markers. Nothing outside is read.
  */
 export function section(text, name) {
   const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
@@ -65,7 +64,7 @@ export function section(text, name) {
   const at = body.findIndex((l, i) => i + 1 < body.length && isSep(body[i + 1]));
   const header = at >= 0 ? body[at] : above;
   const rows = body.filter((l, i) => i !== at && !isSep(l)).map(cellsOf);
-  return { header: header ? cellsOf(header).map((c) => trimCell(c).toLowerCase()) : DEFAULT_HEADER[name], rows };
+  return { header: header ? cellsOf(header).map((c) => trimCell(c).toLowerCase()) : null, rows };
 }
 
 /** A Worktree cell as the guard reads it: the first word, a placeholder (-, n/a, none) read as empty. */
@@ -83,16 +82,19 @@ function byName(header, cells) {
   return { unit: at('unit', 'task'), step: at('step'), branch: at('branch'), worktree: worktreeCell(at('worktree')), gate: at('gate'), since: at('parked'), cards: at('cards') };
 }
 
-/** The registry's held rows, then its parked ones. Held: a first cell of 1 or more (row 0 is the mainline, never held). */
+/**
+ * The registry's held rows, then its parked ones. Held: a first cell of 1 or more (row 0 is the mainline,
+ * never held). With no header a held row keeps its cells unnamed (`cells`), and a parked table gives none.
+ */
 export function registryRows(text) {
   const out = [];
   const active = section(text, 'active');
   for (const cells of active?.rows ?? []) {
     if (!/^[1-9][0-9]*$/.test((cells[0] ?? '').replace(/\s/g, ''))) continue;
-    out.push({ kind: 'held', ...byName(active.header, cells) });
+    out.push(active.header ? { kind: 'held', ...byName(active.header, cells) } : { kind: 'held', cells: cells.map(trimCell) });
   }
   const parked = section(text, 'parked');
-  for (const cells of parked?.rows ?? []) {
+  for (const cells of parked?.header ? parked.rows : []) {
     const row = byName(parked.header, cells);
     if (row.unit && !PLACEHOLDER.test(row.unit)) out.push({ kind: 'parked', ...row });
   }
@@ -152,15 +154,27 @@ export function openQuestions(lines = []) {
 
 const nextLines = (lines = []) => lines.map((l) => clip(l.replace(/^\s*[-*+]\s+/, ''))).filter(Boolean).slice(0, NEXT_LINES);
 
-/** A row's state file, read from the checkout its Worktree cell names: { head, sections } or { note }. */
+/**
+ * A row's state file, read from the checkout its Worktree cell names, else from its Branch cell's branch:
+ * a unit parked on the main checkout under SCOPE=repo keeps its file on its branch while the checkout is
+ * on another unit's. { head, sections } or { note }.
+ */
 function stateOf(row, root) {
+  if (row.cells) return { note: 'state file not read: the registry table has no header row' };
   if (!UNIT_ID.test(row.unit) || row.unit.includes('..')) return { note: `state file not read: '${clip(row.unit)}' is not a unit id` };
   const checkout = !row.worktree || row.worktree === 'main' || row.worktree === '.' ? root : resolve(root, row.worktree);
   const file = join(checkout, STATE_DIR, `${row.unit}.state.md`);
   try {
     return readState(readFileSync(file, 'utf8'));
   } catch {
-    return { note: `state file not found: ${relative(root, file).split(sep).join('/')}` };
+    const missing = `state file not found: ${relative(root, file).split(sep).join('/')}`;
+    if (!BRANCH.test(row.branch) || row.branch.includes('..')) return { note: missing };
+    try {
+      const text = execFileSync('git', ['show', `${row.branch}:${STATE_DIR}/${row.unit}.state.md`], { cwd: root, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
+      return readState(text);
+    } catch {
+      return { note: `${missing} (in this checkout or on ${clip(row.branch)})` };
+    }
   }
 }
 
@@ -169,7 +183,7 @@ export function unitLines(row, { head = {}, sections = {}, note } = {}) {
   const parts = (list) => list.filter(Boolean).map(clip).join(' · ');
   const lines = [];
   if (row.kind === 'held') {
-    lines.push(`HELD ${parts([row.unit, row.step && `step ${row.step}`, row.branch, row.worktree || 'main', head.tier && `tier ${head.tier}`])}`);
+    lines.push(`HELD ${parts(row.cells ?? [row.unit, row.step && `step ${row.step}`, row.branch, row.worktree || 'main', head.tier && `tier ${head.tier}`])}`);
   } else {
     const gate = [row.gate, row.since && `since ${row.since}`].filter(Boolean).join(' ') || head.parked;
     lines.push(`PARKED ${parts([row.unit, gate, row.cards])}`);
@@ -186,7 +200,11 @@ export function unitLines(row, { head = {}, sections = {}, note } = {}) {
   return lines;
 }
 
-/** The first line, the body and the closing line, held to `max` bytes: whole body lines while they fit, then how many were cut. */
+/**
+ * The first line, the body and the closing line, held to `max` bytes: whole body lines while they fit, then how
+ * many were cut. A cap too small for even the first line, that count and the closing line drops the count and
+ * cuts the text, never inside a character.
+ */
 export function capped(first, body, last, max = MAX_BYTES) {
   const size = (ls) => Buffer.byteLength(ls.join('\n'));
   if (size([first, ...body, last]) <= max) return [first, ...body, last].join('\n');
@@ -196,16 +214,21 @@ export function capped(first, body, last, max = MAX_BYTES) {
     if (size([first, ...kept, line, tail(body.length - kept.length - 1), last]) > max) break;
     kept.push(line);
   }
-  return [first, ...kept, tail(body.length - kept.length), last].join('\n');
+  const lines = [first, ...kept, tail(body.length - kept.length), last];
+  if (size(lines) <= max) return lines.join('\n');
+  const bytes = Buffer.from([first, last].join('\n'));
+  let end = Math.max(0, Math.min(bytes.length, max));
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1; // a UTF-8 continuation byte: back to its character's start
+  return bytes.subarray(0, end).toString('utf8');
 }
 
-/** The text for a SessionStart from `source`, or null with no held or parked row. */
+/** The text for a SessionStart from `source`; with no held or parked row, a compaction's pointer at the queue, else null. */
 export function resumeText(source, rows, root) {
-  if (!rows.length) return null;
+  if (!rows.length && source !== 'compact') return null;
   const first = `[session-resume] ${source}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
   const body = rows.flatMap((row) => unitLines(row, stateOf(row, root)));
   const held = rows.some((row) => row.kind === 'held');
-  return capped(first, body, source !== 'compact' ? CLOSING.context : held ? CLOSING.compact : CLOSING.parkedOnly);
+  return capped(first, body, source !== 'compact' ? CLOSING.context : held ? CLOSING.compact : rows.length ? CLOSING.parkedOnly : CLOSING.none);
 }
 
 /** The main checkout, as the commit guard finds it: the parent of git's common dir when that is a .git, else the top level. */

@@ -125,9 +125,10 @@ two if the compaction call itself turns out uncached (−1.8% against −0.4%).
 compaction compacts a conversation left idle about 54 minutes, before the cache
 expires, so the owner's answer does not rewrite it all — but only after an ended
 turn: **0 of 44 idle compactions came while an `AskUserQuestion` or `ExitPlanMode`
-was pending.** So at an owner gate with the context at **150K or more**, the cards
-go to the state file as `Q-n` rows and out as text, the unit parks, and when
-nothing else is ready the turn ends (`gate-design.md` › Who decides). Under 150K the question tool stays:
+was pending.** So at an owner gate with the context at **150K or more**, or while
+another unit can run, the cards go to the state file as `Q-n` rows and out as text,
+the unit parks, and when nothing else is ready the turn ends (`gate-design.md` ›
+Parking a unit). Under 150K, with nothing else ready, the question tool stays:
 rewriting the context costs less than compacting it below about 125K (the $0.15
 compaction call against rewriting what lies above the 106K base at $8 a million).
 
@@ -219,11 +220,14 @@ compaction, a `/clear`, a resume or a startup it reads the registry's held and p
 rows and each one's state file, and puts the resume point into the new context: per
 unit its step, branch and worktree, the state file's `## Next`, its open `Q-n` cards,
 its `Grant:` and `Stop:` lines, then the inbox (`gate-design.md` › Parking a unit).
-After a compaction it says to continue the held unit's next step through step 0a; on
-the other sources it is context only, so opening a session never starts work.
+After a compaction it says to continue the held unit's next step through step 0a,
+or with none held, to start the next ready unit if a queue run is on; on the other
+sources it is context only, so opening a session never starts work.
 
-- reads files only, plus `git rev-parse` for the main checkout; never writes,
-  never blocks, exits 0 on any error, and says nothing when no row is held or parked;
+- reads files only, plus `git rev-parse` for the main checkout and `git show` for a
+  state file on a branch the shared checkout has left; never writes, never blocks,
+  exits 0 on any error, and says nothing when no row is held or parked, except after
+  a compaction;
 - caps its text at `MAX_BYTES`, held rows first;
 - never sets `initialUserMessage`: a session that starts work on its own is a run
   the owner did not start.

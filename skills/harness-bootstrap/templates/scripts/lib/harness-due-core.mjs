@@ -256,16 +256,18 @@ export function parseWorktrees(text) {
  * in them, no ignored file that is not REBUILDABLE, and untouched for WORKTREE_IDLE_HOURS. Each
  * comes with `merged`, `own`, `clean`, `ignored` (its ignored paths) and `active` (its last
  * activity, ms) as the CLI measured them; the main worktree, a locked one and a prunable one are
- * never residue, nor is one a registry row names (`named`, absolute paths: registryWorktrees). The
+ * never residue, nor is one a registry row names (`named`, absolute paths: registryWorktrees). A row
+ * and git may spell one checkout two ways, through a link: both sides are compared as `real` gives
+ * them (the CLI's resolves links, as the guard's cd and pwd -P do; the identity here). The
  * rails are one project's, earned: a branch cut from the mainline and not yet started is an
  * ancestor of it too, hence `own`.
  */
-export function worktreesDue({ worktrees = [], now, idleHours = WORKTREE_IDLE_HOURS, rebuildable = REBUILDABLE, top = null, named = [], command = COMMANDS.worktrees }) {
-  const kept = new Set(named.map((p) => path.resolve(p)));
+export function worktreesDue({ worktrees = [], now, idleHours = WORKTREE_IDLE_HOURS, rebuildable = REBUILDABLE, top = null, named = [], real = (p) => p, command = COMMANDS.worktrees }) {
+  const kept = new Set(named.map((p) => real(path.resolve(p))));
   const stale = worktrees
     .slice(1)
     .filter((w) => !w.bare && !w.locked && !w.prunable && w.merged && w.own && w.clean)
-    .filter((w) => !kept.has(path.resolve(w.path)))
+    .filter((w) => !kept.has(real(path.resolve(w.path))))
     .filter((w) => (w.ignored ?? []).every((p) => rebuildable.test(p)))
     .filter((w) => Number.isFinite(w.active) && now - w.active >= idleHours * HOUR);
   if (!stale.length) return null;
@@ -322,27 +324,46 @@ export function projectName(registry, mainTop) {
 
 // ---- the registry: its tables are read by header name, whatever the order or the extra columns
 const SEPARATOR = /^\s*\|[\s:|-]*-[\s:|-]*$/;
+const trimCell = (c) => c.replace(/^[\s`]+|[\s`]+$/g, '');
 // a cell without its padding and backticks; `\|` is a pipe inside a cell
-const cellsOf = (row) =>
-  row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').replace(/^[\s`]+|[\s`]+$/g, ''));
+const cellsOf = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => trimCell(c.replace(/\\\|/g, '|')));
+// the cells as the commit guard splits them: at every `|`, an escaped one too
+const guardCellsOf = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(trimCell);
 
 /**
- * The table between `<!-- harness:<name> -->` and `<!-- /harness:<name> -->`, each alone on its line (a
- * line of prose that cites a marker is none), as { head, rows }: the header is the row above the
- * section's first |---| separator, lowercased and without a trailing `(UTC)`-like note. No marker
- * pair, or no header, is no table: rows outside the markers are never read.
+ * The table between `<!-- harness:<name> -->` and `<!-- /harness:<name> -->`, read as the commit guard
+ * reads its active one (harness-guard.sh's rows()), as { head, lines }. A marker is any line holding
+ * it, and the begin marker's line is no row; every marked section counts, and one not closed runs to
+ * the file's end. The header is the row right above the first |---| row inside, else the table header
+ * right above the first begin marker (markers around the data rows only), lowercased and without a
+ * trailing `(UTC)`-like note; every other row inside is data. A file without both markers, or a table
+ * without a header, is no table: no column is named, and rows outside the markers are never read.
  */
 function registryTable(text, name) {
-  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
-  const begin = lines.findIndex((l) => l.trim() === `<!-- harness:${name} -->`);
-  const end = lines.findIndex((l, i) => i > begin && l.trim() === `<!-- /harness:${name} -->`);
-  if (begin === -1 || end === -1) return null;
-  const rows = lines.slice(begin + 1, end).filter((l) => /^\s*\|/.test(l));
-  const sep = rows.findIndex((l) => SEPARATOR.test(l));
-  if (sep < 1) return null;
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const [open, close] = [`<!-- harness:${name} -->`, `<!-- /harness:${name} -->`];
+  if (!lines.some((l) => l.includes(open)) || !lines.some((l) => l.includes(close))) return null;
+  const rows = [];
+  let run = []; // the table rows right above the line at hand, until the first begin marker
+  let above = null;
+  let on = false;
+  for (const line of lines) {
+    const row = /^\s*\|/.test(line);
+    if (line.includes(open)) {
+      if (run && run.length > 1 && SEPARATOR.test(run.at(-1))) above = run.at(-2);
+      run = null;
+      on = true;
+    } else if (on && line.includes(close)) on = false;
+    else if (on && row) rows.push(line);
+    else if (run && row) run.push(line);
+    else if (run) run = [];
+  }
+  const at = rows.findIndex((l, i) => i + 1 < rows.length && SEPARATOR.test(rows[i + 1]));
+  const header = at >= 0 ? rows[at] : above;
+  if (header === null) return null;
   return {
-    head: cellsOf(rows[sep - 1]).map((h) => h.replace(/\s*\(.*\)$/, '').toLowerCase()),
-    rows: rows.slice(sep + 1).filter((l) => !SEPARATOR.test(l)).map(cellsOf),
+    head: cellsOf(header).map((h) => h.replace(/\s*\(.*\)$/, '').toLowerCase()),
+    lines: rows.filter((l, i) => i !== at && !SEPARATOR.test(l)),
   };
 }
 
@@ -355,7 +376,8 @@ export function parkedUnits(registryText, command = COMMANDS.inbox) {
   const table = registryTable(registryText, 'parked');
   const unit = table ? table.head.indexOf('unit') : -1;
   if (unit === -1) return [];
-  return table.rows
+  return table.lines
+    .map(cellsOf)
     .filter((row) => (row[unit] ?? '') !== '')
     .map((row) => {
       const cell = (name) => row[table.head.indexOf(name)] ?? '';
@@ -370,19 +392,22 @@ export function inboxLines(registryText) {
 
 /**
  * The linked worktrees the registry's rows name, as absolute paths from `root` (the main checkout):
- * every held row of the active table (first cell 1 or more) and every parked row. The Worktree cell's
- * first word is the path; empty, `main`, `.` and a placeholder (-, n/a, none) name the main checkout.
+ * every held row of the active table (first cell 1 or more, its spaces aside) and every parked row. A
+ * Worktree cell's first word is the path; empty, `main`, `.` and a placeholder (-, n/a, none) name the
+ * main checkout. Over-reading is safe and under-reading is not: every Worktree column counts, and each
+ * row is also split at every `|`, as the guard splits it, so a path either reading names is kept.
  */
 export function registryWorktrees(registryText, root) {
   if (typeof root !== 'string' || root === '') return [];
   const out = new Set();
-  for (const [name, held] of [['active', (row) => /^[1-9]\d*$/.test(row[0] ?? '')], ['parked', () => true]]) {
+  for (const [name, held] of [['active', (row) => /^[1-9]\d*$/.test((row[0] ?? '').replace(/\s/g, ''))], ['parked', () => true]]) {
     const table = registryTable(registryText, name);
-    const w = table ? table.head.indexOf('worktree') : -1;
-    if (w === -1) continue;
-    for (const row of table.rows.filter(held)) {
-      const cell = (row[w] ?? '').replaceAll('`', '').trim().split(/\s/)[0].split('·')[0];
-      if (!['', 'main', '.', '-', '—', 'n/a', 'none'].includes(cell.toLowerCase())) out.add(path.resolve(root, cell));
+    const columns = table ? table.head.flatMap((h, i) => (h === 'worktree' ? [i] : [])) : [];
+    for (const row of columns.length ? table.lines.flatMap((l) => [cellsOf(l), guardCellsOf(l)]).filter(held) : []) {
+      for (const w of columns) {
+        const cell = (row[w] ?? '').replaceAll('`', '').trim().split(/\s/)[0].split('·')[0];
+        if (!['', 'main', '.', '-', '—', 'n/a', 'none'].includes(cell.toLowerCase())) out.add(path.resolve(root, cell));
+      }
     }
   }
   return [...out];
@@ -392,8 +417,8 @@ export function registryWorktrees(registryText, root) {
  * Every check, in KINDS order, from what the CLI read: `log` and `followUps` as { text, dates }
  * (line -> commit ms) or null; `reports` by kind as [{ rel, time }]; `merges` the mainline's
  * merges as [{ t, subject }]; `disk` { free, approved, last }; `worktrees` measured; `proposals`
- * { newest, text, file }; `seen`; `project`; `registry` { text, root } (the registry's text and the
- * main checkout) or null. Nothing here reads a file.
+ * { newest, text, file }; `seen`; `project`; `registry` { text, root, real } (the registry's text, the
+ * main checkout and a path's real path, the identity when absent) or null. Nothing here reads a file.
  */
 export function checkAll(f) {
   const now = f.now;
@@ -410,7 +435,7 @@ export function checkAll(f) {
     ),
     p3Due({ summary, now }),
     f.disk ? diskDue(f.disk) : null,
-    worktreesDue({ worktrees: f.worktrees ?? [], now, top: f.top ?? null, named: registryWorktrees(f.registry?.text, f.registry?.root) }),
+    worktreesDue({ worktrees: f.worktrees ?? [], now, top: f.top ?? null, named: registryWorktrees(f.registry?.text, f.registry?.root), real: f.registry?.real }),
     proposalsDue({ newest: f.proposals?.newest ?? null, text: f.proposals?.text ?? '', seen: f.seen ?? {}, project: f.project, file: f.proposals?.file ?? '' }),
   ];
   return items.filter(Boolean);

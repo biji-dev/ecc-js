@@ -149,7 +149,7 @@ decision sheet** — or of the Phase A assessment when nothing is installed.
 - **Never install alongside.** An existing runner keeps its name through the
   manifest's `roles`; two files governing the same steps is the drift the rules
   warn about. A log with rows in it is the strongest signal to preserve.
-- Apply only what the sheet approved, **only while no unit holds a registry row**,
+- Apply only what the sheet approved, **only while no registry row is held or parked**,
   then write `.agents/harness-manifest.json`.
 
 ### Phase A — Assess, route, and be willing to refuse
@@ -239,7 +239,7 @@ examples whose right answers differed, and how the same test yields the **risk
 map** (hot modules, critical code, cold modules, each entry citing its evidence)
 and the **merge policy** (the generated default: Small merges locally when clean;
 Full, never-auto and taste calls — copy, naming, visual identity — wait for the
-owner; push is always the owner's).
+owner; push is the owner's unless a run grant covers it).
 This is the piece that cannot be templated.
 
 Write all three into the **harness file** — the instruction file every agent reads,
@@ -279,7 +279,7 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |
 | `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); with `--times` and `--by-step`, where the time and money went; bind the price table and the dollars-per-percent calibration |
 | `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`): KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
-| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
+| `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks at steps 0 and 9 (`runner.md` › Due-checks): a missing preflight stops the claim of the row that opens a phase; a sweep, retro or hygiene unit due, the P3 queue, low disk, finished worktrees and the week's proposals each print one line; bind `MAIN`, `REGISTRY` (the guard's), the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
 | `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts, a Codex host's threads and the two run ledgers are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does and `CLAUDE_LEDGER_DIR` as `claude-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `scripts/intake.mjs` + `scripts/lib/intake-core.mjs` + its test | `templates/scripts/intake.mjs`, `templates/scripts/lib/intake-core.mjs`, `templates/scripts/lib/intake-core.test.mjs` | the Intake type: `--check` holds a drafted request to the owner sheet's properties, and `--gate1` makes unit 1's Gate 1 automatic while its approval still matches the claim (`intake.md`); bind `STRAY` |

@@ -494,14 +494,18 @@ test('inboxLines: a section that is missing or malformed is no inbox, and rows o
     ['no parked section', registryFile(activeSection([]))],
     ['no end marker', registryFile(['<!-- harness:parked -->', ...PARKED_HEAD, ...rows].join('\n'))],
     ['no begin marker', registryFile([...PARKED_HEAD, ...rows, '<!-- /harness:parked -->'].join('\n'))],
-    ['the end marker before the begin marker', registryFile(['<!-- /harness:parked -->', '<!-- harness:parked -->', ...PARKED_HEAD, ...rows].join('\n'))],
     ['no header', registryFile(['<!-- harness:parked -->', ...rows, '<!-- /harness:parked -->'].join('\n'))],
     ['no separator row', registryFile(['<!-- harness:parked -->', PARKED_HEAD[0], ...rows, '<!-- /harness:parked -->'].join('\n'))],
     ['no Unit column', registryFile(parkedSection(['| Gate 2 | 2026-11-06T04:10Z |'], ['| Gate | Parked (UTC) |', '|---|---|']))],
-    ['a header above the begin marker', registryFile([...PARKED_HEAD, '<!-- harness:parked -->', ...rows, '<!-- /harness:parked -->'].join('\n'))],
-    ['a marker cited in a line of prose', registryFile('Parked units sit between `<!-- harness:parked -->` and `<!-- /harness:parked -->`.', activeSection([]))],
   ]) assert.deepEqual(inboxLines(text), [], what);
-  // rows above and below the markers belong to no table; a prose line naming the markers does not open one
+  // the markers as the commit guard reads its active ones (harness-guard.sh's rows()): the header right above the begin
+  // marker, a marker inside a line of text, and a section not closed after its begin marker, read to the file's end
+  for (const [what, text] of [
+    ['a header above the begin marker', registryFile([...PARKED_HEAD, '<!-- harness:parked -->', ...rows, '<!-- /harness:parked -->'].join('\n'))],
+    ['markers inside lines of text', registryFile(['The parked units: <!-- harness:parked -->', ...PARKED_HEAD, ...rows, 'and no more <!-- /harness:parked --> here'].join('\n'))],
+    ['the end marker before the begin marker', registryFile(['<!-- /harness:parked -->', '<!-- harness:parked -->', ...PARKED_HEAD, ...rows].join('\n'))],
+  ]) assert.deepEqual(inboxLines(text), [CR_LINE], what);
+  // rows above and below the markers belong to no table; a prose line naming both markers opens the section, as it opens the guard's, and the end marker below closes it
   const around = registryFile(`${PARKED_HEAD.join('\n')}\n${rows[0]}`, 'The parked units sit between `<!-- harness:parked -->` and `<!-- /harness:parked -->`.', parkedSection(['| CR-022 | Gate 1 | 2026-11-06T04:11Z | b | w | Q-1 |']), `${PARKED_HEAD.join('\n')}\n${rows[0]}`);
   assert.deepEqual(inboxLines(around), ['INBOX CR-022 Gate 1 since 2026-11-06T04:11Z · Q-1']);
 });
@@ -528,6 +532,23 @@ test('registryWorktrees: the checkouts named by a held row or a parked row, from
   assert.deepEqual(registryWorktrees(null, '/r'), []);
   assert.deepEqual(registryWorktrees(text, ''), []);
   assert.deepEqual(registryWorktrees(registryFile(parkedSection(['| CR-021 |'], ['| Unit |', '|---|'])), '/r'), []);
+  // every row the commit guard holds keeps its worktree (harness-guard.sh's rows()): the header right above the begin
+  // marker, markers inside lines of text, a row number with a space in it, a row above the header, every marked section
+  // and one not closed, to the file's end; every Worktree column, and a cell split at an escaped pipe as the guard splits it
+  const guard = (...lines) => registryWorktrees(lines.join('\n'), '/r/main');
+  const HEAD = ['| # | Unit | Step | Branch | Worktree |', '|---|---|---|---|---|'];
+  const at = (n, wt) => `| ${n} | CR-02${n} | 5 | change/cr-02${n} | ${wt} |`;
+  assert.deepEqual(guard(...HEAD, '<!-- harness:active -->', at(1, '../wt-held'), '<!-- /harness:active -->'), ['/r/wt-held']);
+  assert.deepEqual(guard('Held rows: <!-- harness:active -->', ...HEAD, '| 1 0 | CR-021 | 5 | b | ../wt-a |', 'held rows end <!-- /harness:active --> here'), ['/r/wt-a']);
+  assert.deepEqual(
+    guard('<!-- harness:active -->', at(2, '../wt-above'), ...HEAD, at(1, '../wt-a'), '<!-- /harness:active -->', '', '<!-- harness:active -->', at(3, '../wt-second'), '<!-- /harness:active -->', '<!-- harness:active -->', at(4, '../wt-open')),
+    ['/r/wt-above', '/r/wt-a', '/r/wt-second', '/r/wt-open'],
+  );
+  assert.deepEqual(guard('<!-- harness:active -->', '| # | Worktree | Unit | Worktree |', '|---|---|---|---|', '| 1 | ../wt-x | CR-021 | ../wt-y |', '<!-- /harness:active -->'), ['/r/wt-x', '/r/wt-y']);
+  assert.deepEqual(guard('<!-- harness:active -->', '| # | Unit | Notes | Worktree |', '|---|---|---|---|', '| 1 | CR-021 | a\\|../wt-split | main |', '<!-- /harness:active -->'), ['/r/wt-split']);
+  // no header row: no column is the Worktree one, so a held row locks the main checkout and a parked one names nothing
+  assert.deepEqual(guard('<!-- harness:active -->', at(1, '../wt-a'), '<!-- /harness:active -->', '<!-- harness:parked -->', CR_ROW, '<!-- /harness:parked -->'), []);
+  assert.deepEqual(registryWorktrees(registryFile([...PARKED_HEAD, '<!-- harness:parked -->', CR_ROW, '<!-- /harness:parked -->'].join('\n')), '/r/main'), ['/r/wt-cr-021']);
 });
 
 test('worktreesDue never names a worktree that a registry row names; checkAll takes the rows from the registry it is given', () => {
@@ -544,6 +565,15 @@ test('worktreesDue never names a worktree that a registry row names; checkAll ta
   const line = (f) => checkAll(f).find((i) => i.kind === 'worktrees')?.why.split(': ')[1];
   assert.equal(line(facts), '.worktrees/a, .worktrees/b, .worktrees/c');
   assert.equal(line({ ...facts, registry: { text, root: '/r' } }), '.worktrees/a, .worktrees/c');
+  // a row or git may name a checkout through a link: both sides are compared as `real` gives them, as the guard compares
+  // them (cd and pwd -P); `real` is the identity unless the facts give one
+  const links = { '/r/alias-a': '/r/.worktrees/a', '/r/.worktrees/c': '/r/real-c', '/r/alias-c': '/r/real-c' };
+  const real = (p) => links[p] ?? p;
+  assert.equal(worktreesDue({ worktrees, now: NOW, top: '/r', named: ['/r/alias-a', '/r/alias-c'] }).why.split(': ')[1], '.worktrees/a, .worktrees/b, .worktrees/c');
+  assert.equal(worktreesDue({ worktrees, now: NOW, top: '/r', named: ['/r/alias-a', '/r/alias-c'], real }).why.split(': ')[1], '.worktrees/b');
+  const aliased = registryFile(parkedSection(['| CR-021 | Gate 2 | 2026-11-06T04:10Z | change/cr-021 | alias-a | Q-1 |']));
+  assert.equal(line({ ...facts, registry: { text: aliased, root: '/r' } }), '.worktrees/a, .worktrees/b, .worktrees/c');
+  assert.equal(line({ ...facts, registry: { text: aliased, root: '/r', real } }), '.worktrees/b, .worktrees/c');
 });
 
 test('formatDue puts the inbox lines last, and nothing due stays nothing due while the owner has an inbox', () => {
@@ -821,6 +851,12 @@ test('the wrapper: a worktree that a held row or a parked row names is never res
   // the same rows outside their markers name nothing
   f.write(REGISTRY, `${activeSection([])}\n\n${parkedSection([])}\n\n${held}\n${parked}\n`);
   assert.deepEqual(residue(), names.slice().sort());
+  // rows that name each worktree through a link outside the repository keep it: the paths are compared as real paths
+  const links = tmpDir('harness-due-links-');
+  for (const name of ['held', 'parked']) fs.symlinkSync(path.join(f.repo, '.worktrees', name), path.join(links, name), 'dir');
+  const via = (name) => path.relative(f.repo, path.join(links, name));
+  f.write(REGISTRY, registryFile(activeSection([held.replace('.worktrees/held', via('held'))]), parkedSection([parked.replace('.worktrees/parked', via('parked'))])));
+  assert.deepEqual(residue(), ['plain']);
 });
 
 test('the wrapper exits 2 with a usage line on a bad flag and outside a repository', () => {

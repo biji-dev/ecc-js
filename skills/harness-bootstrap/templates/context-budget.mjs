@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// harness-bootstrap context-budget hook (generated YYYY-MM-DD). Claude Code, Stop + UserPromptSubmit + PostToolUse.
+// harness-bootstrap context-budget hook (generated YYYY-MM-DD). Claude Code, UserPromptSubmit + PostToolUse.
 // [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding: the WARN, GATE_TEXT,
 // MARGIN and DEFAULT_LIMIT figures and BAND below, re-derived per project from its harness file's
 // Context budget section.

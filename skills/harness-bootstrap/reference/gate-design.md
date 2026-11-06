@@ -68,18 +68,23 @@ and on whether another unit can run:
 ## Parking a unit — the gate inbox
 
 `[M]` **An owner gate parks its unit, and the run moves on.** At a Gate 1 ask, an
-owner Gate 2, a blocking P or C card, or a push the run grant does not cover:
+owner Gate 2, a blocking P or C card, an `escalate-adversarial` or a tripwire:
 
 1. write the brief and the open cards to the state file — the cards as `Q-n` rows
    in the decision log, the header line `Parked: <gate> <ISO time>` — and commit it
    on the unit branch;
-2. move the unit's row from the registry's active table to its parked table, below.
+2. stop what the unit started (`runner.md` › Step 10), since a parked row holds no
+   `Resources` slot, and move its row from the registry's active table to its
+   parked table, below.
    A held row would block every other unit's merge under `SCOPE=repo`
    (`commit-guard.md` › Land order); the guard reads the active table only;
 3. post the gate as text with its cards in full, and a `PushNotification` where the
    host has one;
 4. start the next ready unit whose write set overlaps no held or parked unit's
    (`runner.md` › Shape). With none, end the turn on `WAITING ON YOU:` and the inbox.
+
+A push the grant does not cover has no row left to park: it waits in the state line
+(`WAITING ON YOU: push <mainline>, <n> commits`), and the run goes on.
 
 ```markdown
 <!-- harness:parked -->
@@ -92,10 +97,14 @@ owner Gate 2, a blocking P or C card, or a push the run grant does not cover:
 one `INBOX` line per parked row, and the session-resume hook puts them into every new
 or compacted context (`context.md`).
 
-`[M]` **Answers come in one message, for any number of units.** Each answered unit
-moves back to the active table (a claim, `runner.md` › Step 0), its `Q-n` rows
-become `DEC` rows, its `Parked:` line goes, and it resumes through step 0a. A card
-left unanswered keeps its unit parked: park-and-carry, never consent.
+`[M]` **Answers come in one message, for any number of units.** Each answer goes
+into its unit's Cards cell (`answered: Q-1 <answer> · …`; the registry is
+untracked, so no commit). The unit stays parked while another is in flight — one
+unit in flight — and is the next one claimed (`runner.md` › Shape): back to the
+active table, its `Q-n` rows become `DEC` rows, the span from its `Parked:` line to
+the answer is added to `Owner wait:`, the `Parked:` line goes, and it resumes
+through step 0a. A card left unanswered keeps its unit parked: park-and-carry, never
+consent.
 > Origin, the v8 session study (2026-10-23 to 11-06, 127 sessions, 10 installs):
 > owner wait per unit exceeded work per unit in two of three measured repositories
 > (1h57m against 1h44m, 8h27m against 1h01m), because a Full gate stopped the whole
@@ -295,7 +304,7 @@ generated default:
 - **Push is the owner's**, every tier, unless a run grant covers it.
 
 `[M]` The owner may tighten the default (no auto-merge at all) at review. **Push is
-the owner's; the owner may grant it for one run, never for never-auto work.** A
+the owner's; the owner may grant it for one run (› The run grant).** A
 pushed merge is the one step the harness cannot take back, so the grant is explicit,
 written in the kickoff and quoted in the ledger.
 
@@ -305,21 +314,23 @@ written in the kickoff and quoted in the ledger.
 unread.** One line in the `/task-runner` message, with an optional stop line
 (`until 18:00`, `3 units`):
 `Grant: merge clean Full · push after merge · recommendation on reversible P cards`.
-The runner copies it into each covered unit's state file as its `Grant:` line and
-quotes it in the ledger's Gate 2 row.
+The runner copies both into each covered unit's state file as its `Grant:` and
+`Stop:` lines (`scope-guard.md` › The state file) and quotes the grant in the
+ledger's Gate 2 row.
 
 - **merge clean Full** — a Full unit merges on its own when it passes the Small
-  test above: no blocking conformance gap, no unresolved P0 or P1, no `FALSE
-  CLAIMS`, nothing `degraded`, every required step `ran`, this round's FULL verify
-  all PASS, re-verified if the mainline moved.
+  test above (› The merge policy) and its claim audit found no `FALSE CLAIMS`.
 - **push after merge** — a merge the policy or the grant made is pushed.
 - **recommendation on reversible P cards** — a P card whose reversal is a revert
   takes its recommendation, logged `By: grant` and listed at Gate 2 under **Decided
   for you**.
 
 `[M]` **A grant never covers** a never-auto category, a taste call, a C card, an Ops
-step, a re-tier, an `escalate` or a tripwire: each of those parks the unit. A grant
-ends with its run.
+step, a re-tier, an `escalate-adversarial` or a tripwire: each of those parks the
+unit. **A grant ends with its run**, and a run ends on `DONE` or `BLOCKED` or at its
+stop line; `WAITING ON YOU` does not end it, so the answers continue it. A parked
+unit resumed in a later run takes that run's grant, never the `Grant:` line its
+state file kept.
 > Origin, the v8 session study: in 14 days the owner typed 66 bare "yes", 38 "your
 > recommendation" and 22 "merge / push", and picked the option marked Recommended 41
 > times — approvals given unread. The owner's v7 rollout prompt already pre-approved
@@ -337,12 +348,12 @@ ends with its run.
 3. a P or C decision that blocks the next step — a never-auto decision, a hidden
    cost that is a one-way door (`scope-guard.md`), spend past the Gate 1 estimate's upper bound;
 4. a third fix round on critical code (`escalate-adversarial`, below);
-5. Gate 2 when the merge policy and the run grant say ask, and before every push
-   the grant does not cover;
+5. Gate 2 when the merge policy and the run grant say ask, and a push the grant
+   does not cover;
 6. an Ops step — the runbook is approved once, for the SHA and the rollback it names.
 
-Each stop parks its unit (› Parking a unit), and the run goes on with what else is
-ready.
+Each stop parks its unit (› Parking a unit), a push waits in the state line, and
+the run goes on with what else is ready.
 
 `[M]` **Not a stop:** finishing a step, a full context (persist and keep working;
 auto-compaction is the reset, `context.md`), the second family being unavailable (degraded, recorded),

@@ -247,8 +247,9 @@ second run of the same gates waits for the first.
 > the merges were never the waste.
 
 **At an owner gate past 150K, the cards go out as text.** The open cards go to the
-state file as `Q-n` rows first, and the turn ends once nothing else is ready; under
-150K the question tool stays (`gate-design.md` › Who decides).
+state file as `Q-n` rows first, and the turn ends once nothing else is ready. Under
+150K they go out as text too while another unit can run; otherwise the question tool
+stays (`gate-design.md` › Parking a unit).
 > Origin, the v5 context study: 183 requests after a gap of more than an hour
 > rewrote their whole context, 9.6% of main-thread spend. Idle compaction runs only
 > after an ended turn — 0 of 44 came while a question was pending.
@@ -395,7 +396,7 @@ This section exists so a generator does not repeat the pattern.
 |---|---|
 | *"Size is a poor effort proxy"* | Written at n=2. At n=19 size ordered correctly at the median and the large bucket had the **tightest** spread of any. Retracted. |
 | *"A process tier scaling ceremony to blast radius is unnecessary"* | Withdrawn at n=10, when clean tasks ran 22–59 min with four reviewers. **Reversed at n=22**: elapsed reached 424 minutes on a medium task returning one HIGH, because every task ran the same pipeline; the wins were concentrated in auth, identity and isolation while the cost was spread evenly. Tiers now (`gate-design.md`). Being wrong twice about the same rule is the lesson. |
-| *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`). |
+| *"One task per session, then exit"* and *"past the limit, start a new session"* | Both shipped in this skill's first version. The third project measured the cost: 28 of 118 sessions ended in a hand-off, about 90% triggered by the budget rule. State on disk made the exit unnecessary. Reversed: offer `/compact`, keep working (`context.md`); v8 dropped the offer too (next row). |
 | *"Offer `/compact` with a keep-line; offer `/clear` at gates and deliverable boundaries"* | v3 to v7. Over 14 days and 127 sessions the owner pasted 94 keep-lines and typed 38 `/clear`s; 58% of 530 owner prompts carried no decision. A clear came at a median 170K and the new session cost a median 90K before its first step, so a clear freed about 80K, not a resume "from about 8 KB". The model cannot compact or clear itself; auto-compaction does it, and the session-resume hook restores the unit. Reversed: never offer either (§1, `context.md`). |
 | An Opus code-reviewer over every slice | 63 per-slice runs in one milestone found no P0 or P1; both of its P1s came from the silent-failure lens and the second family. Across 14 days the code-reviewer cost the most of any Opus reviewer and found 8 unique P0/P1. The second family reviews each slice now; one Opus reviewer reads the whole unit diff at step 8 (`gate-design.md`). |
 | Fix every finding at once, nits included | 20 of one milestone's 50 fix rounds were opened by P3s alone, each re-reviewed. P3s wait for one P3 batch now (§1). |

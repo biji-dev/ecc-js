@@ -313,9 +313,13 @@ mutantFails('letting the inbox change the exit code', 'if (blocking) process.exi
 mutantFails('reading the registry of the linked worktree instead of the main checkout', 'readRegistry(mainTop)', 'readRegistry(top)', CLI_REL);
 mutantFails('printing the inbox before the due lines', "return [...lines, ...inbox.map((l) => `${l}\\n`)].join('');", "return [...inbox.map((l) => `${l}\\n`), ...lines].join('');");
 mutantFails('reading the active table as the parked one', "registryTable(registryText, 'parked');", "registryTable(registryText, 'active');");
-mutantFails('reading the rows outside the markers', '.slice(begin + 1, end).filter((l) => /^\\s*\\|/.test(l))', '.filter((l) => /^\\s*\\|/.test(l))');
+mutantFails('reading the rows outside the markers', 'else if (on && row) rows.push(line);', 'else if (row) rows.push(line);');
 mutantFails('naming a worktree that a parked row names', "['parked', () => true]", "['parked', () => false]");
 mutantFails('naming a worktree that a held row names', "['active', (row) =>", "['activ', (row) =>");
+mutantFails('dropping the table header right above the begin marker', 'if (run && run.length > 1 && SEPARATOR.test(run.at(-1))) above = run.at(-2);', '');
+mutantFails('reading a held row number with a space in it as no row', "/^[1-9]\\d*$/.test((row[0] ?? '').replace(/\\s/g, ''))", "/^[1-9]\\d*$/.test(row[0] ?? '')");
+mutantFails('missing the worktree the guard reads in a row with an escaped pipe','.flatMap((l) => [cellsOf(l), guardCellsOf(l)])', '.map(cellsOf)');
+mutantFails('comparing the worktrees a row names as written, not as real paths', '{ text: registryText, root: mainTop, real }', '{ text: registryText, root: mainTop }', CLI_REL);
 
 test('the shipped suite never skips: bound to no preflight and a 72 h idle time it still passes with skipped 0 and todo 0', () => {
   const copy = tmp('harness-due-binding-');

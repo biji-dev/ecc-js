@@ -85,9 +85,11 @@ const readRegistry = (root) => {
     return null;
   }
 };
+// A path through its links, as the guard's cd and pwd -P read it (the native call also gives a
+// case-insensitive disk's own spelling); a path that does not exist is itself.
 const real = (p) => {
   try {
-    return fs.realpathSync(p);
+    return fs.realpathSync.native(p);
   } catch {
     return path.resolve(p);
   }
@@ -272,7 +274,7 @@ function main() {
       disk: readDisk(top, harness),
       worktrees: readWorktrees(top),
       proposals: readProposals(harness),
-      registry: registryText === null ? null : { text: registryText, root: mainTop },
+      registry: registryText === null ? null : { text: registryText, root: mainTop, real },
       seen: readJson(seenFile) ?? {},
     };
     items = checkAll(facts);

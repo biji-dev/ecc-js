@@ -113,24 +113,36 @@ test("a held row in a linked worktree: the main checkout's registry, and its sta
   assert.match(text, /^ {2}grant: merge clean Full · push after merge; stop: after CR-021$/m);
 });
 
-test('a parked row: its gate, since when and its cards; with no held row a compaction starts nothing', () => {
+test('a parked row: its gate, since when and its cards, its state file read from its branch when the checkout is on another; with no held row a compaction points at the next ready unit', () => {
   const { main } = checkout();
   put(main, REGISTRY, registry({ parked: ['| CR-030 | Gate 2 | 2026-11-06T04:10Z | change/cr-030 | main | Q-1 merge or hold · Q-2 button copy |'] }));
   put(main, `${STATE_DIR}/CR-030.state.md`, stateFile({ unit: 'CR-030', head: ['Tier: Full', 'Parked: Gate 2 2026-11-06T04:10Z'], next: ["wait for the owner's answers"] }));
   const text = run(main, 'compact');
-  assert.match(text, /^PARKED CR-030 · Gate 2 since 2026-11-06T04:10Z · Q-1 merge or hold · Q-2 button copy$/m);
-  assert.match(text, /^ {2}next: wait for the owner's answers$/m);
+  assert.match(text, /^PARKED CR-030 · Gate 2 since 2026-11-06T04:10Z · Q-1 merge or hold · Q-2 button copy\n {2}next: wait for the owner's answers$/m);
   assert.doesNotMatch(text, /^HELD/m);
-  assert.equal(lastLine(text), "No unit is held; parked units wait for the owner's answers.");
+  assert.equal(lastLine(text), "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).");
+  // the unit's state file committed on its branch, and the main checkout moved to another unit's branch
+  git(main, 'checkout', '-q', '-b', 'change/cr-030');
+  git(main, 'add', `${STATE_DIR}/CR-030.state.md`);
+  git(main, 'commit', '-q', '--no-verify', '-m', 'park CR-030');
+  git(main, 'checkout', '-q', '-b', 'change/cr-031', 'main');
+  assert.ok(!fs.existsSync(path.join(main, STATE_DIR, 'CR-030.state.md')));
+  assert.equal(run(main, 'compact'), text, 'read from change/cr-030');
 });
 
-test('no held or parked row, rows outside the marked sections only, or no registry: silent', () => {
+test('no held or parked row, rows outside the marked sections only, or no registry: silent, but a compaction points a queue run at its next unit', () => {
   const { main } = checkout();
   assert.equal(run(main), null, 'no registry');
+  const none = [
+    "[session-resume] compact: the harness's resume point, read from the registry and the state files (newer than any summary).",
+    "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).",
+  ].join('\n');
   put(main, REGISTRY, registry());
-  assert.equal(run(main), null, 'row 0 alone is the mainline, never held');
+  assert.equal(run(main, 'startup'), null, 'row 0 alone is the mainline, never held');
+  assert.equal(run(main, 'compact'), none, 'row 0 alone, on a compaction');
   put(main, REGISTRY, registry({ outside: ['| # | Unit | Step | Branch | Worktree |', '|---|---|---|---|---|', '| 2 | CR-099 | 3 tests | change/cr-099 | main |'] }));
-  assert.equal(run(main), null, 'a numbered row outside the active markers is not held');
+  assert.equal(run(main, 'resume'), null, 'a numbered row outside the active markers is not held');
+  assert.equal(run(main, 'compact'), none, 'a numbered row outside the active markers, on a compaction');
 });
 
 test('a missing, unreadable or broken state file still prints its row, and the hook exits 0', () => {
@@ -141,8 +153,8 @@ test('a missing, unreadable or broken state file still prints its row, and the h
   fs.mkdirSync(path.join(main, STATE_DIR, 'CR-022.state.md'), { recursive: true }); // a directory: unreadable
   put(main, `${STATE_DIR}/CR-023.state.md`, '\u0000\u0001 not a state file ÿ\n## \n|||\n');
   const text = run(main);
-  assert.match(text, new RegExp(`^HELD CR-021 · step 5 implement · change/cr-021 · main\\n {2}state file not found: ${esc(STATE_DIR)}/CR-021\\.state\\.md$`, 'm'));
-  assert.match(text, new RegExp(`^HELD CR-022 · step 3 tests · change/cr-022 · main\\n {2}state file not found: ${esc(STATE_DIR)}/CR-022\\.state\\.md$`, 'm'));
+  assert.match(text, new RegExp(`^HELD CR-021 · step 5 implement · change/cr-021 · main\\n {2}state file not found: ${esc(STATE_DIR)}/CR-021\\.state\\.md \\(in this checkout or on change/cr-021\\)$`, 'm'));
+  assert.match(text, new RegExp(`^HELD CR-022 · step 3 tests · change/cr-022 · main\\n {2}state file not found: ${esc(STATE_DIR)}/CR-022\\.state\\.md \\(in this checkout or on change/cr-022\\)$`, 'm'));
   assert.match(text, /^HELD CR-023 · step 2 plan · change\/cr-023 · main$/m, 'a broken state file prints the row alone');
   assert.match(text, /^ {2}state file not read: '\.\.\/\.\.\/outside' is not a unit id$/m, 'an id that leaves the state directory is refused');
 });
@@ -157,12 +169,17 @@ test('over MAX_BYTES: whole lines up to the cap, held rows before parked, then h
   const tail = new RegExp(`^… (\\d+) more lines: read ${esc(REGISTRY)} and the state files$`).exec(lines.at(-2));
   assert.ok(tail, `no tail line: ${lines.at(-2)}`);
   const kept = lines.slice(1, -2);
-  const whole = new RegExp(`^HELD CR-\\d+ · step 5 implement · change/cr-\\d+-a-long-branch-name · \\.\\./wt-cr-\\d+$|^ {2}state file not found: \\.\\./wt-cr-\\d+/${esc(STATE_DIR)}/CR-\\d+\\.state\\.md$`);
+  const whole = new RegExp(`^HELD CR-\\d+ · step 5 implement · change/cr-\\d+-a-long-branch-name · \\.\\./wt-cr-\\d+$|^ {2}state file not found: \\.\\./wt-cr-\\d+/${esc(STATE_DIR)}/CR-\\d+\\.state\\.md \\(in this checkout or on change/cr-\\d+-a-long-branch-name\\)$`);
   assert.ok(kept.every((l) => whole.test(l)), 'a kept line was cut');
   assert.equal(kept.length + Number(tail[1]), 2 * 61, 'the tail counts every line it cut');
   assert.match(text, /^HELD CR-100 /m);
   assert.doesNotMatch(text, /PARKED/, 'the parked row comes last, so it is cut first');
   assert.match(lastLine(text), /^Continue the held unit's next step/, 'the closing line is kept');
+  // a cap too small for the first line, the count and the closing line: the text is cut to it, never inside a character
+  for (const max of [10, 11, 12]) {
+    const cut = bound.capped('€'.repeat(10), ['x'], 'z', max);
+    assert.ok(Buffer.byteLength(cut) <= max && /^€+$/.test(cut), `${max}: ${cut}`);
+  }
 });
 
 test('compact says continue the held unit; startup, resume and clear are context only', () => {
@@ -174,7 +191,7 @@ test('compact says continue the held unit; startup, resume and clear are context
   for (const source of ['startup', 'resume', 'clear']) {
     const text = run(main, source);
     assert.match(text, new RegExp(`^\\[session-resume\\] ${source}: `));
-    assert.equal(lastLine(text), 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the queue.', source);
+    assert.equal(lastLine(text), 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.', source);
   }
 });
 

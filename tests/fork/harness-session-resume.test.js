@@ -121,8 +121,10 @@ function runHook(dir, opts = {}) {
 const source = (dir, s, opts = {}) => runHook(dir, { ...opts, input: { source: s, ...opts.input } });
 const lastLine = text => text.split('\n').at(-1);
 const COMPACT = "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.";
-const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the queue.';
-const PARKED_ONLY = "No unit is held; parked units wait for the owner's answers.";
+const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.';
+const PARKED_ONLY = "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).";
+const NO_ROWS = "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).";
+const FIRST = s => `[session-resume] ${s}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
 
 console.log('\nharness session-resume: the registry');
 
@@ -178,9 +180,16 @@ test('columns are read by header name after the first: another order, a header a
   assert.match(runHook(main), /^HELD CR-021 · step 4 tests · change\/cr-021 · main$/m);
   put(main, '.claude/registry.md', registry({ activeHead: ['| # | Task | Branch | Notes |', '|---|---|---|---|'], held: ['| 1 | P2-16 | task/p2-16 | open |'] }));
   assert.match(runHook(main), /^HELD P2-16 · task\/p2-16 · main$/m);
-  // no header at all: the documented column order
+  // no header at all: no column is named, as the guard names none (its row locks the main checkout), so no column
+  // order is invented and no state file is read, here or in the checkout a cell names; a held row shows its cells,
+  // and a parked table with no header gives nothing, as harness-due gives no INBOX line
+  put(path.dirname(main), 'wt/docs/plans/CR-021.state.md', stateFile({ head: ['Tier: Foreign'], next: ['a foreign next step'] }));
+  put(main, 'docs/plans/CR-021.state.md', stateFile({ head: ['Tier: Full'], next: ['the main next step'] }));
   put(main, '.claude/registry.md', registry({ activeHead: [], parkedHead: [], held: ['| 1 | CR-021 | 4 tests | change/cr-021 | ../wt |'], parked: ['| CR-030 | Gate 2 | 2026-11-06T04:10Z | b | main | Q-1 x |'] }));
-  assert.match(runHook(main), /^HELD CR-021 · step 4 tests · change\/cr-021 · \.\.\/wt\n(?:.*\n)*PARKED CR-030 · Gate 2 since 2026-11-06T04:10Z · Q-1 x$/m);
+  const bare = runHook(main);
+  assert.strictEqual(bare, [FIRST('compact'), 'HELD 1 · CR-021 · 4 tests · change/cr-021 · ../wt', '  state file not read: the registry table has no header row', COMPACT].join('\n'));
+  put(main, '.claude/registry.md', registry({ parkedHead: [], parked: ['| CR-030 | Gate 2 | 2026-11-06T04:10Z | b | main | Q-1 x |'] }));
+  assert.strictEqual(source(main, 'startup'), null, 'a parked table with no header');
 });
 
 test('a Worktree cell that is empty, main, -, n/a, none or `main · <branch>` reads the main checkout', () => {
@@ -203,26 +212,29 @@ test('rows outside the marked sections are never read, and a section without its
   put(main, '.claude/registry.md', `${registry({ held: [heldRow(1, 'CR-021')] }).replace('<!-- /harness:active -->', '')}\n`);
   assert.doesNotMatch(runHook(main) || '', /HELD/, 'an active section with no end marker');
   put(main, '.claude/registry.md', `${registry({ outside, parked: ['| CR-030 | Gate 2 | t | b | main | c |'] }).replace('<!-- /harness:parked -->', '')}\n`);
-  assert.strictEqual(runHook(main), null, 'a parked section with no end marker, and rows outside');
+  assert.strictEqual(source(main, 'startup'), null, 'a parked section with no end marker, and rows outside');
 });
 
 test('row 0 and a first cell that is not a number of 1 or more are never held', () => {
   const { main } = checkout();
   put(main, '.claude/registry.md', registry({ held: ['| - | CR-021 | | | main | | |', '| # | CR-022 | | | main | | |', '| 00 | CR-023 | | | main | | |', '| 1a | CR-024 | | | main | | |'] }));
-  assert.strictEqual(runHook(main), null);
+  assert.strictEqual(source(main, 'startup'), null);
+  assert.strictEqual(runHook(main), [FIRST('compact'), NO_ROWS].join('\n'));
   put(main, '.claude/registry.md', registry({ held: ['| 12 | CR-025 | | | main | | |'] }));
   assert.match(runHook(main), /^HELD CR-025 · main$/m);
 });
 
 console.log('\nharness session-resume: silence');
 
-test('no registry, no rows, no markers, not a checkout: nothing printed, exit 0', () => {
+test('no registry or not a checkout: nothing printed, exit 0; no row held or parked: nothing, but a compaction points at the queue', () => {
   const { main } = checkout();
   assert.strictEqual(runHook(main), null, 'no registry');
   put(main, '.claude/registry.md', registry());
-  assert.strictEqual(runHook(main), null, 'row 0 and an empty parked table');
+  for (const s of ['startup', 'resume', 'clear', 'something-new']) assert.strictEqual(source(main, s), null, `row 0 and an empty parked table: ${s}`);
+  assert.strictEqual(source(main, 'compact'), [FIRST('compact'), NO_ROWS].join('\n'), 'a compaction with no unit held or parked');
   put(main, '.claude/registry.md', '# Registry\n| # | Unit |\n|---|---|\n| 1 | CR-021 |\n');
-  assert.strictEqual(runHook(main), null, 'no markers: nothing is inside them');
+  assert.strictEqual(source(main, 'startup'), null, 'no markers: nothing is inside them');
+  assert.strictEqual(source(main, 'compact'), [FIRST('compact'), NO_ROWS].join('\n'), 'no markers, on a compaction');
   const plain = path.join(tmp('session-resume-plain-'), 'plain');
   put(plain, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021')] }));
   assert.strictEqual(runHook(plain), null, 'not a git checkout');
@@ -293,15 +305,39 @@ test('a missing, unreadable or broken state file prints the row; an id that leav
   put(main, 'docs/plans/CR-024.state.md', Buffer.from([0, 1, 2, 0xff, 0xfe, 10, 35, 35, 10, 124, 124]).toString('latin1'));
   put(main, 'docs/plans/change/fix-login.state.md', stateFile({ unit: 'change/fix-login', next: ['the nested one'] }));
   const text = runHook(main);
-  assert.match(text, /^HELD CR-021 · step 5 implement · change\/cr-021 · main\n {2}state file not found: docs\/plans\/CR-021\.state\.md$/m);
-  assert.match(text, /^ {2}state file not found: \.\.\/gone\/docs\/plans\/CR-022\.state\.md$/m);
-  assert.match(text, /^ {2}state file not found: docs\/plans\/CR-023\.state\.md$/m);
+  assert.match(text, /^HELD CR-021 · step 5 implement · change\/cr-021 · main\n {2}state file not found: docs\/plans\/CR-021\.state\.md \(in this checkout or on change\/cr-021\)$/m);
+  assert.match(text, /^ {2}state file not found: \.\.\/gone\/docs\/plans\/CR-022\.state\.md \(in this checkout or on change\/cr-022\)$/m);
+  assert.match(text, /^ {2}state file not found: docs\/plans\/CR-023\.state\.md \(in this checkout or on change\/cr-023\)$/m);
   assert.match(text, /^HELD CR-024 · step 5 implement · change\/cr-024 · main\nHELD /m, 'a broken file prints the row alone');
   for (const id of ['../etc/secret', 'CR..1', '/etc/secret', 'a/b/c']) {
     assert.ok(text.includes(`  state file not read: '${id}' is not a unit id`), id);
   }
   assert.doesNotMatch(text, /leaked/);
   assert.match(text, /^ {2}next: the nested one$/m, 'one / nests the state file');
+});
+
+test("a state file that is not in the row's checkout is read from its Branch cell's branch: a unit parked on a main checkout now on another unit's branch", () => {
+  const { main } = checkout();
+  git(main, 'checkout', '-q', '-b', 'change/cr-030');
+  put(main, 'docs/plans/CR-030.state.md', stateFile({ unit: 'CR-030', head: ['Tier: Small', 'Parked: Gate 2 2026-11-06T04:10Z'], decisions: ['| Q-1 | 2026-11-06 | P | Merge or hold? | owner |'], next: ["wait for the owner's answers"] }));
+  git(main, 'add', '.');
+  git(main, 'commit', '-q', '--no-verify', '-m', 'park CR-030');
+  git(main, 'checkout', '-q', '-b', 'change/cr-031', 'main');
+  assert.ok(!fs.existsSync(path.join(main, 'docs/plans/CR-030.state.md')), 'the main checkout is on another branch');
+  put(main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-031')], parked: [
+    '| CR-030 | Gate 2 | 2026-11-06T04:10Z | `change/cr-030` | main | |',
+    '| CR-032 | Gate 1 | t | change/cr-032 | | |',
+    '| CR-033 | Gate 1 | t | -c | main | |',
+    '| CR-034 | Gate 1 | t | change/cr-030..main | main | |',
+    '| CR-035 | Gate 1 | t | change/cr-030~1 | main | |',
+  ] }));
+  const text = runHook(main);
+  assert.match(text, /^PARKED CR-030 · Gate 2 since 2026-11-06T04:10Z\n {2}next: wait for the owner's answers\n {2}open: Q-1 Merge or hold\?$/m);
+  assert.match(text, /^HELD CR-031 · step 5 implement · change\/cr-031 · main\n {2}state file not found: docs\/plans\/CR-031\.state\.md \(in this checkout or on change\/cr-031\)$/m, 'the branch has no state file');
+  assert.match(text, /^ {2}state file not found: docs\/plans\/CR-032\.state\.md \(in this checkout or on change\/cr-032\)$/m, 'no such branch');
+  // a Branch cell that is no plain branch name is never handed to git
+  for (const id of ['CR-033', 'CR-034', 'CR-035']) assert.match(text, new RegExp(`^PARKED ${id} · .*\\n {2}state file not found: docs/plans/${id}\\.state\\.md$`, 'm'), id);
+  assert.strictEqual(lastLine(text), COMPACT);
 });
 
 test('the hook writes nothing: the fixture tree is the same after a run', () => {
@@ -337,6 +373,10 @@ test('the closing line: compact continues the held unit; startup, resume, clear 
     assert.match(text, /^\[session-resume\] startup: /, String(odd));
     assert.strictEqual(lastLine(text), CONTEXT, String(odd));
   }
+  // parked rows alone: a compaction says the run may go on with the next ready unit; context only on the rest
+  put(main, '.claude/registry.md', registry({ parked: ['| CR-030 | Gate 2 | 2026-11-06T04:10Z | change/cr-030 | main | Q-1 x |'] }));
+  assert.strictEqual(lastLine(source(main, 'compact')), PARKED_ONLY);
+  assert.strictEqual(lastLine(source(main, 'resume')), CONTEXT);
 });
 
 test('over MAX_BYTES: whole lines to the cap, a tail that counts the rest, the closing line kept; under it, no tail', () => {
@@ -350,7 +390,7 @@ test('over MAX_BYTES: whole lines to the cap, a tail that counts the rest, the c
   const tail = /^… (\d+) more lines: read \.claude\/registry\.md and the state files$/.exec(lines.at(-2));
   assert.ok(tail, lines.at(-2));
   const kept = lines.slice(1, -2);
-  assert.ok(kept.every(l => /^HELD CR-\d+ · step 5 implement · change\/cr-\d+-a-long-branch-name · \.\.\/wt-cr-\d+$|^ {2}state file not found: \.\.\/wt-cr-\d+\/docs\/plans\/CR-\d+\.state\.md$/.test(l)), 'a kept line was cut');
+  assert.ok(kept.every(l => /^HELD CR-\d+ · step 5 implement · change\/cr-\d+-a-long-branch-name · \.\.\/wt-cr-\d+$|^ {2}state file not found: \.\.\/wt-cr-\d+\/docs\/plans\/CR-\d+\.state\.md \(in this checkout or on change\/cr-\d+-a-long-branch-name\)$/.test(l)), 'a kept line was cut');
   assert.strictEqual(kept.length + Number(tail[1]), 122);
   assert.doesNotMatch(text, /PARKED/, 'parked rows come after held rows, so they are cut first');
   assert.strictEqual(lastLine(text), COMPACT);
@@ -385,6 +425,10 @@ test('the bindings and the readers are exported', () => {
       open: m.openQuestions(['Q-1 a', '| Q-2 | b |', 'DEC-1 c']),
       // 163 bytes whole; 124 with one body line kept and the tail, 175 with two
       capped: m.capped('first', ['a'.repeat(50), 'b'.repeat(50), 'c'.repeat(50)], 'last', 130),
+      // a cap under the first line, the tail and the closing: no tail, the text cut where no character is split
+      // (€ is 3 bytes: 10 of them and \\nz make 32, cut to 9 at a cap of 10 or 11, to 12 at 12)
+      tiny: [10, 11, 12].map((max) => m.capped('€'.repeat(10), ['x'], 'z', max)),
+      zero: m.capped('first', [], 'last', 0),
     }));
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
@@ -395,6 +439,21 @@ test('the bindings and the readers are exported', () => {
   assert.deepStrictEqual(got.head, { unit: 'x', tier: 'Small' });
   assert.deepStrictEqual(got.open, ['Q-1 a', 'Q-2 b']);
   assert.strictEqual(got.capped, `first\n${'a'.repeat(50)}\n… 2 more lines: read .claude/registry.md and the state files\nlast`);
+  assert.deepStrictEqual(got.tiny, ['€€€', '€€€', '€€€€']);
+  assert.strictEqual(got.zero, '');
+});
+
+test('a small MAX_BYTES binding is still a cap: the text is never longer, whatever the first and closing lines take', () => {
+  const { main } = checkout();
+  put(main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021', { step: '5 implement — étape' })] }));
+  put(main, 'docs/plans/CR-021.state.md', stateFile({ next: ['the next step'] }));
+  for (const cap of [200, 120, 61, 1]) {
+    const script = mutant('export const MAX_BYTES = 4000;', `export const MAX_BYTES = ${cap};`);
+    const text = runHook(main, { script });
+    assert.ok(Buffer.byteLength(text) <= cap, `${Buffer.byteLength(text)} bytes over a cap of ${cap}`);
+    assert.ok(!text.includes('�'), 'a character was split');
+    assert.ok(text.startsWith('[session-resume] compact: '.slice(0, Math.min(cap, 26))), text);
+  }
 });
 
 test('no output starts work, offers /compact or /clear, or mentions a new session', () => {
@@ -423,7 +482,7 @@ test('mutation: a parse that also reads rows outside the marked sections is caug
   const outside = ['| # | Unit | Step | Branch | Worktree |', '|---|---|---|---|---|', '| 2 | CR-099 | 3 tests | change/cr-099 | main |'];
   put(main, '.claude/registry.md', registry({ outside }));
   assert.match(runHook(main, { script }) || '', /HELD CR-099/, 'the mutant reads the row outside the markers');
-  assert.strictEqual(runHook(main), null);
+  assert.strictEqual(source(main, 'startup'), null);
 });
 
 test('mutation: a cap that is never applied is caught', () => {
@@ -440,7 +499,15 @@ test('mutation: row 0 counted as held is caught', () => {
   const { main } = checkout();
   put(main, '.claude/registry.md', registry());
   assert.match(runHook(main, { script }) || '', /HELD mainline/, 'the mutant holds the mainline row');
-  assert.strictEqual(runHook(main), null);
+  assert.strictEqual(source(main, 'startup'), null);
+});
+
+test('mutation: a Branch cell handed to git unchecked is caught', () => {
+  const script = mutant("if (!BRANCH.test(row.branch) || row.branch.includes('..'))", 'if (!row.branch)');
+  const { main } = checkout();
+  put(main, '.claude/registry.md', registry({ parked: ['| CR-030 | Gate 2 | t | change/cr-030..main | main | |'] }));
+  assert.match(runHook(main, { script }), /\(in this checkout or on change\/cr-030\.\.main\)$/m, 'the mutant hands a range to git');
+  assert.doesNotMatch(runHook(main), /in this checkout or on/);
 });
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

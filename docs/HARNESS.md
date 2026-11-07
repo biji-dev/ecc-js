@@ -1258,7 +1258,7 @@ others one at a time after the pilot's checks.
 | v6 | 5 |
 | v5 | 2 |
 
-Claude Code's plugin, Codex's plugin and the ZCode copies are at `2.2.3-js.11`, equal to main. One remote
+Claude Code's plugin, Codex's plugin and the ZCode copies are at `2.2.3-js.12`, equal to main. One remote
 machine's plugin was last noted at js.9. The weekly job ran for weeks W44 and W45 with no failed exports,
 and next runs on 2026-11-09.
 

@@ -30,6 +30,7 @@ import {
   parseElapsed,
   parseLog,
   percentile,
+  poolLogs,
   tierWord,
 } from './estimate-core.mjs';
 
@@ -298,6 +299,27 @@ test('parseArgs needs --log, validates tier and cohort, and rejects unknown flag
   assert.throws(() => parseArgs(['--log', 'l', '--nope']), /unknown option --nope/);
 });
 
+test('--log repeats: every log is kept in order, and the first stays a.log', () => {
+  const a = parseArgs(['--log', 'a.md', '--log', 'b.md']);
+  assert.deepEqual(a.logs, ['a.md', 'b.md']);
+  assert.equal(a.log, 'a.md');
+  assert.deepEqual(parseArgs(['--log', 'a.md']).logs, ['a.md']);
+});
+
+test('poolLogs keeps one log as it is, and pools several with each unit id kept apart by its log', () => {
+  assert.deepEqual(poolLogs([{ name: 'a', text: LOG }]), parseLog(LOG));
+  const pooled = poolLogs([{ name: 'a/log.md', text: LOG }, { name: 'b/log.md', text: LOG }]);
+  assert.equal(pooled.length, 2 * LOG_ROWS);
+  // the same unit id in two logs is two units, not one with two deliverables
+  const est = estimate(pooled, { tier: BIG, sources: ['a/log.md', 'b/log.md'] });
+  assert.equal(est.rows, 2 * N);
+  assert.deepEqual(est.sources, [{ log: 'a/log.md', units: N }, { log: 'b/log.md', units: N }]);
+  near(est.metrics.work.median, 100 * at(0.5));
+  assert.ok(formatLine(est).endsWith(` — a range from 2 logs (a/log.md ${N} units, b/log.md ${N} units), not a promise`), formatLine(est));
+  // one log: no sources, the line as before
+  assert.equal(estimate(parseLog(LOG), { sources: ['a'] }).sources, undefined);
+});
+
 test('owner wait is summed over every term unit-record writes: durations joined by + or , and ISO pairs', () => {
   const d = '2026-10-24';
   assert.equal(ownerWaitMinutes('10m + 60m'), 70);
@@ -410,6 +432,24 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   assert.equal(cli(['--log', log, '--bogus']).status, 2);
   assert.equal(cli(['--log', log, '--slices', '3']).status, 2);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['empty.md', 'log.md']);
+});
+
+test('the wrapper pools repeated --log files, counts units per log, and names a log it cannot read', () => {
+  const dir = tmpDir('estimate-');
+  const one = path.join(dir, 'one.md');
+  const two = path.join(dir, 'two.md');
+  fs.writeFileSync(one, `# Harness log\n\n${LOG}\n`);
+  fs.writeFileSync(two, `# Harness log\n\n${LOG}\n`);
+  const r = cli(['--log', one, '--log', two, '--tier', BIG]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.startsWith(`Estimate per unit (${BIG}, n=${2 * N} units)`), r.stdout);
+  assert.ok(r.stdout.includes(` — a range from 2 logs (${one} ${N} units, ${two} ${N} units), not a promise`), r.stdout);
+  const j = JSON.parse(cli(['--log', one, '--log', two, '--json']).stdout);
+  assert.deepEqual(j.sources, [{ log: one, units: LOG_ROWS }, { log: two, units: LOG_ROWS }]);
+  const missing = path.join(dir, 'missing.md');
+  const gone = cli(['--log', one, '--log', missing]);
+  assert.equal(gone.status, 2);
+  assert.ok(gone.stderr.includes(`cannot read log ${missing}`), gone.stderr);
 });
 
 test('the wrapper warns on stderr of log rows left out, exits 0 as before, and says nothing when none is', () => {

@@ -29,7 +29,9 @@ import {
   checkAll,
   diskDue,
   formatDue,
+  heldKinds,
   inboxLines,
+  isHarnessUnit,
   markSeen,
   matchReports,
   newestProposals,
@@ -456,6 +458,77 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   assert.equal(formatDue([]), 'harness-due: nothing due\n');
 });
 
+test('isHarnessUnit: a harness/<slug> row id or a merge subject naming a harness/ branch; a plan row or a task branch is not', () => {
+  for (const s of ['harness/install', 'Harness/flip', 'Merge harness/risk-map: re-derive', "Merge branch 'harness/sweep-2026-11-07'", 'Merge `harness/x`'])
+    assert.equal(isHarnessUnit(s), true, s);
+  for (const s of [ROW(1, 1), `Merge task/${ROW(1, 3)}: x`, 'Merge t0.01-project-setup: T0.01 Project setup', 'the harness/ docs', 'Merge noharness/x', ''])
+    assert.equal(isHarnessUnit(s), false, s);
+});
+
+test('checkAll counts product landings only: seven harness units and one product unit since the sweep are one landing', () => {
+  const ids = [...[1, 2, 3, 4, 5, 6, 7].map((n) => `harness/h${n}`), ROW(1, 1)];
+  const logText = `# Log\n\n${table(LOG_HEAD, [])}\n${ids.map(logRow).join('\n')}\n`;
+  const birth = NOW - 3 * DAY;
+  // header lines 1-4 at the log's birth, then one row an hour, all after the sweep report
+  const logDates = new Map([[1, birth], [2, birth], [3, birth], [4, birth], ...ids.map((_, i) => [5 + i, birth + (i + 2) * HOUR])]);
+  const sweep = { rel: fill(REPORTS.sweep ?? 'r/sweep-<date>.md', '2026-10-24'), time: birth + HOUR };
+  const facts = (merges) => ({
+    now: NOW,
+    claim: null,
+    log: { text: logText, dates: logDates },
+    followUps: null,
+    reports: { sweep: [sweep], retro: [], hygiene: [] },
+    merges,
+    worktrees: [],
+    proposals: null,
+    seen: {},
+    project: 'p',
+  });
+  const harnessMerges = ids.slice(0, 7).map((id, i) => ({ t: birth + (i + 2) * HOUR, subject: `Merge ${id}: x` }));
+  const productMerge = { t: birth + 9 * HOUR, subject: `Merge task/${ROW(1, 1)}: x` };
+  const kinds = (f) => checkAll(f).map((i) => i.kind);
+  if (REPORTS.sweep !== null && CADENCE.sweep.landings !== null && CADENCE.sweep.landings > 1 && CADENCE.sweep.days > 3) {
+    assert.ok(!kinds(facts([...harnessMerges, productMerge])).includes('sweep'), 'harness units are no landings');
+    // the same count of product units is due
+    const product = ids.map((_, i) => ROW(1, i + 1));
+    const productLog = `# Log\n\n${table(LOG_HEAD, [])}\n${product.map(logRow).join('\n')}\n`;
+    const due = checkAll({ ...facts([]), log: { text: productLog, dates: logDates } }).find((i) => i.kind === 'sweep');
+    assert.match(due.why, /^2 d, 8 landings since /);
+  }
+});
+
+test('the foundation stage holds the cadences and the P3 batch; the preflight still blocks, and formatDue names what it holds', () => {
+  const logText = `# Log\n\n${table(LOG_HEAD, [])}\n${logRow('harness/install')}\n`;
+  const old = NOW - 40 * DAY;
+  const fuText = `${table(['#', SEV, ST], [['FU-1', 'P3', OPEN]])}\n`;
+  const facts = {
+    now: NOW,
+    claim: ROW(2, 1),
+    log: { text: logText, dates: new Map([[1, old], [2, old], [3, old], [4, old], [5, old]]) },
+    followUps: { text: fuText, dates: new Map([[3, old]]) },
+    reports: { preflight: [], sweep: [], retro: [], hygiene: [] },
+    merges: [],
+    disk: { free: 1e9, approved: ['caches'], last: null },
+    worktrees: [],
+    proposals: null,
+    seen: {},
+    project: 'p',
+  };
+  const full = checkAll({ ...facts, stage: 'full' }).map((i) => i.kind);
+  const held = checkAll({ ...facts, stage: 'foundation' }).map((i) => i.kind);
+  for (const kind of ['sweep', 'retro', 'hygiene', 'p3']) assert.ok(!held.includes(kind), kind);
+  assert.ok(held.includes('disk'));
+  if (REPORTS.preflight !== null && PH2 !== null) assert.ok(held.includes('preflight'));
+  // what a full stage, or no stage, finds is what v8 found
+  assert.deepEqual(checkAll(facts).map((i) => i.kind), full);
+  const bound = ['sweep', 'retro', 'hygiene'].filter((k) => REPORTS[k] !== null);
+  assert.deepEqual(heldKinds('foundation'), REPORTS.hygiene === null ? [...bound, 'p3'] : bound);
+  assert.deepEqual(heldKinds('full'), []);
+  assert.deepEqual(heldKinds(null), []);
+  assert.equal(formatDue([], [], ['sweep', 'hygiene']), 'harness-due: nothing due\nHELD sweep, hygiene — foundation stage — they wait for the flip\n');
+  assert.equal(formatDue([], ['INBOX P2-17'], ['sweep']), 'harness-due: nothing due\nHELD sweep — foundation stage — they wait for the flip\nINBOX P2-17\n');
+});
+
 // ---- the registry: the parked table is the owner's inbox
 // A registry as the commit guard reads it, with the parked table after the active one
 // (harness-bootstrap's reference/commit-guard.md › The registry).
@@ -675,6 +748,23 @@ test('the wrapper: a sweep report that no commit holds does not clear the sweep;
   f.git(['add', '.']);
   f.git(['commit', '-q', '-m', 'sweep'], `${yesterday}T10:00:00Z`);
   assert.doesNotMatch(run(f, []).stdout, /^DUE sweep/m);
+});
+
+test('the wrapper: a foundation-stage manifest holds the sweep and says so; a full one, or none, does not', () => {
+  const f = fixture();
+  if (REPORTS.sweep === null) return;
+  assert.match(run(f, []).stdout, DUE_SWEEP);
+  f.write('.agents/harness-manifest.json', '{ "stage": "foundation" }\n');
+  const held = run(f, ['--json']);
+  assert.equal(held.status, 0, held.stderr);
+  const json = JSON.parse(held.stdout);
+  assert.ok(!json.due.some((d) => d.kind === 'sweep'));
+  assert.ok(json.held.includes('sweep'));
+  assert.match(run(f, []).stdout, /^HELD sweep.* — foundation stage — they wait for the flip$/m);
+  f.write('.agents/harness-manifest.json', '{ "stage": "full" }\n');
+  assert.match(run(f, []).stdout, DUE_SWEEP);
+  f.write('.agents/harness-manifest.json', 'not json');
+  assert.match(run(f, []).stdout, DUE_SWEEP);
 });
 
 test('the wrapper: a landed branch that merged the mainline into itself is one landing, not two', () => {

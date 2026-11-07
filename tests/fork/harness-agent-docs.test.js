@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 84;
+const EXPECTED_PASS = 87;
 
 let passed = 0;
 let failed = 0;
@@ -111,7 +111,7 @@ test('the template test suite passes against a copy whose [B] CONFIG an install 
   // A new repository binds more than the budgets: its own state-file path and path prefixes.
   const original = fs.readFileSync(SCRIPT, 'utf8');
   const bindings = [
-    [/^ {2}budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192, base: 30720 },"],
+    [/^ {2}budgets: \{[^}\n]*\},$/m, "  budgets: { 'AGENTS.md': 20480, 'CLAUDE.md': 10240, rule: 16384, skillLines: 500, stateFile: 8192, base: 30720, 'process.md': 12288 },"],
     [/^ {2}statePattern: .*$/m, "  statePattern: 'harness/units/**/*.state.md',"],
     [/^ {2}pathPrefixes: .*$/m, "  pathPrefixes: ['frontend/', 'tests/', 'harness/', '.claude/', '.agents/'],"],
   ];
@@ -303,6 +303,16 @@ test('mutant that reads a link against the citing file only is killed by the tem
   const mutant = mutantOf('...(escapes ? [] : [rootRel])', '');
   const failed = failedTestsAgainst(mutant);
   assert.ok(failed.some((n) => n.includes('a link in a nested file is read against the file and against the repository root')), `not killed by the nested-link test: ${failed.join(' | ')}`);
+});
+
+test('mutant that reads no process.md citation is killed by the template suite', () => {
+  const failed = failedTestsAgainst(mutantOf('if (!inProcess) return;', 'return;'));
+  assert.ok(failed.some((n) => n.includes('`process.md` › Name and the full path hold')), `not killed by the process.md citation test: ${failed.join(' | ')}`);
+});
+
+test('mutant that drops the hint to cite process.md is killed by the template suite', () => {
+  const failed = failedTestsAgainst(mutantOf('const moved = (name) => (inProcess?.(name, false) ?', 'const moved = (name) => (false ?'));
+  assert.ok(failed.some((n) => n.includes('moved to process.md fails with a hint')), `not killed by the hint test: ${failed.join(' | ')}`);
 });
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

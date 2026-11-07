@@ -7,7 +7,8 @@
  * SUMMARY line of the gate log, and the Base/Claimed/Deliverable started/Owner wait lines, ledger
  * and findings tables of the unit's state file. A `Deliverable started: <ISO>` line opens the row's
  * Elapsed, wall and owner-wait window at that time (owner-wait pairs before it are left out); without
- * it the window opens at `Claimed:`, so a unit's second deliverable would include its first. The session pastes or redirects the output; nothing is hand-written.
+ * it the window opens at `Claimed:`, so a unit's second deliverable would include its first. A batch
+ * unit's `Rows: <id>, <id>` line starts the row's Deliverable cell with `rows <id>, <id> — `. The session pastes or redirects the output; nothing is hand-written.
  *
  *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"]
  *     [--steps <steps file>] [--json]

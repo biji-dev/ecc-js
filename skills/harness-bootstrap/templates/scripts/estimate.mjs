@@ -7,15 +7,17 @@
  * owner wait, Claude % and Codex % -- and says "no history" when a metric has fewer rows than the
  * threshold. Gate 1 quotes the line as-is.
  *
- *   node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>]
- *     [--json]
+ *   node scripts/estimate.mjs --log <docs/harness/log.md> [--log <file>]... [--tier <small|full>]
+ *     [--cohort <regex>] [--json]
  *
  * options:
- *   --log <file>      the harness log (a markdown table; `\|` is a literal pipe inside a cell)
+ *   --log <file>      the harness log (a markdown table; `\|` is a literal pipe inside a cell); repeat it
+ *                     to pool several logs -- a unit id stays one log's, and the line counts units per log
  *   --tier <t>        only rows of this tier (read from the Tier column, or the last part of
  *                     the `Unit · Mode · Type · Tier` cell)
  *   --cohort <re>     only rows whose Unit or Type cell matches this regular expression (case-insensitive)
- *   --json            print { tier, rows, metrics, line } instead (`rows` counts units)
+ *   --json            print { tier, rows, metrics, line } instead (`rows` counts units; with several logs,
+ *                     `sources` lists { log, units })
  *
  * One sample per UNIT: rows are grouped by the unit id (the first cell, before ` · `) and a unit's
  * deliverable rows are summed, so a unit with three deliverables is one sample, not three.
@@ -28,10 +30,10 @@
  * Read-only. It prints; it never writes into the repo.
  */
 import fs from 'node:fs';
-import { estimate, formatLine, formatReport, hasLogTable, leftOutRows, leftOutWarning, parseArgs, parseLog } from './lib/estimate-core.mjs';
+import { estimate, formatLine, formatReport, hasLogTable, leftOutRows, leftOutWarning, parseArgs, poolLogs } from './lib/estimate-core.mjs';
 
 const USAGE =
-  'usage: node scripts/estimate.mjs --log <docs/harness/log.md> [--tier <small|full>] [--cohort <regex>] [--json]';
+  'usage: node scripts/estimate.mjs --log <docs/harness/log.md> [--log <file>]... [--tier <small|full>] [--cohort <regex>] [--json]';
 
 function usage(msg) {
   process.stderr.write(`estimate: ${msg}\n${USAGE}\n`);
@@ -48,16 +50,19 @@ function main() {
   let leftOut;
   try {
     args = parseArgs(process.argv.slice(2));
-    let text;
-    try {
-      text = fs.readFileSync(args.log, 'utf8');
-    } catch (e) {
-      throw new Error(`cannot read log ${args.log}: ${e.code ?? e.message}`, { cause: e });
-    }
-    if (!hasLogTable(text)) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${args.log}`);
-    const records = parseLog(text);
-    leftOut = leftOutWarning(leftOutRows(text));
-    est = estimate(records, { tier: args.tier, cohort: args.cohort });
+    const logs = args.logs.map((name) => {
+      let text;
+      try {
+        text = fs.readFileSync(name, 'utf8');
+      } catch (e) {
+        throw new Error(`cannot read log ${name}: ${e.code ?? e.message}`, { cause: e });
+      }
+      if (!hasLogTable(text)) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${name}`);
+      return { name, text };
+    });
+    const records = poolLogs(logs);
+    leftOut = leftOutWarning(logs.flatMap(({ text }) => leftOutRows(text)));
+    est = estimate(records, { tier: args.tier, cohort: args.cohort, sources: args.logs });
   } catch (e) {
     return usage(e.message);
   }

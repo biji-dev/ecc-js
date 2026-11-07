@@ -11,7 +11,7 @@
  *
  * options:
  *   --claim <id>   also check the row about to be claimed: the preflight of the phase it opens
- *   --json         { due: [{ kind, subject, why, command, blocking }], blocking, inbox: [{ unit, gate,
+ *   --json         { due: [{ kind, subject, why, command, blocking }], blocking, held, inbox: [{ unit, gate,
  *                  parked, branch, worktree, cards, command }] } instead of lines
  *   --now <ISO>    the time to check against (default now)
  *   --home <dir>   the directory holding .agents/harness (default the home directory): the machine
@@ -24,7 +24,9 @@
  * owner's inbox: one `INBOX <unit> <gate> since <parked> · <cards>` line for each row of the parked
  * table of the commit guard's registry (REGISTRY, in the main checkout), the units the run set
  * aside at an owner gate and moved on from. An inbox line is no due-check: it never changes the
- * exit code, and a registry that is missing or unreadable prints none. A worktree a registry row
+ * exit code, and a registry that is missing or unreadable prints none. While the manifest
+ * (MANIFEST) says `"stage": "foundation"`, one `HELD <kinds> — foundation stage — …` line names the
+ * cadences it holds; a missing or unreadable manifest holds nothing. A worktree a registry row
  * names, held or parked, is never listed as `DUE worktrees`. It reads files and git (`log`,
  * `blame`, `worktree list`, `merge-base`, `rev-list`, `reflog`, `status`) and writes nothing but
  * --seen's file: it starts no sweep itself, the runner does what each line says.
@@ -42,6 +44,7 @@ import {
   REPORTS,
   checkAll,
   formatDue,
+  heldKinds,
   inboxLines,
   markSeen,
   matchReports,
@@ -54,6 +57,9 @@ import {
 } from './lib/harness-due-core.mjs';
 import { blameDates, lastCommitTimes, readFollowUps, repoTop } from './lib/retro-gather.mjs';
 import { gitRead } from './lib/run-sources.mjs';
+
+// The install manifest, relative to the checkout: its `stage` holds the cadences until the flip.
+const MANIFEST = '.agents/harness-manifest.json';
 
 const USAGE =
   'usage: node scripts/harness-due.mjs [--claim <row id>] [--json] [--now <ISO>] [--home <dir>] | --seen <YYYY-Www> [--home <dir>]';
@@ -260,6 +266,7 @@ function main() {
     return;
   }
   let items;
+  let held;
   const registryText = readRegistry(mainTop);
   try {
     const facts = {
@@ -276,13 +283,15 @@ function main() {
       proposals: readProposals(harness),
       registry: registryText === null ? null : { text: registryText, root: mainTop, real },
       seen: readJson(seenFile) ?? {},
+      stage: readJson(path.join(top, MANIFEST))?.stage ?? null,
     };
     items = checkAll(facts);
+    held = heldKinds(facts.stage);
   } catch (e) {
     return usage(e.message);
   }
   const blocking = items.filter((i) => i.blocking).length;
-  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, inbox: parkedUnits(registryText) }, null, 2)}\n` : formatDue(items, inboxLines(registryText)));
+  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, held, inbox: parkedUnits(registryText) }, null, 2)}\n` : formatDue(items, inboxLines(registryText), held));
   if (blocking) process.exitCode = 1;
 }
 

@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 56;
+const EXPECTED_TESTS = 59;
 
 let passed = 0;
 let failed = 0;
@@ -134,7 +134,7 @@ const INSTALL = [
   ],
   [RETRO_CORE, "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
   [RETRO_CORE, 'export const FILED_AT = null;', 'export const FILED_AT = /(?:^|[^\\d])(\\d{4}-\\d{2}-\\d{2})-[a-z]/i;'],
-  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes' };"],
+  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes', deliverable: 'item' };"],
   [RETRO_CORE, 'export const OUTLIER_X = 2;', 'export const OUTLIER_X = 3;'],
   [RETRO_CORE, 'export const MIN_COHORT = 3;', 'export const MIN_COHORT = 4;'],
   [RETRO_CORE, 'export const MIN_SHARE = 5;', 'export const MIN_SHARE = 8;'],
@@ -237,6 +237,8 @@ mutantFails('counting a /clear that is no owner prompt', 'if (!isOwnerPrompt(d))
 mutantFails("ending an agent run at the owner's answer to a question", "if (e.type === 'prompt') {\n        close();", "if (e.type === 'prompt' || e.type === 'result') {\n        close();");
 mutantFails('ending an agent run at the next prompt, not at the last record before it', "if (e.type === 'prompt') {\n        close();", "if (e.type === 'prompt') {\n        end = e.ts;\n        close();");
 mutantFails('counting a prompt from before the window', 'if (start === null || !inWindow(start, since, until)) return;', 'if (start === null) return;');
+mutantFails('counting a batch row as one plan row', 'n + (ids.size || 1)', 'n + 1');
+mutantFails('counting the harness units as product plan rows', 'for (const r of rows) if (!isHarnessUnit(r.id)) named.set(', 'for (const r of rows) if (true) named.set(');
 mutantFails('counting a typed /clear or /compact as an agent run', 'if (!typedAt.has(`${session}|${start}`)) runs.push(end - start);', 'runs.push(end - start);');
 mutantFails("running two sessions' records together", 'g.events.push({ ...e, session: id });', 'g.events.push(e);', GATHER_REL);
 mutantFails("taking the Codex host's baseline from the transcripts'", "codexHost: previousKpis(g.previous, win.week, 'codexHost'),", 'codexHost: previousKpis(g.previous, win.week),');
@@ -257,7 +259,7 @@ console.log(JSON.stringify({
   const got = JSON.parse(res.stdout);
   assert.deepStrictEqual(got.paths, ['docs/harness/reports', 'docs/harness/log.md', 'docs/harness/follow-ups.md', 'docs/plans'], 'the template paths');
   assert.deepStrictEqual(got.follow, [['status'], { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] }, ['sev', 'priority'], null], 'the template follow-ups shape (the filing date binding is off)');
-  assert.deepStrictEqual(got.extra, { defects: 'defects', missed: 'missed by harness', friction: 'friction' }, 'the template EXTRA_COLUMNS');
+  assert.deepStrictEqual(got.extra, { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' }, 'the template EXTRA_COLUMNS');
   assert.deepStrictEqual(got.levels, [2, 3, 5, 5, 14], `OUTLIER_X, MIN_COHORT, MIN_SHARE, REWRITE_ALERT_PERCENT and QUEUE_ALERT_DAYS: ${got.levels.join(', ')}`);
   assert.deepStrictEqual(got.steps, ['8c', '4', '5', '6', '7', '8', '2', '1', '8b', '8a'], 'the template STEP_WORDS');
 }

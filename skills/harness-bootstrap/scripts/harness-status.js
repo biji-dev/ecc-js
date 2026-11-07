@@ -45,6 +45,11 @@ const { spawnSync } = require('child_process');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.worktrees', 'dist', 'build', 'coverage']);
 const MAX_READ = 2 * 1024 * 1024;
 const MANIFEST = '.agents/harness-manifest.json';
+// skillVersion 9 keeps the run's blocks in PROCESS_FILE: AGENTS.md is loaded by every session and Codex run
+const PROCESS_FILE = '.agents/skills/task-runner/process.md';
+const RUN_BLOCKS = ['types', 'tiers', 'gates', 'stops', 'scope', 'context', 'triggers', 'models'];
+const PROCESS_VERSION = 9;
+const STAKES_LINE = /^\s*Stakes:/m;
 // the skill this script ships in: a template-backed manifest entry names a file under its
 // templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
 const SKILL_DIR = path.join(__dirname, '..');
@@ -1000,6 +1005,24 @@ function buildReport() {
     if (found) haz('foundation-stage-has-tests', `manifest says foundation, and test files exist (e.g. ${found}): run the flip`, MANIFEST);
   }
 
+  // v9: the policy block opens with the stakes line, and the run's blocks are off the base -- below
+  // skillVersion 9 a run block in AGENTS.md is an upgrade proposal, not a hazard
+  const proposals = [];
+  const agentsText = read('AGENTS.md');
+  if (agentsText !== null) {
+    const policyText = blockText(agentsText, 'policy');
+    if (policyText !== null && !STAKES_LINE.test(policyText)) {
+      haz('stakes-line-missing', 'the policy block has no line starting "Stakes:": every reviewer brief judges severity with no threat model', 'AGENTS.md', lineOf(agentsText, /^\s*<!-- harness:begin policy -->\s*$/));
+    }
+    const v = manifest && Number.isInteger(manifest.skillVersion) ? manifest.skillVersion : null;
+    const inBase = new Set(markers.filter(m => m.path === 'AGENTS.md' && RUN_BLOCKS.includes(m.block)).map(m => m.block));
+    for (const block of inBase) {
+      const line = lineOf(agentsText, new RegExp(`^\\s*<!-- harness:begin ${block} -->\\s*$`));
+      if (v !== null && v >= PROCESS_VERSION) haz('block-in-base', `the ${block} block is in AGENTS.md, which every session and Codex run loads; at skillVersion ${v} it lives in ${PROCESS_FILE}`, 'AGENTS.md', line);
+      else proposals.push({ id: 'block-in-base', path: 'AGENTS.md', ...(line !== undefined ? { line } : {}), detail: `the ${block} block is in AGENTS.md; the v9 upgrade moves it to ${PROCESS_FILE}` });
+    }
+  }
+
   return {
     repo: REPO,
     manifest,
@@ -1012,6 +1035,7 @@ function buildReport() {
     registry,
     policy,
     hazards,
+    proposals,
   };
 }
 
@@ -1230,6 +1254,10 @@ function renderText(r) {
       const where = h.path ? ` ${h.path}${h.line ? `:${h.line}` : ''}` : '';
       out.push(`- ${h.id}${where} -- ${h.detail}`);
     }
+  }
+  if (r.proposals.length) {
+    out.push('', `upgrade proposals (${r.proposals.length}):`);
+    for (const p of r.proposals) out.push(`- ${p.id} ${p.path}${p.line ? `:${p.line}` : ''} -- ${p.detail}`);
   }
   return `${out.join('\n').replace(/[^\x20-\x7e\n]/g, '?')}\n`;
 }

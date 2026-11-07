@@ -16,7 +16,7 @@ const TEST_REL = path.join('lib', 'unit-record-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-record-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 42;
+const EXPECTED_TESTS = 43;
 
 let passed = 0;
 let failed = 0;
@@ -149,7 +149,7 @@ const INSTALL = [
   ],
   [RETRO_CORE, "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
   [RETRO_CORE, 'export const FILED_AT = null;', 'export const FILED_AT = /(?:^|[^\\d])(\\d{4}-\\d{2}-\\d{2})-[a-z]/i;'],
-  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes' };"],
+  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes', deliverable: 'item' };"],
   [RETRO_CORE, 'export const OUTLIER_X = 2;', 'export const OUTLIER_X = 3;'],
   [RETRO_CORE, 'export const MIN_COHORT = 3;', 'export const MIN_COHORT = 4;'],
   [RETRO_CORE, 'export const MIN_SHARE = 5;', 'export const MIN_SHARE = 8;'],
@@ -225,6 +225,7 @@ mutantFails('leaving the open step without a time up to now', 'stepIntervals(mar
 mutantFails('dropping the Steps line', '...(times ? [`- Steps: ${times.line}`] : []),', '');
 mutantFails('reading a bare 0 owner wait as unreadable', "if (term === '0') continue;", '');
 mutantFails('ignoring the bound log columns', '${columns.map((name) => logCell(name, known)).join', '${LOG_COLUMNS.map((name) => logCell(name, known)).join');
+mutantFails('dropping a batch unit\'s Rows from the Deliverable cell', 'const rows = h.rows ?', 'const rows = false ?');
 mutantFails('ignoring --steps', "if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));", '', 'unit-record.mjs');
 
 /** The core's default LOG_COLUMNS are log-format.md's columns, in its order, and each one has a cell (Yield, Friction, Missed). */

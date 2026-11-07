@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'estimate-core.mjs');
 const CLI_REL = 'estimate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 27;
+const EXPECTED_TESTS = 30;
 
 let passed = 0;
 let failed = 0;
@@ -142,7 +142,7 @@ const INSTALL = [
   ],
   [RETRO_CORE, "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
   [RETRO_CORE, 'export const FILED_AT = null;', 'export const FILED_AT = /(?:^|[^\\d])(\\d{4}-\\d{2}-\\d{2})-[a-z]/i;'],
-  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes' };"],
+  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes', deliverable: 'item' };"],
   [RETRO_CORE, 'export const OUTLIER_X = 2;', 'export const OUTLIER_X = 3;'],
   [RETRO_CORE, 'export const MIN_COHORT = 3;', 'export const MIN_COHORT = 4;'],
   [RETRO_CORE, 'export const MIN_SHARE = 5;', 'export const MIN_SHARE = 8;'],
@@ -212,6 +212,8 @@ mutantFails('dropping the rows below a later table', 'const home = out.findLast(
 mutantFails('dropping the rows no table took without a word', 'else leftOut.push(r);', '');
 mutantFails('staying silent about the log rows left out', 'if (leftOut) process.stderr.write(', 'if (false) process.stderr.write(', CLI_REL);
 mutantFails('refusing a log that has headers and no rows yet', 'return tables(text).some(({ names })', 'return false && tables(text).some(({ names })');
+mutantFails('merging the same unit id from two logs into one unit', 'id: `${name}#${r.id}`, source: name', 'id: r.id, source: name');
+mutantFails('reading only the first --log', 'const logs = args.logs.map(', 'const logs = args.logs.slice(0, 1).map(', CLI_REL);
 mutantFails('keeping the code ticks in the unit id', "id: parts[0].replace(/^[`*]+|[`*]+$/g, ''),", 'id: parts[0],');
 
 /** What the shipped suite no longer pins: it builds its fixtures from the bound values, so the template's own are read here. */

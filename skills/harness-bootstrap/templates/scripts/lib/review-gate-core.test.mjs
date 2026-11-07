@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CRITICAL,
   FIX_LINES,
+  HARNESS,
   INSTRUCTIONS,
   NON_PRODUCTION,
   ROLES,
@@ -26,6 +27,7 @@ import {
   WRITERS,
   decide as decideCore,
   formatLine,
+  isHarness,
   isInstruction,
   isProduction,
   isTest,
@@ -43,6 +45,7 @@ const INJECTED = {
   NON_PRODUCTION: [/\.md$/, /^docs\//, /(^|\/)(__tests__|tests?|e2e|fixtures)\//, /\.(test|spec)\.[cm]?[jt]sx?$/],
   TESTS: [/(^|\/)(__tests__|tests?|e2e)\//, /\.(test|spec)\.[cm]?[jt]sx?$/],
   INSTRUCTIONS: [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//],
+  HARNESS: [/(^|\/)(AGENTS|CLAUDE)\.md$/, /^\.(claude|agents|codex|zcode)\//, /^\.githooks\//, /^scripts\//],
   TRIGGERS: {
     'security-reviewer': [/auth|session|token|crypto|permission|rbac|tenant|webhook|public/i],
     'silent-failure-hunter': [/payment|billing|money|settle|ledger|invoice|refund|webhook|queue|job|notif/i],
@@ -60,7 +63,7 @@ let injecting = 0;
  */
 function withBindings(overrides, fn) {
   const want = { ...INJECTED, ...overrides };
-  const arrays = { CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS };
+  const arrays = { CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS, HARNESS };
   const saved = {};
   for (const [name, arr] of Object.entries(arrays)) saved[name] = arr.splice(0, arr.length, ...want[name]);
   const savedTriggers = { ...TRIGGERS };
@@ -123,6 +126,10 @@ const INSTRUCTION_PATHS = [
 const INSTRUCTION_TEST_PATHS = ['.agents/skills/checker/tests/checker.test.js', '.claude/hooks/x.test.mjs'];
 // prose INSTRUCTIONS must not name: the first three stay docs
 const DOCS_PATHS = ['README.md', 'docs/a.md', 'packages/a/README.md', 'notes/AGENTS.md.bak'];
+// the harness lane's paths beyond the instruction files: keep these matching HARNESS (an install adds its
+// harness scripts and records folder); PRODUCT_PATHS are no harness path
+const HARNESS_PATHS = ['.githooks/pre-commit', '.githooks/pre-merge-commit'];
+const PRODUCT_PATHS = ['src/a.ts', 'app/src/main.tsx', 'README.md'];
 // ---- end [B]
 const DOCS_ONLY = /^no production code and no tests: docs only$/;
 
@@ -149,6 +156,7 @@ for (const [name, value, ok, what] of [
   ['NON_PRODUCTION', NON_PRODUCTION, regexps(NON_PRODUCTION) && NON_PRODUCTION.length > 0, 'a non-empty array of RegExp'],
   ['TESTS', TESTS, regexps(TESTS) && TESTS.length > 0, 'a non-empty array of RegExp'],
   ['INSTRUCTIONS', INSTRUCTIONS, regexps(INSTRUCTIONS) && INSTRUCTIONS.length > 0, 'a non-empty array of RegExp'],
+  ['HARNESS', HARNESS, regexps(HARNESS) && HARNESS.length > 0, 'a non-empty array of RegExp'],
   [
     'TRIGGERS',
     TRIGGERS,
@@ -162,6 +170,11 @@ for (const [name, value, ok, what] of [
     const shown = Array.isArray(value) || typeof value !== 'object' ? String(value) : Object.keys(value).join(', ');
     assert.ok(ok, `the core's ${name} is not ${what}: ${shown}`);
   });
+
+test('[B] the harness paths are the instruction files plus HARNESS_PATHS; a product path is none', () => {
+  for (const p of [...INSTRUCTION_PATHS, ...INSTRUCTION_TEST_PATHS, ...HARNESS_PATHS]) assert.ok(isHarness(p), `${p} is not a harness path`);
+  for (const p of PRODUCT_PATHS) assert.ok(!isHarness(p), `${p} is a harness path`);
+});
 
 test('[B] the instruction files are production, whatever NON_PRODUCTION says; prose elsewhere stays docs', () => {
   assert.ok(INSTRUCTIONS.length > 0);
@@ -318,6 +331,28 @@ test('unit 3: a full unit is Opus + adversarial, then specialists in TRIGGERS or
   ]);
 });
 
+test('unit 4: the harness lane is one cross-family review over a harness-only diff, critical or not, no specialist', () => {
+  const lane = [f('AGENTS.md', 12), f('.githooks/pre-commit', 30), f('scripts/check-agent-docs.mjs', 8), f('scripts/lib/auth-token.test.mjs', 40)];
+  for (const [writer, reviewer] of [['claude', 'second-family-review'], ['sonnet', 'second-family-review'], ['codex', 'sonnet-code-reviewer'], ['mixed', 'sonnet-code-reviewer']]) {
+    const r = withCritical([/^\.githooks\//], () => decide({ files: lane, kind: 'unit', tier: 'harness', writer }));
+    assert.equal(r.decision, 'review', writer);
+    assert.deepEqual(r.reviewers, [reviewer], writer);
+    assert.match(r.reason, /^harness lane: one cross-family review over the diff/);
+  }
+  // docs alone is still skipped
+  assert.equal(decide({ files: [f('docs/harness/log.md', 3)], kind: 'unit', tier: 'harness' }).decision, 'skip');
+  // a doc outside HARNESS (the unit's record, a README) leaves the lane as it is: no tier reviews a doc
+  const withDocs = decide({ files: [...lane, f('docs/harness/log.md', 3), f('README.md', 2)], kind: 'unit', tier: 'harness' });
+  assert.match(withDocs.reason, /^harness lane: /);
+  assert.equal(withDocs.reviewers.length, 1);
+  // a path outside HARNESS: the full lineup, and the unit is told to re-tier
+  const stray = decide({ files: [...lane, f('app/src/main.tsx', 4)], kind: 'unit', tier: 'harness' });
+  assert.deepEqual(stray.reviewers.slice(0, 2), ['opus-code-reviewer', 'second-family-adversarial']);
+  assert.match(stray.reason, /; path outside HARNESS at --tier harness \(app\/src\/main\.tsx\): reviewed as full, re-tier the unit$/);
+  const two = decide({ files: [...lane, f('app/src/main.tsx', 4), f('src/a.ts', 1)], kind: 'unit', tier: 'harness' });
+  assert.match(two.reason, /\(app\/src\/main\.tsx \+1\)/);
+});
+
 // ---- kind fix
 
 test('fix: kind fix needs a valid --max-fixed', () => {
@@ -405,6 +440,25 @@ test('fix 8: the specialist whose trigger the fix hits joins its re-review', () 
   const r3 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P1', round: 3 }));
   assert.deepEqual(r3.reviewers, ['second-family-adversarial', 'database-reviewer']);
   assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'p3-batch');
+});
+
+test('fix 9: the harness lane has one fix round, re-read by the other family; a second stops for the owner', () => {
+  const lane = [f('.githooks/pre-commit', 30), f('CLAUDE.md', 4)];
+  const r1 = withCritical([/^\.githooks\//], () => decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P1', round: 1 }));
+  assert.equal(r1.decision, 'second-family');
+  assert.deepEqual(r1.reviewers, ['second-family-review']);
+  assert.match(r1.reason, /^harness lane, fix round 1: the second family re-reads the fix/);
+  const c1 = decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P2', round: 1, writer: 'codex' });
+  assert.deepEqual([c1.decision, c1.reviewers], ['review', ['sonnet-code-reviewer']]);
+  for (const round of [2, 3]) {
+    const r = decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P2', round });
+    assert.equal(r.decision, 'escalate-adversarial', `round ${round}`);
+    assert.match(r.reason, new RegExp(`^harness lane, fix round ${round}: the lane allows one fix round -- ask the owner`));
+  }
+  // P3s stay the P3 batch; a stray path takes the ordinary fix rules
+  assert.equal(withCritical([/^\.githooks\//], () => decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P3', writer: 'codex' })).decision, 'p3-batch');
+  const stray = decide({ files: [...lane, f(COLD, 9)], kind: 'fix', tier: 'harness', maxFixed: 'P1', round: 2 });
+  assert.equal(stray.decision, 'skip');
 });
 
 test('fix 4: round 3+ on critical code escalates to the adversarial pass', () => {
@@ -669,7 +723,7 @@ test('invalid kind, tier, writer and round are errors the wrapper turns into exi
   const ok = { files: [f(COLD, 1)], kind: 'slice' };
   assert.throws(() => decide({ ...ok, kind: 'first' }), /--kind must be one of slice\|unit\|fix/);
   assert.throws(() => decide({ ...ok, kind: undefined }), /--kind/);
-  assert.throws(() => decide({ ...ok, tier: 'medium' }), /--tier must be one of small\|full/);
+  assert.throws(() => decide({ ...ok, tier: 'medium' }), /--tier must be one of small\|full\|harness/);
   assert.throws(() => decide({ ...ok, writer: 'gemini' }), /--writer is required and must be one of claude\|codex\|sonnet\|mixed/);
   for (const round of [0, -1, 1.5, NaN, Infinity])
     assert.throws(() => decide({ ...ok, round }), /--round must be an integer >= 1/, String(round));

@@ -26,17 +26,19 @@ const SHIPPED =
   process.env.CHECK_AGENT_DOCS_SCRIPT || join(dirname(fileURLToPath(import.meta.url)), '..', 'check-agent-docs.mjs');
 
 // The [B] budgets the suite runs under. Small, so over-budget fixtures stay small; skillLines is the shipped default.
-const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024, base: 6144 };
-const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile}, base: ${BUDGETS.base} },`;
+const BUDGETS = { agents: 4096, claude: 1024, rule: 2048, skillLines: 500, stateFile: 1024, base: 6144, process: 2048 };
+const BUDGETS_LINE = `budgets: { 'AGENTS.md': ${BUDGETS.agents}, 'CLAUDE.md': ${BUDGETS.claude}, rule: ${BUDGETS.rule}, skillLines: ${BUDGETS.skillLines}, stateFile: ${BUDGETS.stateFile}, base: ${BUDGETS.base}, 'process.md': ${BUDGETS.process} },`;
 // The same line with some keys replaced by source text (`null`, a bad value) or, for `undefined`, left out.
 const budgetsLine = (over = {}) => {
-  const all = { 'AGENTS.md': BUDGETS.agents, 'CLAUDE.md': BUDGETS.claude, rule: BUDGETS.rule, skillLines: BUDGETS.skillLines, stateFile: BUDGETS.stateFile, base: BUDGETS.base, ...over };
+  const all = { 'AGENTS.md': BUDGETS.agents, 'CLAUDE.md': BUDGETS.claude, rule: BUDGETS.rule, skillLines: BUDGETS.skillLines, stateFile: BUDGETS.stateFile, base: BUDGETS.base, 'process.md': BUDGETS.process, ...over };
   const parts = Object.entries(all)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k.includes('.') ? `'${k}'` : k}: ${v}`);
   return `budgets: { ${parts.join(', ')} },`;
 };
-const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base'];
+const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base', 'process.md'];
+// The task runner's process file: the policy blocks moved out of AGENTS.md.
+const PROCESS = '.agents/skills/task-runner/process.md';
 // The rest is the shipped default, which the fixtures below are written against.
 const CONFIG_BLOCK = `export const CONFIG = {
   ${BUDGETS_LINE}
@@ -50,6 +52,7 @@ const CONFIG_BLOCK = `export const CONFIG = {
   requireImport: true,
   citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
   citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'],
+  processFile: '${PROCESS}',
 };`;
 
 // Hermetic: no developer HOME, global or system git config reaches a fixture.
@@ -211,6 +214,14 @@ test('budget: a state file over its byte budget fails', () => {
   expectFail({ 'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n` }, 'budget', `a\\.state\\.md .*budget ${BUDGETS.stateFile}`);
 });
 
+test('budget: the task runner\'s process.md has its own byte budget and is no part of --base', () => {
+  expectOk({ [PROCESS]: 'x'.repeat(BUDGETS.process) });
+  expectFail({ [PROCESS]: 'x'.repeat(BUDGETS.process + 1) }, 'budget', `task-runner/process\\.md ${BUDGETS.process + 1} bytes, budget ${BUDGETS.process}`);
+  const r = run(fixture({ [PROCESS]: 'x'.repeat(BUDGETS.process + 1) }), ['--base']);
+  assert.equal(r.status, 0, r.all);
+  assert.doesNotMatch(r.out, /process\.md/, 'only what CLAUDE.md imports with @ joins the base');
+});
+
 test('budget: a state file that git ignores is still read, from the pattern\'s static prefix only', () => {
   const ignore = { 'docs/plans/.gitignore': '*.state.md\n' };
   expectFail({ ...ignore, 'docs/plans/a.state.md': 'x'.repeat(9216) }, 'budget', 'docs/plans/a\\.state\\.md 9216 bytes, budget 1024');
@@ -288,6 +299,7 @@ function overEveryBudget() {
     '.claude/rules/db.md': `---\npaths:\n  - "src/db/**"\n---\n${'x'.repeat(BUDGETS.rule)}\n`,
     'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n`,
     '.claude/skills/demo/SKILL.md': `---\nname: demo\ndescription: Demo\n---\n${'line\n'.repeat(BUDGETS.skillLines)}`,
+    [PROCESS]: `${'x'.repeat(BUDGETS.process)}\n`,
   };
 }
 const allNull = Object.fromEntries(BUDGET_KEYS.map((k) => [k, 'null']));
@@ -853,7 +865,7 @@ test('--base --json: the files, their total, the target and the excess', () => {
 });
 
 test('base: an install with a null base budget skips the check, and --base says no target is set', () => {
-  const script = withConfig(`, base: ${BUDGETS.base} }`, ', base: null }');
+  const script = withConfig(`, base: ${BUDGETS.base},`, ', base: null,');
   const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
   assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
   assert.equal(run(dir, [], script).status, 0);
@@ -930,6 +942,42 @@ test('citations: a quoted name or phrase AGENTS.md no longer has fails, part by 
   );
   assert.match(r.err, /^FAIL citations: src\/index\.js:1 cites "Gone",/m);
   assert.doesNotMatch(r.err, /cites "Area rules"/);
+});
+
+const PROCESS_MD = '# Process\n\n## Gates\n\n## Owner stops\n\n**Scope guard - what stays out.** Keep it.\n';
+
+test('citations: `process.md` › Name and the full path hold against the task runner\'s process.md, each name one check', () => {
+  const plain = expectOk({ [PROCESS]: PROCESS_MD });
+  const cited = expectOk({
+    [PROCESS]: PROCESS_MD,
+    '.claude/rules/db.md': `${RULE_HEAD}Per \`process.md\` › Gates and \`${PROCESS}\` › Scope guard.\n`,
+    'src/index.js': '// `process.md` › Owner stops\nexport {};\n',
+  });
+  // three citations, and the full path is one paths check too
+  assert.equal(checksIn(cited) - checksIn(plain), 4, cited.out);
+  const r = expectFail(
+    { [PROCESS]: PROCESS_MD, 'src/index.js': '// `process.md` › Tiers, and `docs/process.md` › Gone\nexport {};\n' },
+    'citations',
+    'src/index\\.js:1 cites `process\\.md` › Tiers, which names no heading or bold lead of \\.agents/skills/task-runner/process\\.md',
+  );
+  assert.equal(r.err.match(/^FAIL citations: /gm).length, 1, 'another path\'s process.md is not read');
+});
+
+test('citations: a `process.md` › Name fails when the bound process.md does not exist, never goes unchecked', () => {
+  expectFail(
+    { 'src/x.js': '// `process.md` › Missing\nexport {};\n' },
+    'citations',
+    'src/x\\.js:1 cites `process\\.md` › Missing, but \\.agents/skills/task-runner/process\\.md does not exist',
+  );
+});
+
+test('citations: an `AGENTS.md` › Name that moved to process.md fails with a hint to cite process.md', () => {
+  const r = expectFail(
+    { [PROCESS]: PROCESS_MD, '.claude/rules/db.md': `${RULE_HEAD}Stop per \`AGENTS.md\` › Owner stops, and AGENTS.md "Gates".\n` },
+    'citations',
+    '\\.claude/rules/db\\.md:6 cites `AGENTS\\.md` › Owner stops, which names no heading or bold lead of AGENTS\\.md - it moved: cite `process\\.md` › Owner stops$',
+  );
+  assert.match(r.err, /^FAIL citations: \.claude\/rules\/db\.md:6 cites "Gates", which AGENTS\.md no longer has as a heading, a bold lead or its words - it moved: cite `process\.md` › Gates$/m);
 });
 
 test('citations: other files, imports, string literals, § references, prose, code blocks and exempt files are not read', () => {

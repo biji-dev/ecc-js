@@ -12,8 +12,11 @@ code: every entry came from its documents.
 
 The first units of a project are where its foundations are laid, and where an
 unreviewed decision costs most. **The foundation stage installs everything that
-does not need a pass signal, forbids every auto-merge, and makes the unit that
-lands the first real test the one that completes the install.**
+does not need a pass signal, forbids every auto-merge, and makes the skeleton — the
+unit that lands the first real test — the one that completes the install.** It
+lasts one product unit. **Evidence:** an install that named its fifteenth plan row
+the pass-signal unit ran eight units in 29 hours, seven of them on the harness
+itself, every one Full and owner-merged, and landed one plan row of 115.
 
 **`[M]` mechanism · `[B]` binding**
 
@@ -35,10 +38,10 @@ already unguarded; the readiness plan adds tests first), a suite that exists but
 broken or skips everything (fix it — that is a readiness unit, not a new project),
 and a repository whose only work is trivial. Those keep the readiness plan.
 
-`[M]` **Offer both, default foundation.** The Phase A closing line names the choice:
-*foundation stage now* (default) — the harness gates the readiness units — or
+`[M]` **Offer three, default foundation.** The Phase A closing line names the choice:
+*foundation stage now* (default) — the harness gates the readiness units —,
 *readiness plan first* — the owner runs them as ordinary work and Phase A is rerun
-after. Record the owner's answer on the line below the Phase B status line; Phase C
+after — or *no harness*, hard rules only, where the fit check says so (SKILL.md). Record the owner's answer on the line below the Phase B status line; Phase C
 copies it into the decision log it creates.
 
 ## Phase B — unchanged
@@ -72,15 +75,15 @@ own.
 
 `[M]` Written into the generated gates block while the stage is `foundation`:
 
-1. **Every Code unit is Full** — no path is covered, and the coverage-map rule
-   already makes every uncovered path Full. Say so in each claim line.
+1. **Every product Code unit is Full** — no path is covered, and the coverage-map
+   rule already makes every uncovered path Full. Say so in each claim line. A harness
+   unit runs the harness lane (`runner.md`); the flip is Full (› The flip).
 2. **No auto-merge.** Gate 2 is always the owner's, whatever the merge policy says
    for later.
-3. **The readiness units are the first units.** Take them from the plan's own
-   foundation stories — the skeleton, then the first story that can ship a test — in
-   the plan's order. When no story says which, Phase B asks the owner to name the
-   pass-signal unit, defaulting to the earliest story whose "Done when" can be a
-   counted test. Gate 1 of the pass-signal unit approves its "Done when" as the
+3. **The skeleton is the pass-signal unit.** Take it from the plan's first
+   foundation story; when the plan has none, Phase B asks the owner, defaulting to
+   the plan's first row. Its "Done when" gains one counted product test, and Gate 1
+   approves that line as the
    row-1 test: *`<test command>` runs at least one test, counted, and was seen red
    once*. That command counts **the project's tests only**: a bare runner
    that also finds the harness's template tests (`scripts/lib/*.test.mjs`) reported
@@ -89,18 +92,20 @@ own.
    the red line into the ledger; the claim auditor reruns it.
 4. **A unit that adds tests proves them.** The claim auditor re-counts them and runs
    the sabotage; a suite that runs nothing is a false claim, not a gap.
-5. **Planned paths become real ones.** When a planned risk-map path first gets code,
-   the re-derive trigger in the risk-map block fires (`policy-derivation.md`). The
-   risk map is a reviewed block, so the re-derive is a harness unit between runs;
-   the product unit that created the path records it as a follow-up, and the flip
-   takes every one raised before it. When the plan calls its paths working names,
-   the skeleton fixes them and the same re-derive renames the map.
+5. **Planned paths become real ones at the flip.** A product unit that first gives
+   a planned path code writes it on a `Paths:` line in its state file, not as a
+   follow-up; the flip re-derives the map from those lines. When the plan calls its
+   paths working names, the skeleton fixes them and the flip renames the map.
+6. **No other harness unit before the flip** unless it blocks the flip. A follow-up
+   or a re-derive waits for it; `harness-due.mjs` holds the sweep, retro, hygiene and
+   P3 batch at this stage, and the preflight and disk checks still run.
 
 ## The flip — stage 2
 
 `[M]` **The flip is its own harness unit**, claimed on a `harness/<slug>` branch
-immediately after the pass-signal unit lands — harness changes land between runs,
-never during one. It:
+immediately after the pass-signal unit lands, and Full: its `prepare` line and the
+lint and format fit are paths outside `HARNESS`, so `review-gate.mjs` reviews it as
+Full. Harness changes land between runs, never during one. It:
 
 1. reruns Phase A row 1 and quotes the evidence: the command, its count, the
    sabotage that turned it red, the `cmp` that confirmed the restore;
@@ -109,7 +114,10 @@ never during one. It:
    project's tests only, and any gate that reads another gate's
    output runs that gate first; adds the `prepare` line and fits the lint and format
    (SKILL.md, *Fit the project's tooling*);
-3. writes the coverage map's first covered rows and lists what is still uncovered;
+3. re-derives the risk map from the `Paths:` lines and places every top-level
+   product directory, so a new file under one takes its class
+   (`policy-derivation.md`); writes the coverage map's first covered rows and lists
+   what is still uncovered;
 4. unlocks Small in the tiers block and drops the foundation line from the merge
    block — the merge policy the owner reviewed applies from here;
 5. sets the manifest's `"stage"` to `"full"`, rehashes the blocks it changed, and
@@ -133,6 +141,7 @@ flip.
   rule apply before the flip.
 - Never run the flip inside the pass-signal unit; its diff is reviewed as product
   code, the flip as a harness change.
+- Never name a later row the pass-signal unit when the skeleton can ship a test.
 - Never seed a counted gate with a pattern before a test exists to match it — a
   gate that cannot pass is turned off by the first person it blocks.
 - Never route a repository with untested product code here to skip writing its

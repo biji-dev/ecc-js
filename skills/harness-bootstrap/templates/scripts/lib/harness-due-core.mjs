@@ -23,7 +23,7 @@
  * rows, so the runner and the owner see what waits. It is not a check: it never blocks.
  */
 import path from 'node:path';
-import { followUpsSummary, logRecords } from './retro-core.mjs';
+import { followUpsSummary, isHarnessMerge, isHarnessUnit, logRecords } from './retro-core.mjs';
 
 // ---- [B] project bindings
 // [B] The mainline; the harness log and the follow-ups doc. FOLLOW_UPS may also be a list of paths;
@@ -198,6 +198,20 @@ export function cadenceDue(kind, { reports = [], landed = [], merged = [], logBo
   if (days < cadence.days && !byCount) return null;
   const since = newest ? `since ${path.posix.basename(newest.rel)}` : 'since the log began, and no report yet';
   return { kind, subject: null, why: `${days} d, ${plural(landings, 'landing')} ${since}${note}`, command: fill(command, values), blocking: false };
+}
+
+// isHarnessUnit and isHarnessMerge (retro-core): a `harness/<slug>` row id, a merge of a `harness/` branch. The
+// cadences count product landings only: in one install seven of the first eight units were the
+// harness's own, and a sweep and a hygiene unit came due a day in, counted on those.
+export { isHarnessMerge, isHarnessUnit };
+
+/**
+ * The kinds the foundation stage holds: the cadences and the P3 batch wait for the flip, since
+ * nothing has landed to sweep or clean yet. The preflight and the machine checks still run.
+ */
+export function heldKinds(stage) {
+  if (stage !== 'foundation') return [];
+  return [...['sweep', 'retro', 'hygiene'].filter((k) => REPORTS[k] !== null), ...(REPORTS.hygiene === null ? ['p3'] : [])];
 }
 
 /** The oldest open P3 as `the oldest FU-3 at 20 d` (the row, when the summary knows it), or `the oldest 20 d`. */
@@ -418,22 +432,24 @@ export function registryWorktrees(registryText, root) {
  * (line -> commit ms) or null; `reports` by kind as [{ rel, time }]; `merges` the mainline's
  * merges as [{ t, subject }]; `disk` { free, approved, last }; `worktrees` measured; `proposals`
  * { newest, text, file }; `seen`; `project`; `registry` { text, root, real } (the registry's text, the
- * main checkout and a path's real path, the identity when absent) or null. Nothing here reads a file.
+ * main checkout and a path's real path, the identity when absent) or null; `stage`, the manifest's
+ * (heldKinds). Nothing here reads a file.
  */
 export function checkAll(f) {
   const now = f.now;
   const records = f.log ? logRecords(f.log.text, f.log.dates) : [];
   const logBorn = f.log ? [...f.log.dates.values()].reduce((a, t) => (Number.isFinite(t) && (a === null || t < a) ? t : a), null) : null;
-  const landed = records.map((r) => r.landed);
-  const merged = (f.merges ?? []).map((m) => m.t);
+  const landed = records.filter((r) => !isHarnessUnit(r.id)).map((r) => r.landed);
+  const merged = (f.merges ?? []).filter((m) => !isHarnessMerge(m.subject)).map((m) => m.t);
   const summary = f.followUps ? followUpsSummary(f.followUps.text, f.followUps.dates, now) : null;
   const reports = (kind) => f.reports?.[kind] ?? [];
+  const held = new Set(heldKinds(f.stage ?? null));
   const items = [
     preflightDue({ claim: f.claim ?? null, reports: reports('preflight'), logIds: records.map((r) => r.id), merges: (f.merges ?? []).map((m) => m.subject) }),
     ...['sweep', 'retro', 'hygiene'].map((kind) =>
-      REPORTS[kind] === null ? null : cadenceDue(kind, { reports: reports(kind), landed, merged, logBorn, now, note: kind === 'hygiene' ? p3Note(summary) : '' }),
+      REPORTS[kind] === null || held.has(kind) ? null : cadenceDue(kind, { reports: reports(kind), landed, merged, logBorn, now, note: kind === 'hygiene' ? p3Note(summary) : '' }),
     ),
-    p3Due({ summary, now }),
+    held.has('p3') ? null : p3Due({ summary, now }),
     f.disk ? diskDue(f.disk) : null,
     worktreesDue({ worktrees: f.worktrees ?? [], now, top: f.top ?? null, named: registryWorktrees(f.registry?.text, f.registry?.root), real: f.registry?.real }),
     proposalsDue({ newest: f.proposals?.newest ?? null, text: f.proposals?.text ?? '', seen: f.seen ?? {}, project: f.project, file: f.proposals?.file ?? '' }),
@@ -443,11 +459,12 @@ export function checkAll(f) {
 
 /**
  * One line per item, `DUE <kind> [<subject>] — <why> — <command>` (`NEW` for proposals); or the
- * all-clear. The inbox lines (inboxLines) come last and are no item: what waits on the owner is
- * not due, so they leave the all-clear in place.
+ * all-clear. A `HELD` line names the kinds the foundation stage holds (heldKinds). The inbox lines
+ * (inboxLines) come last; neither is an item: they leave the all-clear in place.
  */
-export function formatDue(items, inbox = []) {
+export function formatDue(items, inbox = [], held = []) {
   const lines = items.map((i) => `${i.tag ?? 'DUE'} ${i.kind}${i.subject ? ` ${i.subject}` : ''} — ${i.why} — ${i.command}\n`);
   if (!items.length) lines.push('harness-due: nothing due\n');
+  if (held.length) lines.push(`HELD ${held.join(', ')} — foundation stage — they wait for the flip\n`);
   return [...lines, ...inbox.map((l) => `${l}\n`)].join('');
 }

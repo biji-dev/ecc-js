@@ -8,7 +8,7 @@
 //
 // Checks (all run; every failure is reported; exit 1 if any failed):
 //   import       CLAUDE.md's first non-blank line is `@AGENTS.md`
-//   budget       byte size of AGENTS.md, CLAUDE.md, rule files, state files; line count of each SKILL.md
+//   budget       byte size of AGENTS.md, CLAUDE.md, rule files, state files, processFile; line count of each SKILL.md
 //   rule-paths   each rule file has a non-empty `paths:` list and every glob matches a file in the repo
 //   rule-index   rule files and the index in `indexFile` agree both ways
 //   links        relative markdown links resolve (a gitignored target counts as present)
@@ -18,7 +18,8 @@
 //   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
 //                AGENTS.md and rule files without `paths:` (off when budgets.base is null)
 //   citations    each AGENTS.md section the instruction files or the code cite still exists: `AGENTS.md` › Name,
-//                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently)
+//                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently);
+//                `process.md` › Name, or processFile's path › Name, the same against processFile
 //
 // `--rules-for <file...>` prints the rule files whose `paths:` globs match the given paths and exits 0.
 // `--base` prints those always-loaded files with their bytes and the target, and exits 0.
@@ -32,8 +33,9 @@ export const CONFIG = {
   // Bytes (files and base) and lines (skillLines). The byte budgets of AGENTS.md, CLAUDE.md, rule and base are set
   // to the current size rounded up to the next 1,024 bytes at generation time; skillLines and stateFile keep their
   // defaults. base is the always-loaded total, lowered as it shrinks (each 10K tokens is about 2% of main-thread
-  // spend). Each of the six is a whole number >= 0 or null, which turns that budget off; a missing key fails.
-  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192, base: 49152 },
+  // spend). process.md is processFile, which no session loads whole (it is no part of base), set like AGENTS.md.
+  // Each of the seven is a whole number >= 0 or null, which turns that budget off; a missing key fails.
+  budgets: { 'AGENTS.md': 40960, 'CLAUDE.md': 8192, rule: 16384, skillLines: 500, stateFile: 8192, base: 49152, 'process.md': 24576 },
   rulesDir: '.claude/rules',
   indexFile: 'AGENTS.md', // holds the area-rules index
   skillDirs: ['.claude/skills', '.agents/skills'],
@@ -46,6 +48,7 @@ export const CONFIG = {
   requireImport: true, // CLAUDE.md line 1 must be @AGENTS.md
   citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'], // code whose comments may cite AGENTS.md (the instruction files always do)
   citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'], // their citations are fixtures
+  processFile: '.agents/skills/task-runner/process.md', // the run's blocks moved out of AGENTS.md
 };
 // ---- [M] mechanism: ship as-is ----------------------------------------------------------------
 
@@ -250,16 +253,16 @@ function citedRuns(text) {
 }
 
 /**
- * The AGENTS.md sections one line cites, `following` being the next lines without comment markers (a citation
+ * The AGENTS.md (or `file`) sections one line cites, `following` being the next lines without comment markers (a citation
  * may wrap): [{names, quoted}]. Three forms follow the name: `› A › B`, `(A)`, and a "quoted" name or phrase
  * (after an optional `'s <words>`). After a path (`apps/web/AGENTS.md`), `@` (an import) or a quote (a string
  * literal) it is another file or no citation; followed by anything else it cites nothing this check can hold.
  */
-export function citationsIn(line, following = []) {
+export function citationsIn(line, following = [], file = 'AGENTS.md') {
   const out = [];
-  for (let at = line.indexOf('AGENTS.md'); at !== -1; at = line.indexOf('AGENTS.md', at + 9)) {
+  for (let at = line.indexOf(file); at !== -1; at = line.indexOf(file, at + file.length)) {
     if (at > 0 && /[\w./@'"-]/.test(line[at - 1])) continue;
-    let rest = line.slice(at + 9);
+    let rest = line.slice(at + file.length);
     if (rest.startsWith('`')) rest = rest.slice(1); // the end of the code span that holds the name
     const harness = rest.match(/^\s*›\s*/);
     if (harness) {
@@ -555,7 +558,8 @@ function main() {
   const baseTotal = baseFiles.reduce((n, f) => n + f.bytes, 0);
   // A budget is a whole number >= 0, or null (off). budgetOf is null for off, missing and invalid alike: the
   // problem itself is reported once, by check 2.
-  const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base'];
+  const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base', 'process.md'];
+  const processFile = CONFIG.processFile && isFile(CONFIG.processFile) ? CONFIG.processFile : null;
   const budgetOf = (key) => {
     const v = CONFIG.budgets?.[key];
     return Number.isInteger(v) && v >= 0 ? v : null;
@@ -607,6 +611,11 @@ function main() {
     if (limit === null) continue;
     const n = size(f);
     verify(n <= limit, 'budget', f, 0, `${n} bytes, budget ${limit} - move content into path-scoped rules`);
+  }
+  const processLimit = budgetOf('process.md');
+  if (processLimit !== null && processFile) {
+    const n = size(processFile);
+    verify(n <= processLimit, 'budget', processFile, 0, `${n} bytes, budget ${processLimit} - move detail into reference files`);
   }
   const ruleLimit = budgetOf('rule');
   for (const f of ruleLimit === null ? [] : ruleFiles) {
@@ -818,25 +827,35 @@ function main() {
 
   // A quoted citation holds while AGENTS.md has the name or the words; `› A` while a name is A, begins A
   // ("› Gates apply") or A begins it ("› Context" for "Context budget and reporting").
+  // processFile holds the blocks moved out of AGENTS.md: `process.md` › A and its path › A hold against it the same
+  // way, and an `AGENTS.md` › A that fails where processFile has A says to cite process.md.
   function checkCitations(agentsMd) {
-    const names = sectionNames(agentsMd);
-    const words = nameKey(agentsMd.join(' '));
-    const holds = (name, quoted) => {
-      const key = nameKey(name);
-      if (names.has(key)) return true;
-      if (quoted) return words.includes(key);
-      return [...names].some((n) => key.startsWith(`${n} `) || n.startsWith(`${key} `));
+    const holder = (lines) => {
+      const names = sectionNames(lines);
+      const words = nameKey(lines.join(' '));
+      return (name, quoted) => {
+        const key = nameKey(name);
+        if (names.has(key)) return true;
+        if (quoted) return words.includes(key);
+        return [...names].some((n) => key.startsWith(`${n} `) || n.startsWith(`${key} `));
+      };
     };
+    const holds = holder(agentsMd);
+    // a bound processFile that is missing holds nothing: a citation of it fails rather than going unchecked
+    const missing = !processFile && CONFIG.processFile ? CONFIG.processFile : null;
+    const inProcess = processFile ? holder(proseLines(read(processFile))) : missing ? () => false : null;
+    const moved = (name) => (inProcess?.(name, false) ? ` - it moved: cite \`process.md\` › ${name}` : null);
     const exempt = new Set(CONFIG.citeExempt ?? []);
     const citeRes = (CONFIG.citeFiles ?? []).map(globToRegExp);
     // A glob may match a directory git lists as one entry (a submodule, a symlinked directory): files only.
-    const citing = [...new Set([...docFiles, ...files.filter((f) => citeRes.some((re) => re.test(f)))])].filter(isFile);
+    const citing = [...new Set([...docFiles, ...(processFile ? [processFile] : []), ...files.filter((f) => citeRes.some((re) => re.test(f)))])].filter(isFile);
+    const cites = (line) => line.includes('AGENTS.md') || (inProcess !== null && line.includes('process.md'));
     for (const f of citing.filter((p) => !exempt.has(p))) {
       const text = read(f);
-      if (!text.includes('AGENTS.md')) continue;
+      if (!cites(text)) continue;
       const lines = f.endsWith('.md') ? proseLines(text) : text.split('\n');
       lines.forEach((line, i) => {
-        if (!line.includes('AGENTS.md')) return;
+        if (!cites(line)) return;
         const following = lines.slice(i + 1, i + 3).map((l) => l.replace(COMMENT_MARKER, ''));
         for (const { names: cited, quoted } of citationsIn(line, following)) {
           for (const name of cited) {
@@ -846,8 +865,24 @@ function main() {
               f,
               i + 1,
               quoted
-                ? `cites "${name}", which AGENTS.md no longer has as a heading, a bold lead or its words - cite what replaced it`
-                : `cites \`AGENTS.md\` › ${name}, which names no heading or bold lead of AGENTS.md - cite the section by its name, ended by punctuation`,
+                ? `cites "${name}", which AGENTS.md no longer has as a heading, a bold lead or its words${moved(name) ?? ' - cite what replaced it'}`
+                : `cites \`AGENTS.md\` › ${name}, which names no heading or bold lead of AGENTS.md${moved(name) ?? ' - cite the section by its name, ended by punctuation'}`,
+            );
+          }
+        }
+        if (!inProcess) return;
+        for (const { names: cited, quoted } of citationsIn(line.replaceAll(processFile ?? missing, 'process.md'), following, 'process.md')) {
+          for (const name of cited) {
+            verify(
+              inProcess(name, quoted),
+              'citations',
+              f,
+              i + 1,
+              missing
+                ? `cites \`process.md\` › ${name}, but ${missing} does not exist - write it or cite AGENTS.md`
+                : quoted
+                  ? `cites "${name}", which ${processFile} no longer has as a heading, a bold lead or its words - cite what replaced it`
+                  : `cites \`process.md\` › ${name}, which names no heading or bold lead of ${processFile} - cite the section by its name, ended by punctuation`,
             );
           }
         }

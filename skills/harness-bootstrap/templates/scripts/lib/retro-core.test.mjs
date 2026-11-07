@@ -31,6 +31,7 @@ import {
   STATUS_COLUMNS,
   STATUS_WORDS,
   agentCosts,
+  batchRows,
   buildRetro,
   candidates,
   claimRows,
@@ -50,6 +51,7 @@ import {
   parseDefects,
   previousData,
   previousKpis,
+  productKpis,
   rowsForUnit,
   stateSummary,
   stepOfDescription,
@@ -507,6 +509,48 @@ test('logKpis: units landed in the window, medians per unit, P0/P1 sums and rows
   const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00', '22T10:00:00', '01T10:00:00'));
   assert.deepEqual(logKpis(recs, '2026-10-19T00:00:00Z', '2026-10-26T00:00:00Z'), { units: 2, work: 90, ownerWait: 15, cost: 22.5, p0: 1, p1: 3, missed: 1 });
   assert.deepEqual(logKpis(recs, '2026-11-01T00:00:00Z', '2026-11-02T00:00:00Z'), { units: 0, work: null, ownerWait: null, cost: null, p0: 0, p1: 0, missed: 0 });
+});
+
+test('batchRows reads the plan rows a batch row names at the start of its Deliverable cell; any other cell names none', () => {
+  assert.deepEqual(batchRows('rows T0.02, T0.03, T0.04 — the three seeds'), ['T0.02', 'T0.03', 'T0.04']);
+  assert.deepEqual(batchRows('rows EP-7 — one row'), ['EP-7']);
+  assert.deepEqual(batchRows('1 of 1 — the commands'), []);
+  assert.deepEqual(batchRows('rows of the table — none'), []);
+  assert.deepEqual(batchRows(''), []);
+});
+
+// The log with its Deliverable column, as unit-record writes it: the retro reads it by the bound prefix.
+const BATCH_HEAD = [...LOG_HEAD, cap(EXTRA_COLUMNS.deliverable)];
+const batchRow = (id, cost, deliverable = '1 of 1 — x') => [...logRow(id, CELL_A, 30, cost), deliverable];
+
+test('productKpis: the harness share of units by count and by cost, and product plan rows per day, a batch counting its rows', () => {
+  const text = table(BATCH_HEAD, [
+    batchRow('harness/a', 30),
+    batchRow('harness/b', 10),
+    batchRow('T0.01', 10, 'rows T0.01, T0.02, T0.03 — the seeds'),
+    batchRow('T0.05', 25, '1 of 2 — a'),
+    batchRow('T0.05', 25, '2 of 2 — b'),
+    batchRow('T0.09', 99),
+  ]);
+  const recs = logRecords(text, datesFor('20T10:00:00', '21T10:00:00', '22T10:00:00', '22T11:00:00', '23T10:00:00', '01T10:00:00'));
+  // 4 units in the window, 2 of them harness; $40 of $100; 3 rows from the batch and 1 from the two-deliverable unit, over 7 days
+  assert.deepEqual(productKpis(recs, '2026-10-19T00:00:00Z', '2026-10-26T00:00:00Z'), { units: 4, harness: 2, share: 50, costShare: 40, productRows: 4, perDay: 0.57 });
+  assert.deepEqual(productKpis(recs, '2026-11-02T00:00:00Z', '2026-11-03T00:00:00Z'), { units: 0, harness: 0, share: null, costShare: null, productRows: 0, perDay: 0 });
+  // a unit whose Cost cell does not parse counts in the share by count, never in the share by cost
+  const unpriced = logRecords(table(BATCH_HEAD, [[...batchRow('harness/c', 1).slice(0, 4), '—', ...batchRow('harness/c', 1).slice(5)]]), datesFor('20T10:00:00'));
+  assert.deepEqual(productKpis(unpriced, '2026-10-19T00:00:00Z', '2026-10-26T00:00:00Z'), { units: 1, harness: 1, share: 100, costShare: null, productRows: 0, perDay: 0 });
+});
+
+test('buildRetro and formatDigest: the harness share and the product rows per day, this window against the four weeks before, reported and never a candidate', () => {
+  const text = table(BATCH_HEAD, [batchRow('harness/a', 30), batchRow('T0.01', 10, 'rows T0.01, T0.02 — two'), batchRow('T0.03', 60)]);
+  const d = buildRetro(gatherOf({ log: { text, dates: datesFor('22T10:00:00', '23T10:00:00', '10T10:00:00') }, rows: [row({ ts: at('22T10:00:00') })], sessions: 1 }), { project: 'demo', now: NOW });
+  assert.deepEqual(d.kpis.product, { units: 2, harness: 1, share: 50, costShare: 75, productRows: 2, perDay: 0.29 });
+  assert.deepEqual([d.baseline.product.units, d.baseline.product.productRows], [1, 1]);
+  const digest = formatDigest(d);
+  assert.match(digest, /^\| Harness units: share by count · by cost \| 1 of 2 \(50% · 75%\) \| 0% · 0% \|$/m);
+  assert.match(digest, /^\| Product plan rows per day \| 0\.29 \(2 rows\) \| 0\.04 \|$/m);
+  assert.ok(!d.candidates.some((c) => /harness share|plan rows/i.test(c.text)), 'the two are reported, never gated');
+  assert.equal(previousData(digest).kpis.product.share, 50);
 });
 
 test('transcriptKpis: spend, sessions, questions, compactions and the expiry-rewrite share of main-thread dollars', () => {

@@ -187,7 +187,7 @@ test('compact says continue the held unit; startup, resume and clear are context
   put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
   const compact = run(main, 'compact');
   assert.match(compact, /^\[session-resume\] compact: /);
-  assert.equal(lastLine(compact), "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.");
+  assert.equal(lastLine(compact), "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.");
   for (const source of ['startup', 'resume', 'clear']) {
     const text = run(main, source);
     assert.match(text, new RegExp(`^\\[session-resume\\] ${source}: `));

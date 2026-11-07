@@ -129,14 +129,22 @@ as usual; the cards the intake answered are decision rows, never asked again.
 ## Tiers — decided at claim, after the task type
 
 `[M]` For a Code unit (`runner.md` › Task type first), state the tier in the claim
-line. **Unsure → the heavier tier.**
+line, naming the Full condition it meets. **Unsure whether a named Full condition
+holds → Full; no condition named → Small.**
 
 | Tier | Test |
 |---|---|
 | **Trivial** | a typo, a comment, a one-line config value, a rename with no semantic change |
 | **Small** | a local change outside critical code, no never-auto category, no new dependency, no shared contract |
-| **Full** | critical code, a never-auto category, more than one module, a new external dependency, a shared contract or schema, a migration, the owner's taste call, the largest size in the plan, or a path no gate covers yet (the coverage map, SKILL.md Phase A) |
+| **Full** | critical code, a never-auto category, critical code in more than one module, a new external dependency, a shared contract or schema, a migration, the largest size in the plan, or a path no gate covers yet (the coverage map, SKILL.md Phase A) |
+| **Harness** | a diff of harness paths only (`HARNESS` in `review-gate-core.mjs`): the harness lane (`runner.md`) |
 | *Hot-small* | `[B]` **empty slot, earned** — see below |
+
+`[M]` **Taste is a card, not a tier.** Copy, naming and visual identity are a P card
+at Gate 1 and the owner's demo at Gate 2; they do not make a unit Full.
+> Origin: a documents-only prototype with fictional data classified about half of
+> its 115 rows Full on "more than one module", "taste" and "unsure", though every
+> error in them could be corrected forward (classified).
 
 `[M]` **One scale for both modes.** Plan mode's former Standard track is Small; its
 Full track is Full. The steps each tier runs are in `runner.md`.
@@ -173,7 +181,8 @@ session dispatches what it names, with `model` and `effort` passed.
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
 | **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
-| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **product claims** |
+| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **behaviour claims** |
+| **Harness lane** | harness paths only | one cross-family review over the diff (`--tier harness`); no lane A, no claim audit |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
 
 > Origin, the cost study (14 days, 1,094 review runs, 2,961 ledger findings): the
@@ -220,7 +229,10 @@ bounded model). Each dispatch passes `model` and `effort: "high"`.
 instruction files (`INSTRUCTIONS` in the core's `[B]` block); only a diff of docs
 alone is skipped. A test or an instruction file under a critical path is critical,
 so a unit that changes one is reviewed at Full whatever `--tier` says: a weakened
-test is a weakened control.
+test is a weakened control. The one exception is `--tier harness` over harness
+paths only: one cross-family review, an adversarial pass only on a second round the
+owner orders, diff-scoped and once, and the owner merges what `runner.md` › The
+harness lane names.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
@@ -268,12 +280,15 @@ Never impose a column the project does not have.
 | Small, nothing else hit | auto — the Scope block, stated in the claim line | by the merge policy |
 | Conformance reports a blocking gap | — | never auto |
 | An unresolved P0 or P1 | — | never auto |
-| Claim auditor reports `FALSE CLAIMS` (Full) | — | never auto |
+| Claim auditor reports `FALSE CLAIMS` (Full), a failed claim not yet fixed or deleted with its re-run pasted | — | never auto |
 | Any invariant or contract check failing | — | **stop.** Never modify the check to pass |
 | Retries exhausted, or a tripwire (`rules.md` §2) | — | escalate |
 | **Owner taste** — identity, copy, naming | ask | ask |
 | A re-tier during the run | re-ask | re-ask, at the new tier |
-| The foundation stage (`foundation.md`) — before the flip | every unit Full: ask | ask, **never auto** |
+| The foundation stage (`foundation.md`) — the skeleton, then the flip | ask | ask, **never auto** |
+| Harness lane: a guard, a gate, a reviewed block or the rules block | ask | ask, **never auto** |
+| Harness lane, nothing else hit | auto — the claim line | by the merge policy |
+| A batch of rows (`runner.md` › Batched rows) | auto — the claim line and every row's Done when | by the merge policy, one `Demo:` per row |
 | **Unit 1 of an approved intake**, `intake.mjs --gate1` saying `auto` | auto — its sheet asked ahead of time: its `Never-auto:` and `Risk map:` lines and its cards answer the Gate 1 ask of every row above they cover | by the merge policy; every row above still applies |
 
 `[M]` **The project's own rules tighten these rows, never loosen them.** A document
@@ -300,7 +315,8 @@ generated default:
   gate PASS, every step the tier requires is `ran` in the ledger, nothing is
   `degraded`, the diff touches no path the coverage map leaves uncovered, and the run
   re-verified if the mainline moved since.
-- **Full, any never-auto category, any taste call: the owner merges.**
+- **Full, any never-auto category, any taste call: the owner merges.** So does a
+  harness-lane diff to a guard, a gate, a reviewed block or the rules block.
 - **Push is the owner's**, every tier, unless a run grant covers it.
 
 `[M]` The owner may tighten the default (no auto-merge at all) at review. **Push is
@@ -319,7 +335,8 @@ The runner copies both into each covered unit's state file as its `Grant:` and
 ledger's Gate 2 row.
 
 - **merge clean Full** — a Full unit merges on its own when it passes the Small
-  test above (› The merge policy) and its claim audit found no `FALSE CLAIMS`.
+  test above (› The merge policy) and every claim its audit failed is fixed or
+  deleted, its re-run pasted (`claim-auditor.md` › One round).
 - **push after merge** — a merge the policy or the grant made is pushed.
 - **recommendation on reversible P cards** — a P card whose reversal is a revert
   takes its recommendation, logged `By: grant` and listed at Gate 2 under **Decided
@@ -366,9 +383,9 @@ in one line and start it.
 
 - **Another review round** — `review-gate.mjs` decides; only its
   `escalate-adversarial` is a stop.
-- **A tripwire a rule already answers** proceeds by that rule and is logged — a
-  second `FALSE CLAIMS` round on record prose only is quote-or-delete and land; a
-  tripwire stops only when its answer is P or C.
+- **A tripwire a rule already answers** proceeds by that rule and is logged; it
+  stops only when its answer is P or C. Record prose is never a claim-audit round:
+  the session's quote-or-delete at 8b settles it (`claim-auditor.md`).
 - **Summaries and records** are written at the step that owns them, never asked.
 - **★ Missed by harness** is filled from what the owner volunteered at Gate 2;
   nothing volunteered → `—`, not a question.
@@ -385,6 +402,15 @@ in one line and start it.
 | **P1** | a correctness defect the unit introduces, or a blocker for its "Done when" | always |
 | **P2** | a robustness gap, an edge case, a missing test for a real path | if IN scope |
 | **P3** | a nit, a style point | **never opens one** — the P3 batch, or rides along on a line the round already changes |
+
+`[M]` **Severity is judged against the stakes line.** Every reviewer brief carries
+the policy block's `Stakes:` line — the second family's briefless `review` reads it in
+`AGENTS.md`, which every run of it loads — and a P0 or P1 must be reachable under it. A
+finding that needs a condition the line rules out — a hostile local user on a
+one-developer local app, real records in a fictional-data prototype — is P3, or
+OUT when this diff does not make it reachable; the finding names the condition.
+> Origin: adversarial passes on a local prototype with fictional data kept
+> returning P1s that needed an attacker the project did not have.
 
 `[M]` Agents that report CRITICAL / HIGH / MEDIUM / LOW map to P0 / P1 / P2 / P3.
 A three-level scale (critical, then important or warning, then nice-to-have or
@@ -407,6 +433,7 @@ line in the ledger. Its rules:
 | P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` |
 | any, round 3 or later | — | `escalate-adversarial`: **a stop** — a third round opened unasked is a tripwire (`rules.md` §2). The round the owner orders is the second family's adversarial pass, never a third Opus round |
 | **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review; round 3 is an Opus adversarial brief |
+| **the harness lane** (`--tier harness`) | round 1: the other family re-reviews; round 2: a stop, the owner's call | — |
 
 `[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
 writes, the other re-reads — fix rounds included. It is required and names the

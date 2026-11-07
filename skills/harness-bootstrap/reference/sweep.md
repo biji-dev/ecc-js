@@ -14,8 +14,11 @@ mode the register is the follow-ups doc (› Change mode).
 
 `[M]` **`harness-due.mjs` says `DUE sweep` seven days or five landings after the
 newest report** `[B]`, and the runner queues it as the next unit (`runner.md` ›
-Due-checks); before a phase preflight too. A landing is a log row or a mainline
-merge, whichever counts more.
+Due-checks); before a phase preflight too. A landing is a product landing — a log
+row or a mainline merge of no `harness/` unit, whichever counts more — and nothing is
+due while the manifest's stage is `foundation`.
+> Origin: one install's sweep and hygiene came due a day in, counted on its own
+> harness units; the hygiene unit changed nothing.
 > Origin: all eight runs happened because someone asked. Two ran overdue —
 > "overdue by seven landings" (2026-09-24), then "by four days and fourteen
 > landings" (2026-10-11), whose report opened with "the weekly cadence is enforced

@@ -18,7 +18,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 36;
+const EXPECTED_TESTS = 41;
 
 let passed = 0;
 let failed = 0;
@@ -136,7 +136,7 @@ const INSTALL = [
   ],
   [RETRO_CORE, "export const SEVERITY_COLUMNS = ['sev', 'priority'];", "export const SEVERITY_COLUMNS = ['impact'];"],
   [RETRO_CORE, 'export const FILED_AT = null;', 'export const FILED_AT = /(?:^|[^\\d])(\\d{4}-\\d{2}-\\d{2})-[a-z]/i;'],
-  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes' };"],
+  [RETRO_CORE, "export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' };", "export const EXTRA_COLUMNS = { defects: 'bugs', missed: 'missed', friction: 'notes', deliverable: 'item' };"],
   [RETRO_CORE, 'export const OUTLIER_X = 2;', 'export const OUTLIER_X = 3;'],
   [RETRO_CORE, 'export const MIN_COHORT = 3;', 'export const MIN_COHORT = 4;'],
   [RETRO_CORE, 'export const MIN_SHARE = 5;', 'export const MIN_SHARE = 8;'],
@@ -295,6 +295,10 @@ test('the core\'s PHASE_OF rebound alone fails the [B] PHASE_OF test', () => {
 mutantFails('blocking a phase that a merge already opened', 'const opens = rows === 0 && merged === 0;', 'const opens = rows === 0;');
 mutantFails('matching a preflight report by case', '.some((r) => path.posix.basename(r.rel).toLowerCase() === want)', '.some((r) => path.posix.basename(r.rel) === want)');
 mutantFails('counting landings from the log rows alone', 'const landings = Math.max(after(landed), after(merged));', 'const landings = after(landed);');
+mutantFails('counting a harness unit\'s log row as a landing', 'records.filter((r) => !isHarnessUnit(r.id)).map((r) => r.landed)', 'records.map((r) => r.landed)');
+mutantFails('counting a harness branch\'s merge as a landing', '(f.merges ?? []).filter((m) => !isHarnessMerge(m.subject)).map((m) => m.t)', '(f.merges ?? []).map((m) => m.t)');
+mutantFails('running the cadences in the foundation stage', "if (stage !== 'foundation') return [];", 'return [];');
+mutantFails('reading no stage from the manifest', 'stage: readJson(path.join(top, MANIFEST))?.stage ?? null,', 'stage: null,', CLI_REL);
 mutantFails('dropping the P3 queue from the hygiene line', "note: kind === 'hygiene' ? p3Note(summary) : ''", "note: ''");
 mutantFails('taking a dirty worktree for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.own)');
 mutantFails('taking a branch with no commits of its own for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.clean)');

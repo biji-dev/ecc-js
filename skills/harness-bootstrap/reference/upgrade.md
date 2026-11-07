@@ -31,8 +31,8 @@ It never writes. It reports:
   (the skill changed the template since the entry was written), `gone` (the skill
   no longer ships it), `unrecorded` (no `templateSha256`) or `invalid`, counted on
   one line of the text report;
-- **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md` and
-  `CLAUDE.md`, and whether it balances;
+- **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md`,
+  `CLAUDE.md` and the runner's `process.md`, and whether it balances;
 - **sizes**, **id prefixes** in use (`DEC-`, `D-`, `D<n>`, `Q-`, counted outside
   harness blocks) and **held registry rows**;
 - **hazards** — by id, with the file and line.
@@ -214,11 +214,11 @@ change (then register the repository for the weekly job, `learning.md` › The w
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 8, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 9, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
-    { "path": "AGENTS.md", "block": "gates", "kind": "generated", "sha256": "<hex>" },
+    { "path": ".agents/skills/task-runner/process.md", "block": "gates", "kind": "generated", "sha256": "<hex>" },
     { "path": "AGENTS.md", "block": "policy", "kind": "reviewed" },
     { "path": ".githooks/pre-commit", "kind": "generated",
       "template": "templates/harness-guard.sh", "templateSha256": "<hex>", "sha256": "<hex>" },
@@ -274,15 +274,16 @@ sections sit between markers on their own lines, never nested:
 ```
 
 Ids: `rules`, `types`, `tiers`, `gates`, `policy`, `risk-map`, `merge`, `stops`,
-`scope`, `context`, `triggers`, `do-not-adopt`, `commands`, `models`, `claude`, and
-`earned` — the empty slots the log fills (Hot-small, tripwire numbers, the
+`scope`, `context`, `triggers`, `do-not-adopt`, `commands`, `models`, `claude`, `run`,
+and `earned` — the empty slots the log fills (Hot-small, tripwire numbers, the
 milestone cap), always of kind `reviewed`. Everything outside the markers is the
 project's, and an upgrade never touches it. **Wrap only blocks this skill writes**:
 legacy text the project wrote stays outside markers until the owner adopts it, and
 an adopted block is `reviewed`.
 
 `[M]` Files the harness owns outright — the runner skill, the auditors, the guard,
-the hooks, the scripts — are entries without a block. Never put a stamp comment in
+the hooks, the scripts — are entries without a block; the runner's `process.md` holds
+blocks, each an entry of its own. Never put a stamp comment in
 a `SKILL.md`: frontmatter must be the first line.
 
 ## Hazards and their fixes
@@ -312,6 +313,8 @@ a `SKILL.md`: frontmatter must be the first line.
 | `sweep-overdue`, `retro-overdue`, `hygiene-overdue` | install `harness-due.mjs` where it is absent (steps 0 and 9 run it), commit each report at `REPORTS.<kind>` in `harness-due-core.mjs` (default `docs/harness/reports/<file>`) — never a gitignored directory — and make the overdue one the next unit |
 | `p3-queue-aging` | a hygiene unit: its P3 batch takes the oldest cold-code rows, each re-verified against the mainline first (`hygiene.md`). Follow-ups spread over many files are bound or merged into one doc first |
 | `foundation-stage-has-tests` | the pass-signal unit landed and the flip did not run: claim the flip as a `harness/` unit (`foundation.md`) |
+| `stakes-line-missing` | ask the owner for the `Stakes:` line and open the policy block with it (`policy-derivation.md`); until then every reviewer brief judges severity with no threat model |
+| `block-in-base` | move the run's blocks to `.agents/skills/task-runner/process.md` (`harness-targets.md` › The run's blocks) and write the `run` block in their place |
 
 ## Version table
 
@@ -335,11 +338,12 @@ entry is stale, and the sheet's list of what the owner reviews again.
 | 6 | 2.2.3-js.8 | the fixes from the v5 installs. The guards refuse what v5 let through: `push --no-verify`, a hook path set through the environment, `git` behind `command`, `exec` or `time`, a second-family run sent to the background with `&` (built-in rule `codex-background`), an indented patch header, every env-file form, and in either scope the merge of a branch that still holds a row; each hook file runs the guard first and passes its refusal on. The review gate reviews tests and the harness's instruction files (a unit of only those under a critical path at the full tier), and a P3 batch over critical code gets the Opus reviewer. `run-counted.mjs` fails a test file that registered no tests and forwards a stop signal; `run-gates.sh` keys reuse on `NODE_OPTIONS`; `unit-cost.mjs` counts a streamed message by its fullest copy and both run ledgers by the unit's worktree; the retro warns where a figure reads zero for a fixable reason, dates rows past re-indents and moves, and reads the follow-ups' columns as bound; step ids take one `/`; the FULL verify ends step 8a; `codex-run.mjs` keeps `max` behind `--allow-max`; each CLI in `scripts/` takes `--help`, and `check-agent-docs.mjs` refuses an argument it does not know; `harness-status.js` reports each entry's template state and prints its base (`--base`). Template-backed entries from v5 merge three-way (Step 2); the rest of an upgrade to v6 is in *Upgrading to v6* below |
 | 7 | 2.2.3-js.10 | the owner's eight: **decision first** at the claim, each card fact with its source (`scope-guard.md` › The decision sheet); OUT **filed or dropped** (› Filing OUT), the close-out listing the new rows only; the Impact Analysis's `found by` and `proof` cells and Small's one-line IA; the plan's **Drawbacks** and one **plan critique** by the other family (`cross-model.md` › The plan critique); the **simplicity lens**, once per family (`gate-design.md` › Review lineup); Hot-small runnable once its cap is filled, the rule audit looking (`learning.md`); `unit-step.mjs` refuses a marker on the wrong checkout (exit 1), with `--check` and `--where`; the state file's `Worktree:` line and the resume command naming the unit; `codex-run.mjs` and `claude-run.mjs --status` over a run sidecar (`lib/run-status.mjs`), `machine-sweep.mjs --status`, and "is it still running" answered from those commands. The rest of an upgrade to v7 is in *Upgrading to v7* below |
 | 8 | 2.2.3-js.11 | a run finishes without the owner: the owner never manages the context — the budget hook silent on `Stop`, no `/compact` or `/clear` offer anywhere, reading-heavy steps to subagents past the warning (`context.md` › No hand-off); the **session-resume hook** on `SessionStart` (held and parked units, their `## Next`, open `Q-n` cards, grant and stop lines); the **queue run** (`/task-runner` resumes, then the queue; `<unit> only` for one unit; it stops only on a command's word); gates **park** their unit and the run moves on (`gate-design.md` › Parking a unit: the registry's parked table, `harness-due.mjs`'s `INBOX` lines, answers in one message); the **run grant** (`gate-design.md` › The run grant: merge clean Full, push after merge, the recommendation on reversible P cards; never what the section excludes); the state line that ends a run's turn; the retro's owner-touch figures (`learning.md`). The rest of an upgrade to v8 is in *Upgrading to v8* below |
+| 9 | 2.2.3-js.12 | the process fits the stakes and reaches product code first: Phase A's **stakes line** and forecast; the **short foundation** (`foundation.md`: the skeleton is the pass-signal unit, the flip follows it at once, `Paths:` lines feed the re-derive, no other harness unit first); the **harness lane** (`runner.md`, `review-gate.mjs --tier harness` over `HARNESS` paths); cadences count product landings and none is due in foundation (`harness-due.mjs`); severity judged against the stakes line, critical entries citing a harm, the narrowed tier test and taste as a card (`gate-design.md`, `policy-derivation.md`); the claim audit over **behaviour claims**, one round, record prose quote-or-delete at 8b (`claim-auditor.md`); **batched rows** (`runner.md`, the state file's `Rows:`); an owner's own push as a fact; the plan check only when the approach is open; the run's blocks in `process.md` (`harness-targets.md`); `estimate.mjs --log` repeatable; the retro's self-reference share and product rows per day; hazards `stakes-line-missing` and `block-in-base`. The rest of an upgrade to v9 is in *Upgrading to v9* below |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v7 install the v8 row, a v6 install the v7 and v8
-rows, a v3 install the v4 to v8 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v8 install the v9 row, a v7 install the v8 and v9
+rows, a v3 install the v4 to v9 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
@@ -350,7 +354,7 @@ with no manifest starts from the fingerprints (Step 1): its entries are `legacy`
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 8.
+`skillVersion` 9.
 
 ### Upgrading to v6
 
@@ -495,3 +499,47 @@ owner rows (`learning.md` › The retro).
 land the runner starts the next ready unit itself; `/task-runner <unit> only` keeps
 v7's one-unit run. A gate parks its unit and the run goes on, so the answers come
 in one message. **Land it between runs**, with no row held or parked.
+
+### Upgrading to v9
+
+`[M]` **What moves.** The `types`, `tiers`, `gates`, `stops`, `scope`, `context`,
+`triggers` and `models` blocks move to `.agents/skills/task-runner/process.md`
+(`harness-targets.md` › The run's blocks), each under its own markers, and the
+manifest entry takes the new `path`. A block whose hash matches moves unchanged; an
+edited block moves with its edits, shown to the owner as a diff; a block of kind
+`reviewed` moves unchanged too, its words the owner's and only its file new, and the
+diff shows the move. Where the blocks live in `CLAUDE.md` (› Step 2), they move from
+there. The `run` block, kind `generated`, takes their place, and each citation of a
+moved section is repointed to `process.md`. Then `check-agent-docs.mjs --base` reads
+the smaller base: the `AGENTS.md` and `base` budgets come down to the new sizes rounded
+up to the next 1,024 bytes, and the new `process.md` budget is set the same way.
+
+`[M]` **What regenerates.** The rules block (`templates/agents-rules.md`: the record
+rule), the runner skill and the implementer agent (`runner.md`:
+the harness lane, batched rows, the owner's own push, the plan check), the claim
+auditor (`claim-auditor.md`: behaviour claims, one round), the `scope` block's
+`Rows:` and `Paths:` lines, the blocks written from `gate-design.md` (the tier test,
+the severity paragraph, the lane's rows; proposals where the block is `reviewed`), and
+the scripts with their tests:
+`review-gate-core.mjs` (`HARNESS`, `--tier harness`), `harness-due-core.mjs` and
+`harness-due.mjs` (product landings, the foundation stage), `estimate.mjs`,
+`retro-core.mjs`, `unit-record-core.mjs` (`Rows:`), `check-agent-docs.mjs`
+(`process.md`) and the session-resume hook (it names `process.md` after a
+compaction).
+
+`[M]` **New bindings.** `HARNESS` in `review-gate-core.mjs`, the instruction files
+and the harness's own scripts and records; a path the project keeps them under is
+added there. In `check-agent-docs.mjs`, `processFile` and the `process.md` budget
+key, set to the moved file's size rounded up to the next 1,024 bytes (the template's
+24576 is a placeholder). `EXTRA_COLUMNS` in `retro-core.mjs` gains `deliverable`,
+which the product-rows figure reads. Before the upgrade, `harness-status.js` lists a
+block still in `AGENTS.md` under `upgrade proposals`, not as a hazard.
+
+`[M]` **What the owner reviews again.** The `Stakes:` line, a C card, since the
+policy block is `reviewed`. Each critical entry that cites no harm and no never-auto
+category, with a proposed demotion to standard. In an install still at stage
+`foundation`, the **pass-signal re-point**, a card: **A** the plan's own test row,
+claimed next, when its dependencies have landed; **B** the next product row, its
+"Done when" gaining one counted test. The flip follows either one, and the
+manifest's `flipAfter` names it. A harness follow-up already filed waits for the
+flip (`foundation.md`). **Land it between runs**, with no row held or parked.

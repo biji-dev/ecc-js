@@ -48,9 +48,9 @@ const UNUSABLE = /unreconcil|unusable|excluded/i;
 const DUR =
   '~?(\\d+(?:\\.\\d+)?)\\s*(?:h(?:ours?|rs?)?(?![a-z])\\s*(?:(\\d{1,2})(?!\\d)\\s*(?:m(?:ins?|inutes?)?(?![a-z]))?)?|m(?:ins?|inutes?)?(?![a-z]))';
 
-/** Reject unknown flags and a missing --log before any file is read. */
+/** Reject unknown flags and a missing --log before any file is read. --log repeats: a.logs holds them all, a.log the first. */
 export function parseArgs(argv) {
-  const a = { log: null, tier: null, cohort: null, json: false };
+  const a = { log: null, logs: [], tier: null, cohort: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
@@ -58,9 +58,11 @@ export function parseArgs(argv) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
       a[t.slice(2)] = v;
+      if (t === '--log') a.logs.push(v);
     } else throw new Error(`unknown option ${t}`);
   }
   if (!a.log) throw new Error('--log <docs/harness/log.md> is required');
+  a.log = a.logs[0];
   if (a.tier !== null) {
     a.tier = a.tier.toLowerCase();
     if (!TIERS.includes(a.tier)) throw new Error(`--tier must be one of ${TIERS.join('|')} (got "${a.tier}")`);
@@ -251,6 +253,15 @@ export function parseLog(text, { raw = false, columns = COLUMNS, tierWords = TIE
   return records;
 }
 
+/**
+ * Several logs -> one pool of rows: each row keeps its log as `source` and its unit id is prefixed
+ * with it, so the same id in two logs is two units. One log is parsed as it is.
+ */
+export function poolLogs(logs) {
+  if (logs.length === 1) return parseLog(logs[0].text);
+  return logs.flatMap(({ name, text }) => parseLog(text).map((r) => ({ ...r, id: `${name}#${r.id}`, source: name })));
+}
+
 /** Rows of one tier (when given) whose Unit or Type cell matches the cohort regex (when given). */
 export function filterRows(records, { tier = null, cohort = null } = {}) {
   return records.filter(
@@ -288,10 +299,11 @@ function stat(values) {
   return { n, p25: percentile(values, 0.25), median: percentile(values, 0.5), p75: percentile(values, 0.75) };
 }
 
-/** Per-metric ranges, one sample per unit among the rows of the tier and cohort asked for. */
-export function estimate(records, { tier = null, cohort = null } = {}) {
+/** Per-metric ranges, one sample per unit among the rows of the tier and cohort asked for; with several logs, the units of each. */
+export function estimate(records, { tier = null, cohort = null, sources = [] } = {}) {
   const units = groupUnits(filterRows(records, { tier, cohort }));
   const out = { tier, rows: units.length, metrics: {} };
+  if (sources.length > 1) out.sources = sources.map((log) => ({ log, units: units.filter((u) => u.source === log).length }));
   for (const key of Object.keys(METRICS)) {
     out.metrics[key] = stat(units.map((u) => u[key]).filter(Number.isFinite));
   }
@@ -310,7 +322,10 @@ const range = (s, fmt, unit = '') => (s.noHistory ? s.message : `${fmt(s.p25)}�
 export function formatLine(est) {
   const m = est.metrics;
   const tier = est.tier ?? 'all tiers';
-  return `Estimate per unit (${tier}, n=${est.rows} units): work ${range(m.work, fmtMinutes)} · owner wait ${range(m.ownerWait, fmtMinutes)} · Claude ${range(m.claudePct, fmtPct, '%')} · Codex ${range(m.codexPct, fmtPct, '%')} — a range from this project's log, not a promise`;
+  const from = est.sources
+    ? `${est.sources.length} logs (${est.sources.map((s) => `${s.log} ${s.units} units`).join(', ')})`
+    : "this project's log";
+  return `Estimate per unit (${tier}, n=${est.rows} units): work ${range(m.work, fmtMinutes)} · owner wait ${range(m.ownerWait, fmtMinutes)} · Claude ${range(m.claudePct, fmtPct, '%')} · Codex ${range(m.codexPct, fmtPct, '%')} — a range from ${from}, not a promise`;
 }
 
 /** The line plus a median detail per metric. */

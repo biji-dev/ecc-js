@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 62;
+const EXPECTED_TESTS = 66;
 
 let passed = 0;
 let failed = 0;
@@ -101,6 +101,7 @@ const REBINDINGS = [
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that are not production', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /^scripts\\//]; // paths that are not production'],
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that count as tests', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /(^|\\/)\\.maestro\\//]; // paths that count as tests'],
   [CORE_REL, 'export const FIX_LINES = 40;', 'export const FIX_LINES = 25;'],
+  [CORE_REL, 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//];', 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//, /^scripts\\//, /^harness\\//];'],
   [TEST_REL, 'const EXPECTED_CRITICAL = [];', REBOUND_CRITICAL.replace('export const CRITICAL', 'const EXPECTED_CRITICAL')],
 ];
 
@@ -149,6 +150,8 @@ console.log(JSON.stringify({
   db: p.db.map((x) => c.TRIGGERS['database-reviewer'].some((re) => re.test(x))),
   fixLines: c.FIX_LINES,
   production: p.production.map(c.isProduction),
+  harness: ['AGENTS.md', '.claude/settings.json', '.githooks/pre-commit', 'scripts/run-gates.sh', 'src/a.ts'].map(c.isHarness),
+  tiers: c.TIERS,
 }));`;
   const res = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: hermeticEnv() });
   assert.strictEqual(res.status, 0, res.stderr);
@@ -158,6 +161,8 @@ console.log(JSON.stringify({
   assert.deepStrictEqual(got.db, [true, true, false, false], `database-reviewer matches ${paths.db.join(', ')} as ${got.db.join(', ')}`);
   assert.strictEqual(got.fixLines, 40, 'the template FIX_LINES');
   assert.deepStrictEqual(got.production, [true, ...NINE.map(() => false)], `production: ${paths.production.join(', ')} as ${got.production.join(', ')}`);
+  assert.deepStrictEqual(got.harness, [true, true, true, false, false], 'the template HARNESS: the instruction files and .githooks/ until the install adds its scripts');
+  assert.deepStrictEqual(got.tiers, ['small', 'full', 'harness'], 'the template TIERS');
 }
 
 test('the template core ships its default bindings', () => {
@@ -270,6 +275,18 @@ test('mutant: critical code at --tier small no longer escalates to the full line
 
 test('mutant: the specialists matching an instruction file\'s prose makes the suite fail', () => {
   mutantRun('files.some((f) => !isExempt(f.path) && TRIGGERS', 'files.some((f) => isProduction(f.path) && TRIGGERS');
+});
+
+test('mutant: the harness lane gone, so a harness-only unit gets the full lineup again', () => {
+  mutantRun('const lane = tier === \'harness\' && stray.length === 0;', 'const lane = false;');
+});
+
+test('mutant: the harness lane taking a product path, so a stray app file gets one reviewer', () => {
+  mutantRun('reviewed.filter((f) => !isHarness(f.path))', 'reviewed.filter(() => false)');
+});
+
+test('mutant: the harness lane allowing a second fix round', () => {
+  mutantRun('    if (round >= 2)\n      return out(\n        \'escalate-adversarial\',', '    if (round >= 9)\n      return out(\n        \'escalate-adversarial\',');
 });
 
 test('shipped files carry no machine paths', () => {

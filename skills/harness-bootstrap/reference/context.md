@@ -141,7 +141,8 @@ action: it runs while the owner is away.
 saves about 2% of main-thread spend and $0.08 per compaction. The repository's share
 — `CLAUDE.md`, the files it imports with `@`, `AGENTS.md`, and any rule file without
 `paths:` — is `check-agent-docs.mjs --base`, held to a ratcheted target
-(`budgets.base`); MCP servers, plugins and user files add the rest, per machine.
+(`budgets.base`); MCP servers, plugins and user files add the rest, per machine. The
+run's blocks sit outside it, in `process.md` (`harness-targets.md`).
 Measured fresh bases in four repositories: 108K (one with its harness in a 144 KB `CLAUDE.md`), 91K,
 82K, ecc-js 68K; a worktree session 22–28K.
 
@@ -232,9 +233,9 @@ sources it is context only, so opening a session never starts work.
 - never sets `initialUserMessage`: a session that starts work on its own is a run
   the owner did not start.
 
-`CLAUDE.md` and `AGENTS.md` are re-read after a compaction; the unit's state is not,
-which is why the owner used to paste it as a keep-line. Other hosts keep the rule: a
-post-compaction turn reads the state file first.
+`CLAUDE.md` and `AGENTS.md` are re-read after a compaction; the unit's state and
+`process.md` are not, which is why the owner used to paste a keep-line. Other hosts
+keep the rule: a post-compaction turn reads the state file and `process.md` first.
 
 Install only when the owner agrees: copy it to `.claude/hooks/session-resume.mjs`, its
 test `templates/scripts/lib/session-resume.test.mjs` to `scripts/lib/`, and add to

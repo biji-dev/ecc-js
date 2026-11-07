@@ -85,7 +85,7 @@ function checkReferences(skillDir) {
     'context-budget.mjs', 'harness-guard.sh', 'registry.md', 'plan-conformance-auditor.md', 'claim-auditor.md',
     'implementer.md', 'harness-manifest.json', 'command-guard.mjs', 'run-gates.sh', 'codex-run.mjs',
     'check-agent-docs.mjs', 'review.workflow.js', 'settings.json', 'settings.local.json', 'package.json',
-    'review-gate.mjs', 'docs-drift.mjs', 'unit-record.mjs'
+    'review-gate.mjs', 'docs-drift.mjs', 'unit-record.mjs', 'process.md'
   ];
   for (const m of text.matchAll(/`([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:md|sh|mjs|js|json))`/g)) {
     const name = m[1];
@@ -832,13 +832,13 @@ test('the claim auditor and a reviewer that mutates code work in a worktree of t
   assert.ok(squashed('SKILL.md').includes('states that it sabotages only in a worktree of its own and restores'), "SKILL.md's claim-auditor row does not say where it sabotages");
 });
 
-test("the record rule's prose audit is at Full, in rules.md, the rules block and SKILL.md; a rule the project states keeps its words and cites them", () => {
-  const rule = '**The record is written last, from the diff — its fields generated, its prose audited at Full by someone who did not write it.**';
+test("the record rule's claim audit is at Full, in rules.md, the rules block and SKILL.md; a rule the project states keeps its words and cites them", () => {
+  const rule = '**The record is written last, from the diff — its fields generated, its behaviour claims audited at Full by someone who did not write it, its prose quote-or-delete.**';
   const rules = squashed('reference/rules.md');
   const block = squashed('templates/agents-rules.md');
   assert.ok(rules.includes(rule), "rules.md's record rule does not say at Full");
   assert.ok(block.includes(rule), "the rules block's record rule does not say at Full");
-  assert.ok(squashed('SKILL.md').includes('fields generated, prose audited at Full by someone else.**'), "SKILL.md's record rule does not say at Full");
+  assert.ok(squashed('SKILL.md').includes('fields generated, behaviour claims audited at Full by someone else, prose quote-or-delete.**'), "SKILL.md's record rule does not say at Full");
   const citation = "`Stated in the project's words: <path> › <heading>`";
   const preamble = rules.slice(0, rules.indexOf('## 1 · Ship these'));
   assert.ok(preamble.includes(`A rule the project already states in its own words keeps them: the rules block keeps the bold rule and, in place of its why clause, ${citation}, so no section is left a bare heading.`), 'the rules.md preamble does not give the citation form');
@@ -914,11 +914,12 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 8 for 2.2.3-js.11, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 9 for 2.2.3-js.12, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
   assert.match(text, /^\| 8 \| 2\.2\.3-js\.11 \| /m, 'the version table has no row 8 for 2.2.3-js.11');
+  assert.match(text, /^\| 9 \| 2\.2\.3-js\.12 \| /m, 'the version table has no row 9 for 2.2.3-js.12');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -927,7 +928,7 @@ test("upgrade.md has a version row 8 for 2.2.3-js.11, and both skills, the manif
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v7 install the v8 row, a v6 install the v7 and v8 rows, a v3 install the v4 to v8 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v7, v6 or v3 install to v8');
+  assert.ok(flat.includes('a v8 install the v9 row, a v7 install the v8 and v9 rows, a v3 install the v4 to v9 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v8, v7 or v3 install to v9');
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {
@@ -1159,6 +1160,95 @@ test('no reference or template offers the owner /compact, /clear or a keep-line 
       // upgrade.md's history rows and the Origin and section-3 lines record the old offers.
       if (offer.test(line)) assert.match(line, /^\| \d|^>|^\| \*"|never|Origin|v3 to v7|no `\/clear` offer|no keep-line/i, `${path.relative(BOOTSTRAP, file)}: ${line.trim()}`);
     }
+  }
+});
+
+// ── v9: fit the process to the stakes, reach product code first ──────────────
+
+test('v9: Phase A records the stakes line and forecasts before any install, with a no-harness route', () => {
+  const text = squashed('SKILL.md');
+  for (const part of [
+    '| 7 | The **stakes** |',
+    '**Fit and forecast, before any install.**',
+    'the **no harness** route',
+    'Label it *estimate*, never a threshold.',
+    'route to the **short foundation**',
+    'The policy block opens with Phase A\'s `Stakes:` line',
+  ]) assert.ok(text.includes(part), `SKILL.md lacks: ${part}`);
+});
+
+test('v9: the skeleton is the pass-signal unit, the flip follows it, and no other harness unit runs first', () => {
+  const text = squashed('reference/foundation.md');
+  for (const part of [
+    '**The skeleton is the pass-signal unit.**',
+    '**No other harness unit before the flip**',
+    'Never name a later row the pass-signal unit when the skeleton can ship a test.',
+    '`Paths:` line',
+  ]) assert.ok(text.includes(part), `foundation.md lacks: ${part}`);
+  assert.ok(squashed('reference/policy-derivation.md').includes('a path under no placed directory is **critical**, never cold'), 'policy-derivation.md does not narrow the unplaced-path rule');
+});
+
+test('v9: a harness-only diff runs the harness lane, and harness work waits for product work', () => {
+  const runner = squashed('reference/runner.md');
+  for (const part of [
+    '## The harness lane',
+    '**A diff of harness paths alone**',
+    '**Harness work waits for product work.**',
+    '**An owner\'s own push, rename or commit is a fact:**',
+  ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);
+  const gates = squashed('reference/gate-design.md');
+  assert.ok(gates.includes('| **Harness** |'), 'gate-design.md has no Harness tier row');
+  assert.ok(gates.includes('| **Harness lane** | harness paths only |'), 'the review lineup has no harness-lane row');
+});
+
+test('v9: severity is judged against the stakes line, critical entries cite a harm, and taste is a card', () => {
+  const gates = squashed('reference/gate-design.md');
+  for (const part of [
+    '**Severity is judged against the stakes line.**',
+    '**Taste is a card, not a tier.**',
+    '**Unsure whether a named Full condition holds → Full; no condition named → Small.**',
+  ]) assert.ok(gates.includes(part), `gate-design.md lacks: ${part}`);
+  const policy = squashed('reference/policy-derivation.md');
+  for (const part of ['**Ask it against the stakes line.**', '**Every critical entry cites a harm, a category or its importer count.**']) {
+    assert.ok(policy.includes(part), `policy-derivation.md lacks: ${part}`);
+  }
+});
+
+test('v9: the claim audit reads behaviour claims in one round, and record prose is quote-or-delete at 8b', () => {
+  const auditor = squashed('reference/claim-auditor.md');
+  for (const part of ['## One round', '**There is no second round:**', 'Behaviour claims only']) {
+    assert.ok(auditor.includes(part), `claim-auditor.md lacks: ${part}`);
+  }
+  assert.ok(!auditor.includes('## The two-round rule'), 'claim-auditor.md still has the two-round rule');
+  assert.ok(squashed('reference/runner.md').includes('| blocking, **behaviour claims**, one round |'), "the runner's 8c row is not one round over behaviour claims");
+});
+
+test('v9: batched rows carry a Rows: line, and the run\'s blocks live in process.md outside the base', () => {
+  assert.ok(squashed('reference/runner.md').includes('## Batched rows'), 'runner.md has no Batched rows section');
+  const scope = fs.readFileSync(path.join(BOOTSTRAP, 'reference', 'scope-guard.md'), 'utf8');
+  assert.match(scope, /^Rows: </m, 'the state file has no Rows: header');
+  assert.match(scope, /^Paths: </m, 'the state file has no Paths: header');
+  const targets = squashed('reference/harness-targets.md');
+  assert.ok(targets.includes('**The run\'s blocks.**') && targets.includes('`process.md` has a budget of its own and is not in `--base`'), 'harness-targets.md does not move the run\'s blocks out of the base');
+});
+
+test('v9: cadences count product landings and nothing is due in the foundation stage', () => {
+  assert.ok(squashed('reference/sweep.md').includes("nothing is due while the manifest's stage is `foundation`"), 'sweep.md still counts every landing in foundation');
+  assert.ok(squashed('reference/hygiene.md').includes('5 product landings'), 'hygiene.md does not count product landings');
+});
+
+test("upgrade.md's v9 section moves the run's blocks, asks the stakes and the re-point as cards and lands between runs", () => {
+  const text = squashed('reference/upgrade.md');
+  assert.ok(text.includes('The rest of an upgrade to v9 is in *Upgrading to v9* below') && /^### Upgrading to v9$/m.test(upgradeMd()), 'row 9 points to no Upgrading to v9 section');
+  const v9 = text.slice(text.indexOf('### Upgrading to v9'));
+  for (const part of [
+    'a block of kind `reviewed` moves unchanged too',
+    'The `Stakes:` line, a C card',
+    'the **pass-signal re-point**',
+    '**Land it between runs**',
+  ]) assert.ok(v9.includes(part), `the v9 section lacks: ${part}`);
+  for (const hazard of ['stakes-line-missing', 'block-in-base']) {
+    assert.ok(text.includes(`| \`${hazard}\` |`), `upgrade.md has no fix row for ${hazard}`);
   }
 });
 

@@ -59,7 +59,7 @@ export const SEVERITY_COLUMNS = ['sev', 'priority'];
 // job reads only the paths its registry names, so it always dates by line.
 export const FILED_AT = null;
 // [B] The log columns the retro reads beyond estimate-core's COLUMNS, matched the same way (prefix).
-export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction' };
+export const EXTRA_COLUMNS = { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' };
 // [B] An outlier is at least OUTLIER_X times its cohort's median, in a cohort of at least MIN_COHORT.
 export const OUTLIER_X = 2;
 export const MIN_COHORT = 3;
@@ -202,6 +202,35 @@ export function previousData(text) {
   }
 }
 
+/** Whether a log row's unit id names a harness unit (`harness/<slug>`), not a product one. */
+export const isHarnessUnit = (id) => /^[`'"]?harness\/[A-Za-z0-9]/i.test(String(id ?? '').trim());
+
+// The branch a merge subject merges, the first form that matches: GitHub's `from <owner>/<branch>`, git's
+// remote-tracking `'<remote>/<branch>'` and `Merge branch '<branch>'`, the runner's `Merge <branch>: <title>`.
+const MERGE_FORMS = [
+  /^Merge pull request #\d+ from [^/\s]+\/(\S+)/i,
+  /^Merge remote-tracking branch '[^/']+\/([^']+)'/i,
+  /^Merge branch '([^']+)'/i,
+  /^Merge [`'"]?([^\s`'":]+)/i,
+];
+/** The branch a merge subject names, or null for a subject in no merge form. */
+export function mergedBranch(subject) {
+  const s = String(subject ?? '').trim();
+  for (const re of MERGE_FORMS) {
+    const m = re.exec(s);
+    if (m) return m[1];
+  }
+  return null;
+}
+/** Whether a merge subject merges a harness unit's `harness/<slug>` branch; a title that only mentions one does not. */
+export const isHarnessMerge = (subject) => isHarnessUnit(mergedBranch(subject));
+
+/** The plan rows a batch row names: the ids of a Deliverable cell that starts `rows <id>, <id> — `; else none. */
+export function batchRows(cell) {
+  const m = /^rows ((?:[^\s,]+, )*[^\s,]+) — /i.exec(oneLine(cell));
+  return m ? m[1].split(', ') : [];
+}
+
 /** A Defects cell -> { p0, p1 }: `0/2`, `P0 0 · P1 2` or an older `2C/6H`; null when it says none of these. */
 export function parseDefects(cell) {
   const text = String(cell ?? '');
@@ -211,7 +240,8 @@ export function parseDefects(cell) {
 }
 
 /**
- * The log's rows: estimate-core's fields, the Defects, Missed by harness and Friction cells, and
+ * The log's rows: estimate-core's fields, the Defects, Missed by harness and Friction cells, the plan
+ * rows a batch row names (`batch`, batchRows), and
  * `landed` -- the time of the commit that last changed the row's line (`lineDates`, line -> ms, from
  * git blame), or null. `columns` replaces estimate-core's COLUMNS (the weekly job's per-repository map).
  */
@@ -226,6 +256,7 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
       defects: parseDefects(at(EXTRA_COLUMNS.defects)),
       missed: clean(at(EXTRA_COLUMNS.missed)),
       friction: clean(at(EXTRA_COLUMNS.friction)),
+      batch: batchRows(at(EXTRA_COLUMNS.deliverable)),
       landed: lineDates.get(r.line) ?? null,
     };
   });
@@ -513,6 +544,31 @@ export function logKpis(records, since, until) {
     p0: rows.reduce((s, r) => s + (r.defects?.p0 ?? 0), 0),
     p1: rows.reduce((s, r) => s + (r.defects?.p1 ?? 0), 0),
     missed: rows.filter((r) => r.missed).length,
+  };
+}
+
+/**
+ * The harness's share of the units landed in [since, until], by count and by cost (over the units whose
+ * Cost cell parses), and the product plan rows landed per day: a product unit counts the plan rows its
+ * batch rows name, else 1. Reported in the digest, never a candidate.
+ */
+export function productKpis(records, since, until) {
+  const rows = records.filter((r) => inWindow(r.landed, since, until));
+  const units = groupUnits(rows);
+  const priced = units.filter((u) => Number.isFinite(u.cost));
+  const total = priced.reduce((s, u) => s + u.cost, 0);
+  const harness = units.filter((u) => isHarnessUnit(u.id));
+  const named = new Map();
+  for (const r of rows) if (!isHarnessUnit(r.id)) named.set(r.id, new Set([...(named.get(r.id) ?? []), ...r.batch]));
+  const productRows = [...named.values()].reduce((n, ids) => n + (ids.size || 1), 0);
+  const days = (Date.parse(until) - Date.parse(since)) / DAY;
+  return {
+    units: units.length,
+    harness: harness.length,
+    share: units.length ? round1((harness.length / units.length) * 100) : null,
+    costShare: total > 0 ? round1((priced.filter((u) => isHarnessUnit(u.id)).reduce((s, u) => s + u.cost, 0) / total) * 100) : null,
+    productRows,
+    perDay: days > 0 ? round2(productRows / days) : null,
   };
 }
 
@@ -852,6 +908,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     sources: readCounts(g, records),
     kpis: {
       log,
+      product: productKpis(records, win.since, win.until),
       transcripts: g.rows.length ? transcriptKpis(g.rows, g.events, win) : null,
       owner: ownerKpis(g.events ?? [], g.commands ?? [], { ...win, units: log.units }),
       codex: g.ledger ? summarizeLedger(g.ledger, { since: win.since, until: win.until }) : null,
@@ -860,6 +917,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     },
     baseline: {
       log: logKpis(records, win.baselineSince, win.since),
+      product: productKpis(records, win.baselineSince, win.since),
       transcripts: previousKpis(g.previous, win.week),
       owner: previousKpis(g.previous, win.week, 'owner'),
       codexHost: previousKpis(g.previous, win.week, 'codexHost'),
@@ -883,6 +941,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
 }
 
 const perWeek = (n) => `${round1(n / BASELINE_WEEKS)}/wk`;
+const pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);
 const cell = (s) => oneLine(s).replaceAll('|', '\\|');
 
 /** The digest markdown; `items` caps each list and `width` each quoted cell (fitDigest shrinks both to fit). */
@@ -911,6 +970,14 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
     `| P0 / P1 found | ${k.p0} / ${k.p1} | ${perWeek(b.p0)} / ${perWeek(b.p1)} |`,
     `| Rows with Missed by harness | ${k.missed} | ${perWeek(b.missed)} |`,
   ];
+  const p = d.kpis.product;
+  const bp = d.baseline.product;
+  if (p) {
+    L.push(
+      `| Harness units: share by count · by cost | ${p.harness} of ${p.units} (${pct(p.share)} · ${pct(p.costShare)}) | ${pct(bp?.share)} · ${pct(bp?.costShare)} |`,
+      `| Product plan rows per day | ${p.perDay ?? '—'} (${p.productRows} row${p.productRows === 1 ? '' : 's'}) | ${bp?.perDay ?? '—'} |`,
+    );
+  }
   if (t) {
     L.push(
       `| Claude spend (main · subagents) | ${usd(t.claudeUsd)} (${usd(t.mainUsd)} · ${usd(t.subUsd)}) | ${base('claudeUsd', usd)} |`,

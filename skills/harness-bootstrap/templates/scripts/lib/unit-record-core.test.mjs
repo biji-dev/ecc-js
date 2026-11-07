@@ -375,6 +375,19 @@ test('the draft row has the 14 log columns in order, with Deliverable, owner wai
   assert.equal(row('a | b').length, 14);
 });
 
+test('Rows: a batch unit\'s state names its plan rows, and the Deliverable cell starts `rows <id>, <id> — `; without it nothing changes', () => {
+  const plain = STATE.replace('Tier: Full', 'Tier: Full\nDeliverable: the seeds');
+  const batch = plain.replace('Tier: Full', 'Tier: Full\nRows: T0.02,T0.03 ,  T0.04');
+  const rec = (text) => buildRecord({ state: parseState(text), commits: COMMITS, diffstat: '', gatesSummary: null, now: NOW, columns: DRAFT_COLUMNS });
+  const deliverableCell = (r) => splitRow(r.split('\n').find((l) => l.startsWith('| EP-27.04 ')))[1];
+  assert.equal(deliverableCell(rec(batch)), 'rows T0.02, T0.03, T0.04 — the seeds');
+  assert.equal(deliverableCell(rec(STATE.replace('Tier: Full', 'Tier: Full\nRows: T0.02'))), 'rows T0.02 — —');
+  assert.equal(rec(batch).replace('rows T0.02, T0.03, T0.04 — ', ''), rec(plain), 'the Rows line changes the Deliverable cell only');
+  // no Rows line: the header has no rows key, so the JSON header is as before too
+  assert.equal(Object.hasOwn(parseState(plain).header, 'rows'), false);
+  assert.equal(parseState(batch).header.rows, 'T0.02,T0.03 ,  T0.04');
+});
+
 test('the draft row follows the columns it is given, and the bound LOG_COLUMNS by default: a reordered list reorders the cells, an unknown name is a fill', () => {
   const state = parseState(STATE.replace('Tier: Full', 'Tier: Full\nDeliverable: docs/x.md'));
   const COST = 'Cost $12.40 · Claude 0.6% · Codex 2% (3 runs)';

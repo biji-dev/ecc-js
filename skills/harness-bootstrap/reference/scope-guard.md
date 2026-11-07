@@ -174,6 +174,8 @@ Owner wait: <e.g. 1h20m>
 Grant: <the kickoff's grant line, when one covers the unit>
 Stop: <the kickoff's stop line>
 Parked: <gate> <ISO time, while the unit is parked>
+Rows: <every plan row a batched unit carries, comma-separated>
+Paths: <planned risk-map paths this unit first gave code>
 
 ## Scope            the block, verbatim
 ## Ledger           | Step | Status | Evidence |
@@ -187,8 +189,9 @@ Parked: <gate> <ISO time, while the unit is parked>
 (`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
 each new deliverable; the record measures the row's time from it. `Grant:` and
 `Stop:` are copied from the kickoff at the claim and `Parked:` is written when the
-unit parks (`gate-design.md` › The run grant, › Parking a unit); each is left out
-when it does not apply.
+unit parks (`gate-design.md` › The run grant, › Parking a unit). `Rows:` marks a
+batch (`runner.md` › Batched rows); `Paths:` is what the flip and the milestone
+re-derive read (`foundation.md`). Each is left out when it does not apply.
 
 Header lines come before the first `##`, one `Key: value` each. `Source` is the
 reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,

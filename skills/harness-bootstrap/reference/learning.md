@@ -46,6 +46,11 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
   prompts count twice; a Codex host's threads and claude-run's runs are not counted.
   > Origin, the v8 session study: 530 owner touches in 14 days, 58% of them carrying
   > no decision, and a median of 8 minutes of agent work between them.
+- **Self-reference and product pace**: harness units' share of the units landed, by
+  count and by cost where cost is known, and product plan rows landed per day, a
+  batch counted by the rows its Deliverable cell lists. Reported, never gated.
+  > Origin: one documents-only install spent 7 of its first 8 units on the harness
+  > and landed 1 plan row of 115 in 29 hours.
 - **Outliers**: a unit whose cost or work is at least `OUTLIER_X` times its tier's
   median, and a step whose share of its unit's dollars is at least `OUTLIER_X`
   times that step's median share — each only in a cohort of `MIN_COHORT`, and a

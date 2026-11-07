@@ -152,7 +152,7 @@ const GATES = 'Gate rule one\nGate rule two';
 const AGENTS_MD = [
   '# Agents', '',
   '<!-- harness:begin gates -->', GATES, '<!-- harness:end gates -->', '',
-  '<!-- harness:begin policy -->', 'Never-auto policy: REVIEWED', 'Money paths are never merged on agent output.', '<!-- harness:end policy -->', '',
+  '<!-- harness:begin policy -->', 'Stakes: account data · public web · one owner · a payment sent', 'Never-auto policy: REVIEWED', 'Money paths are never merged on agent output.', '<!-- harness:end policy -->', '',
 ].join('\n');
 const PRE_COMMIT = '#!/bin/sh\n# harness-bootstrap commit guard\nexit 0\n';
 
@@ -422,6 +422,42 @@ test('state files and decision ids outside docs/ (harness docs moved to harness/
   assert.deepStrictEqual(r.sizes.stateFiles.map(s => s.path), ['harness/plans/EP-1.state.md']);
   assert.ok(ids(r).includes('state-file-over-budget'), ids(r).join(','));
   assert.strictEqual(r.ids.DEC, 2);
+});
+
+test('stakes line (v9): a policy block with no line starting Stakes: is stakes-line-missing; with one, or with no policy block, none', () => {
+  const policy = (body, extra = []) => mk({ 'AGENTS.md': ['# Agents', '', ...extra, '<!-- harness:begin policy -->', ...body, '<!-- harness:end policy -->', ''].join('\n') });
+  const h = report(policy(['Never-auto policy: REVIEWED', 'The stakes are low.'])).hazards.find(x => x.id === 'stakes-line-missing');
+  assert.ok(h, 'expected stakes-line-missing');
+  assert.deepStrictEqual([h.path, h.line], ['AGENTS.md', 3]);
+  assert.strictEqual(h.detail, 'the policy block has no line starting "Stakes:": every reviewer brief judges severity with no threat model');
+  assert.ok(!ids(report(policy(['Stakes: user notes · public web · one owner · a deleted note', 'Never-auto policy: REVIEWED']))).includes('stakes-line-missing'));
+  assert.ok(!ids(report(policy(['  Stakes: a · b · c · d']))).includes('stakes-line-missing'), 'an indented line still starts with it');
+  assert.ok(ids(report(policy(['Never-auto policy: REVIEWED'], ['Stakes: outside the block', '']))).includes('stakes-line-missing'), 'a line outside the block does not count');
+  assert.ok(!ids(report(mk({ 'AGENTS.md': '# Agents\nNo policy block here.\n' }))).includes('stakes-line-missing'), 'no policy block: no hazard');
+});
+
+test('the run\'s blocks (v9): one still in AGENTS.md is block-in-base at skillVersion 9 and an upgrade proposal below it', () => {
+  const RUN = ['types', 'tiers', 'gates', 'stops', 'scope', 'context', 'triggers', 'models'];
+  const blocks = RUN.flatMap(b => [`<!-- harness:begin ${b} -->`, `${b} text`, `<!-- harness:end ${b} -->`]);
+  const agents = ['# Agents', '', ...blocks, '<!-- harness:begin run -->', 'Every change runs through task-runner.', '<!-- harness:end run -->', ''].join('\n');
+  const manifest = (v) => JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: v, generated: '2026-11-07', modes: ['plan'], entries: [] });
+  const at = (v, files = { 'AGENTS.md': agents }) => mk({ ...files, '.agents/harness-manifest.json': manifest(v) });
+  const v9 = report(at(9));
+  const haz = v9.hazards.filter(h => h.id === 'block-in-base');
+  assert.deepStrictEqual(haz.map(h => [h.path, h.line]), RUN.map((b, i) => ['AGENTS.md', 3 + 3 * i]));
+  assert.strictEqual(haz[0].detail, 'the types block is in AGENTS.md, which every session and Codex run loads; at skillVersion 9 it lives in .agents/skills/task-runner/process.md');
+  assert.deepStrictEqual(v9.proposals, []);
+  const v8 = report(at(8));
+  assert.ok(!ids(v8).includes('block-in-base'), 'below 9 it is no hazard');
+  assert.deepStrictEqual(v8.proposals.map(p => [p.id, p.line]), RUN.map((b, i) => ['block-in-base', 3 + 3 * i]));
+  assert.strictEqual(v8.proposals[2].detail, 'the gates block is in AGENTS.md; the v9 upgrade moves it to .agents/skills/task-runner/process.md');
+  assert.strictEqual(report(mk({ 'AGENTS.md': agents })).proposals.length, RUN.length, 'no manifest: an older install, proposals too');
+  // moved: the blocks under process.md's markers are off the base
+  const moved = at(9, { 'AGENTS.md': '# Agents\n<!-- harness:begin run -->\nrun\n<!-- harness:end run -->\n', '.agents/skills/task-runner/process.md': agents });
+  assert.ok(!ids(report(moved)).includes('block-in-base'));
+  assert.deepStrictEqual(report(moved).proposals, []);
+  assert.match(run(at(8), ['--text']).stdout, /\nupgrade proposals \(8\):\n- block-in-base AGENTS\.md:3 -- the types block is in AGENTS\.md; the v9 upgrade moves it/);
+  assert.doesNotMatch(run(moved, ['--text']).stdout, /upgrade proposals/, 'none: no section');
 });
 
 test('foundation stage: reported, and flagged once tests exist', () => {
@@ -770,6 +806,10 @@ test('marker-unbalanced for a begin without an end, an orphan end, and nesting',
   const rep3 = report(mk({ 'AGENTS.md': '<!-- harness:begin a -->\n<!-- harness:begin b -->\n<!-- harness:end b -->\n<!-- harness:end a -->\n' }));
   assert.ok(ids(rep3).includes('marker-unbalanced'));
   assert.ok(rep3.markers.every(m => m.ok === false));
+  // the run's blocks live in the task runner's process.md from v9: its markers balance there too
+  const rep4 = report(mk({ '.agents/skills/task-runner/process.md': '<!-- harness:begin tiers -->\ntext\n' }));
+  assert.ok(ids(rep4).includes('marker-unbalanced'));
+  assert.deepStrictEqual(rep4.markers.map(m => [m.block, m.ok]), [['tiers', false]]);
 });
 
 // ── CLI behaviour ────────────────────────────────────────────────────────────
@@ -1394,6 +1434,15 @@ test('sweep-, retro- and hygiene-overdue: the newest report by the date in its n
   assert.ok(!ids(report(fresh)).some(id => id.endsWith('-overdue')), ids(report(fresh)).join());
   const older = mk({ 'scripts/retro.mjs': '// retro\n' });
   assert.ok(ids(report(older)).includes('retro-overdue'));
+  // the foundation stage holds every cadence and the P3 batch until the flip, as harness-due does
+  const p3 = '| # | Area | Severity | Status |\n|---|---|---|---|\n| 1 | a.ts | P3 | open |\n';
+  const held = mk({
+    'scripts/retro.mjs': '// retro\n',
+    'scripts/harness-due.mjs': '// due\n',
+    'docs/harness/follow-ups.md': p3,
+    '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), stage: 'foundation' }),
+  });
+  assert.ok(!ids(report(held)).some(id => id.endsWith('-overdue') || id === 'p3-queue-aging'), ids(report(held)).join());
 });
 
 test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may wait', () => {

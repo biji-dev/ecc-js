@@ -9,7 +9,7 @@
  * WHY GENERATED. The runner's step 8b record was written by hand; in one project records grew to
  * 58-81 KB of prose and a unit took four consecutive `FALSE CLAIMS` rounds from the claim auditor,
  * 75% of whose P1s were about record prose, not product code. A record generated from git, the gate
- * log and the state file is true by construction, so the claim audit can stay on product claims.
+ * log and the state file is true by construction, so the claim audit can stay on behaviour claims.
  * With the unit's steps file (unit-step.mjs) the record also carries each step's time.
  */
 import { formatMinutes, label, stepIntervals } from './unit-step-core.mjs';
@@ -63,6 +63,7 @@ const HEADER_KEYS = {
   claimed: 'claimed',
   deliverablestarted: 'deliverableStarted',
   ownerwait: 'ownerWait',
+  rows: 'rows',
 };
 // A combined key (`Type · tier: Feature · Full`) is split on these, key and value alike.
 const COMBINED_SEP = /\s*[·/]\s*/;
@@ -180,7 +181,7 @@ export function parseState(text) {
       if (values.length > keys.length) values.splice(keys.length - 1, Infinity, values.slice(keys.length - 1).join(' · '));
     }
     keys.forEach((key, i) => {
-      if (key && header[key] === '') header[key] = (values[i] ?? '').trim().replace(/^`(.*)`$/, '$1');
+      if (key && !header[key]) header[key] = (values[i] ?? '').trim().replace(/^`(.*)`$/, '$1');
     });
   };
   for (const line of text.split(/\r?\n/)) {
@@ -423,7 +424,10 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
     elapsedLine = `${wall} wall · owner wait ${waitShown}${workMs === null ? '' : ' exceeds wall time'} — work time unknown`;
   else elapsedLine = `${formatMs(workMs)} work · ${wall} wall · owner wait ${waitShown}`;
   const elapsedCell = workMs !== null && workMs >= 0 ? formatMs(workMs) : '<fill: work time>';
-  const deliverable = cell(h.deliverable || '—');
+  // A batch unit's state names its plan rows (`Rows: T0.02, T0.03`); the cell starts with them, so the
+  // retro counts each. A key with no default: without the line the header and the record are as before.
+  const rows = h.rows ? `rows ${h.rows.split(/\s*,\s*/).filter(Boolean).join(', ')} — ` : '';
+  const deliverable = cell(`${rows}${h.deliverable || '—'}`);
   const waitCell = h.ownerWait ? cell(waitShown) : '<fill: owner wait>';
   const costCell = cost ? cell(cost) : '<fill: node scripts/unit-cost.mjs --session …>';
   // The draft row's cells by the prefix of a log column's name (LOG_COLUMNS).

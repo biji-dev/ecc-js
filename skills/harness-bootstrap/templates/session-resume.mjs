@@ -6,7 +6,7 @@
 // Auto-compaction is the reset; this restores the unit. On a compaction, a clear, a resume or a
 // startup it reads the registry's held and parked rows and each unit's state file, and hands the
 // model the resume point the owner used to paste by hand:
-//   compact                 -> continue the held unit's next step (Step 0a: verify, do not trust the marker)
+//   compact                 -> continue the held unit's next step, re-reading process.md (Step 0a)
 //   startup, resume, clear  -> context only: nothing starts until the owner asks
 // The registry and the state files are the record; a compaction summary is not (harness-bootstrap's
 // reference/context.md). Reads files and runs `git rev-parse` and `git show` only: never writes, never
@@ -33,7 +33,7 @@ const QID = /^Q-\d+$/;
 // A Branch cell git may take as a branch name: no option, no range, no revision syntax.
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const CLOSING = {
-  compact: "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
+  compact: "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
   parkedOnly: "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).",
   none: "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).",
   context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.',

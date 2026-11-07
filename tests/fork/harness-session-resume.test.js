@@ -120,7 +120,7 @@ function runHook(dir, opts = {}) {
 
 const source = (dir, s, opts = {}) => runHook(dir, { ...opts, input: { source: s, ...opts.input } });
 const lastLine = text => text.split('\n').at(-1);
-const COMPACT = "Continue the held unit's next step from its state file (the runner's Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.";
+const COMPACT = "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.";
 const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.';
 const PARKED_ONLY = "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).";
 const NO_ROWS = "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).";

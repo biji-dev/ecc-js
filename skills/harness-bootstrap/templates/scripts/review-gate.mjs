@@ -8,7 +8,7 @@
  * code-reviewer over the whole unit, or an adversarial pass. The rules are in the core's header.
  *
  *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed
- *        [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3]
+ *        [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full|harness] [--max-fixed P0|P1|P2|P3]
  *        [--round N] [--json]
  *
  *   --kind slice   after a slice passes its gate, before the next builds on it
@@ -44,7 +44,7 @@ import { detectHost } from './lib/harness-host-core.mjs';
 import { decide, formatLine, parseArgs, parseNumstat, writerRole } from './lib/review-gate-core.mjs';
 
 const USAGE =
-  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed (on Claude Code also claude|sonnet|codex) [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
+  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed (on Claude Code also claude|sonnet|codex) [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full|harness] [--max-fixed P0|P1|P2|P3] [--round N] [--json]';
 
 function fail(msg, withUsage) {
   process.stderr.write(`review-gate: ${msg}\n${withUsage ? `${USAGE}\n` : ''}`);

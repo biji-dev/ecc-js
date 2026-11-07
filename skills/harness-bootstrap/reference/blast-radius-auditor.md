@@ -49,7 +49,8 @@ a sub-agent on their own.
    response field, endpoint and query parameter, column and migration, config key,
    environment variable, i18n key and test id.
 4. **Fix commits** — every bug this branch fixed, one line each.
-5. **The Scope block and the decision log**, so each finding can be classed.
+5. **The Scope block, the decision log and the policy block's `Stakes:` line**, so
+   each finding can be classed and its severity judged (`gate-design.md` › Severity).
 6. **The area rules** — `node scripts/check-agent-docs.mjs --rules-for <files>`.
 7. **The Impact Analysis**, with its `found by` and `proof` cells: each row whose
    proof is `none` is a named target, searched first, and each `found by` is

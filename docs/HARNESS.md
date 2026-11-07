@@ -1,6 +1,6 @@
 # The gated agent harness
 
-**Describes:** skills `version: 8`, plugin `2.2.3-js.11`, merge `50478698`, 2026-11-06.
+**Describes:** skills `version: 9`, plugin `2.2.3-js.12`, branch `slim/harness-js12`, 2026-11-07.
 `tests/fork/harness-doc.test.js` fails when the skills' version moves on without this file. A
 plugin build that changes other things needs no edit here, so the build above can trail the
 plugin's current one.
@@ -197,6 +197,8 @@ Each round followed measurement of the last one ([§17](#17-version-history)):
 3. **v6, the harness's own defects:** about 95 distinct template defects found in four rollouts.
 4. **v7, judgment:** decision-first planning, plan critique, a simplicity lens.
 5. **v8, owner flow:** the run continues without the owner wherever it can.
+6. **v9, fit:** the process scales to the stakes, and a documents-only start reaches product
+   code in its first unit.
 
 ## 4. Architecture
 
@@ -273,9 +275,10 @@ policy and stops, and nothing is generated until the owner has reviewed it.
 flowchart TD
   P0["Phase 0: harness-status.js"] --> Q{"Anything installed?"}
   Q -- "yes" --> SH["Decision sheet, owner approves, three-way merge, new manifest"]
-  Q -- "no" --> A["Phase A: six preconditions, evidence table, coverage map"]
-  A -- "pass" --> B["Phase B: policy, risk map, merge policy. Status line DRAFT"]
-  A -- "only row 1 fails, nothing built" --> F["Foundation route"]
+  Q -- "no" --> A["Phase A: seven preconditions, evidence table, coverage map, fit and forecast"]
+  A -- "pass" --> B["Phase B: stakes line, policy, risk map, merge policy. Status line DRAFT"]
+  A -- "only row 1 fails, nothing built" --> F["Short foundation"]
+  A -- "throwaway, or speed over a false-claim rate" --> N["No harness: hard rules only"]
   F --> B
   A -- "row 1, 2 or 3 fails" --> R["Refusal: a readiness plan, then rerun Phase A"]
   R --> A
@@ -297,6 +300,13 @@ flowchart TD
 | 4 | A **unit of work** | Routes to plan mode or change mode, never stops |
 | 5 | A **risk signal** | Phase B derives the risk map |
 | 6 | A **written** never-auto policy | Phase B derives it. This is the usual gap |
+| 7 | The **stakes**: data, exposure, who runs it, what cannot be corrected forward | Ask the owner. It scales every review |
+
+**Fit and forecast** come before anything is installed. The stakes line is weighed against
+what the harness costs; a throwaway repository gets hard rules only. The plan's rows are
+classified by tier, and each tier gets a cost range from the owner's other harness logs
+(`estimate.mjs --log <a> --log <b>`), labelled *estimate*. The owner sees the gates and the
+cost before the first unit, not after the fifteenth.
 
 Lint, a type check and a format check are gates, not a pass signal. A command that runs nothing
 is not a pass signal either. The output is a table with cited evidence and a coverage map per
@@ -308,15 +318,22 @@ units that would make the failed rows pass, each with a "Done when", ending with
 **The foundation stage** ([`reference/foundation.md`](../skills/harness-bootstrap/reference/foundation.md))
 exists because of an embarrassment. One documents-only repository was refused, and then landed
 three units in eleven minutes with no lock, no gate, no review and no log row (self-reported).
-The foundation stage installs everything that needs no pass signal, makes every unit Full and
-owner-merged, and makes the unit that lands the first real test complete the install.
+The foundation stage installs everything that needs no pass signal. Since v9 it is **short**:
+the skeleton, the plan's first row, is the pass-signal unit, Full and owner-merged, its "Done
+when" one counted product test; the flip follows at once and takes the risk-map re-derive with
+it, and no other harness unit runs first. v8 let an install name a later row the pass-signal
+unit, and one did: row fifteen, reached after eight units in 29 hours, seven of them on the
+harness itself ([§18](#a-documents-only-start-on-v7)).
 
 ### Phase B: the one piece that cannot be templated
 
 [`reference/policy-derivation.md`](../skills/harness-bootstrap/reference/policy-derivation.md)
 holds a single test: *if this is wrong and ships, can it be corrected forward?* The same test
 yields three things: the never-auto policy, the risk map (hot, critical and cold modules, each
-citing evidence), and the merge policy. All three go into the harness file under one line:
+citing evidence), and the merge policy. The test is asked against Phase A's stakes line, which
+opens the policy block, and since v9 every critical entry cites a harm under it or a never-auto
+category; a coverage target alone makes a path hot. All three go into the harness file under
+one line:
 
 ```text
 Never-auto policy: DRAFT — owner has not reviewed
@@ -387,12 +404,18 @@ context hook's `Stop` entry; and removes any `/clear` or `/compact` offer in the
 words. The `gates` block is `reviewed`, so the push line and run grant reach the owner as
 proposals.
 
+**The v9 upgrade** moves the run's blocks out of `AGENTS.md` into the runner's `process.md`,
+leaving a `run` block; binds `HARNESS` in the review gate; regenerates the runner, the claim
+auditor and the scripts; and asks three cards: the stakes line, a demotion for each critical
+entry that cites no harm, and, in an install still in foundation, which unit becomes the
+pass-signal unit.
+
 **The kickoff.** An upgrade starts from a prompt in a fresh session, between units, in this form:
 
 ```text
-Use the harness-bootstrap skill to upgrade this repository's harness to v8,
-following reference/upgrade.md. Confirm SKILL.md says version: 8. Start between
-units, on branch harness/v8. Run harness-status first and show me the decision sheet.
+Use the harness-bootstrap skill to upgrade this repository's harness to v9,
+following reference/upgrade.md. Confirm SKILL.md says version: 9. Start between
+units, on branch harness/v9. Run harness-status first and show me the decision sheet.
 ```
 
 ## 6. What gets installed
@@ -401,7 +424,7 @@ Everything below is generated into the project. `*` marks an optional part, aske
 install ([`SKILL.md`](../skills/harness-bootstrap/SKILL.md) › Phase C has the full table).
 
 ```text
-AGENTS.md                 generated blocks between harness markers, plus the project's text
+AGENTS.md                 rules, stakes and policy, risk map, merge, commands, the run pointer, plus the project's text
 CLAUDE.md                 line 1 is @AGENTS.md, then Claude specifics only
 CODEOWNERS                never-auto paths as required review, where the platform supports it
 .githooks/                pre-commit and pre-merge-commit, the same guard script
@@ -415,6 +438,7 @@ CODEOWNERS                never-auto paths as required review, where the platfor
   rules/<area>.md         the project's path-scoped rules
 .agents/
   skills/task-runner/SKILL.md     the runner, bound to this project's documents
+  skills/task-runner/process.md   the run's blocks: types, tiers, gates, stops, scope, context, triggers, models
   harness-manifest.json           every entry's kind and hashes; written last
   harness-models.json             each role's model per host
 .codex/                   agents/<name>.toml and hooks.json, where Codex is a target
@@ -451,9 +475,9 @@ Runtime directories stay gitignored: `.review-work/`, `.codex-runs/`, `.claude-r
 | `scripts/harness-due.mjs` | Steps 0 and 9 | One line per due job ([§7](#due-checks)) |
 | `scripts/unit-step.mjs` | Each step | Marks start and end in the steps file; refuses a wrong checkout outside the resume, claim and teardown steps; `--check`, `--where`, `--list` |
 | `scripts/unit-stack.sh`* | Step 0 | Gives a unit a slot (1–6) when units run live stacks side by side |
-| `scripts/estimate.mjs` | Gate 1 | p25–p75 ranges from the log, or "no history" below three rows |
+| `scripts/estimate.mjs` | Phase A, Gate 1 | p25–p75 ranges from the log, or "no history" below three rows; `--log` repeats to pool other installs' logs for a forecast |
 | `scripts/intake.mjs` | Intake | `--check` holds a drafted request to the owner sheet; `--gate1` makes unit 1's Gate 1 automatic while its approval still matches |
-| `scripts/review-gate.mjs` | Each slice, step 8, each fix round | Names the reviewers from facts about the diff ([§9](#who-reviews-what)) |
+| `scripts/review-gate.mjs` | Each slice, step 8, each fix round | Names the reviewers from facts about the diff ([§9](#who-reviews-what)); `--tier harness` names one cross-family reviewer over harness paths only |
 | `scripts/docs-drift.mjs` | Step 8a | Lists docs that may have gone stale against the diff |
 | `scripts/run-gates.sh`*, `scripts/run-counted.mjs`* | Verification | Runs every gate and never bails; prints PASS, FAIL or SKIP and a summary; reuses a result by tree (`REUSED`); waits for another run's lock, 30 minutes by default, then goes ahead without it. Counted gates pass only with no failed, skipped, todo or flaky test and at least the minimum count |
 | `scripts/unit-record.mjs` | Step 8b | Record fields and the log row, from git, state and steps |
@@ -516,7 +540,9 @@ A session starts in one of three ways. In all of them, the state file is what ge
 
 - **A new, compacted or cleared session on Claude Code:** the session-resume hook puts each held or
   parked unit's resume point into the first turn. After a compaction, the turn continues the next
-  step itself. Other hosts have no such hook, so the turn reads the state file first.
+  step itself. Other hosts have no such hook, so the turn reads the state file first. Either
+  way the runner reads its `process.md`, which holds the blocks below, before step 0 and on
+  every resume.
 - **`/task-runner`** resumes what is held, then the queue. **`/task-runner <unit>`** runs that unit,
   then the queue. **`/task-runner <unit> only`** runs that unit alone.
 - **A kickoff may carry a grant and a stop line:**
@@ -538,7 +564,7 @@ Checked in order, and when unsure the heavier one wins:
 | **Intake** | New behaviour no request covers, with open decisions or several deliverables | [`reference/intake.md`](../skills/harness-bootstrap/reference/intake.md): no code, one owner sheet |
 | **Docs-light** | Small prose | Write, format, lint, commit, one ledger row |
 | **Docs-heavy** | A rule file, runbook, change request, or about 200 lines or more | Adds one other-family review and one fix pass |
-| **Code** | Everything else, and always the harness's own files | Tiers and the sequence below |
+| **Code** | Everything else, and always the harness's own files | Tiers and the sequence below; a diff of harness files alone runs the harness lane |
 
 Docs units still claim a row, a branch and a land.
 
@@ -548,10 +574,15 @@ Docs units still claim a row, a branch and a land.
 |---|---|
 | **Trivial** | A typo, a comment, a one-line config value, a rename |
 | **Small** | Local, outside critical code, no never-auto category, no new dependency, no shared contract |
-| **Full** | Critical code, a never-auto category, more than one module, a new external dependency, a shared contract or schema, a migration, a taste call, the largest plan size, or an uncovered path |
+| **Full** | Critical code, a never-auto category, critical code in more than one module, a new external dependency, a shared contract or schema, a migration, the largest plan size, or an uncovered path |
+| **Harness** | A diff of harness paths only: one cross-family review, one fix round, no lane A or claim audit. The owner still merges a guard, a gate, a reviewed block or the rules block |
 | **Hot-small** | An empty slot that a project may earn: 5 or more critical-code units ran Full and found nothing a cheaper path would have missed |
 
-A unit is re-tiered at both gates. A re-tier into never-auto discards earlier reviews.
+A unit is re-tiered at both gates. A re-tier into never-auto discards earlier reviews. The tier
+line names the Full condition it meets: unsure whether a named condition holds means Full, and
+no condition named means Small. Taste is a card at Gate 1 and a demo at Gate 2, not a tier.
+v8 made "more than one module", "a taste call" and "unsure" Full, which on one plan classified
+about half of 115 rows Full (classified).
 
 ### The sequence
 
@@ -579,7 +610,7 @@ flowchart TD
 |---|---|---|
 | **0a resume** | Compares the marker against branch, tree and state file | A compaction summary once carried a wrong timestamp; files win |
 | **0 claim** | Decides first. Runs due-checks, picks type and tier, checks overlap (overlap means sequence, not parallel), creates branch and worktree, takes the lock, writes the state file | One unit in flight plus hotfixes; a parked unit is not in flight |
-| **1 ground** | Plan mode: sync both ways, follow the trace, read follow-ups. Change mode: investigate, then plan with an Impact Analysis and a Scope block; plan check on Full | Prevents building from a stale or thin understanding |
+| **1 ground** | Plan mode: sync both ways, follow the trace, read follow-ups. Change mode: investigate, then plan with an Impact Analysis and a Scope block; plan check on Full when the approach is open | Prevents building from a stale or thin understanding |
 | **Gate 1** | The owner approves, or policy auto-approves ([§8](#8-the-human-gates)) | Last point where a change of direction is cheap |
 | **2 implement** | One executor per slice, by routing. Every brief has a `Traps:` line. Tests land with their slice, proven with a control. Targeted tests only | Keeps the coordinator small and the slices cheap |
 | **3 sync** | Merges mainline in | "Audit the merged reality": step 4 reads the result, not the branch alone |
@@ -589,8 +620,8 @@ flowchart TD
 | **7 visual** | Structure first, then pixels | Screenshots are costly and easy to over-trust |
 | **8 review** | Dispatches what `review-gate.mjs` names, independently and in one message; triages; bounded fix rounds | [§9](#9-review-and-verification) |
 | **8a docs, verify** | Doc sweep, then the one FULL verify before merge | One full suite per unit: 39 runs took 8.4 hours before this rule (self-reported) |
-| **8b record** | Written last, from the diff, as fields | A record written earlier described what was planned |
-| **8c claims** | Lane C checks that each test fails when its behaviour breaks and that each claim is true. Full only | 9 of 21 tasks shipped a false claim |
+| **8b record** | Written last, from the diff, as fields; every prose claim is quoted with its evidence or deleted | A record written earlier described what was planned |
+| **8c claims** | Lane C checks that each test fails when its behaviour breaks and that each behaviour claim is true. Full only, one round | 9 of 21 tasks shipped a false claim |
 | **Gate 2** | Merge decision by policy, grant or owner | [§8](#8-the-human-gates) |
 | **9 land** | Guard, land commit on the unit branch, release the row, merge `--no-ff`, push on the owner's word or a grant, then due-checks | Fixed order so that the guard does not refuse its own land |
 | **10 teardown** | Stops what the unit started by recorded PID, writes a vendor skill if a library misbehaved, closes follow-ups, starts the next ready unit | Leftover servers once held 11.25 GB of swap (self-reported, 2026-10-17) |
@@ -613,10 +644,21 @@ gates.
 | 8a docs | Same commit | `docs-drift`, same commit | `docs-drift`, then a separate sweep |
 | 8a verify | Scoped | FULL, once before merge | FULL |
 | 8b record | A ledger line | `unit-record` | Plus deviations |
-| 8c claims | — | Skipped; the record is generated | Blocking, product claims |
+| 8c claims | — | Skipped; the record is generated | Blocking, behaviour claims, one round |
 | Gate 2 | Merge policy | Merge policy | Owner, or a grant |
 
 A P0 or P1 from review promotes a Small unit to Full.
+
+**The harness lane** runs Small's column with an impact note at step 1, the shipped tests and
+the agent-docs lint at 5–7, `review-gate --tier harness` at step 8, and no steps 4 or 8c. A
+path outside the harness's own files sends it back to Full. Harness work that blocks nothing
+waits for one harness unit per milestone. On one v7 install, seven of the first eight units
+were harness units, and a commands edit to `CLAUDE.md` ran the whole Full sequence.
+
+**Batched rows.** Two or three consecutive Small rows of one phase, with no critical path and no
+open card, run as one unit: one branch `<first>-<last>-<slug>`, one slice per row, one review,
+one fix round, one record whose Deliverable cell lists the rows, one `Demo:` per row at Gate 2.
+A row promoted to Full splits the batch: the earlier rows land, and it runs alone.
 
 **Step markers and dispatch tags.** `node scripts/unit-step.mjs <unit> <step> start`, chained onto
 the step's first command, gives each step a time and a cost. Each dispatch carries a tag,
@@ -639,6 +681,9 @@ current state of reports and logs.
 
 Default cadences are bindings and live in `CADENCE` in the template
 [`harness-due-core.mjs`](../skills/harness-bootstrap/templates/scripts/lib/harness-due-core.mjs).
+Since v9 they count product landings only, never a `harness/` unit, and nothing is due while the
+manifest's stage is `foundation`. A v7 install's sweep and hygiene came due one day in, counted
+on its own harness units.
 
 ### The queue run and the state line
 
@@ -657,7 +702,7 @@ BLOCKED: <cause, what you must do>
 
 ### A worked example
 
-*Illustrative only: invented, and v8 has no real-session record yet.* A project `shop` runs on
+*Illustrative only: invented, and v9 has no real-session record yet.* A project `shop` runs on
 Claude Code with Codex as second family. Its risk map marks `src/billing/` as critical.
 
 1. The owner sends `/task-runner` with `Grant: merge clean Full · push after merge`.
@@ -729,8 +774,11 @@ outstanding.
 | Never-auto category | Ask | Ask, never automatic |
 | Critical code | Ask | Ask |
 | Small | Automatic | Merge policy |
-| Taste call | Ask | Ask |
-| Foundation stage | Every unit Full | Never automatic |
+| Taste call | A P card | The owner reads the demo |
+| Foundation stage: the skeleton, then the flip | Ask | Never automatic |
+| Harness lane: a guard, a gate, a reviewed block or the rules block | Ask | Never automatic |
+| Harness lane, nothing else | Automatic | Merge policy |
+| Batched rows | Automatic | Merge policy, one `Demo:` per row |
 | Intake's unit 1 | Automatic while approval matches | — |
 | Blocking conformance gap, unresolved P0 or P1, `FALSE CLAIMS` on Full | — | Never automatic |
 | Failing invariant | Stop; never modify the check | |
@@ -804,7 +852,8 @@ has gone wrong. How often each fired in the origin project is in brackets (self-
 - Elapsed work time beyond 3× the tier median (3).
 - A third review round nobody asked for (1).
 - A re-tier into never-auto (1).
-- A second consecutive `FALSE CLAIMS` on product claims.
+- A behaviour claim the claim auditor failed that its fix's re-run still does not back. Until v9
+  this was a second consecutive `FALSE CLAIMS`, and on one install it fired twice on record prose.
 
 The numbers ship as empty slots: "Do not ship the thresholds".
 
@@ -824,7 +873,7 @@ Reversal cost | Kind`. Later questions are batched to at most one owner round pe
 |---|---|---|---|---|
 | **A** plan conformance | Was the plan built, all of it, and nothing else? | Step 4, once per unit | Sonnet, read-only, or Codex `lane-a` | `CLEAN` or `GAPS — n blocking, m advisory` |
 | **B** blast radius | Who else reads what changed? | Step 8, riding in the second family's adversarial pass | Opus agent only when the second family is out | Findings |
-| **C** claims | Does each test fail when its behaviour breaks, and is every claim true? | Step 8c, Full only | Opus, may sabotage in its own worktree only | `CLAIMS HOLD` or `FALSE CLAIMS (<n>)` |
+| **C** claims | Does each test fail when its behaviour breaks, and is every behaviour claim true? | Step 8c, Full only, one round | Opus, may sabotage in its own worktree only | `CLAIMS HOLD` or `FALSE CLAIMS (<n>)` |
 
 Sources:
 [`reference/conformance-auditor.md`](../skills/harness-bootstrap/reference/conformance-auditor.md),
@@ -845,6 +894,7 @@ model family writes, the other reviews.**
 | Unit, Small | Opus or Sonnet | The second family, plus triggered specialists |
 | Unit, Small | Second family or mixed | A Sonnet code-reviewer, plus triggered specialists |
 | Unit, Small but a critical path | Any | The Full lineup; the row must be re-tiered |
+| Unit, harness lane | Any | One cross-family review over the diff; a path outside the harness's files sends it to the Full lineup |
 | Unit, Full | Any | One Opus code-reviewer, the second family's adversarial pass, triggered specialists, the test analyzer when tests changed |
 | Fix, P3 only | Any | None: a P3 batch, once per slice set. On critical code not written by Opus, an Opus reader |
 | Fix, cold, round 1 | Main or bounded model | The second family |
@@ -880,6 +930,11 @@ family is unavailable.
 | **P1** | Correctness defect or blocker | Blocks; opens a round |
 | **P2** | Robustness | Fixed if in scope |
 | **P3** | Nit | **Never opens a round.** Waits for the batch |
+
+**Severity is judged against the stakes line,** which every reviewer brief carries since v9. A P0
+or P1 must be reachable under it: a finding that needs a hostile local user on a one-developer
+local app, or real records in a fictional-data prototype, is P3 or OUT, and names the condition.
+Before this, one documents-only install raised P1s on exactly those conditions.
 
 ### How findings are handled
 
@@ -1206,12 +1261,14 @@ machine's plugin was last noted at js.9. The weekly job ran for weeks W44 and W4
 and next runs on 2026-11-09.
 
 **The v8 pilot's checks, none run yet:** auto-compaction is followed by the right next step; zero typed
-clears; parked gates are answered in one message; nothing merges beyond the grant.
+clears; parked gates are answered in one message; nothing merges beyond the grant. v9 is piloted
+together with v8, on the documents-only install of [§18](#a-documents-only-start-on-v7), and adds two:
+the self-reference share and product rows per day, against a stop-loss the owner sets for the pilot.
 
 ## 17. Version history
 
-Eight versions in 28 days, 103 commits. The skill's tree grew from 17 files to 93 (via 30, 41, 47, 89
-and 91).
+Nine versions in 29 days. To v8, 103 commits, and the skill's tree grew from 17 files to 93 (via 30,
+41, 47, 89 and 91).
 
 | Skills | Plugin | Date | Merge | What forced it | What it added |
 |---|---|---|---|---|---|
@@ -1226,6 +1283,7 @@ and 91).
 | v6 | 2.2.3-js.9 | 2026-11-03 | `7b3f01ec` | | Pins only, no change to the skills' version |
 | v7 | 2.2.3-js.10 | 2026-11-04 | `251f6918` | The owner's eight ideas | Decision first, OUT filed or dropped, plan critique, simplicity lens, marker refusal, `--status` |
 | v8 | 2.2.3-js.11 | 2026-11-06 | `50478698` | The agent ran a median of 8 minutes between owner touches | No offers, session-resume hook, queue run, parked gates, run grant, state line, owner-touch KPIs |
+| v9 | 2.2.3-js.12 | 2026-11-07 | | A documents-only install landed 1 of 115 plan rows in 29 hours, 7 of its 8 units on the harness | Stakes line and forecast, short foundation, harness lane, product-only cadences, stakes-scaled severity, one-round behaviour claims, batched rows, `process.md` |
 
 Per-version detail is in [`reference/upgrade.md`](../skills/harness-bootstrap/reference/upgrade.md).
 
@@ -1248,7 +1306,7 @@ about where review money goes, not whether the whole thing is worth it.
 | The 300K window saves money | A replay model, −4.0% | **Modelled only.** Re-measure due 2026-11-16 |
 | The 150K rule recovers cache spend | Weekly digests show mixed readings | **Not evidenced** |
 | Generated records cut paperwork | Record-step share fell from 11–22% to readings of 1.1%, 3.2% and 12.8% in W45 | **Partly; small sample** |
-| The claim auditor earns its cost | $3 per unique P0 or P1 and 25 unique, though 79 of its 105 P1s were about record prose | **Evidenced, and narrower than claimed** |
+| The claim auditor earns its cost | $3 per unique P0 or P1 and 25 unique, though 79 of its 105 P1s were about record prose | **Evidenced, and narrower than claimed.** v9 narrows it to behaviour claims, one round |
 | The install review earns its cost | All four recorded reviews found at least one P1 | **Evidenced,** and also a signal of template defects |
 | Decision classes remove about 300 of 373 questions | The classification, before the rule | **Not evidenced.** 58–66% of touches still carried no decision two weeks later, partly for other reasons |
 | Tiers put cost at risk | One project shows it. Elsewhere every logged unit ran Full, and Hot-small was never earned | **Partly** |
@@ -1314,6 +1372,33 @@ headroom, and a third sat 23 bytes under its cap (self-reported).
 **Self-reference.** 56 of 129 parsed units across ten logs were harness, hygiene, sweep or retro units,
 about 43% (classified by regex, excluding the origin project). Some of that is the rollout itself, but it
 is the number to watch: a process that spends four units in ten on itself has to catch a lot to pay.
+Since v9 the retro reports it, with product rows per day.
+
+### A documents-only start on v7
+
+One install began from a PRD, a TRD and a 115-row plan: a documents-only prototype, fictional data,
+local only, one developer. It ran v7's foundation stage (measured from git, transcripts and the
+harness log, to 2026-11-07):
+
+| Figure | Value |
+|---|---|
+| Wall clock / owner wait | 29h28m / 16h02m |
+| Cost, API-list | $166.52 |
+| Units / of them on the harness | 8 / 7, every one Full and owner-merged |
+| Plan rows landed | 1 of 115 |
+| Commits / touching product source | 116 / 1 (84 records or docs, 18 mechanism, 8 merges, 5 app tooling) |
+| Tests / product tests | 751 / 0 |
+| Claim audit | 35 findings over 7 rounds, nearly all record prose; the tripwire fired twice |
+
+What v7 text caused it: the install named its fifteenth row the pass-signal unit, so fifteen rows ran
+Full and owner-merged before any test; the risk-map re-derive ran as a Full unit of its own; the sweep and
+hygiene came due on the harness's own landings; a commands edit to `CLAUDE.md` ran the whole Full
+sequence; reviews raised P1s that needed a hostile local user; and an owner's own branch rename and push
+became two decisions, a question, a card and a follow-up.
+
+What earned its cost: the first push was held because personal data showed in 22 of 31 reference
+screenshots; the phase preflight found the documents' contradictions for $4.40; and the local CI gate was
+proven red before it was trusted. v9 keeps each of these and changes the rest.
 
 ### Failure modes observed
 
@@ -1351,6 +1436,8 @@ not repeat them ([`reference/rules.md`](../skills/harness-bootstrap/reference/ru
 | Elapsed measured from first commit | Missed grounding entirely |
 | "A report is a claim," as a rule for the author | False claims kept rising until a separate agent checked them |
 | Keyword-matching hooks | About 30 stalls, about 650 false blocks in 80 sessions, nothing caught |
+| Every foundation unit Full and owner-merged until the first test | 8 units in 29 hours, 7 on the harness, 1 plan row of 115 |
+| A claim audit over record prose, with a second-round tripwire | 35 findings over 7 rounds, nearly all prose |
 
 **A measured recommendation can be wrong too.** The 2026-10-24 cost study recommended a new session at each
 gate. That became v3's `/clear` offer on 2026-10-25, and was reversed on 2026-11-06, 12 days later, by a
@@ -1374,6 +1461,7 @@ not the owner's attention.
 - **It changes faster than it can be measured.** v4 ran nowhere. v8 shipped two days after v7 and eight days
   after v6, and installs sit across three versions, so most version claims have no before-and-after. v8 itself
   shipped with no second review after its fix round, against its own rule that a fix commit is new code.
+  v9 shipped a day after v8, with v8 unpiloted, so the pilot measures the two together.
 - **It is heavy.** 358 KB of skill text, 93 files, and an always-loaded base that keeps pressing its budget.
 - **It depends on one owner's patterns.** All of the evidence comes from one owner's projects. Those habits are in
   the numbers, and the design may not transfer.
@@ -1382,7 +1470,9 @@ not the owner's attention.
 
 ### When not to use it
 
-- **No test that can fail,** except through the foundation route.
+Since v9, Phase A's fit check offers the last two the no-harness route: hard rules only.
+
+- **No test that can fail,** except through the short foundation.
 - **No owner who answers,** since then the gates are decoration.
 - **Trivial work,** per Phase A row 3.
 - **A one-off or throwaway repository.** The install alone costs more than such a project will recoup.
@@ -1394,12 +1484,14 @@ not the owner's attention.
 
 1. **Add the outcome metric first.** Count reverts, hotfixes and production defects per unit per week. Without it,
    every other number describes activity.
-2. **Hold the next version until v8 has a measured pilot.** Run the checks in [§16](#install-state-2026-11-06),
-   and re-run the session study over the pilot window.
+2. **Hold the next version until v8 and v9 have a measured pilot.** Run the checks in
+   [§16](#install-state-2026-11-06), and re-run the session study over the pilot window. v9 itself broke
+   this rule, because the first documents-only install showed the foundation stage stalling.
 3. **Re-measure the projected figures** on 2026-11-16 as planned: v3's saving, the 300K window, the 150K rule.
 4. **Decide what the gates are.** Either enforce Gate 2 and push in code, or say plainly that they are instructions
    and accept the risk.
-5. **Target self-reference.** Set a share for harness-type units, and let the retro report against it.
+5. **Target self-reference.** v9's retro reports the share and product rows per day, with no shipped
+   target; the owner sets a stop-loss per pilot.
 6. **Fix the disagreements below in one small round,** since they are cheap and a reader hits them first.
 
 ## 19. Open issues
@@ -1473,9 +1565,10 @@ Both versions are shown here rather than one being picked.
 - **Not yet measured in a real session:** the session-resume hook, the queue run, parked gates and the run grant.
 - **Least-validated component:** the segment runner, with 2 runs and one halt. It is not installed by default.
 
-### Candidates for v9
+### Candidates for v10
 
-From the weekly reviews and the v8 round. None is decided.
+From the weekly reviews and the v8 round; v9 was the documents-only round and took none of them. None is
+decided.
 
 - Per-review worktrees, and a landing check for critical diffs changed after the last review.
 - A padding check on state-file budgets, and write-once review returns.

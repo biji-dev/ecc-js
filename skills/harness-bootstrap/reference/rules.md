@@ -361,7 +361,7 @@ An anomaly recorded in a log is one discovered too late.
 | Elapsed beyond 3× the tier median, **work time only** | 3× |
 | A third review round opens **without the owner asking** | 1× |
 | A re-tier crosses into a never-auto category | 1× |
-| A second consecutive `FALSE CLAIMS` from the claim auditor on **product** claims | counts as the first row — on record prose alone it is quote-or-delete and land, not a stop |
+| A **behaviour** claim the claim auditor failed that its fix's re-run still does not back | counts as the first row — record prose is quote-or-delete at 8b, never a claim round |
 
 The first is the strongest signal in the data. **When a fix makes things worse,
 more fixing makes it worse still** — the approach is wrong, not the
@@ -408,6 +408,8 @@ This section exists so a generator does not repeat the pattern.
 | Elapsed measured first-commit-to-merge | Missed grounding entirely. Every figure recorded before the fix understates. |
 | *"A report is a claim"*, as a rule for the author | Necessary and not sufficient. False claims kept rising until the check moved to a separate agent (§1). |
 | Hooks that match keywords rather than effects | About thirty stalls, nothing caught. Gate on what a command does, not on words in it. A commit-message hook that checks for review tags the agent writes itself is the same mistake. A plugin's keyword hooks produced about 650 false-positive blocks across 80 sessions in the third project before they were turned off. |
+| *"Every foundation unit is Full and owner-merged, until the unit that lands the first test"* | v2 to v8. One documents-only install named its fifteenth row that unit and ran 8 units in 29 hours, 7 of them on the harness, landing 1 plan row of 115. The skeleton is that unit now and the flip follows it (`foundation.md`). |
+| A claim audit over record prose, with a second-round tripwire | One install's audits ran 7 rounds over three units for 35 findings, nearly all prose; the tripwire fired twice. Behaviour claims only, one round; prose is quote-or-delete at 8b (`claim-auditor.md`). |
 
 **The lesson for a generator: ship rules that cite an incident. Everything else
 is taste wearing a rule's clothes — and roughly one in five was wrong.**

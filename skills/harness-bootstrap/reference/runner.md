@@ -43,7 +43,9 @@ cite them.
 
 `[M]` **Generated to `.agents/skills/task-runner/SKILL.md`**, with a committed
 relative symlink at `.claude/skills/task-runner` (`harness-targets.md`). An
-upgrade keeps an existing runner's name through the manifest's `roles`.
+upgrade keeps an existing runner's name through the manifest's `roles`. Beside it,
+`process.md` holds the run's blocks (`harness-targets.md` › The run's blocks); the
+runner reads it before step 0 and on every resume.
 
 ## Task type first — before the tier
 
@@ -63,7 +65,7 @@ never by feel. Check in this order; unsure → the heavier type.
 `[B]` Which files are rule files; the line threshold for Docs-heavy; how to tell
 that a test reads a doc. The harness's own files — `AGENTS.md`, `CLAUDE.md`, the
 skills and agents — are read by the agent-docs lint, so a change to them is
-**Code**, never Docs.
+**Code**, never Docs; a diff of harness paths alone runs the harness lane (below).
 
 `[M]` **Docs units still go through the lock and the merge policy.** They take no
 Scope block, but they claim a registry row, branch and land like a Small change —
@@ -146,7 +148,7 @@ and never asks a question. What each line makes the runner do:
 | Line | The runner |
 |---|---|
 | `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
-| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit after any answered parked one (› Shape), a `harness/<slug>` unit |
+| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit after any answered parked one (› Shape), a `harness/<slug>` unit. Cadences count product landings only; before the flip they print `HELD … — foundation stage — they wait for the flip` instead |
 | `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
 | `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
 | `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
@@ -187,13 +189,39 @@ bound, `DUE p3` queues the P3 batch alone.
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8a verify | scoped | FULL once before merge | FULL |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
-| 8c claims | — | **skipped; the record is generated** | blocking, **product claims** |
+| 8c claims | — | **skipped; the record is generated** | blocking, **behaviour claims**, one round |
 | Gate 2 | by the merge policy | by the merge policy | owner |
 
 `[M]` **A P0 or P1 from review promotes Small to Full** — the unit then runs the
 plan check, lane A against a written plan, lane C and the adversarial pass.
 **Hot-small**, once its cap is filled (`gate-design.md`), runs Full's column
 without the plan check, lane A and the separate doc sweep; step 8 is `--tier full`.
+
+## The harness lane
+
+`[M]` **A diff of harness paths alone** (`HARNESS` in `review-gate-core.mjs`)
+runs Small's column with these changes: step 1 is an impact note; 4 and 8c do not
+run; 5–7 are the shipped tests and `check-agent-docs.mjs`; step 8 is `--tier
+harness`, one cross-family review and one fix round, a second round the owner's
+call. Gate 1 and Gate 2 are the owner's for a guard, a gate, a reviewed block or the
+rules block, else the merge policy's.
+> Origin: seven of one install's first eight units were its own harness, each Full.
+
+`[M]` **Harness work waits for product work.** A non-blocking harness follow-up
+goes into one harness unit per milestone unless the owner orders it now; an owner's
+request runs when asked, its claim line saying what it displaces.
+
+## Batched rows
+
+`[M]` **One unit may carry two or three consecutive Small rows of one phase**,
+their dependencies landed or in the batch, none never-auto, critical or behind an
+open P or C card; the owner may raise the cap, the runner may not (`segment.md`).
+One registry row, branch `<first id>-<last id>-<slug>`, unit id the first row's,
+every row on the `Rows:` line and in the Scope block. One slice per row, one step-8
+review over the combined diff, one fix round; 8a checks every row's "Done when";
+the record's Deliverable cell starts `rows <id>, <id>, <id> —`; Gate 2 shows one
+`Demo:` per row. **A row promoted to Full splits the batch:** the rows before it
+land, and it runs alone.
 
 ## Per-step notes
 
@@ -234,9 +262,12 @@ as its own commit. Never reclaim a row you do not own.
   harness work, vendor-trap skills and follow-ups no unit owns run on
   `harness/<slug>`, matched by the Branch cell. Write the generated paths with
   `<unit>` (the id or the slug), never the plan's id shape alone.
-- `[M]` **In the foundation stage** (`foundation.md`) every Code unit is Full and
-  Gate 2 is the owner's; the unit that lands the first counted test is followed by
-  the flip, its own `harness/` unit.
+- `[M]` **In the foundation stage** (`foundation.md`) the skeleton is the one
+  product unit, Full and owner-merged; the flip follows it, and no other harness
+  unit runs first unless it blocks the flip.
+- `[M]` **An owner's own push, rename or commit is a fact:** one decision-log line,
+  never a finding, a follow-up or a card. Where a rule binds pushes, this claim
+  carries one check row over the pushed range.
 
 **Step 1 — ground, plan mode.**
 - `[M]` **Sync both directions.** Behind: pull before branching. **Ahead:** another
@@ -244,7 +275,8 @@ as its own commit. Never reclaim a row you do not own.
   > Origin: the local mainline was four commits ahead, and no step looked.
 - `[M]` Read the follow-ups doc: rows scheduled for this unit are part of its
   requirement. Verify the dependency list before presenting it.
-- `[M]` The IA, plan check and Drawbacks as in change mode, in the plan document.
+- `[M]` The IA, and the plan check where it runs, as in change mode, in the plan
+  document.
 
 **Step 1 — ground, change mode.**
 - `[M]` **Investigate.** A bug: no fix without the root cause, decided by Opus or the
@@ -258,10 +290,12 @@ as its own commit. Never reclaim a row you do not own.
   on an "every" or "no other" claim) and **proof** (its test, or `none`: lane B's
   targets). Small writes `IA: <surface> · readers: <search result>` or `IA: none — no
   shared surface`. The plan opens with the **Scope block**.
-- `[M]` **Plan check** (Full): the blind dual plan (`cross-model.md`), then a plan
-  comparison the session merges. **A failed plan is revised, never carried on.** Then
-  its **Drawbacks** and one **plan critique** by the other family (`cross-model.md` ›
-  The plan critique).
+- `[M]` **Plan check** (Full, when the approach is open — the row's design
+  section or the request names none, or the preflight raised a card on it): the
+  blind dual plan (`cross-model.md`), then a plan comparison the session merges. **A
+  failed plan is revised, never carried on.** Then its **Drawbacks** and one **plan
+  critique** by the other family (`cross-model.md` › The plan critique). An approach
+  the documents already fix gets the Impact Analysis only.
 - `[M]` **Nobody reads the plan whole.** Grep the section; paste the slice verbatim
   into its brief.
 
@@ -355,14 +389,11 @@ DOM snapshot; send screenshots to a model that reads images.
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
   <tier> --writer <role>` (the role that wrote it; `mixed` when the second family
   wrote part of it, `bounded` when Opus and Sonnet wrote it together) and dispatch
-  exactly the reviewers it names (`gate-design.md` maps each name to a dispatch), with `model` and `effort`
-  passed on each (`gate-design.md` › Review lineup). Full: one Opus `code-reviewer`
-  over the whole unit diff, the second family's adversarial pass carrying lane B's
-  change surface (`blast-radius-auditor.md` › The brief), each triggered specialist,
-  and `pr-test-analyzer` on Sonnet when tests changed — independent, in **one message**. Small: the
-  second family's review, plus the adversarial pass with lane B's brief when the
-  Impact Analysis lists a reader outside the diff. The second family unavailable → the fallbacks in
-  `gate-design.md`, `degraded`.
+  exactly the reviewers it names, independent ones in **one message**, with `model`
+  and `effort` passed on each (`gate-design.md` › Review lineup; lane B's brief in
+  `blast-radius-auditor.md`). On Small the adversarial pass with lane B's brief joins
+  when the Impact Analysis lists a reader outside the diff. The second family
+  unavailable → the fallbacks in `gate-design.md`, `degraded`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.
   Briefs forbid host-level operations and repository-wide suite runs. A reviewer
   that mutates code to prove a test does it in a worktree of its own, never the
@@ -423,20 +454,20 @@ file's `Deliverable started:`, else the claim: the row's own window, as for Elap
 are true by construction; the ledger and findings rows are copied as the session
 wrote them.
 The session writes only what no command knows: the deviations, the controls
-evidence, the `<fill: …>` cells of the log row. Delete any sentence you cannot point
-at a line for. **The record has a byte budget** like the state file
-(`scope-guard.md`).
+evidence, the `<fill: …>` cells of the log row. **Quote-or-delete** every prose
+claim in the record, the state file and the commit messages: it inlines its
+evidence or goes; nothing re-audits it. **The record has a byte budget** like the
+state file (`scope-guard.md`).
 > Origin: two tasks took three and five claim-audit rounds; every false claim was
 > in the record or a commit message, not the code.
 
 **Step 8c — claim audit.** `[M]` Dispatch `claim-auditor` with `model: "opus"`,
-`effort: "high"` (`claim-auditor.md`), over **product claims** — code comments,
-docstrings, test titles, commit messages, controls evidence and the deviations. The
-git-derived record fields are not re-audited; the ledger's evidence cells are
-checked against the saved returns. Blocking on Full. A second consecutive
-`FALSE CLAIMS` switches to quote-or-delete.
+`effort: "high"` (`claim-auditor.md`), over **behaviour claims** — code comments,
+docstrings, test titles, each "Done when" line's evidence, test counts, the `Demo:`
+line, the controls. Blocking
+on Full, **one round**: a `FALSE CLAIMS` is fixed and that claim's command re-run.
 > Origin, the cost study: 79 of the claim auditor's 105 P1s were about record
-> prose, not product code.
+> prose, not product code; one install's audits then ran 7 rounds for 35 findings.
 
 **Gate 2.** `[M]` Brief: **the deliverable's demo evidence** — its `Demo:` line,
 the screenshot, the named tests or the live-walk transcript that shows it ·
@@ -468,11 +499,10 @@ review round is outstanding. Decided by the merge policy and the run grant
 - `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
   unit the close announces, after any answered parked unit (› Shape).
 
-**Step 10 — teardown.** `[M]` Long commands — builds, the FULL verify, an emulator
-— ran in the background and were awaited by their completion notice, never a sleep
-loop. Each long-running process was recorded at its start; where the machine sweep
-is installed, also with `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
---record <pid>`, so one a dead run leaves behind is still stopped (`machine.md`).
+**Step 10 — teardown.** `[M]` Long commands ran in the background, awaited by
+their completion notice, never a sleep loop, each recorded at its start — also with
+`node ~/.agents/harness/machine-sweep/machine-sweep.mjs --record <pid>` where the
+machine sweep is installed (`machine.md`).
 **What is still running comes from commands, never memory:** the host's task list,
 `codex-run.mjs --status` (or `claude-run.mjs`), `machine-sweep.mjs --status`; a live
 run is never relaunched, a dead one's partial writes are checked first.

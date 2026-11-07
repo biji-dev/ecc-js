@@ -16,6 +16,12 @@ Correctable forward is **not** this list. A wrong number can be corrected. A
 reversible merge can be reversed. Data that left the building, a message that was
 sent, and a record that was supposed to prove what happened cannot.
 
+**Ask it against the stakes line.** Phase A records the owner's
+`Stakes: <data> · <exposure> · <who runs it> · <what cannot be corrected forward here>`;
+it opens the policy block, and every reviewer brief carries it
+(`gate-design.md` › Severity). A local prototype with fictional data has little that
+cannot be corrected forward, and its policy says so.
+
 ## Rules for the output
 
 - **Every category cites an identifier from the project's own documents** — a
@@ -61,12 +67,15 @@ to code instead of change categories.
 | List | What goes on it | Evidence each entry cites |
 |---|---|---|
 | **Hot modules** | named paths where a defect cannot be corrected forward | the policy category, a risk id, or an incident |
-| **Critical code** | the hot modules + the code implementing each never-auto category + schema and migrations + any module imported by at least *N* files | the category, or the importer count |
+| **Critical code** | the hot modules + the code implementing each never-auto category + schema and migrations + any module imported by at least *N* files | the category, or the harm a defect there reaches under the stakes line |
 | **Cold modules** | named paths where a defect is visible and cheap — leaf UI, internal tools, test helpers | the reason it is cheap |
 | everything else | standard | — |
 
 - **Critical wins over cold.** A cold-looking component with many importers is
   critical.
+- **Every critical entry cites a harm or a category.** A coverage target or a
+  layer name alone is no evidence: a module whose every defect can be corrected
+  forward is standard, and its tier test still applies.
 - **Never put shared constants, formatters or date utilities on the cold list** —
   their importers make them critical.
 - `[B]` *N* — **left empty at generation.** List the ten most-imported modules with
@@ -81,9 +90,10 @@ the layout (an architecture or repository-structure section) and from the areas 
 documents say need the owner's approval, and mark each entry **`planned`** with the
 document it comes from. A planned path is critical when its area is; there are no
 importer counts and no history yet, so *N* stays empty. Write the trigger into the
-draft: re-derive the map when a planned path first has code, and at the first
-checkpoint after that — the owner reviews the re-derived map like the first one.
-A path the map cannot place yet is **critical**, never cold.
+draft: the flip re-derives the map (`foundation.md`) and places every top-level
+product directory, and the first milestone after it re-derives it again — the owner
+reviews each like the first. A new file under a placed directory takes its class;
+a path under no placed directory is **critical**, never cold.
 
 **The harness's own paths are on the map too.** These are **critical** — the risk
 map's tier, which some projects also call never-auto (a project whose own word differs
@@ -102,6 +112,10 @@ maps it). A broken one silently allows everything:
 
 The runner skill, the auditors and the harness docs are standard. Leaving the
 critical ones off is how a later session finds them unplaced and has to file it.
+Critical here sets the gate, not the review: the owner merges a change to these, and
+a diff of harness paths alone — these, the instruction files, the harness scripts
+and records, `HARNESS` in `review-gate-core.mjs` — runs the harness lane
+(`runner.md`).
 
 ## The merge policy
 

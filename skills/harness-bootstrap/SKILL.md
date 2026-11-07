@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 8
+  version: 9
 ---
 
 # Harness bootstrap
@@ -162,6 +162,16 @@ decision sheet** — or of the Phase A assessment when nothing is installed.
 | 4 | A **unit of work** | a plan with stable ids → **plan mode**, its order from a dependency column or else from the plan's phases and checkpoints (say which); code change requests, issues, milestones, a change stream, or nothing yet → **change mode** | route, never stop |
 | 5 | A **risk signal** | a per-task size or risk column, the paths of critical code, or the areas a document says need the owner's approval | present: evidence for Phase B · absent: **Phase B** — the risk map |
 | 6 | A **written** never-auto-merge policy | a security section, locked decisions, a risk register, a protected-areas list | present: Phase B confirms it · absent: **Phase B** — the usual gap |
+| 7 | The **stakes** | the documents' data, users and deployment sections | `Stakes: <data> · <exposure> · <who runs it> · <what cannot be corrected forward>` in the owner's words (`policy-derivation.md`) · absent: **ask** — it scales every review |
+
+**Fit and forecast, before any install.** Under the table, weigh the stakes line
+against what the harness costs: a one-off or throwaway repository, or work where
+speed matters more than a false-claim rate, is the **no harness** route — hard rules
+in `AGENTS.md` only. Then forecast: the plan's rows by tier on the tier test
+(`gate-design.md` › Tiers), the gates the owner will see, and a cost range per tier
+from the owner's other harness logs (`node <skill>/templates/scripts/estimate.mjs
+--log <a> --log <b> --tier <tier>`), or "no history". Label it *estimate*, never a
+threshold.
 
 **Specify properties, not columns.** Never prescribe a plan shape; check the
 property. **A pass signal is at least one real test that runs and was seen red.**
@@ -204,11 +214,11 @@ passes.
 **A new repository — documents only.** Row 3 has no history: judge it from the plan
 or the owner's stated scope and say so; with neither, **ask** the owner for the
 scope, and stop if there is none. When row 1 fails only because nothing is built yet
-and rows 2 and 3 pass, route to the **foundation stage** (`reference/foundation.md`)
-— the default, offered beside the readiness plan: Phase B runs from the documents, the
-install ships everything that needs no pass signal, every unit is Full and merged by
-the owner, and the unit that lands the first real test is followed by the flip that
-binds the test gates. Refusal stays for untested product code, a broken suite, no
+and rows 2 and 3 pass, route to the **short foundation** (`reference/foundation.md`)
+— the default, offered beside the readiness plan and no harness: Phase B runs from
+the documents, the install ships everything that needs no pass signal, and the
+skeleton — Full, owner-merged, its "Done when" one counted product test — is followed
+at once by the flip that binds the test gates. Refusal stays for untested product code, a broken suite, no
 owner and trivial scope. The risk map can name only **planned** paths
 (`policy-derivation.md`).
 Install **between units**: a branch already in flight carries an id the new guard
@@ -242,7 +252,9 @@ Full, never-auto and taste calls — copy, naming, visual identity — wait for 
 owner; push is the owner's unless a run grant covers it).
 This is the piece that cannot be templated.
 
-Write all three into the **harness file** — the instruction file every agent reads,
+The policy block opens with Phase A's `Stakes:` line, and every critical entry cites
+a harm under it or a never-auto category. Write all three into the **harness file**
+— the instruction file every agent reads,
 `AGENTS.md` by default, created now if the project has only `CLAUDE.md`
 (`harness-targets.md`) — under one status line, placed directly above
 the `policy` block and outside its markers (so flipping it never edits a block):
@@ -264,16 +276,17 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 
 | File | From | Notes |
 |---|---|---|
-| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `gate-design.md`, `scope-guard.md`, `context.md`, Phase B | rules (rule + why + link) · task types · tiers · gate table on the risk map and policy · the policy, risk map and merge policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `AGENTS.md` — generated sections between `harness:begin`/`harness:end` markers (block ids in `upgrade.md`) | `templates/agents-rules.md` (the rules block, copied), `harness-targets.md`, Phase B | rules (rule + why + link) · the stakes line, policy, risk map and merge policy · the `run` pointer · the "do not adopt" list · the project's commands. The earned slots — Hot-small and tripwire numbers empty, the milestone cap at its starting figure — go in their own `earned` block of kind `reviewed`, so filling one never marks a generated block edited |
+| `.agents/skills/task-runner/process.md` — the run's blocks, same markers | `gate-design.md`, `scope-guard.md`, `context.md` (`harness-targets.md` › The run's blocks) | task types · tiers · gate table on the risk map and policy · owner stops · the scope guard (Scope block, scope classes, drift check, quote-or-delete, the state-file convention) · the no-hand-off context rule · specialist triggers · model and effort routing (`models`) |
 | `docs/harness/rule-origins.md` | `rules.md` §1 | every shipped rule's full origin |
 | `CLAUDE.md` | `harness-targets.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agents, skills, hooks. An existing `CLAUDE.md` keeps its project text; moving it to `AGENTS.md` is a proposal to the owner, never part of the install |
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` (a copy where the project refuses committed symlinks, `harness-targets.md`) | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
 | `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `effort: high`, `tools: Read, Grep, Glob`; states its bound |
 | `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B's fallback when the second family is unavailable · `model: opus`, `effort: high`, `tools: Read, Grep, Glob` |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; product claims only; states that it sabotages only in a worktree of its own and restores |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; behaviour claims only, one round; states that it sabotages only in a worktree of its own and restores |
 | `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices, `effort: high`, `autoCompactWindow: 250000` |
 | every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
-| `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line |
+| `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line — and `HARNESS` to the harness's own scripts and records (`--tier harness`, `runner.md` › The harness lane) |
 | `scripts/docs-drift.mjs` + `scripts/lib/docs-drift-core.mjs` + its test | `templates/scripts/docs-drift.mjs`, `templates/scripts/lib/docs-drift-core.mjs`, `templates/scripts/lib/docs-drift-core.test.mjs` | step 8a's stale-doc list; bind `DOC_GLOBS` to the doc tree |
 | `scripts/unit-step.mjs` + `scripts/lib/unit-step-core.mjs` + its test | `templates/scripts/unit-step.mjs`, `templates/scripts/lib/unit-step-core.mjs`, `templates/scripts/lib/unit-step-core.test.mjs` | each runner step's start and end, one line each in the unit's steps file beside its state file (`runner.md` › Step markers); bind `STEPS_DIR` to the state file's directory, and `MAIN_CHECKOUT_STEPS` to the runner's resume, claim and teardown steps |
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |

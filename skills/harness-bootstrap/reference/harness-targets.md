@@ -18,7 +18,8 @@ Code is the default target; the others are additive.
 
 | File | Holds | Read by |
 |---|---|---|
-| `AGENTS.md` | rules (one clause of origin + link), task types, tiers, gate table, never-auto policy, risk map, merge policy, stops, tripwire slots, commands | every agent; Claude Code through `@AGENTS.md` |
+| `AGENTS.md` | rules (one clause of origin + link), the stakes line and never-auto policy, risk map, merge policy, tripwire slots, commands, the `run` pointer | every agent; Claude Code through `@AGENTS.md` |
+| `.agents/skills/task-runner/process.md` | the run's blocks: task types, tiers, gate table, stops, scope guard, context, triggers, models | the runner, before step 0 and on resume |
 | `CLAUDE.md` | line 1 `@AGENTS.md`, then only Claude specifics: model map, agent names, skills, hooks | Claude Code |
 | `.agents/skills/<name>/` | the real skill files | Codex, ZCode, Kimi |
 | `.claude/skills/<name>` | a **committed relative symlink** to `../../.agents/skills/<name>` | Claude Code |
@@ -46,7 +47,8 @@ limit.
 
 | File | Holds | Budget `[B]` |
 |---|---|---|
-| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the tier and gate tables; the policy; commands; the area-rules index | its current size, rounded up to the next 1,024 bytes — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
+| `AGENTS.md` | each rule as **rule + one clause of why + a link**; the policy; commands; the area-rules index | its current size, rounded up to the next 1,024 bytes — and under 32 KB where Codex reads it (its default project-doc cap truncates the rest silently) |
+| `process.md` | the run's blocks (below) | its current size, rounded up to the next 1,024 bytes |
 | `CLAUDE.md` | `@AGENTS.md`, then Claude specifics only | its current size, rounded up to the next 1,024 bytes |
 | `.claude/rules/<area>.md` | rules that apply to one area, with `paths:` frontmatter so Claude Code loads them on reading a matching file | per file |
 | `docs/harness/rule-origins.md` | the full origin of every shipped rule (`rules.md` §1), generated | none |
@@ -56,6 +58,17 @@ limit.
 `[M]` **Budgets ratchet from the current size.** Generation sets each to the file's
 size today, rounded up to the next 1,024 bytes, and the lint fails only above it. A
 118 KB `CLAUDE.md` must not fail on day one; it must not grow either.
+
+`[M]` **The run's blocks.** Only a run needs the task types, tiers, gate table,
+owner stops, scope guard, context rules, specialist triggers and model routing, so
+they live in `.agents/skills/task-runner/process.md` under the same
+`harness:begin <id>` markers, not in `AGENTS.md`; the manifest records each at that
+path. `AGENTS.md` keeps a three-line `run` block: every change runs through
+`task-runner`, and its process is in that file. `process.md` has a budget of its own
+and is not in `--base`. A citation of a moved section names `process.md`.
+> Origin: one install's base reached 51,192 of its 51,200 bytes, with `AGENTS.md`
+> at 43.5 KB — past Codex's 32 KiB read — before its first product test; about
+> 20 KB of it was these blocks, loaded by every Codex run that only reviews a diff.
 
 `[M]` **Area rules are indexed in `AGENTS.md`**, one line each:
 ``- `<file>.md` — <what it covers> (`<first path glob>` …)``; a rule in a

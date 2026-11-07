@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 8
+  version: 9
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -68,7 +68,8 @@ findings — and the code. Write the **slicing table**:
 ```
 
 Every acceptance criterion of the request maps to a slice, or the table is
-incomplete. **The executor comes from the risk** — the harness's risk map where one
+incomplete; a harness unit that batches plan rows (the `harness-bootstrap` runner)
+gives each row its own slice. **The executor comes from the risk** — the harness's risk map where one
 exists (the `harness-bootstrap` skill's gate design), else the project's own judgment:
 
 | Slice | Executor | How |
@@ -217,7 +218,8 @@ one message, one brief per reviewer, each with its own `.review-work/<name>/`
 directory and, in a harness, the step tag in its description. Findings are typed: severity P0–P3, `file:line`, evidence, why, how to
 reproduce, introduced by this diff or pre-existing, and a proposed scope class. Every
 P0 and P1 is then **verified** — reproduced or refuted — before anyone fixes it; an
-unverifiable one stays blocking. A harness's review workflow
+unverifiable one stays blocking. A harness's `review-gate.mjs --tier harness`, over
+its own files only, names one cross-family reviewer and no fan-out. A harness's review workflow
 (`.claude/workflows/review.workflow.js`) runs the same fan-out deterministically.
 
 **Plan specs** dispatch two planners from one brief, blind to each other — Opus and

@@ -11,8 +11,9 @@ installs with **no evidence it ever ran**: no ledger row, log cell or subagent.
 
 ## When it runs
 
-`[M]` **`harness-due.mjs` says `DUE hygiene` 14 days or 5 landings after the newest
-hygiene report** `[B]`, with the oldest open P3's age on the line, and the runner
+`[M]` **`harness-due.mjs` says `DUE hygiene` 14 days or 5 product landings
+(`sweep.md` › When it runs) after the newest hygiene report** `[B]`, never in the
+foundation stage, with the oldest open P3's age on the line, and the runner
 makes it the next unit (`runner.md` › Due-checks). It is a **Code** unit,
 `harness/hygiene-<date>`, with the tiers: Small, and **Full when a job deletes in
 the risk map's critical code**. Its executors follow the risk map like any slice's.

@@ -193,7 +193,8 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   const critical = reviewed.filter((f) => isCritical(f.path)).map((f) => f.path);
   const name = (paths) => `${paths[0]}${paths.length > 1 ? ` +${paths.length - 1}` : ''}`;
   const named = name(critical);
-  // the harness lane covers harness paths alone: any other reviewed path takes the tier's ordinary rules
+  // the harness lane covers harness paths alone: any other reviewed path takes the tier's ordinary rules; a doc
+  // outside HARNESS (the unit's record, a README) is reviewed at no tier, so it leaves the lane as it is
   const stray = tier === 'harness' ? reviewed.filter((f) => !isHarness(f.path)).map((f) => f.path) : [];
   const lane = tier === 'harness' && stray.length === 0;
   const prodLines = prod.reduce((n, f) => n + f.lines, 0);

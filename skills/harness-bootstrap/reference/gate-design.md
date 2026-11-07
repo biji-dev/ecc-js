@@ -230,7 +230,9 @@ instruction files (`INSTRUCTIONS` in the core's `[B]` block); only a diff of doc
 alone is skipped. A test or an instruction file under a critical path is critical,
 so a unit that changes one is reviewed at Full whatever `--tier` says: a weakened
 test is a weakened control. The one exception is `--tier harness` over harness
-paths only: one cross-family review, and the owner merges a guard or a gate.
+paths only: one cross-family review, an adversarial pass only on a second round the
+owner orders, diff-scoped and once, and the owner merges what `runner.md` › The
+harness lane names.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
@@ -278,7 +280,7 @@ Never impose a column the project does not have.
 | Small, nothing else hit | auto — the Scope block, stated in the claim line | by the merge policy |
 | Conformance reports a blocking gap | — | never auto |
 | An unresolved P0 or P1 | — | never auto |
-| Claim auditor reports `FALSE CLAIMS` (Full) | — | never auto |
+| Claim auditor reports `FALSE CLAIMS` (Full), a failed claim not yet fixed or deleted with its re-run pasted | — | never auto |
 | Any invariant or contract check failing | — | **stop.** Never modify the check to pass |
 | Retries exhausted, or a tripwire (`rules.md` §2) | — | escalate |
 | **Owner taste** — identity, copy, naming | ask | ask |
@@ -333,7 +335,8 @@ The runner copies both into each covered unit's state file as its `Grant:` and
 ledger's Gate 2 row.
 
 - **merge clean Full** — a Full unit merges on its own when it passes the Small
-  test above (› The merge policy) and its claim audit found no `FALSE CLAIMS`.
+  test above (› The merge policy) and every claim its audit failed is fixed or
+  deleted, its re-run pasted (`claim-auditor.md` › One round).
 - **push after merge** — a merge the policy or the grant made is pushed.
 - **recommendation on reversible P cards** — a P card whose reversal is a revert
   takes its recommendation, logged `By: grant` and listed at Gate 2 under **Decided
@@ -401,7 +404,8 @@ in one line and start it.
 | **P3** | a nit, a style point | **never opens one** — the P3 batch, or rides along on a line the round already changes |
 
 `[M]` **Severity is judged against the stakes line.** Every reviewer brief carries
-the policy block's `Stakes:` line, and a P0 or P1 must be reachable under it. A
+the policy block's `Stakes:` line — the second family's briefless `review` reads it in
+`AGENTS.md`, which every run of it loads — and a P0 or P1 must be reachable under it. A
 finding that needs a condition the line rules out — a hostile local user on a
 one-developer local app, real records in a fictional-data prototype — is P3, or
 OUT when this diff does not make it reachable; the finding names the condition.

@@ -88,8 +88,9 @@ names all assert; none verify.
 > properties that did not hold, three test titles claimed more than their bodies
 > checked, and a column named `hashed_token` held a plaintext value.
 
-**The record is written last, from the diff — its fields generated, its prose
-audited at Full by someone who did not write it.** (`runner.md` 8b/8c, `claim-auditor.md`.)
+**The record is written last, from the diff — its fields generated, its behaviour
+claims audited at Full by someone who did not write it, its prose quote-or-delete.**
+(`runner.md` 8b/8c, `claim-auditor.md`.)
 > Origin: *"a report is a claim — verify it before presenting it"* was a rule
 > addressed to the author. After it was written, one task shipped **eight** false
 > claims, and **nine of the first twenty-one** tasks shipped at least one. None
@@ -361,7 +362,7 @@ An anomaly recorded in a log is one discovered too late.
 | Elapsed beyond 3× the tier median, **work time only** | 3× |
 | A third review round opens **without the owner asking** | 1× |
 | A re-tier crosses into a never-auto category | 1× |
-| A **behaviour** claim the claim auditor failed that its fix's re-run still does not back | counts as the first row — record prose is quote-or-delete at 8b, never a claim round |
+| A **behaviour** claim the claim auditor failed, kept, that its fix's re-run still does not back | counts as the first row; deleting it is the fix, never a trip — record prose is quote-or-delete at 8b, never a claim round |
 
 The first is the strongest signal in the data. **When a fix makes things worse,
 more fixing makes it worse still** — the approach is wrong, not the

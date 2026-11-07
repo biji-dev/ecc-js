@@ -38,10 +38,10 @@ already unguarded; the readiness plan adds tests first), a suite that exists but
 broken or skips everything (fix it — that is a readiness unit, not a new project),
 and a repository whose only work is trivial. Those keep the readiness plan.
 
-`[M]` **Offer both, default foundation.** The Phase A closing line names the choice:
-*foundation stage now* (default) — the harness gates the readiness units — or
+`[M]` **Offer three, default foundation.** The Phase A closing line names the choice:
+*foundation stage now* (default) — the harness gates the readiness units —,
 *readiness plan first* — the owner runs them as ordinary work and Phase A is rerun
-after. Record the owner's answer on the line below the Phase B status line; Phase C
+after — or *no harness*, hard rules only, where the fit check says so (SKILL.md). Record the owner's answer on the line below the Phase B status line; Phase C
 copies it into the decision log it creates.
 
 ## Phase B — unchanged
@@ -77,7 +77,7 @@ own.
 
 1. **Every product Code unit is Full** — no path is covered, and the coverage-map
    rule already makes every uncovered path Full. Say so in each claim line. A harness
-   unit runs the harness lane (`runner.md`).
+   unit runs the harness lane (`runner.md`); the flip is Full (› The flip).
 2. **No auto-merge.** Gate 2 is always the owner's, whatever the merge policy says
    for later.
 3. **The skeleton is the pass-signal unit.** Take it from the plan's first
@@ -96,15 +96,16 @@ own.
    a planned path code writes it on a `Paths:` line in its state file, not as a
    follow-up; the flip re-derives the map from those lines. When the plan calls its
    paths working names, the skeleton fixes them and the flip renames the map.
-6. **No other harness unit before the flip** unless it blocks the flip. A due-check,
-   a follow-up or a re-derive waits for it; `harness-due.mjs` reports nothing due
-   at this stage.
+6. **No other harness unit before the flip** unless it blocks the flip. A follow-up
+   or a re-derive waits for it; `harness-due.mjs` holds the sweep, retro, hygiene and
+   P3 batch at this stage, and the preflight and disk checks still run.
 
 ## The flip — stage 2
 
 `[M]` **The flip is its own harness unit**, claimed on a `harness/<slug>` branch
-immediately after the pass-signal unit lands and run in the harness lane — harness
-changes land between runs, never during one. It:
+immediately after the pass-signal unit lands, and Full: its `prepare` line and the
+lint and format fit are paths outside `HARNESS`, so `review-gate.mjs` reviews it as
+Full. Harness changes land between runs, never during one. It:
 
 1. reruns Phase A row 1 and quotes the evidence: the command, its count, the
    sabotage that turned it red, the `cmp` that confirmed the restore;

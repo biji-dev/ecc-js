@@ -87,7 +87,7 @@ orient:
   is an assertion.
 - **A "done" report ends with the step ledger; a step missing from it did not
   run.**
-- **The record is written last, from the diff — fields generated, prose audited at Full by someone else.**
+- **The record is written last, from the diff — fields generated, behaviour claims audited at Full by someone else, prose quote-or-delete.**
 - **Reproduce a finding before fixing it.**
 - **Whatever one model family writes, the other reviews.**
 - **Never hand the context to the owner: no new session, hand-off, `/compact` or
@@ -169,7 +169,7 @@ against what the harness costs: a one-off or throwaway repository, or work where
 speed matters more than a false-claim rate, is the **no harness** route — hard rules
 in `AGENTS.md` only. Then forecast: the plan's rows by tier on the tier test
 (`gate-design.md` › Tiers), the gates the owner will see, and a cost range per tier
-from the owner's other harness logs (`node <skill>/templates/scripts/estimate.mjs
+from the owner's other harness logs (`node <skill dir>/templates/scripts/estimate.mjs
 --log <a> --log <b> --tier <tier>`), or "no history". Label it *estimate*, never a
 threshold.
 
@@ -198,7 +198,7 @@ generated gate table carries this map: a unit that touches an uncovered path is
 **The assessment is a table, not prose:** `Precondition | Evidence (file, path or
 line) | Verdict (pass · route · Phase B · ask · stop)`, then the coverage map, then
 one closing line: the mode when eligible, the foundation stage when nothing is
-built yet, or the readiness plan when refused. A pass without cited evidence was not
+built yet, the readiness plan when refused, or no harness when the fit check says so. A pass without cited evidence was not
 assessed. **Never install a harness that can merge on its own without a pass
 signal.**
 

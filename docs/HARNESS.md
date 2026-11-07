@@ -332,7 +332,7 @@ holds a single test: *if this is wrong and ships, can it be corrected forward?* 
 yields three things: the never-auto policy, the risk map (hot, critical and cold modules, each
 citing evidence), and the merge policy. The test is asked against Phase A's stakes line, which
 opens the policy block, and since v9 every critical entry cites a harm under it or a never-auto
-category; a coverage target alone makes a path hot. All three go into the harness file under
+category; a coverage target alone makes a path standard. All three go into the harness file under
 one line:
 
 ```text
@@ -653,7 +653,8 @@ A P0 or P1 from review promotes a Small unit to Full.
 the agent-docs lint at 5–7, `review-gate --tier harness` at step 8, and no steps 4 or 8c. A
 path outside the harness's own files sends it back to Full. Harness work that blocks nothing
 waits for one harness unit per milestone. On one v7 install, seven of the first eight units
-were harness units, and a commands edit to `CLAUDE.md` ran the whole Full sequence.
+were harness units, and a commands edit to `CLAUDE.md` ran the whole Full sequence (measured,
+to 2026-11-07; [§18](#a-documents-only-start-on-v7)).
 
 **Batched rows.** Two or three consecutive Small rows of one phase, with no critical path and no
 open card, run as one unit: one branch `<first>-<last>-<slug>`, one slice per row, one review,
@@ -683,7 +684,7 @@ Default cadences are bindings and live in `CADENCE` in the template
 [`harness-due-core.mjs`](../skills/harness-bootstrap/templates/scripts/lib/harness-due-core.mjs).
 Since v9 they count product landings only, never a `harness/` unit, and nothing is due while the
 manifest's stage is `foundation`. A v7 install's sweep and hygiene came due one day in, counted
-on its own harness units.
+on its own harness units (measured, to 2026-11-07).
 
 ### The queue run and the state line
 
@@ -934,7 +935,8 @@ family is unavailable.
 **Severity is judged against the stakes line,** which every reviewer brief carries since v9. A P0
 or P1 must be reachable under it: a finding that needs a hostile local user on a one-developer
 local app, or real records in a fictional-data prototype, is P3 or OUT, and names the condition.
-Before this, one documents-only install raised P1s on exactly those conditions.
+Before this, one documents-only install raised P1s on exactly those conditions (classified, to
+2026-11-07).
 
 ### How findings are handled
 

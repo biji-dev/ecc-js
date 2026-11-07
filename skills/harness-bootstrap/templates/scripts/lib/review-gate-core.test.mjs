@@ -341,6 +341,10 @@ test('unit 4: the harness lane is one cross-family review over a harness-only di
   }
   // docs alone is still skipped
   assert.equal(decide({ files: [f('docs/harness/log.md', 3)], kind: 'unit', tier: 'harness' }).decision, 'skip');
+  // a doc outside HARNESS (the unit's record, a README) leaves the lane as it is: no tier reviews a doc
+  const withDocs = decide({ files: [...lane, f('docs/harness/log.md', 3), f('README.md', 2)], kind: 'unit', tier: 'harness' });
+  assert.match(withDocs.reason, /^harness lane: /);
+  assert.equal(withDocs.reviewers.length, 1);
   // a path outside HARNESS: the full lineup, and the unit is told to re-tier
   const stray = decide({ files: [...lane, f('app/src/main.tsx', 4)], kind: 'unit', tier: 'harness' });
   assert.deepEqual(stray.reviewers.slice(0, 2), ['opus-code-reviewer', 'second-family-adversarial']);

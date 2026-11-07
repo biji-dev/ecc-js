@@ -806,6 +806,10 @@ test('marker-unbalanced for a begin without an end, an orphan end, and nesting',
   const rep3 = report(mk({ 'AGENTS.md': '<!-- harness:begin a -->\n<!-- harness:begin b -->\n<!-- harness:end b -->\n<!-- harness:end a -->\n' }));
   assert.ok(ids(rep3).includes('marker-unbalanced'));
   assert.ok(rep3.markers.every(m => m.ok === false));
+  // the run's blocks live in the task runner's process.md from v9: its markers balance there too
+  const rep4 = report(mk({ '.agents/skills/task-runner/process.md': '<!-- harness:begin tiers -->\ntext\n' }));
+  assert.ok(ids(rep4).includes('marker-unbalanced'));
+  assert.deepStrictEqual(rep4.markers.map(m => [m.block, m.ok]), [['tiers', false]]);
 });
 
 // ── CLI behaviour ────────────────────────────────────────────────────────────
@@ -1430,6 +1434,15 @@ test('sweep-, retro- and hygiene-overdue: the newest report by the date in its n
   assert.ok(!ids(report(fresh)).some(id => id.endsWith('-overdue')), ids(report(fresh)).join());
   const older = mk({ 'scripts/retro.mjs': '// retro\n' });
   assert.ok(ids(report(older)).includes('retro-overdue'));
+  // the foundation stage holds every cadence and the P3 batch until the flip, as harness-due does
+  const p3 = '| # | Area | Severity | Status |\n|---|---|---|---|\n| 1 | a.ts | P3 | open |\n';
+  const held = mk({
+    'scripts/retro.mjs': '// retro\n',
+    'scripts/harness-due.mjs': '// due\n',
+    'docs/harness/follow-ups.md': p3,
+    '.agents/harness-manifest.json': JSON.stringify({ ...JSON.parse(dueManifest(daysAgo(20))), stage: 'foundation' }),
+  });
+  assert.ok(!ids(report(held)).some(id => id.endsWith('-overdue') || id === 'p3-queue-aging'), ids(report(held)).join());
 });
 
 test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may wait', () => {

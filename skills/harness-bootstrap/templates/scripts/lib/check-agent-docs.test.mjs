@@ -963,6 +963,14 @@ test('citations: `process.md` › Name and the full path hold against the task r
   assert.equal(r.err.match(/^FAIL citations: /gm).length, 1, 'another path\'s process.md is not read');
 });
 
+test('citations: a `process.md` › Name fails when the bound process.md does not exist, never goes unchecked', () => {
+  expectFail(
+    { 'src/x.js': '// `process.md` › Missing\nexport {};\n' },
+    'citations',
+    'src/x\\.js:1 cites `process\\.md` › Missing, but \\.agents/skills/task-runner/process\\.md does not exist',
+  );
+});
+
 test('citations: an `AGENTS.md` › Name that moved to process.md fails with a hint to cite process.md', () => {
   const r = expectFail(
     { [PROCESS]: PROCESS_MD, '.claude/rules/db.md': `${RULE_HEAD}Stop per \`AGENTS.md\` › Owner stops, and AGENTS.md "Gates".\n` },

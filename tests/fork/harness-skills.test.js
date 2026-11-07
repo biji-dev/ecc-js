@@ -832,13 +832,13 @@ test('the claim auditor and a reviewer that mutates code work in a worktree of t
   assert.ok(squashed('SKILL.md').includes('states that it sabotages only in a worktree of its own and restores'), "SKILL.md's claim-auditor row does not say where it sabotages");
 });
 
-test("the record rule's prose audit is at Full, in rules.md, the rules block and SKILL.md; a rule the project states keeps its words and cites them", () => {
-  const rule = '**The record is written last, from the diff — its fields generated, its prose audited at Full by someone who did not write it.**';
+test("the record rule's claim audit is at Full, in rules.md, the rules block and SKILL.md; a rule the project states keeps its words and cites them", () => {
+  const rule = '**The record is written last, from the diff — its fields generated, its behaviour claims audited at Full by someone who did not write it, its prose quote-or-delete.**';
   const rules = squashed('reference/rules.md');
   const block = squashed('templates/agents-rules.md');
   assert.ok(rules.includes(rule), "rules.md's record rule does not say at Full");
   assert.ok(block.includes(rule), "the rules block's record rule does not say at Full");
-  assert.ok(squashed('SKILL.md').includes('fields generated, prose audited at Full by someone else.**'), "SKILL.md's record rule does not say at Full");
+  assert.ok(squashed('SKILL.md').includes('fields generated, behaviour claims audited at Full by someone else, prose quote-or-delete.**'), "SKILL.md's record rule does not say at Full");
   const citation = "`Stated in the project's words: <path> › <heading>`";
   const preamble = rules.slice(0, rules.indexOf('## 1 · Ship these'));
   assert.ok(preamble.includes(`A rule the project already states in its own words keeps them: the rules block keeps the bold rule and, in place of its why clause, ${citation}, so no section is left a bare heading.`), 'the rules.md preamble does not give the citation form');
@@ -1209,7 +1209,7 @@ test('v9: severity is judged against the stakes line, critical entries cite a ha
     '**Unsure whether a named Full condition holds → Full; no condition named → Small.**',
   ]) assert.ok(gates.includes(part), `gate-design.md lacks: ${part}`);
   const policy = squashed('reference/policy-derivation.md');
-  for (const part of ['**Ask it against the stakes line.**', '**Every critical entry cites a harm or a category.**']) {
+  for (const part of ['**Ask it against the stakes line.**', '**Every critical entry cites a harm, a category or its importer count.**']) {
     assert.ok(policy.includes(part), `policy-derivation.md lacks: ${part}`);
   }
 });
@@ -1242,7 +1242,7 @@ test("upgrade.md's v9 section moves the run's blocks, asks the stakes and the re
   assert.ok(text.includes('The rest of an upgrade to v9 is in *Upgrading to v9* below') && /^### Upgrading to v9$/m.test(upgradeMd()), 'row 9 points to no Upgrading to v9 section');
   const v9 = text.slice(text.indexOf('### Upgrading to v9'));
   for (const part of [
-    'a block of kind `reviewed` moves only on the owner\'s yes',
+    'a block of kind `reviewed` moves unchanged too',
     'The `Stakes:` line, a C card',
     'the **pass-signal re-point**',
     '**Land it between runs**',

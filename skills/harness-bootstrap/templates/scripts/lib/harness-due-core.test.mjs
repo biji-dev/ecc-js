@@ -31,6 +31,7 @@ import {
   formatDue,
   heldKinds,
   inboxLines,
+  isHarnessMerge,
   isHarnessUnit,
   markSeen,
   matchReports,
@@ -458,11 +459,20 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   assert.equal(formatDue([]), 'harness-due: nothing due\n');
 });
 
-test('isHarnessUnit: a harness/<slug> row id or a merge subject naming a harness/ branch; a plan row or a task branch is not', () => {
-  for (const s of ['harness/install', 'Harness/flip', 'Merge harness/risk-map: re-derive', "Merge branch 'harness/sweep-2026-11-07'", 'Merge `harness/x`'])
+test('isHarnessUnit: a harness/<slug> row id; a plan row, a task branch or a mention is not', () => {
+  for (const s of ['harness/install', 'Harness/flip', '`harness/x`'])
     assert.equal(isHarnessUnit(s), true, s);
-  for (const s of [ROW(1, 1), `Merge task/${ROW(1, 3)}: x`, 'Merge t0.01-project-setup: T0.01 Project setup', 'the harness/ docs', 'Merge noharness/x', ''])
+  for (const s of [ROW(1, 1), `task/${ROW(1, 3)}`, 'the harness/ docs', 'noharness/x', 'app/harness/x', '', null])
     assert.equal(isHarnessUnit(s), false, s);
+});
+
+test('isHarnessMerge: the merged branch is a harness/ branch, in the runner\'s, git\'s and GitHub\'s forms; a title naming one is not', () => {
+  for (const s of ['Merge harness/risk-map: re-derive', "Merge branch 'harness/sweep-2026-11-07'", "Merge branch 'harness/x' into main", 'Merge `harness/x`',
+    "Merge remote-tracking branch 'origin/harness/x'", 'Merge pull request #4 from user/harness/sweep-x'])
+    assert.equal(isHarnessMerge(s), true, s);
+  for (const s of [`Merge task/${ROW(1, 3)}: x`, 'Merge t0.01-project-setup: T0.01 Project setup', "Merge branch 'task/P1-05': document harness/sweep-x syntax",
+    'Merge pull request #5 from user/task/P1-05', 'Merge noharness/x', 'Squash harness/x', ''])
+    assert.equal(isHarnessMerge(s), false, s);
 });
 
 test('checkAll counts product landings only: seven harness units and one product unit since the sweep are one landing', () => {

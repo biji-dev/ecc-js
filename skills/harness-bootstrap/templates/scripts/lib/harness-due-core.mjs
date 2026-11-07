@@ -23,7 +23,7 @@
  * rows, so the runner and the owner see what waits. It is not a check: it never blocks.
  */
 import path from 'node:path';
-import { followUpsSummary, isHarnessUnit, logRecords } from './retro-core.mjs';
+import { followUpsSummary, isHarnessMerge, isHarnessUnit, logRecords } from './retro-core.mjs';
 
 // ---- [B] project bindings
 // [B] The mainline; the harness log and the follow-ups doc. FOLLOW_UPS may also be a list of paths;
@@ -200,10 +200,10 @@ export function cadenceDue(kind, { reports = [], landed = [], merged = [], logBo
   return { kind, subject: null, why: `${days} d, ${plural(landings, 'landing')} ${since}${note}`, command: fill(command, values), blocking: false };
 }
 
-// isHarnessUnit (retro-core): a harness unit's row id or a merge subject naming a `harness/` branch. The
+// isHarnessUnit and isHarnessMerge (retro-core): a `harness/<slug>` row id, a merge of a `harness/` branch. The
 // cadences count product landings only: in one install seven of the first eight units were the
 // harness's own, and a sweep and a hygiene unit came due a day in, counted on those.
-export { isHarnessUnit };
+export { isHarnessMerge, isHarnessUnit };
 
 /**
  * The kinds the foundation stage holds: the cadences and the P3 batch wait for the flip, since
@@ -440,7 +440,7 @@ export function checkAll(f) {
   const records = f.log ? logRecords(f.log.text, f.log.dates) : [];
   const logBorn = f.log ? [...f.log.dates.values()].reduce((a, t) => (Number.isFinite(t) && (a === null || t < a) ? t : a), null) : null;
   const landed = records.filter((r) => !isHarnessUnit(r.id)).map((r) => r.landed);
-  const merged = (f.merges ?? []).filter((m) => !isHarnessUnit(m.subject)).map((m) => m.t);
+  const merged = (f.merges ?? []).filter((m) => !isHarnessMerge(m.subject)).map((m) => m.t);
   const summary = f.followUps ? followUpsSummary(f.followUps.text, f.followUps.dates, now) : null;
   const reports = (kind) => f.reports?.[kind] ?? [];
   const held = new Set(heldKinds(f.stage ?? null));

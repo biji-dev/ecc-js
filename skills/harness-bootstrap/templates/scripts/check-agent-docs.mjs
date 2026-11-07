@@ -48,7 +48,7 @@ export const CONFIG = {
   requireImport: true, // CLAUDE.md line 1 must be @AGENTS.md
   citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'], // code whose comments may cite AGENTS.md (the instruction files always do)
   citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'], // their citations are fixtures
-  processFile: '.agents/skills/task-runner/process.md', // the policy blocks moved out of AGENTS.md
+  processFile: '.agents/skills/task-runner/process.md', // the run's blocks moved out of AGENTS.md
 };
 // ---- [M] mechanism: ship as-is ----------------------------------------------------------------
 
@@ -841,7 +841,9 @@ function main() {
       };
     };
     const holds = holder(agentsMd);
-    const inProcess = processFile ? holder(proseLines(read(processFile))) : null;
+    // a bound processFile that is missing holds nothing: a citation of it fails rather than going unchecked
+    const missing = !processFile && CONFIG.processFile ? CONFIG.processFile : null;
+    const inProcess = processFile ? holder(proseLines(read(processFile))) : missing ? () => false : null;
     const moved = (name) => (inProcess?.(name, false) ? ` - it moved: cite \`process.md\` › ${name}` : null);
     const exempt = new Set(CONFIG.citeExempt ?? []);
     const citeRes = (CONFIG.citeFiles ?? []).map(globToRegExp);
@@ -869,16 +871,18 @@ function main() {
           }
         }
         if (!inProcess) return;
-        for (const { names: cited, quoted } of citationsIn(line.replaceAll(processFile, 'process.md'), following, 'process.md')) {
+        for (const { names: cited, quoted } of citationsIn(line.replaceAll(processFile ?? missing, 'process.md'), following, 'process.md')) {
           for (const name of cited) {
             verify(
               inProcess(name, quoted),
               'citations',
               f,
               i + 1,
-              quoted
-                ? `cites "${name}", which ${processFile} no longer has as a heading, a bold lead or its words - cite what replaced it`
-                : `cites \`process.md\` › ${name}, which names no heading or bold lead of ${processFile} - cite the section by its name, ended by punctuation`,
+              missing
+                ? `cites \`process.md\` › ${name}, but ${missing} does not exist - write it or cite AGENTS.md`
+                : quoted
+                  ? `cites "${name}", which ${processFile} no longer has as a heading, a bold lead or its words - cite what replaced it`
+                  : `cites \`process.md\` › ${name}, which names no heading or bold lead of ${processFile} - cite the section by its name, ended by punctuation`,
             );
           }
         }

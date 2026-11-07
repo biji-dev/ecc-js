@@ -202,8 +202,28 @@ export function previousData(text) {
   }
 }
 
-/** Whether a log row's unit id or a merge subject names a harness unit (`harness/<slug>`), not a product one. */
-export const isHarnessUnit = (s) => /(?:^|[\s'"`])harness\/[A-Za-z0-9]/i.test(String(s ?? ''));
+/** Whether a log row's unit id names a harness unit (`harness/<slug>`), not a product one. */
+export const isHarnessUnit = (id) => /^[`'"]?harness\/[A-Za-z0-9]/i.test(String(id ?? '').trim());
+
+// The branch a merge subject merges, the first form that matches: GitHub's `from <owner>/<branch>`, git's
+// remote-tracking `'<remote>/<branch>'` and `Merge branch '<branch>'`, the runner's `Merge <branch>: <title>`.
+const MERGE_FORMS = [
+  /^Merge pull request #\d+ from [^/\s]+\/(\S+)/i,
+  /^Merge remote-tracking branch '[^/']+\/([^']+)'/i,
+  /^Merge branch '([^']+)'/i,
+  /^Merge [`'"]?([^\s`'":]+)/i,
+];
+/** The branch a merge subject names, or null for a subject in no merge form. */
+export function mergedBranch(subject) {
+  const s = String(subject ?? '').trim();
+  for (const re of MERGE_FORMS) {
+    const m = re.exec(s);
+    if (m) return m[1];
+  }
+  return null;
+}
+/** Whether a merge subject merges a harness unit's `harness/<slug>` branch; a title that only mentions one does not. */
+export const isHarnessMerge = (subject) => isHarnessUnit(mergedBranch(subject));
 
 /** The plan rows a batch row names: the ids of a Deliverable cell that starts `rows <id>, <id> — `; else none. */
 export function batchRows(cell) {

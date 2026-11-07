@@ -31,8 +31,8 @@ It never writes. It reports:
   (the skill changed the template since the entry was written), `gone` (the skill
   no longer ships it), `unrecorded` (no `templateSha256`) or `invalid`, counted on
   one line of the text report;
-- **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md` and
-  `CLAUDE.md`, and whether it balances;
+- **markers** — every `harness:begin` / `harness:end` pair in `AGENTS.md`,
+  `CLAUDE.md` and the runner's `process.md`, and whether it balances;
 - **sizes**, **id prefixes** in use (`DEC-`, `D-`, `D<n>`, `Q-`, counted outside
   harness blocks) and **held registry rows**;
 - **hazards** — by id, with the file and line.
@@ -282,7 +282,8 @@ legacy text the project wrote stays outside markers until the owner adopts it, a
 an adopted block is `reviewed`.
 
 `[M]` Files the harness owns outright — the runner skill, the auditors, the guard,
-the hooks, the scripts — are entries without a block. Never put a stamp comment in
+the hooks, the scripts — are entries without a block; the runner's `process.md` holds
+blocks, each an entry of its own. Never put a stamp comment in
 a `SKILL.md`: frontmatter must be the first line.
 
 ## Hazards and their fixes
@@ -506,16 +507,20 @@ in one message. **Land it between runs**, with no row held or parked.
 (`harness-targets.md` › The run's blocks), each under its own markers, and the
 manifest entry takes the new `path`. A block whose hash matches moves unchanged; an
 edited block moves with its edits, shown to the owner as a diff; a block of kind
-`reviewed` moves only on the owner's yes, and declined it stays where it is. The
-`run` block takes their place, and each citation of a moved section is repointed to
-`process.md`. Then `check-agent-docs.mjs --base` reads the smaller base, and the new
-`process.md` budget is its size rounded up to the next 1,024 bytes.
+`reviewed` moves unchanged too, its words the owner's and only its file new, and the
+diff shows the move. Where the blocks live in `CLAUDE.md` (› Step 2), they move from
+there. The `run` block, kind `generated`, takes their place, and each citation of a
+moved section is repointed to `process.md`. Then `check-agent-docs.mjs --base` reads
+the smaller base: the `AGENTS.md` and `base` budgets come down to the new sizes rounded
+up to the next 1,024 bytes, and the new `process.md` budget is set the same way.
 
-`[M]` **What regenerates.** The runner skill and the implementer agent (`runner.md`:
+`[M]` **What regenerates.** The rules block (`templates/agents-rules.md`: the record
+rule), the runner skill and the implementer agent (`runner.md`:
 the harness lane, batched rows, the owner's own push, the plan check), the claim
 auditor (`claim-auditor.md`: behaviour claims, one round), the `scope` block's
 `Rows:` and `Paths:` lines, the blocks written from `gate-design.md` (the tier test,
-the severity paragraph, the lane's rows), and the scripts with their tests:
+the severity paragraph, the lane's rows; proposals where the block is `reviewed`), and
+the scripts with their tests:
 `review-gate-core.mjs` (`HARNESS`, `--tier harness`), `harness-due-core.mjs` and
 `harness-due.mjs` (product landings, the foundation stage), `estimate.mjs`,
 `retro-core.mjs`, `unit-record-core.mjs` (`Rows:`), `check-agent-docs.mjs`
@@ -532,7 +537,7 @@ block still in `AGENTS.md` under `upgrade proposals`, not as a hazard.
 
 `[M]` **What the owner reviews again.** The `Stakes:` line, a C card, since the
 policy block is `reviewed`. Each critical entry that cites no harm and no never-auto
-category, with a proposed demotion to hot. In an install still at stage
+category, with a proposed demotion to standard. In an install still at stage
 `foundation`, the **pass-signal re-point**, a card: **A** the plan's own test row,
 claimed next, when its dependencies have landed; **B** the next product row, its
 "Done when" gaining one counted test. The flip follows either one, and the

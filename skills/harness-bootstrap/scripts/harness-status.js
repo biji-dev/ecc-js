@@ -660,7 +660,8 @@ function buildReport() {
 
   // markers
   const markers = [];
-  for (const rel of docFiles()) scanMarkers(rel, markers, haz);
+  // the run's blocks sit in PROCESS_FILE from v9, so their markers balance there too
+  for (const rel of [...docFiles(), ...(isFile(PROCESS_FILE) ? [PROCESS_FILE] : [])]) scanMarkers(rel, markers, haz);
 
   // sizes
   const sizes = { 'AGENTS.md': null, 'CLAUDE.md': null, stateFiles: [], codexLimit: codexLimit() };
@@ -960,9 +961,11 @@ function buildReport() {
       haz('preflight-missing', `phase ${phase} is under way (${rows} log row${rows === 1 ? '' : 's'}) and has no preflight report at ${due.reports.preflight.map(p => p.template.replace(/<\w+>/, () => phase)).join(' or ')}`, logRel);
     }
   }
-  // a recurring report older than its cadence, or none once the install is that old
+  // a recurring report older than its cadence, or none once the install is that old; the foundation stage
+  // holds the cadences and the P3 batch until the flip (reference/foundation.md), as harness-due does
+  const held = manifest !== null && manifest.stage === 'foundation';
   const overdue = (kind, runs) => {
-    if (!runs || due.reports[kind] === null) return;
+    if (held || !runs || due.reports[kind] === null) return;
     const r = dueReports(due.reports[kind])[0];
     if (r && ageOf(r) >= DUE_DAYS[kind]) haz(`${kind}-overdue`, `the newest ${kind} report is ${ageOf(r)} days old; due every ${DUE_DAYS[kind]} days`, r.rel);
     else if (!r && settled(DUE_DAYS[kind])) haz(`${kind}-overdue`, `no ${kind} report at ${due.reports[kind].map(p => p.template).join(' or ')}`);
@@ -992,7 +995,7 @@ function buildReport() {
     if (here && fuRel === null) fuRel = rel;
   }
   const h = dueReports(due.reports.hygiene)[0];
-  if (openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
+  if (!held && openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
     haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
   }
 

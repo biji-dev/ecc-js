@@ -199,12 +199,14 @@ without the plan check, lane A and the separate doc sweep; step 8 is `--tier ful
 
 ## The harness lane
 
-`[M]` **A diff of harness paths alone** (`HARNESS` in `review-gate-core.mjs`)
-runs Small's column with these changes: step 1 is an impact note; 4 and 8c do not
-run; 5–7 are the shipped tests and `check-agent-docs.mjs`; step 8 is `--tier
-harness`, one cross-family review and one fix round, a second round the owner's
-call. Gate 1 and Gate 2 are the owner's for a guard, a gate, a reviewed block or the
-rules block, else the merge policy's.
+`[M]` **A diff of harness paths alone** (`HARNESS` in `review-gate-core.mjs`; a
+doc changes no tier's review) runs Small's column with these changes: step 1 is an
+impact note; 4 and 8c do not run; 5–7 are the shipped tests and
+`check-agent-docs.mjs`; step 8 is `--tier harness`, one cross-family review and one
+fix round, a second round the owner's call. Gate 1 is the claim line and Gate 2 the
+merge policy's, except that the owner takes both for a guard (the commit guard, its
+hooks), a gate (`run-gates.sh`, `review-gate.mjs`, the `gates` block), a reviewed
+block or the rules block. A diff Trivial fits stays Trivial unless it edits one.
 > Origin: seven of one install's first eight units were its own harness, each Full.
 
 `[M]` **Harness work waits for product work.** A non-blocking harness follow-up
@@ -221,7 +223,9 @@ every row on the `Rows:` line and in the Scope block. One slice per row, one ste
 review over the combined diff, one fix round; 8a checks every row's "Done when";
 the record's Deliverable cell starts `rows <id>, <id>, <id> —`; Gate 2 shows one
 `Demo:` per row. **A row promoted to Full splits the batch:** the rows before it
-land, and it runs alone.
+finish as a smaller batch from their last slice, their `Rows:` line cut to them, and
+the promoted row and the rows after it go back to the queue, it as a Full unit of its
+own (`segment.md` › Halting).
 
 ## Per-step notes
 
@@ -260,7 +264,9 @@ as its own commit. Never reclaim a row you do not own.
   their id; the code half of an approved change request carries the request's id (or runs on
   `change/<slug>`, matched by the Branch cell, when requests carry none);
   harness work, vendor-trap skills and follow-ups no unit owns run on
-  `harness/<slug>`, matched by the Branch cell. Write the generated paths with
+  `harness/<slug>`, matched by the Branch cell, and that branch is the unit's id in
+  the registry, the log row and the merge subject: the cadences and the retro tell
+  harness work from product work by it. Write the generated paths with
   `<unit>` (the id or the slug), never the plan's id shape alone.
 - `[M]` **In the foundation stage** (`foundation.md`) the skeleton is the one
   product unit, Full and owner-merged; the flip follows it, and no other harness
@@ -495,7 +501,8 @@ review round is outstanding. Decided by the merge policy and the run grant
   Until it is committed the row has no date, and the retro's digest says so
   (`learning.md`).
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
-- `[M]` Write the merge message to a file; `git merge` does not read stdin.
+- `[M]` Write the merge message to a file, its subject `Merge <branch>: <title>`;
+  `git merge` does not read stdin.
 - `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
   unit the close announces, after any answered parked unit (› Shape).
 

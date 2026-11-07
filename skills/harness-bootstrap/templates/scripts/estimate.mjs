@@ -58,8 +58,11 @@ function main() {
         throw new Error(`cannot read log ${name}: ${e.code ?? e.message}`, { cause: e });
       }
       if (!hasLogTable(text)) throw new Error(`no harness-log table (Unit and Elapsed or Cost columns) in ${name}`);
-      return { name, text };
+      return { name, text, real: fs.realpathSync(name) };
     });
+    // a log named twice would count each of its units twice
+    const twice = logs.find((l, i) => logs.findIndex((o) => o.real === l.real) !== i);
+    if (twice) throw new Error(`log ${twice.name} is given twice`);
     const records = poolLogs(logs);
     leftOut = leftOutWarning(logs.flatMap(({ text }) => leftOutRows(text)));
     est = estimate(records, { tier: args.tier, cohort: args.cohort, sources: args.logs });

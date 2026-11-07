@@ -431,6 +431,10 @@ test('the wrapper prints the line for a log file, JSON on request, and exits 2 o
   assert.match(none.stderr, /no harness-log table/);
   assert.equal(cli(['--log', log, '--bogus']).status, 2);
   assert.equal(cli(['--log', log, '--slices', '3']).status, 2);
+  // the same log twice, under two names, would count each unit twice
+  const twice = cli(['--log', log, '--log', `${dir}/./log.md`]);
+  assert.equal(twice.status, 2);
+  assert.match(twice.stderr, /log .*log\.md is given twice/);
   assert.deepEqual(fs.readdirSync(dir).sort(), ['empty.md', 'log.md']);
 });
 

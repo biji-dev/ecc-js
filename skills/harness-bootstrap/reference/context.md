@@ -125,16 +125,13 @@ two if the compaction call itself turns out uncached (−1.8% against −0.4%).
 compaction compacts a conversation left idle about 54 minutes, before the cache
 expires, so the owner's answer does not rewrite it all — but only after an ended
 turn: **0 of 44 idle compactions came while an `AskUserQuestion` or `ExitPlanMode`
-was pending.** So at an owner gate with the context at **150K or more**, or while
-another unit can run, the cards go to the state file as `Q-n` rows and out as text,
-the unit parks, and when nothing else is ready the turn ends (`gate-design.md` ›
-Parking a unit). Under 150K, with nothing else ready, the question tool stays:
-rewriting the context costs less than compacting it below about 125K (the $0.15
-compaction call against rewriting what lies above the 106K base at $8 a million).
+was pending.** So a blocking card goes to the state file as a `Q-n` row and out as
+text, the unit parks, and when nothing else is ready the turn ends (`gate-design.md`
+› Parking a unit).
 
 `[M]` **Idle compaction** is on by default for a conversation of 200K or more;
-`CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=150000`, a machine setting, lowers that to the
-gate wait's figure, and `/config` › Idle compaction turns it off. It needs no owner
+`CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=150000`, a machine setting, lowers that to
+150K, and `/config` › Idle compaction turns it off. It needs no owner
 action: it runs while the owner is away.
 
 `[M]` **The base budget.** Each 10K tokens trimmed from what every session loads
@@ -163,7 +160,7 @@ settings order: managed settings, then `--settings`, then local, project and use
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` beats both; a `modelSettings` entry in a settings
 file beats the top-level key in the same file), the hook's warning
 (220K) and its margin under the window (40K; with no window set, a 260K limit), the
-gate wait's figure (150K), the base target, the state file's path. The retro
+base target, the state file's path. The retro
 re-measures them (`learning.md`).
 
 ## The budget hook — opt-in

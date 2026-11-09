@@ -5,12 +5,15 @@
  * Reads what retro-core turns into a digest: the log and the follow-ups doc with each line's commit
  * time (git blame), the state and steps files, earlier digests and exports, the Claude Code
  * transcripts and a Codex host's threads that ran in the repository or one of its worktrees, and the
- * two run ledgers, codex-run's and claude-run's. Read-only: it never writes, and its git is `blame`,
- * `log`, `rev-parse` and `worktree list`.
+ * two run ledgers, codex-run's and claude-run's, and the mainline's merges and fix commits around the
+ * window (the files each changed), so a granted decision can be linked to a fix on its unit's files.
+ * Read-only: it never writes, and its git is `blame`, `log`, `diff`, `diff-tree`, `rev-parse` and
+ * `worktree list`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { contextCommands, markerUnits, previousData } from './retro-core.mjs';
+import { MAIN } from './harness-due-core.mjs'; // the one [B] binding of the mainline (retro-core binds none)
+import { DEFECT_DAYS, FIX_SUBJECT, contextCommands, markerUnits, mergedBranch, previousData } from './retro-core.mjs';
 import {
   CLAUDE_LEDGER_DIR,
   codexProjectSessions,
@@ -176,6 +179,69 @@ export function lastCommitTimes(top, dirs) {
   return times;
 }
 
+const DAY = 86_400_000;
+
+/** The paths a commit changed against its first parent (a root commit: against nothing); none when git cannot say. */
+function changedFiles(top, sha) {
+  const lines = (out) => out.split('\n').filter(Boolean);
+  try {
+    return lines(gitRead(['diff', '--name-only', '--no-renames', `${sha}^1`, sha], top));
+  } catch {
+    try {
+      return lines(gitRead(['diff-tree', '--root', '--no-commit-id', '--name-only', '--no-renames', '-r', sha], top));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * The mainline's first-parent history from DEFECT_DAYS before `sinceMs` to `untilMs` (committer time):
+ * { merges: [{ sha, unit, t, seq, subject, files }], fixes: [{ sha, t, seq, subject, files }], note? }.
+ * It is read from MAIN, not from HEAD: run from a unit's linked worktree, HEAD is the unit's branch and
+ * the repairs that landed on the mainline since would be missed. When MAIN does not exist (a repository
+ * whose mainline has another name), HEAD is read and `note` says so; an explicit `ref` is used as given.
+ * `seq` is the commit's place in the window's `git log --first-parent` order, larger = later, for
+ * ordering commits that share a second. A merge's unit is the branch its subject names (mergedBranch;
+ * null when it names none) and its files those the merge changed on the mainline (`git diff
+ * <merge>^1 <merge>`); a fix is a single-parent commit whose subject is a revert or a conventional fix
+ * (FIX_SUBJECT). The extra days are there so a fix early in the window finds the merge it repairs;
+ * nothing older is read. Empty lists when git cannot read the history.
+ */
+export function mainlineHistory(top, { sinceMs, untilMs, ref = null }) {
+  const out = { merges: [], fixes: [] };
+  let note = null;
+  let from = ref;
+  if (from === null) {
+    try {
+      gitRead(['rev-parse', '--verify', '--quiet', `${MAIN}^{commit}`], top);
+      from = MAIN;
+    } catch {
+      from = 'HEAD';
+      note = `no ${MAIN} branch: the mainline history was read from HEAD`;
+    }
+  }
+  let log;
+  try {
+    const since = new Date(sinceMs - DEFECT_DAYS * DAY).toISOString();
+    const until = new Date(untilMs).toISOString();
+    log = gitRead(['log', '--first-parent', '--no-color', `--since=${since}`, `--until=${until}`, '--format=%x1e%H%x1f%ct%x1f%P%x1f%s', from, '--'], top);
+  } catch {
+    return out;
+  }
+  const records = log.split('\x1e').filter((rec) => rec.trim() !== '');
+  records.forEach((rec, i) => {
+    const [sha, ct, parents, subject = ''] = rec.replace(/\n+$/, '').split('\x1f');
+    if (!/^[0-9a-f]{40,64}$/.test(sha ?? '')) return;
+    const t = Number(ct) * 1000;
+    const seq = records.length - 1 - i; // newest first in the log: the first record is the latest
+    if (String(parents).trim().split(/\s+/).length > 1) out.merges.push({ sha, unit: mergedBranch(subject), t, seq, subject, files: changedFiles(top, sha) });
+    else if (FIX_SUBJECT.test(subject)) out.fixes.push({ sha, t, seq, subject, files: changedFiles(top, sha) });
+  });
+  if (note !== null) out.note = note;
+  return out;
+}
+
 /** Files under `dir` whose name ends with one of `suffixes`, skipping dependency and build trees. */
 export function findFiles(dir, suffixes, depth = 0, out = []) {
   let entries;
@@ -230,9 +296,12 @@ function addSteps(steps, markers, fallback) {
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
  * `top` and its worktrees whose main file changed since `sinceMs` (a main thread's events and its typed
  * /clear and /compact commands carry the session's id), and so are a Codex host's threads
- * (rollouts under `codexDir`, streamed: one can pass 512 MB).
+ * (rollouts under `codexDir`, streamed: one can pass 512 MB). With `history` ({ sinceMs, untilMs }, the
+ * window), the mainline's merges and fixes around it (mainlineHistory, whose `note` rides along on a
+ * fallback to HEAD); without it, `merges` and `fixes`
+ * are null, so the digest says the git figures were not read rather than zero.
  */
-export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, codexDir = codexSessionsDir(), ledger = null, claudeLedger = null, sinceMs = 0 }) {
+export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, codexDir = codexSessionsDir(), ledger = null, claudeLedger = null, sinceMs = 0, history = null }) {
   const logFile = log === null ? null : path.join(top, log);
   if (logFile !== null && !fs.existsSync(logFile)) throw new Error(`no harness log at ${log}`);
   const g = {
@@ -248,7 +317,10 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     ledger: null,
     codex: [],
     claudeRuns: null,
+    merges: null,
+    fixes: null,
   };
+  if (history) Object.assign(g, mainlineHistory(top, history));
   const dirs = plansDirs.filter((d) => fs.existsSync(path.join(top, d)));
   const changed = lastCommitTimes(top, dirs);
   for (const dir of dirs) {

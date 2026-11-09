@@ -222,7 +222,7 @@ export function reviewPrompt({ week, digests, previous = null }) {
     '- Projects: <the repositories it applies to>',
     '- Evidence: <digest file> › <section>: "<a short quote>", with the numbers as the digest gives them',
     '- Proposal: the change itself — the file, the value or the rule text',
-    '- Route: T when it is recoverable and changes no product behaviour (queue a `harness/<slug>` unit in the project) · C when it changes product behaviour, cost or the owner\'s workflow (the next Gate 2 brief, under "Harness learning")',
+    '- Route: T when it is recoverable and changes no product behaviour (one line in that project\'s `docs/harness/upstream-notes.md`, read at the next skill round; never a unit) · C when it changes product behaviour, cost or the owner\'s workflow (that project\'s next weekly report, under "Harness learning")',
     '- Confidence: high, medium or low, and what would raise it',
     '',
     'Cite only what the digests say and never invent a number. A pattern in one unit is a candidate; the same pattern in two projects is a promotion. Promote mechanism, never one project\'s thresholds. If nothing clears that bar, write "No proposals this week" and why.',

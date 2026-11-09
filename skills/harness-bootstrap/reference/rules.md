@@ -148,7 +148,8 @@ against an incomplete picture is not an approval.
 > pass was in flight. Two more rounds followed. It held because an agent chose the
 > careful reading — not because the gate did.
 
-**An unanswered Gate 2 question means park and carry, never consent.**
+**Silence is never consent.** The standing grant is the consent, in writing;
+outside it an unanswered question parks and carries.
 > Origin, three occurrences: silence after a Gate 2 brief was read as approval.
 
 **An override covers the findings on the table when it was given; new findings
@@ -206,8 +207,8 @@ machine-down time separately.
 
 ### Cost
 
-**P3s never start a fix round.** They wait for the P3 batch, one per slice set,
-with no re-review; a P3 on a line the round already changes rides along.
+**P3s never start a fix round.** A P3 on a line the round already changes rides
+along; at `production: live` the rest wait for one P3 batch, with no re-review.
 > Origin, the cost study: in one 50-slice milestone, 20 of the 50 fix rounds were
 > opened by P3 findings alone, each followed by an Opus re-review — about four hours
 > of serial wall time and a tenth of the milestone's spend.
@@ -247,10 +248,9 @@ second run of the same gates waits for the first.
 > always owed. No run repeated after a merge whose tree equalled the verified tip;
 > the merges were never the waste.
 
-**At an owner gate past 150K, the cards go out as text.** The open cards go to the
-state file as `Q-n` rows first, and the turn ends once nothing else is ready. Under
-150K they go out as text too while another unit can run; otherwise the question tool
-stays (`gate-design.md` › Parking a unit).
+**A blocking card goes out as text, never a question tool.** The open cards go to the state file as `Q-n`
+rows first, and the turn ends once nothing else is ready (`gate-design.md` ›
+Parking a unit).
 > Origin, the v5 context study: 183 requests after a gap of more than an hour
 > rewrote their whole context, 9.6% of main-thread spend. Idle compaction runs only
 > after an ended turn — 0 of 44 came while a question was pending.
@@ -351,16 +351,19 @@ consistently.**
 
 ---
 
-## 2 · Tripwires — stop in flight, do not log and continue
+## 2 · Tripwires — stop fixing, redesign once
 
-An anomaly recorded in a log is one discovered too late.
+An anomaly recorded in a log is one discovered too late. A tripwire stops the
+fixing in flight: the judgment model re-plans the area once, and the second
+family's adversarial pass reviews the new approach. A redesign that trips again
+cuts the area (`gate-design.md` › Fix rounds); it parks the unit only when the way
+forward is on the never-auto list.
 
 | Tripwire | Fired, in the origin project |
 |---|---|
 | **A fix round introduces a new *blocking* finding** | **4×** — every occurrence inside one of the four longest tasks |
 | Scope outgrew its tier | 4× |
 | Elapsed beyond 3× the tier median, **work time only** | 3× |
-| A third review round opens **without the owner asking** | 1× |
 | A re-tier crosses into a never-auto category | 1× |
 | A **behaviour** claim the claim auditor failed, kept, that its fix's re-run still does not back | counts as the first row; deleting it is the fix, never a trip — record prose is quote-or-delete at 8b, never a claim round |
 
@@ -377,10 +380,8 @@ fixed or filed and counted under Defects.
 > Origin, twice in the second project: every fix pass produced a minor finding of
 > its own; the table had no arm for that, and the log said *"fix the machinery."*
 
-**A third round the owner asks for is not the tripwire.** Run it, log it as the
-owner's, present Gate 2 again, and never open a fourth unasked. On critical code
-that round is the second family's adversarial pass, never a third Opus review
-(`review-gate.mjs` says `escalate-adversarial`).
+**A third or fourth round is not the tripwire.** `review-gate.mjs` runs it as the
+adversarial pass, then the redesign, never a third Opus review.
 
 **Do not ship the thresholds.** *"3× the tier median"* is mechanism; *"90
 minutes"* is a number that project earned. Generate the slot empty. If you carry

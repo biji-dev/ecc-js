@@ -42,7 +42,7 @@ Each rule was produced by a failure in another project; the incident behind each
 
 - **Guard every commit — refuse, do not merely check.** A git hook, not a habit: three times a concurrent session committed onto a running unit's branch.
 - **Gate 2 is not asked while a review is still running.** An approval against an incomplete picture is not an approval.
-- **An unanswered Gate 2 question means park and carry, never consent.** Silence was read as approval three times.
+- **Silence is never consent.** The standing grant in the merge block is the consent, in writing; outside it an unanswered question parks and carries. Silence was read as approval three times.
 - **An override covers the findings on the table when it was given; new findings re-arm the stop.** One override over six findings preceded twelve it never saw.
 - **A re-tier into a never-auto category invalidates the reviews already run.** A unit added an authorization layer mid-run and merged reviewed at the lower tier.
 - **A conformance verdict is not evidence of correctness.** Conformance returned CLEAN on code with a CRITICAL nine tasks running.
@@ -64,7 +64,7 @@ Each rule was produced by a failure in another project; the incident behind each
 - **One turn, many tool calls.** 96% of agent turns made one tool call, each re-reading the whole context.
 - **Split a milestone that will not fit one session.** 50 slices in one session: 20 compactions, a 493 KB state file.
 - **Never re-run a gate on a tree it already passed.** 33 full-suite runs repeated on an unchanged tree in 14 days.
-- **At an owner gate past 150K, the cards go out as text.** An open question is never idle-compacted; rewrites after hour-long waits cost 9.6% of spend.
+- **A blocking card goes out as text, never a question tool.** An open question is never idle-compacted; rewrites after hour-long waits cost 9.6% of spend.
 - **Wait on a completion notice, never a sleep loop; shrink a screenshot before reading it.** Each poll re-read about 200K of context.
 
 ### Sessions and the working tree

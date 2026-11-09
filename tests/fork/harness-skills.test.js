@@ -396,7 +396,7 @@ test('a P3 batch over critical code that Opus did not write gets the Opus code-r
   assert.ok(notOpus.test(para) && para.includes('Opus `code-reviewer`'), 'the P3-batch paragraph does not name the Opus `code-reviewer` for a batch over critical code');
   assert.ok(para.includes('--max-fixed P3'), 'the P3-batch paragraph does not cite `review-gate.mjs --kind fix --max-fixed P3`');
   const runner = gateRef('runner.md');
-  const at = runner.indexOf('**The P3 batch** runs once per slice set');
+  const at = runner.indexOf('**The P3 batch**, at `production: live` only, runs once per slice set');
   assert.ok(at >= 0, 'runner.md has no P3-batch bullet');
   const bullet = runner.slice(at, runner.indexOf('- `[M]`', at));
   assert.ok(notOpus.test(bullet) && bullet.includes('Opus `code-reviewer`'), "runner.md's P3-batch bullet does not name the Opus `code-reviewer` for a batch over critical code");
@@ -914,12 +914,13 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 9 for 2.2.3-js.12, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 10 for 2.2.3-js.13, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
   assert.match(text, /^\| 8 \| 2\.2\.3-js\.11 \| /m, 'the version table has no row 8 for 2.2.3-js.11');
   assert.match(text, /^\| 9 \| 2\.2\.3-js\.12 \| /m, 'the version table has no row 9 for 2.2.3-js.12');
+  assert.match(text, /^\| 10 \| 2\.2\.3-js\.13 \| /m, 'the version table has no row 10 for 2.2.3-js.13');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -928,7 +929,7 @@ test("upgrade.md has a version row 9 for 2.2.3-js.12, and both skills, the manif
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v8 install the v9 row, a v7 install the v8 and v9 rows, a v3 install the v4 to v9 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v8, v7 or v3 install to v9');
+  assert.ok(flat.includes('a v9 install the v10 row, a v8 install the v9 and v10 rows, a v3 install the v4 to v10 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v9, v8 or v3 install to v10');
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {
@@ -1188,12 +1189,12 @@ test('v9: the skeleton is the pass-signal unit, the flip follows it, and no othe
   assert.ok(squashed('reference/policy-derivation.md').includes('a path under no placed directory is **critical**, never cold'), 'policy-derivation.md does not narrow the unplaced-path rule');
 });
 
-test('v9: a harness-only diff runs the harness lane, and harness work waits for product work', () => {
+test('v9: a harness-only diff runs the harness lane; v10: no harness unit inside a project but an upgrade or a broken guard', () => {
   const runner = squashed('reference/runner.md');
   for (const part of [
     '## The harness lane',
     '**A diff of harness paths alone**',
-    '**Harness work waits for product work.**',
+    '**The harness freeze: no harness unit inside a project**',
     '**An owner\'s own push, rename or commit is a fact:**',
   ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);
   const gates = squashed('reference/gate-design.md');
@@ -1206,10 +1207,10 @@ test('v9: severity is judged against the stakes line, critical entries cite a ha
   for (const part of [
     '**Severity is judged against the stakes line.**',
     '**Taste is a card, not a tier.**',
-    '**Unsure whether a named Full condition holds → Full; no condition named → Small.**',
+    '**Unsure whether a named Full condition holds → Full at `production: live`, Small plus the adversarial pass at `none`; no condition named → Small.**',
   ]) assert.ok(gates.includes(part), `gate-design.md lacks: ${part}`);
   const policy = squashed('reference/policy-derivation.md');
-  for (const part of ['**Ask it against the stakes line.**', '**Every critical entry cites a harm, a category or its importer count.**']) {
+  for (const part of ['**Ask it against the stakes line.**', '**Every critical entry cites a harm or a category.**', '**The importer count makes a module hot, never critical.**']) {
     assert.ok(policy.includes(part), `policy-derivation.md lacks: ${part}`);
   }
 });

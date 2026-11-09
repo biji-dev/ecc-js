@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 9
+  version: 10
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -49,8 +49,8 @@ Dispatch, by host; in a harness, `.agents/harness-models.json`).
 - The contracts between tasks — routes, signatures, type names, file ownership —
   can be fixed **before** any executor starts.
 - **Inside a gated harness** (`harness-bootstrap`): the runner hands this skill
-  each bounded segment. Gate 1 approves the slicing table, which replaces this
-  skill's own spec-index stop.
+  each bounded segment. The run's Gate 1, under its grant, approves the slicing
+  table, which replaces this skill's own spec-index stop.
 
 Handle directly instead, and say why: a single bug (diagnosis is most of the work);
 design decisions still open; tasks that must edit the same files; judgment-heavy or
@@ -76,7 +76,7 @@ exists (the `harness-bootstrap` skill's gate design), else the project's own jud
 |---|---|---|
 | copy, mechanical adoption with count gates, UI against a committed contract, tests for cold code, fixes outside critical code, docs | **the second family first** (`implement-cold`, `fix-cold`, `docs`) while it is available and under its budget, else a Sonnet builder — and a Sonnet builder when the slice needs a browser, a service the sandbox cannot reach, or steering mid-run | waves, in parallel when truly independent — twins over a landed contract (web and mobile) included |
 | contract or domain logic | Opus implementer | serial |
-| critical code — never-auto categories, migrations, auth, money, widely imported modules | **Opus implementer only** | **serial, never in parallel** |
+| critical code — never-auto categories, migrations, auth, money, the risk map's critical entries | **Opus implementer only** | **serial, never in parallel** |
 
 The second family's quota is separate from Claude's: a cold slice there costs the
 Claude quota nothing, and its review comes from Claude (a Sonnet reviewer, or the
@@ -134,7 +134,7 @@ State the decision and the model for each role in one line before going on.
    > Origin: Gate 1 approved the slicing table but never saw the spec text, so every
    > spec defect in those runs got past it.
 6. **Show the spec index** — one line per spec with its order — and get a go-ahead
-   (or Gate 1, in a harness) before dispatching.
+   before dispatching; in a harness, the run's Gate 1 under its grant.
 
 Templates for every kind are in `reference/spec-templates.md`.
 
@@ -189,7 +189,7 @@ Templates for every kind are in `reference/spec-templates.md`.
    goes into the spec — into **every** spec that carries the contract it changes, so
    they stay identical — the harness's state file and the commit message, never only
    the chat.
-7. **Fix rounds — at most three.** A red gate gets a Sonnet fixer (Opus on critical
+7. **Fix rounds — at most three standalone.** A red gate gets a Sonnet fixer (Opus on critical
    code) **fenced to the current slice's listed files, never a folder** — a fixer
    once wrote the next wave's strings. **Review findings:** P3s never open a fix
    round — they wait for one Sonnet P3 batch, with no re-review; fix groups
@@ -199,7 +199,8 @@ Templates for every kind are in `reference/spec-templates.md`.
    decides). Give it the tail of **both stdout and
    stderr**: type checkers and build orchestrators print errors to stdout. A finding
    is `verified` only when the gate is green. Count maps come from the spec. Still
-   red after three: stop and report.
+   red after three: stop and report — in a harness, `review-gate.mjs` names round 3
+   the adversarial pass, round 4 the redesign and round 5 the cut, none asked.
 8. Executors that share state (one test database, one port) run in sequence, or each
    gets its own resource. **Pin the repository root** in every command.
 9. **Another session may be working in the same clone.** A file outside every list

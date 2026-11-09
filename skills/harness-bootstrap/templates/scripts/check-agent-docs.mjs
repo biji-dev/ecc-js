@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 // harness-bootstrap check-agent-docs (generated YYYY-MM-DD). Verify gate for the shared agent instruction files.
-// [M] mechanism (ship as-is): everything below the CONFIG block - the ten checks, the glob matcher,
+// [M] mechanism (ship as-is): everything below the CONFIG block - the eleven checks, the glob matcher,
 //     `--rules-for`, `--base` and `--json`.
 // [B] binding (re-derived per project): the CONFIG block only. Generation sets each budget to the
-//     file's current size rounded up to the next 1,024 bytes, so a budget is a ratchet: a check fails only
-//     ABOVE it. A budget set to null is off (its check does not run); a missing one fails.
+//     file's current size rounded up to the next 1,024 bytes, so a budget is a ratchet: a check reports
+//     only ABOVE it. A budget set to null is off (its check does not run); a missing one fails.
 //
-// Checks (all run; every failure is reported; exit 1 if any failed):
+// Checks (all run; every failure is reported; exit 1 if any failed). A size budget is a WARNING: it is printed
+// and listed under `warnings`, and changes neither `ok` nor the exit code - a gate that failed on a size would
+// turn every growth of an instruction file into work. What fails is a broken binding (a missing or invalid
+// budget key) and a file over a host's hard read limit, where the host drops the rest and breaks.
 //   import       CLAUDE.md's first non-blank line is `@AGENTS.md`
-//   budget       byte size of AGENTS.md, CLAUDE.md, rule files, state files, processFile; line count of each SKILL.md
+//   budget       WARNS. Byte size of AGENTS.md, CLAUDE.md, rule files, state files, processFile; line count of each SKILL.md
+//   hard-limit   FAILS. A file over its host's hard read limit (CONFIG.hardLimits): Codex reads at most 32 KiB of
+//                AGENTS.md and silently drops the rest
 //   rule-paths   each rule file has a non-empty `paths:` list and every glob matches a file in the repo
 //   rule-index   rule files and the index in `indexFile` agree both ways
 //   links        relative markdown links resolve (a gitignored target counts as present)
@@ -16,14 +21,14 @@
 //   frontmatter  skills and agents carry valid frontmatter; read-only agents hold no write tools
 //   secrets      no credential-shaped strings in the instruction files
 //   base         the bytes every session loads from the repository: CLAUDE.md, what it imports with `@`,
-//                AGENTS.md and rule files without `paths:` (off when budgets.base is null)
+//                AGENTS.md and rule files without `paths:` (WARNS; off when budgets.base is null)
 //   citations    each AGENTS.md section the instruction files or the code cite still exists: `AGENTS.md` › Name,
 //                `AGENTS.md` (Name), or a quoted name or phrase after it (a renamed heading orphans them silently);
 //                `process.md` › Name, or processFile's path › Name, the same against processFile
 //
 // `--rules-for <file...>` prints the rule files whose `paths:` globs match the given paths and exits 0.
 // `--base` prints those always-loaded files with their bytes and the target, and exits 0.
-// `--json` prints {ok, failures:[{check, file, line, detail}]} instead of text (with --base: the files).
+// `--json` prints {ok, failures:[{check, file, line, detail}], warnings:[same shape]} instead of text (with --base: the files).
 import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, normalize, relative, isAbsolute, sep, posix } from 'node:path';
@@ -49,6 +54,10 @@ export const CONFIG = {
   citeFiles: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'], // code whose comments may cite AGENTS.md (the instruction files always do)
   citeExempt: ['scripts/check-agent-docs.mjs', 'scripts/lib/check-agent-docs.test.mjs'], // their citations are fixtures
   processFile: '.agents/skills/task-runner/process.md', // the run's blocks moved out of AGENTS.md
+  // A host's hard read limit in bytes (Codex's default `project_doc_max_bytes`): a file over it FAILS, since the host
+  // drops the rest. null turns a limit off - an install with no Codex host binds { 'AGENTS.md': null }. A missing
+  // `hardLimits` key means no hard limit; a present one is a whole number >= 0 or null, else it fails.
+  hardLimits: { 'AGENTS.md': 32768 },
 };
 // ---- [M] mechanism: ship as-is ----------------------------------------------------------------
 
@@ -314,6 +323,7 @@ const rulesForAt = args.indexOf('--rules-for');
 const wantBase = args.includes('--base') && rulesForAt === -1;
 
 const failures = [];
+const warnings = [];
 let checks = 0;
 
 // Credential-shaped strings. Any value that matches is masked in every message, whichever check quotes it.
@@ -330,15 +340,18 @@ const mask = (text) =>
 
 function finish() {
   // Every result passes through here, so no check can quote a secret into text or JSON output.
-  const shown = failures.map((f) => ({ ...f, file: mask(f.file), detail: mask(f.detail) }));
+  const masked = (list) => list.map((f) => ({ ...f, file: mask(f.file), detail: mask(f.detail) }));
+  const shown = masked(failures);
+  const warned = masked(warnings);
+  const line = (word, f) => `${word} ${f.check}: ${f.file ? `${f.file}${f.line ? `:${f.line}` : ''} ` : ''}${f.detail}`;
   if (wantJson) {
-    console.log(JSON.stringify({ ok: shown.length === 0, failures: shown }, null, 2));
-  } else if (shown.length) {
-    for (const f of shown) {
-      const where = f.file ? `${f.file}${f.line ? `:${f.line}` : ''} ` : '';
-      console.error(`FAIL ${f.check}: ${where}${f.detail}`);
-    }
+    console.log(JSON.stringify({ ok: shown.length === 0, failures: shown, warnings: warned }, null, 2));
   } else {
+    // Warnings go to stderr beside the failures, so the OK line on stdout stays what a caller matches.
+    for (const f of shown) console.error(line('FAIL', f));
+    for (const f of warned) console.error(line('WARN', f));
+  }
+  if (!wantJson && !shown.length) {
     console.log(`check-agent-docs: OK (${checks} checks)`);
   }
   process.exitCode = failures.length ? 1 : 0;
@@ -384,6 +397,11 @@ function main() {
   const verify = (cond, check, file, line, detail) => {
     checks += 1;
     if (!cond) fail(check, file, line, detail);
+  };
+  // A size is reported, never a failure: it must not change `ok` or the exit code.
+  const verifyWarn = (cond, check, file, line, detail) => {
+    checks += 1;
+    if (!cond) warnings.push({ check, file, line: line || 0, detail });
   };
 
   // On disk and in the index or untracked-but-not-ignored: a file deleted but not yet staged
@@ -597,7 +615,8 @@ function main() {
   }
 
   // 2. budget
-  // A key that is missing or not a whole number fails once and its files are not checked; null is off.
+  // A key that is missing or not a whole number FAILS once (a broken binding) and its files are not checked;
+  // null is off. A file over a budget only warns.
   const shown = (v) => (typeof v === 'number' && !Number.isFinite(v) ? String(v) : (JSON.stringify(v) ?? String(v)));
   for (const key of BUDGET_KEYS) {
     const v = CONFIG.budgets?.[key];
@@ -610,27 +629,46 @@ function main() {
     const limit = budgetOf(f);
     if (limit === null) continue;
     const n = size(f);
-    verify(n <= limit, 'budget', f, 0, `${n} bytes, budget ${limit} - move content into path-scoped rules`);
+    verifyWarn(n <= limit, 'budget', f, 0, `${n} bytes, budget ${limit} - move content into path-scoped rules`);
   }
   const processLimit = budgetOf('process.md');
   if (processLimit !== null && processFile) {
     const n = size(processFile);
-    verify(n <= processLimit, 'budget', processFile, 0, `${n} bytes, budget ${processLimit} - move detail into reference files`);
+    verifyWarn(n <= processLimit, 'budget', processFile, 0, `${n} bytes, budget ${processLimit} - move detail into reference files`);
   }
   const ruleLimit = budgetOf('rule');
   for (const f of ruleLimit === null ? [] : ruleFiles) {
     const n = size(f);
-    verify(n <= ruleLimit, 'budget', f, 0, `${n} bytes, budget ${ruleLimit} - split or trim it`);
+    verifyWarn(n <= ruleLimit, 'budget', f, 0, `${n} bytes, budget ${ruleLimit} - split or trim it`);
   }
   const stateLimit = budgetOf('stateFile');
   for (const f of stateLimit === null ? [] : listStateFiles()) {
     const n = size(f);
-    verify(n <= stateLimit, 'budget', f, 0, `${n} bytes, budget ${stateLimit} - archive finished entries`);
+    verifyWarn(n <= stateLimit, 'budget', f, 0, `${n} bytes, budget ${stateLimit} - archive finished entries`);
   }
   const skillLimit = budgetOf('skillLines');
   for (const f of skillLimit === null ? [] : skillFiles) {
     const n = read(f).replace(/\n$/, '').split('\n').length;
-    verify(n <= skillLimit, 'budget', f, 0, `${n} lines, budget ${skillLimit} - move detail into reference files`);
+    verifyWarn(n <= skillLimit, 'budget', f, 0, `${n} lines, budget ${skillLimit} - move detail into reference files`);
+  }
+
+  // 2b. hard-limit: a host reads at most this many bytes of the file and drops the rest, so over it is a failure.
+  const HARD_LIMIT_HOSTS = { 'AGENTS.md': 'Codex' };
+  const hardLimits = CONFIG.hardLimits ?? {};
+  if (typeof hardLimits !== 'object' || Array.isArray(hardLimits)) {
+    fail('hard-limit', '', 0, `CONFIG.hardLimits is ${shown(hardLimits)}, not an object`);
+  } else {
+    for (const [key, limit] of Object.entries(hardLimits)) {
+      if (limit === null) continue;
+      if (!Number.isInteger(limit) || limit < 0) {
+        fail('hard-limit', '', 0, `CONFIG.hardLimits.${key} is ${shown(limit)}, not a whole number or null`);
+        continue;
+      }
+      if (!isFile(key)) continue;
+      const n = size(key);
+      const host = HARD_LIMIT_HOSTS[key] ?? 'host';
+      verify(n <= limit, 'hard-limit', key, 0, `${n} bytes, over the ${host} hard read limit ${limit}: the host drops the rest - move content out`);
+    }
   }
 
   // 3. rule-paths
@@ -813,7 +851,7 @@ function main() {
 
   // 9. base
   if (baseTarget !== null) {
-    verify(
+    verifyWarn(
       baseTotal <= baseTarget,
       'base',
       '',

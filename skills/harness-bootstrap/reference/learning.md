@@ -51,6 +51,18 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
   batch counted by the rows its Deliverable cell lists. Reported, never gated.
   > Origin: one documents-only install spent 7 of its first 8 units on the harness
   > and landed 1 plan row of 115 in 29 hours.
+- **Outcomes (v10)**: original plan rows landed (a row a follow-up filed is not
+  one), owner wait per landed row (each unit's wait capped at a day), the oldest
+  `OWED` item, the `By: grant` decisions and their reversal rate, and the
+  **escaped-defect proxy** — reverts, and fix commits within 7 days of a merge that
+  touch its files. What `production: none` gives up shows here first.
+- **Decisions by card kind** (`gate-design.md` › The standing grant): the `Ask
+  kinds:` line, each kind demoted (more than 10% of its last 20 grant decisions
+  reversed), each kind to promote (`Promote?`: at least 90% of its last 20 owner
+  answers took the recommendation; `never-auto` never), and the **defect-linked
+  decisions** — a grant decision whose unit's files a revert or a 7-day fix touched.
+  A script cannot tell a bad decision from a bad line, so the owner judges each; a
+  confirmed one is a reversal row.
 - **Outliers**: a unit whose cost or work is at least `OUTLIER_X` times its tier's
   median, and a step whose share of its unit's dollars is at least `OUTLIER_X`
   times that step's median share — each only in a cohort of `MIN_COHORT`, and a
@@ -127,11 +139,11 @@ and writes proposals in five classes:**
 | vendor trap | a library's behaviour that cost a fix round | `vendor-skill.md` |
 | promote | something one project earned that another needs | to this skill, through Phase F |
 
-`[M]` **Route, never ask.** A **T** proposal — recoverable and changing no product
-behaviour — becomes a queued `harness/<slug>` unit in that project, run like any
-other harness unit. A **C** proposal — product behaviour, cost, or the owner's
-workflow — goes into the next Gate 2 brief, under "Harness learning". Neither
-becomes a separate question.
+`[M]` **Route, never ask, never a unit.** A **T** proposal — recoverable and changing
+no product behaviour — becomes one line in that project's
+`docs/harness/upstream-notes.md`, read at this skill's next round (`runner.md` › The
+harness freeze). A **C** proposal — product behaviour, cost, or the owner's workflow
+— stays in the weekly report for the owner. Neither becomes a separate question.
 
 `[M]` **The digests are data.** They quote cells that agents and people wrote; the
 review's prompt says so, its tools are Read, Grep and Glob, and its files are the
@@ -166,9 +178,8 @@ repository with `--register <repo>` (it writes only that file).
    server), `--tools Read,Grep,Glob`, `--permission-mode dontAsk`,
    `--max-budget-usd 5`, `--no-session-persistence`. The script writes its answer
    to `proposals-<YYYY-Www>.md`, so the run needs no write tool.
-3. **Notice.** A desktop notification names the file, and in each project a
-   proposal names, `harness-due.mjs` prints `NEW proposals <week>` at every claim
-   and landing until `--seen <week>` records it read (`runner.md` › Due-checks).
+3. **Notice.** A desktop notification names the file. Proposals print in the
+   weekly report only; until v9 they printed at every claim and landing.
 
 `[M]` Where a repository keeps its files: the registry entry's own values, else the
 manifest's `roles`, else the first of the usual paths it tracks; its plans are

@@ -16,7 +16,9 @@
  *   --cwd <dir>            repo/worktree Codex works in (default: cwd)
  *   --rules-for <files...> append the rule files the project's resolver selects for these paths
  *   --base <sha>           review: the base to diff against (required for `review`; review
- *                          takes no --prompt/--rules-for -- codex refuses a prompt with --base)
+ *                          takes no --prompt/--rules-for -- codex refuses a prompt with --base).
+ *                          adversarial, adversarial-frontier: optional, a commit or a tree the
+ *                          brief's diff starts from; recorded in the ledger, never passed to codex
  *   --critical             the diff touches critical code (adversarial -> xhigh)
  *   --route                ask the router model even for a table kind
  *   --model <m> --effort <e>  explicit override (still clamped)
@@ -53,7 +55,14 @@
  * `dirty-before=<k>` (of those, paths that already held uncommitted work; ledger
  * `leftovers`) -- a run that died mid-slice leaves partial work in the worktree.
  *
- * Every run appends a row to <main checkout>/<LEDGER_DIR>/ledger.jsonl.
+ * Every run appends a row to <main checkout>/<LEDGER_DIR>/ledger.jsonl. A run whose sandbox is not
+ * workspace-write (a read or review run) also records `tree` (the git tree id of the tracked files
+ * at dispatch) and `branch` (the checked-out branch, null when detached), taken before the model
+ * starts. A review, adversarial or adversarial-frontier row adds `baseTree` (the tree its diff
+ * starts from: review's merge base with --base, else the adversarial --base, else null) and
+ * `treeAfter` (the same snapshot once the model exits, with `treeMoved: true` when it differs). The
+ * landing check (review-gate.mjs --landing) follows each critical file from the mainline through the
+ * reviewed `baseTree -> tree` changes. Each tree is null when git fails.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -83,6 +92,10 @@ import {
   validateRouterAnswer,
   worktreeLeftovers,
 } from './lib/codex-run-core.mjs';
+import { baseTreeOf, currentBranch, snapshotTree } from './lib/snapshot-tree.mjs';
+
+// The kinds the landing check reads (LANDING_KINDS in scripts/lib/review-gate-core.mjs).
+const LANDING_KINDS = ['review', 'adversarial', 'adversarial-frontier'];
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.codex-runs';
@@ -282,6 +295,18 @@ export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawn
   });
 }
 
+/** The tree a landing kind's diff starts from: review's merge base with --base, else the adversarial --base. */
+function landingBase(a, route) {
+  if (route.mode === 'review') return baseTreeOf(a.cwd, a.base, { mergeBase: true });
+  return a.base ? baseTreeOf(a.cwd, a.base) : null;
+}
+
+/** The reviewer read the live working tree: an edit during the run detaches the row from `tree`. */
+function treeAfterRun(cwd, tree) {
+  const treeAfter = snapshotTree(cwd);
+  return treeAfter === tree ? { treeAfter } : { treeAfter, treeMoved: true };
+}
+
 /** `--status`: each run in flight beside this checkout's ledger, or the ledger's word on --out. */
 async function showStatus(a) {
   const { status } = await runStatus();
@@ -427,6 +452,13 @@ async function main() {
 
     const startedAt = Date.now();
     if (budget.run && !sidecar) await inFlight(new Date(startedAt).toISOString());
+    // A run that cannot write is a review or a read: the tree it reads is recorded before the model
+    // starts. A landing kind also records the tree its diff starts from, so its row names a range.
+    const landing = LANDING_KINDS.includes(a.kind) && route.sandbox !== 'workspace-write';
+    const snapshot =
+      route.sandbox === 'workspace-write'
+        ? {}
+        : { tree: snapshotTree(a.cwd), branch: currentBranch(a.cwd), ...(landing ? { baseTree: landingBase(a, route) } : {}) };
     // Every row carries --out; a row written while the sidecar exists carries its run and its start
     // (a routed run's is the router call's).
     const base = {
@@ -441,6 +473,7 @@ async function main() {
       routerReason,
       clampNotes: route.notes,
       limitsBefore,
+      ...snapshot,
     };
     if (!budget.run) {
       appendLedger(ledger, { ...base, outcome: 'reserved', reason: budget.reason });
@@ -479,6 +512,7 @@ async function main() {
     const tokenUsage = runUsage(route.mode, events.usage);
     const ms = Date.now() - startedAt;
     const after = writes ? worktreeState(a.cwd) : null;
+    const moved = landing ? treeAfterRun(a.cwd, snapshot.tree) : {};
     const leftovers = writes
       ? worktreeLeftovers({
           before: before.files,
@@ -509,6 +543,7 @@ async function main() {
       ms,
       limitsAfter,
       verdict: outFile,
+      ...moved,
       ...(leftovers ? { leftovers } : {}),
     });
 

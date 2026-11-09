@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 59;
+const EXPECTED_TESTS = 71;
 
 let passed = 0;
 let failed = 0;
@@ -145,12 +145,18 @@ const INSTALL = [
   [DUE_CORE, "export const MAIN = 'main';", "export const MAIN = 'trunk';"],
   [DUE_CORE, "export const LOG = 'docs/harness/log.md';", "export const LOG = 'docs/harness-log.md';"],
   [DUE_CORE, "export const FOLLOW_UPS = 'docs/harness/follow-ups.md';", FOLLOW_UPS_LIST],
+  [DUE_CORE, "export const REGISTRY = '.claude/registry.md';", "export const REGISTRY = 'harness/registry.md';"],
   [DUE_CORE, "  preflight: 'docs/harness/reports/preflight-<phase>.md',", "  preflight: 'docs/preflight/<phase>.md',"],
   [DUE_CORE, "  sweep: 'docs/harness/reports/sweep-<date>.md',", "  sweep: 'docs/sweeps/<date>.md',"],
   [DUE_CORE, 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;', 'export const PHASE_OF = (id) => /^(M\\d+)\\.\\d/.exec(id)?.[1] ?? null;'],
   [DUE_CORE, '  sweep: { days: 7, landings: 5 },', '  sweep: { days: 10, landings: 8 },'],
   [DUE_CORE, '  hygiene: { days: 14, landings: 5 },', '  hygiene: { days: 21, landings: null },'],
-  [DUE_CORE, 'export const P3_AGE_DAYS = 14;', 'export const P3_AGE_DAYS = 30;'],
+  [DUE_CORE, "export const STATE_DIR = 'docs/plans';", "export const STATE_DIR = '.claude/plans';"],
+  [DUE_CORE, 'export const OWED_DAYS = 3;', 'export const OWED_DAYS = 5;'],
+  [DUE_CORE, 'export const DIGEST_LINES = 20;', 'export const DIGEST_LINES = 12;'],
+  [DUE_CORE, 'export const VALVE_ITEMS = 10;', 'export const VALVE_ITEMS = 6;'],
+  [DUE_CORE, 'export const VALVE_DAYS = 3;', 'export const VALVE_DAYS = 2;'],
+  [DUE_CORE, 'export const SPLIT_LINES = 10000;', 'export const SPLIT_LINES = 4000;'],
   [DUE_CORE, 'export const DISK_MIN_GB = 25;', 'export const DISK_MIN_GB = 40;'],
   [DUE_CORE, 'export const WORKTREE_IDLE_HOURS = 6;', 'export const WORKTREE_IDLE_HOURS = 72;'],
   [
@@ -159,13 +165,12 @@ const INSTALL = [
     'export const REBUILDABLE = /(^|\\/)(node_modules|dist|\\.turbo|\\.output)\\/?$|\\.DS_Store$/;',
   ],
   [DUE_CORE, String.raw`  preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',`, "  preflight: 'run /phase-check <phase>; its escalations are Gate 1 cards',"],
-  [DUE_CORE, String.raw`  sweep: 'the next unit: harness/sweep-<date> (harness-bootstrap\'s reference/sweep.md)',`, "  sweep: 'run /sweep-check, the next unit: harness/sweep-<date>',"],
-  [DUE_CORE, String.raw`  retro: 'the next unit: harness/retro-<date> (node scripts/retro.mjs, then commit the digest)',`, "  retro: 'run /weekly-retro, the next unit: harness/retro-<date>, then commit the digest',"],
-  [DUE_CORE, String.raw`  hygiene: 'the next unit: harness/hygiene-<date> (harness-bootstrap\'s reference/hygiene.md)',`, "  hygiene: 'run /hygiene-pass, the next unit: harness/hygiene-<date>',"],
-  [DUE_CORE, String.raw`  p3: 'the next unit: harness/p3-batch-<date>, the hygiene unit\'s P3 batch alone (harness-bootstrap\'s reference/hygiene.md)',`, "  p3: 'run /p3-batch, the next unit: harness/p3-batch-<date>, the P3 batch alone',"],
+  [DUE_CORE, String.raw`  sweep: 'write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',`, "  sweep: 'run /sweep-check in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  retro: 'node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',`, "  retro: 'run /weekly-retro in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  hygiene: 'write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',`, "  hygiene: 'run /hygiene-pass in the background; the report rides in the next land commit',"],
   [DUE_CORE, "  disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',", "  disk: 'run /free-disk, in the background',"],
   [DUE_CORE, "  worktrees: 'git worktree remove <paths>, each once no registry row names it',", "  worktrees: 'run /prune-worktrees <paths>, each once no registry row names it',"],
-  [DUE_CORE, "  proposals: 'read <file>; route each proposal (T: a harness/<slug> unit, C: the next Gate 2 brief), then node scripts/harness-due.mjs --seen <week>',", "  proposals: 'run /read-proposals <file>, then node scripts/harness-due.mjs --seen <week>',"],
+  [DUE_CORE, String.raw`  inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',`, "  inbox: 'carry on; /resume-parked <unit> once the owner has answered',"],
 ];
 
 /** Copy the shipped scripts, apply each rebinding (each needle exactly once), run the suite. */
@@ -242,6 +247,15 @@ mutantFails('counting the harness units as product plan rows', 'for (const r of 
 mutantFails('counting a typed /clear or /compact as an agent run', 'if (!typedAt.has(`${session}|${start}`)) runs.push(end - start);', 'runs.push(end - start);');
 mutantFails("running two sessions' records together", 'g.events.push({ ...e, session: id });', 'g.events.push(e);', GATHER_REL);
 mutantFails("taking the Codex host's baseline from the transcripts'", "codexHost: previousKpis(g.previous, win.week, 'codexHost'),", 'codexHost: previousKpis(g.previous, win.week),');
+mutantFails('reading owner-other as owner', 'const BY_WORD = /owner[- ]other|owner|grant|default|agent/i;', 'const BY_WORD = /owner|owner[- ]other|grant|default|agent/i;');
+mutantFails('demoting a kind at the bar, not past it', 'if (last.length > 0 && n / last.length > bar) {', 'if (last.length > 0 && n / last.length >= bar) {');
+mutantFails("counting a grant row dated the newest promotion's day", '(r.date !== null && (cut === null || r.date > cut))', '(r.date !== null && (cut === null || r.date >= cut))');
+mutantFails('counting the undated grant rows of a promotion with no date', '(!promotedKind || (r.date !== null', '(cut === null || (r.date !== null');
+mutantFails("counting the owner's other choices as taking the recommendation", "const took = last.filter((r) => r.by === 'owner').length;", 'const took = last.length;');
+mutantFails('proposing never-auto for the grant', "    if (k === 'never-auto') continue;\n    const last = newestFirst(", '    const last = newestFirst(');
+mutantFails('linking a fix past the defect window', 'after(f, m) && f.t <= m.t + days * DAY && ', 'after(f, m) && ');
+mutantFails('letting a defect link beat a reversal', "      if (reversed.has(rowKey(r))) return { ...r, outcome: 'reversed' };\n", '');
+mutantFails("reading a unit branch's own commits as the mainline's", "['log', '--first-parent', ", "['log', ", GATHER_REL);
 
 /** What the shipped suite no longer pins: it builds its fixtures from the bound values, so the template's own are read here. */
 function checkDefaults(scriptsDir) {
@@ -293,6 +307,64 @@ test('CLI smoke: a bad flag and two output modes each exit 2 with the usage line
     assert.match(res.stderr, /^usage: node scripts\/retro\.mjs /m);
   }
   assert.deepStrictEqual(fs.readdirSync(cwd), []);
+});
+
+test('end to end: a granted decision whose unit merged and then got a fix on its file within 7 days shows defect-linked 1, with an Ask kinds line', () => {
+  const repo = tmp('retro-e2e-');
+  cleanup.push(repo);
+  const env = hermeticEnv(cleanup);
+  const git = (args, date) => {
+    const res = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+    });
+    assert.strictEqual(res.status, 0, res.stderr);
+  };
+  const write = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  };
+  const head = `| Unit ${MID} Mode ${MID} Type ${MID} Tier | Elapsed (work) | Owner wait | Defects | Cost |\n|---|---|---|---|---|\n`;
+  git(['init', '-q', '-b', 'main'], '2026-10-20T10:00:00Z');
+  write('docs/harness/log.md', `# Log\n\n${head}`);
+  write('src/a.js', 'one\n');
+  git(['add', '.'], '2026-10-20T10:00:00Z');
+  git(['commit', '-q', '-m', 'base'], '2026-10-20T10:00:00Z');
+  git(['checkout', '-q', '-b', 'EP-2'], '2026-10-21T10:00:00Z');
+  write('src/a.js', 'two\n');
+  write(
+    'docs/plans/EP-2.state.md',
+    [
+      'Unit: EP-2',
+      '',
+      '## Decisions',
+      '| ID | Date | Class | Decision | By | Card kind | Why | Rejected alternative | Reversal cost | Kind |',
+      '|---|---|---|---|---|---|---|---|---|---|',
+      '| DEC-1 | 2026-10-21 | T | read the file once | grant | code | faster | read per call | edit + tests | default |',
+      '',
+    ].join('\n'),
+  );
+  git(['add', '.'], '2026-10-21T10:00:00Z');
+  git(['commit', '-q', '-m', 'feat(a): read once'], '2026-10-21T10:00:00Z');
+  git(['checkout', '-q', 'main'], '2026-10-22T10:00:00Z');
+  git(['merge', '-q', '--no-ff', '-m', "Merge branch 'EP-2'", 'EP-2'], '2026-10-22T10:00:00Z');
+  fs.appendFileSync(path.join(repo, 'docs/harness/log.md'), `| EP-2 ${MID} plan ${MID} Code ${MID} Full | 60m | 10m | 0/0 | Cost $1 |\n`);
+  git(['commit', '-q', '-a', '-m', 'docs: log EP-2'], '2026-10-22T11:00:00Z');
+  write('src/a.js', 'three\n');
+  git(['commit', '-q', '-a', '-m', 'fix(a): the off-by-one'], '2026-10-24T10:00:00Z');
+  const projects = tmp('retro-e2e-projects-');
+  cleanup.push(projects);
+  const res = spawnSync(
+    process.execPath,
+    [path.join(SCRIPTS, CLI_REL), '--since', '2026-10-19T00:00:00Z', '--until', '2026-10-26T00:00:00Z', '--projects-dir', projects, '--dry-run'],
+    { cwd: repo, encoding: 'utf8', env },
+  );
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^Grant decisions: 1 · reversed 0 \(0%\) · defect-linked 1$/m);
+  assert.match(res.stdout, /^Ask kinds: owner-fact, never-auto$/m);
+  assert.match(res.stdout, /^Escaped-defect proxy: 0 reverts · 1 fixes within 7 days of a merge, on its files · 0 open P0\/P1 follow-ups filed this week$/m);
+  assert.match(res.stdout, /^- EP-2\/DEC-1 · read the file once · [0-9a-f]{7} fix\(a\): the off-by-one$/m);
 });
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

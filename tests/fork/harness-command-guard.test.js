@@ -12,6 +12,8 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..', '..');
 const GUARD = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'command-guard.mjs');
+// A repository outside the temporary directories, for the PATH check's inside-the-repository case.
+const REPO = fs.realpathSync(ROOT);
 
 let passed = 0;
 let failed = 0;
@@ -318,6 +320,45 @@ async function main() {
     ['{ export HUSKY=0; }; git commit -m x', 'no-verify'],
     ['export HUSKY=0; (git commit -m x)', 'no-verify'],
     ['export HUSKY=1; HUSKY=0 git commit -m x', 'no-verify'],
+    // every ref move runs reference-transaction, so these hold on every git subcommand (C8.6 R5)
+    ['git -c core.hooksPath=x status', 'hooks-path-override'],
+    ['git -c core.hooksPath=x log -n 5', 'hooks-path-override'],
+    ['git -c core.hooksPath=x fetch', 'hooks-path-override'],
+    ['GIT_CONFIG_PARAMETERS=x git status', 'hooks-path-override'],
+    ['GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git log -n 1', 'hooks-path-override'],
+    ['HUSKY=0 git status', 'no-verify'],
+    // a PATH entry that can hold a planted node, and an unset of a host variable on a git line (C8.6 R10)
+    ['PATH=./bin:$PATH git commit -m x', 'hooks-path-override'],
+    ['PATH=:$PATH git commit -m x', 'hooks-path-override'],
+    ['PATH=/tmp/x:$PATH git merge --no-ff task', 'hooks-path-override'],
+    ['PATH="~/bin:$PATH" git commit -m x', 'hooks-path-override'],
+    ['unset CLAUDECODE; git merge --no-ff task', 'host-override'],
+    // every assignment form the guard can see, and a guarded name in a form it does not read on a
+    // line that runs git (C8.6 R13)
+    ['HARNESS_LANDING+=owner git commit -m unread', 'landing-override'],
+    ['export HARNESS_LANDING+=owner; git commit -m unread', 'landing-override'],
+    ['HARNESS_LANDING[0]=owner git commit -m x', 'landing-override'],
+    ['HARNESS_HOST+=zcode git commit -m x', 'host-override'],
+    ['GIT_CONFIG_KEY_0+=core.hooksPath git commit -m x', 'hooks-path-override'],
+    ['PATH+=:./bin git commit -m x', 'hooks-path-override'],
+    ['HUSKY+=0 git commit -m x', 'no-verify'],
+    ['HUSKY=$X git commit -m x', 'no-verify'],
+    ['read CLAUDECODE </dev/null; git merge --no-ff task', 'host-override'],
+    ["printf -v CLAUDECODE ''; git merge --no-ff task", 'host-override'],
+    ["for CLAUDECODE in ''; do git merge --no-ff task; done", 'host-override'],
+    ['declare -a CLAUDECODE; git merge --no-ff task', 'host-override'],
+    ['f(){ local CLAUDECODE; git merge --no-ff task; }; f', 'host-override'],
+    [': ${CLAUDECODE:=}; git merge --no-ff task', 'host-override'],
+    ['declare -n r=CLAUDECODE; r=; git merge --no-ff task', 'host-override'],
+    ['mapfile -t CLAUDECODE </dev/null; git merge --no-ff task', 'host-override'],
+    ['exec -c git merge --no-ff task', 'host-override'],
+    ['set -a; read HARNESS_LANDING <<< owner; git commit -m x', 'landing-override'],
+    ["bash -c 'read CLAUDECODE </dev/null; git merge --no-ff task'", 'host-override'],
+    ['read PATH <<< ./bin; git commit -m x', 'hooks-path-override'],
+    ['PATH[0]=./bin; git commit -m x', 'hooks-path-override'],
+    ['for GIT_CONFIG_COUNT in 1; do git commit -m x; done', 'hooks-path-override'],
+    ['read HUSKY <<< 0; git commit -m x', 'no-verify'],
+    ['export PATH=./x:$PATH; export PATH=/usr/bin:$PATH; git commit -m x', 'hooks-path-override'],
   ];
   for (const [command, rule] of blocked) {
     test(`blocks: ${command.replace(/\n/g, '\\n')}`, () => {
@@ -466,9 +507,7 @@ async function main() {
     "git commit -F '-n'",
     'git commit -m x -- "-n"',
     'git push -o "-f" origin feature/x',
-    // hooksPath outside commit-like subcommands, and reads of the setting
-    'git -c core.hooksPath=x status',
-    'git -c core.hooksPath=x log -n 5',
+    // reads of the setting
     'git config --get core.hooksPath',
     'git config core.hooksPath',
     'git config --global --get core.hooksPath',
@@ -491,7 +530,6 @@ async function main() {
     'git config --unset user.signingkey',
     'git config --file hookspath.cfg user.name x',
     'HUSKY=1 git commit -m x',
-    'HUSKY=0 git status',
     'HUSKY=0 npm test',
     // deleting a branch that is not the mainline, and pushes that are not forced
     'git push origin --delete feature/x',
@@ -536,13 +574,10 @@ async function main() {
     'git push --no-ver origin feature/x',
     'git push -o --no-verify origin feature/x',
     'git push --push-option --no-verify origin feature/x',
-    // GIT_CONFIG_* that cannot touch the hooks, or on a subcommand that runs none
-    'GIT_CONFIG_PARAMETERS=x git status',
+    // GIT_CONFIG_* that cannot touch the hooks
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=p git commit -m x',
     'GIT_AUTHOR_DATE="2026-01-01 00:00" git commit -m x',
     'git commit -m "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null"',
-    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git log -n 1',
-    'git -c core.hooksPath=x fetch',
     'export FOO=1; git commit -m x',
     'export HUSKY=1; git commit -m x',
     'HUSKY=0 bash -c "npm test"',
@@ -580,6 +615,31 @@ async function main() {
     'export HUSKY=0; HUSKY=1 git commit -m x',
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m x',
     'export GIT_CONFIG_KEY_0=core.hooksPath; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m x',
+    // what agents type every day: a PATH outside the repository and the temporary directories,
+    // NODE_OPTIONS and NODE_PATH (the guard unsets every NODE_*), and an unset with no git (C8.6 R10)
+    'export PATH="$HOME/.bun/bin:$PATH" && git status',
+    'export PATH="$HOME/.bun/bin:$PATH" && git add -A && git commit -m "feat: x"',
+    'PATH=/opt/homebrew/bin:$PATH git commit -m x',
+    'NODE_OPTIONS=--max-old-space-size=8192 git commit -m x',
+    'unset CLAUDECODE; claude -p "summarise"',
+    'NODE_OPTIONS=--require=./x.js git commit -m x',
+    'unset CLAUDECODE',
+    // a bare export keeps the shell's value, and only the PATH git runs with is read; a read of a
+    // guarded name, git's own arguments and a line with no git are not forms that change it (C8.6 R13)
+    'export PATH; git status --short',
+    'export PATH=./node_modules/.bin:$PATH; export PATH=/usr/bin:/bin; git status --short',
+    'PATH+=:/opt/homebrew/bin git commit -m x',
+    'X+=1; git status',
+    'echo $PATH; git status',
+    'echo "${PATH:-}"; git status',
+    'for p in ${PATH//:/ }; do ls $p; done; git status',
+    'echo $CLAUDECODE; git status',
+    'git log --grep PATH',
+    'git grep -n HARNESS_LANDING',
+    'git commit -m "docs: HARNESS_LANDING and CLAUDECODE"',
+    'read CLAUDECODE </dev/null; claude -p x',
+    'grep -rn HARNESS_LANDING docs',
+    'export FOO; FOO=1; git status',
   ];
   for (const command of allowed) {
     test(`allows: ${command.replace(/\n/g, '\\n') || '(empty)'}`, () => {
@@ -803,7 +863,6 @@ async function main() {
     ['abbrev', "if (name.length >= 6 && '--no-verify'.startsWith(name)) return true;", ''],
     ['mirror', "else if (name === '--mirror') force = everything = true;", ''],
     ['all', "else if (name === '--all') everything = true;", ''],
-    ['hooks-subcommands', ' && HOOK_SUBCOMMANDS.has(parts.sub)', ''],
     ['eval', "words[0] === 'eval'", "words[0] === 'eval-x'"],
     ['commit-values', 'if (COMMIT_VALUE_LONG.has(name) && !t.includes(\'=\')) j++;', ''],
     ['config-env', "|| w === '--config-env'", ''],
@@ -845,8 +904,7 @@ async function main() {
     ['push-husky', "if (parts.sub === 'push' && (pushSkipsHooks(parts.rest) || huskyOff)) {", "if (parts.sub === 'push' && pushSkipsHooks(parts.rest)) {"],
     ['push-abbrev', "if (name.length >= 9 && '--no-verify'.startsWith(name)) return true;", "if (name === '--no-verify') return true;"],
     ['push-nv-o', 'j++; // -o <push-option>: the value is the next word', ''],
-    ['env-override', 'HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks(env) : null', 'null'],
-    ['env-subcommand', 'HOOK_SUBCOMMANDS.has(parts.sub) ? envOverridesHooks', 'true ? envOverridesHooks'],
+    ['env-override', 'const overridden = envOverridesHooks(env);', 'const overridden = null;'],
     ['env-key-case', '/^core\\.hookspath$/i.test(value)', '/^core\\.hookspath$/.test(value)'],
     ['env-key-dynamic', ' || /[$`]/.test(value)', ''],
     ['env-parameters', "if (name === 'GIT_CONFIG_PARAMETERS') return name;", ''],
@@ -856,7 +914,6 @@ async function main() {
     ['wrapper-exec-a', "['exec', 'a']", "['exec', '']"],
     ['wrapper-time-o', "['time', 'of']", "['time', '']"],
     ['wrapper-time-long', "['time', ['--output', '--format']]", "['time', []]"],
-    ['pull-hooks', "'merge', 'pull', 'push'", "'merge', 'push'"],
     ['merge-dashdash', "for (const t of rest) {\n    if (t === '--no-verify') return true;", "for (const t of rest) {\n    if (t === '--') break;\n    if (t === '--no-verify') return true;"],
     ['background', "if (t === '&') endList(true);", "if (t === '&') endList(false);"],
     ['background-list', 'if (background) for (const seg of top().list) seg.background = true;', 'if (background && top().list.length) top().list[top().list.length - 1].background = true;'],
@@ -871,14 +928,43 @@ async function main() {
     ['flat-state', 'while (!n.subshell) n = n.parent;', 'while (n.parent) n = n.parent;'],
     ['newline-continue', "if (t === '\\n' && continued) continue;", ''],
     ['runner-first-word', 'argv.slice(1).some((w) => SCRIPT_RUNNERS.has(basename(w)))', "SCRIPT_RUNNERS.has(basename(argv.slice(1).find((w) => !w.startsWith('-')) ?? ''))"],
-    ['resolved-env', "const huskyOff = env.HUSKY === '0';", 'const huskyOff = cmd.env.some((e) => /^HUSKY=0$/.test(parts.unq(e)));'],
+    ['resolved-env', "const huskyOff = env.HUSKY === '0' ||", 'const huskyOff = cmd.env.some((e) => /^HUSKY=0$/.test(parts.unq(e))) ||'],
     ['pull-husky', '(mergeSkipsHooks(parts.rest) || huskyOff)', "(mergeSkipsHooks(parts.rest) || (huskyOff && parts.sub === 'merge'))"],
     ['env-split', "if (name === 'env' && w[k] === 'S') split", "if (false) split"],
     ['shell-after-c', 'let j = at + 1 + takes(words[at]);', 'let j = at + 1; if (false)'],
+    // C8.6 R5 and R9: the line's settings, the host variables, the runtime and the install path
+    ['hooks-every-sub', '/^core\\.hookspath(=|$)/i.test(c.trim()))) {', "/^core\\.hookspath(=|$)/i.test(c.trim())) && parts.sub === 'commit') {"],
+    ['line-assignments', 'for (const a of env) line.sets.add(nameOf(a));', ''],
+    ['declare-sets', '    line.sets.add(nameOf(w));\n', ''],
+    ['assign-vars', 'state.vars.set(name, a.slice(name.length + 1));', ''],
+    ['assign-exported', 'if (isExported(state, name, inherited)) state.exported.push(a);', ''],
+    ['script-inherited', ', ...env.map(nameOf)]);', ']);'],
+    ['host-env', 'Object.keys(env).find(isHostVar) ??', 'undefined ??'],
+    ['host-zcode', " || name.startsWith('ZCODE_')", ''],
+    ['host-cleared', 'cmd.cleared?.find((n) => n === ALL_VARS || isHostVar(n))', 'undefined'],
+    ['env-i', "if (w[k] === 'i') drops.push(ALL_VARS);", ''],
+    ['env-unset-long', "if ('--unset'.startsWith(opt)) return", 'if (false) return'],
+    ['host-unset', 'if (line && runsGit && [...line.forms].some(isHostVar)) return HOST_HIT;', ''],
+    ['unset-git', 'runsGit && [...line.forms]', '[...line.forms]'],
+    ['runtime', 'const planted = plantedEntry(composedPath(pathValues(cmd)), parts.cwd, opts.homeSet);', 'const planted = null;'],
+    ['path-temp', 'if (!inHome && (under(abs, TEMP_DIRS) || under(real, TEMP_DIRS))) return entry;', ''],
+    ['path-repo', 'if (top && (under(abs, [top]) || under(real, [top]))) return entry;', ''],
+    ['path-empty', "if (entry === '') return '';", ''],
+    ['husky-every-sub', 'if (huskyOff && !NO_VERIFY_OWN.has(parts.sub)) {', 'if (false) {'],
+    ['install-substitution', 'if (v === `${TOPLEVEL}/${key}`) return', 'if (false) return'],
+    ['install-expands', '.every((m) => quoted.expands?.has(Number(m[1])))', '.length >= 0'],
+    ['install-absolute', "if (!v.startsWith('/') || /[$`]/.test(v)) return false;", 'return false;'],
+    // C8.6 R13: += read as an assignment, the guarded-name collection, the composed PATH, exec -c
+    ['plus-assign', 'const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\\[[^\\]]*\\])?\\+?=/;', 'const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\\[[^\\]]*\\])?=/;'],
+    ['forms', 'collectForms(wrapped ? [...shellWords, ...env, ...words] : shellWords, new Set([...env, ...operands]), quoted);', ''],
+    ['path-compose', 'plantedEntry(composedPath(pathValues(cmd)), parts.cwd, opts.homeSet)', '(pathValues(cmd).map((v) => plantedEntry(v, parts.cwd, opts.homeSet)).find((e) => e !== null) ?? null)'],
+    ['exec-c', "if (name === 'exec' && w[k] === 'c') cleared.push(ALL_VARS);", ''],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
   const opts = { cwd: dir, currentBranch: 'feature/x' };
+  const installRepo = tmp('command-guard-install-');
+  assert.strictEqual(spawnSync('git', ['init', '-q'], { cwd: installRepo, encoding: 'utf8', env: gitEnv() }).status, 0);
   const surviving = (label, command, o = opts) => {
     assert.ok(guard.check(command, o), `shipped guard blocks: ${command}`);
     assert.strictEqual(mutants[label].check(command, o), null, `mutant ${label} lets through: ${command}`);
@@ -918,7 +1004,6 @@ async function main() {
     ['wrapper-exec-a', 'not skipping the exec -a value', 'exec -a x git commit -n -m x'],
     ['wrapper-time-o', 'not skipping the time -o value', 'time -o /tmp/t git commit -n -m x'],
     ['wrapper-time-long', 'not skipping the time --output value', 'time --output /tmp/t git commit -n -m x'],
-    ['pull-hooks', 'leaving pull out of the hook subcommands lets -c core.hooksPath on pull through', 'git -c core.hooksPath=/dev/null pull'],
     ['merge-dashdash', 'stopping at `--` lets `git merge -m -- --no-verify` through', 'git merge -m -- --no-verify feature/x'],
     ['background', 'ignoring `&` lets a backgrounded codex run through', 'codex exec x &'],
     ['background-list', 'backgrounding only the last pipeline lets `codex exec x && echo ok &` through', 'codex exec x && echo ok &'],
@@ -933,6 +1018,31 @@ async function main() {
     ['pull-husky', 'ignoring HUSKY=0 on a pull lets it through', 'HUSKY=0 git pull origin main'],
     ['env-split', 'skipping env -S as a plain option value lets its string through', "env -S 'git commit -n -m x'"],
     ['shell-after-c', 'taking the word after -c as the script lets `bash -c -x` through', "bash -c -x 'git commit -n -m x'"],
+    ['hooks-every-sub', 'reading -c core.hooksPath only on a commit lets an update-ref through', 'git -c core.hooksPath=/dev/null update-ref refs/heads/main task'],
+    ['line-assignments', 'not reading an assignment word lets HARNESS_LANDING=owner alone through', 'HARNESS_LANDING=owner'],
+    ['line-assignments', 'not reading an assignment word lets HARNESS_LANDING on a command that is not git through', 'HARNESS_LANDING=owner npm test'],
+    ['declare-sets', 'not reading a declaration lets readonly HARNESS_LANDING=owner through', 'readonly HARNESS_LANDING=owner'],
+    ['declare-sets', 'not reading a declaration lets declare -x HARNESS_LANDING=owner through', 'declare -x HARNESS_LANDING=owner'],
+    ['assign-vars', 'not keeping a plain variable exports an empty one, so a key set before its bare export gets through', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_0=core.hooksPath; export GIT_CONFIG_COUNT GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0; git commit -m x'],
+    ['assign-exported', 'not exporting an assignment to an inherited name lets PATH=...; git through', 'PATH=/tmp/x:$PATH; git commit -m x'],
+    ['script-inherited', 'not passing the shell\'s exports into a script lets its plain assignment to one through', 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=/dev/null; bash -c "GIT_CONFIG_KEY_0=core.hooksPath; git commit -m x"'],
+    ['host-env', 'ignoring the host variables in a git command\'s environment lets HARNESS_HOST through', 'HARNESS_HOST=zcode git merge --no-ff task'],
+    ['host-env', 'ignoring the host variables lets env CLAUDECODE= through', 'env CLAUDECODE= git merge --no-ff task'],
+    ['host-zcode', 'leaving ZCODE_* out of the host variables lets ZCODE_APP_VERSION through', 'ZCODE_APP_VERSION=1 git merge --no-ff task'],
+    ['host-cleared', 'ignoring what env drops lets env -u CLAUDECODE through', 'env -u CLAUDECODE git merge --no-ff task'],
+    ['env-i', 'not reading env -i lets it through', 'env -i git merge --no-ff task'],
+    ['env-unset-long', 'not reading env --unset lets it through', 'env --unset=CLAUDECODE git status'],
+    ['host-unset', 'ignoring an unset of a host variable lets it through', 'unset CODEX_THREAD_ID; git commit -m x'],
+    ['runtime', 'ignoring PATH on git lets a relative entry through', 'PATH=./x:$PATH git commit -m x'],
+    ['path-temp', 'dropping the temporary-directory check lets a /tmp entry through', 'PATH=/tmp/x:$PATH git merge --no-ff task'],
+    ['path-repo', 'dropping the inside-the-repository check lets an entry under the repository through', `PATH=${REPO}/scripts:$PATH git commit -m x`, { cwd: REPO, currentBranch: 'feature/x' }],
+    ['husky-every-sub', 'reading HUSKY=0 only on commit, merge, pull and push lets git reset through', 'HUSKY=0 git reset --hard task'],
+    ['plus-assign', 'not reading += as an assignment lets HARNESS_LANDING+=owner through', 'HARNESS_LANDING+=owner git commit -m unread'],
+    ['plus-assign', 'not reading += as an assignment lets PATH+=:./bin through', 'PATH+=:./bin git commit -m x'],
+    ['forms', 'dropping the guarded-name collection lets read CLAUDECODE through', 'read CLAUDECODE </dev/null; git merge --no-ff task'],
+    ['forms', 'dropping the guarded-name collection lets a for loop over HARNESS_LANDING through', 'for HARNESS_LANDING in owner; do git commit -m x; done'],
+    ['forms', 'dropping the guarded-name collection lets read PATH through', 'read PATH <<< ./bin; git commit -m x'],
+    ['exec-c', 'not clearing the environment for exec -c lets it through', 'exec -c git merge --no-ff task'],
   ];
   for (const [label, title, command, o] of kills) {
     test(`mutation (${label}): ${title}`, () => {
@@ -960,11 +1070,14 @@ async function main() {
     ['tags-only', 'a force push of only tags is allowed', 'git push -f --tags', main],
     ['nested-subst', 'nested quotes in "$(...)" do not flip the masking', 'git commit -m "$(echo "retry -ing")"'],
     ['push-nv-o', 'a push option value that looks like --no-verify is not a flag', 'git push -o --no-verify origin feature/x'],
-    ['env-subcommand', 'an inline GIT_CONFIG_* on a subcommand that runs no hook is allowed', 'GIT_CONFIG_PARAMETERS=x git status'],
     ['amp-redirect', '`&>` is a redirection, not a background launch', 'codex exec x &> log'],
     ['pipe-amp', '`|&` is a pipe, not a background launch', 'codex exec x |& tee log'],
     ['flat-state', 'an export in a ( ) subshell does not reach the command after it', '(export HUSKY=0); git commit -m x'],
     ['resolved-env', 'an inline HUSKY=1 after an exported HUSKY=0 is the value git gets', 'export HUSKY=0; HUSKY=1 git commit -m x'],
+    ['install-substitution', 'the install command with the top-level substitution is allowed', 'git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"'],
+    ['install-absolute', 'the install command with the repository\'s real path is allowed', `git config core.hooksPath ${installRepo}/.githooks`, { cwd: installRepo, currentBranch: 'feature/x' }],
+    ['unset-git', 'an unset of a host variable on a line with no git is allowed', 'unset CLAUDECODE; claude -p "summarise"'],
+    ['path-compose', 'a PATH superseded on the line is not the PATH git runs with', 'export PATH=./node_modules/.bin:$PATH; export PATH=/usr/bin:/bin; git status --short'],
   ];
   for (const [label, title, command, o = opts] of allowedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => {
@@ -983,14 +1096,11 @@ async function main() {
     ['redirect-space', 'a spaced redirect target becomes a refspec and hides the push of the current branch', 'git push -f origin > /tmp/log 2>&1', main],
     ['fd-dup', 'splitting `2>&1` on & hides the refspec after it', 'git push -f 2>&1 origin main'],
     ['heredoc-trim', 'an indented <<- terminator is found', 'cat <<-EOF\n\tbody\n\tEOF\ngit commit -n -m x'],
+    ['install-expands', 'a single-quoted substitution is a literal path, not the install path', "git config core.hooksPath '$(git rev-parse --show-toplevel)/.githooks'"],
   ];
   for (const [label, title, command, o = opts] of blockedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => surviving(label, command, o));
   }
-  test('mutation (hooks-subcommands): the hooksPath rule applied to every subcommand blocks `git -c core.hooksPath=x status`', () => {
-    assert.strictEqual(guard.check('git -c core.hooksPath=x status', opts), null);
-    assert.strictEqual(mutants['hooks-subcommands'].check('git -c core.hooksPath=x status', opts).rule, 'hooks-path-override');
-  });
   test('mutation (heredoc): without heredoc stripping a heredoc body of bypass commands is blocked', () => {
     const command = "git commit -F - <<'EOF'\ngit commit --no-verify\nEOF";
     assert.strictEqual(guard.check(command, opts), null);
@@ -999,11 +1109,18 @@ async function main() {
     assert.strictEqual(guard.check(dashed, opts), null);
     assert.ok(mutants.heredoc.check(dashed, opts), 'mutant sees the <<- body');
   });
+  test('mutation (path-empty): dropping the empty-entry check loses the current directory from the refusal', () => {
+    const command = 'PATH=$PATH: git commit -m x';
+    assert.ok(guard.check(command, opts).reason.includes('puts (the current directory) first'), 'shipped guard names the current directory');
+    const hit = mutants['path-empty'].check(command, opts);
+    assert.ok(!hit || !hit.reason.includes('(the current directory)'), 'mutant path-empty still names the current directory');
+  });
   test('mutation: the short-cluster mutant still catches the long form', () => {
     assert.strictEqual(mutants['short-n'].check('git commit --no-verify -m x', opts).rule, 'no-verify');
   });
 
   fs.rmSync(work, { recursive: true, force: true });
+  fs.rmSync(installRepo, { recursive: true, force: true });
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

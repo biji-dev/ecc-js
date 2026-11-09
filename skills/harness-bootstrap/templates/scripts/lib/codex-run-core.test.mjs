@@ -965,7 +965,7 @@ test('the budget guard reads CODEX_HOME rollouts: past the threshold non-essenti
   assert.equal(JSON.parse(raised.stdout).budget.run, true);
 });
 
-/** A repo-shaped fixture: the shipped wrapper and core copied to <repo>/scripts, nothing else. */
+/** A repo-shaped fixture: the shipped wrapper, core and snapshot module copied to <repo>/scripts, nothing else. */
 function wrapperFixture({ resolver } = {}) {
   const repo = tmpDir('codex-run-rules-');
   fs.mkdirSync(path.join(repo, 'scripts/lib'), { recursive: true });
@@ -973,6 +973,10 @@ function wrapperFixture({ resolver } = {}) {
   fs.copyFileSync(
     fileURLToPath(new URL('./codex-run-core.mjs', import.meta.url)),
     path.join(repo, 'scripts/lib/codex-run-core.mjs'),
+  );
+  fs.copyFileSync(
+    fileURLToPath(new URL('./snapshot-tree.mjs', import.meta.url)),
+    path.join(repo, 'scripts/lib/snapshot-tree.mjs'),
   );
   fs.writeFileSync(path.join(repo, 'task.md'), 'the task');
   if (resolver !== undefined)
@@ -1132,6 +1136,152 @@ test('the ledger of a linked worktree run lands in the main checkout, not the wo
   assert.equal(fs.existsSync(path.join(linked, '.codex-runs')), false);
   const row = JSON.parse(fs.readFileSync(path.join(main, '.codex-runs/ledger.jsonl'), 'utf8'));
   assert.equal(row.cwd, linked);
+});
+
+test('a read-only run\'s ledger row records the tree it read and the branch; a write run\'s row does not', () => {
+  const root = tmpDir('codex-run-snap-');
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  const env = cleanEnv({ CODEX_RUN: 'on' });
+  const git = (...args) => {
+    const r = spawnSync(
+      'git',
+      ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
+      { cwd: repo, env, encoding: 'utf8' },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.codex-runs/\n');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
+  fs.writeFileSync(path.join(repo, 'p.md'), 'task');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'edited after the commit\n');
+  fs.writeFileSync(path.join(repo, 'new.txt'), 'untracked\n');
+  const fake = fakeCodex('#!/bin/sh\necho nope >&2\nexit 1\n');
+  const run = (kind) =>
+    spawnSync(
+      process.execPath,
+      [RUNNER, kind, '--prompt', path.join(repo, 'p.md'), '--out', path.join(root, `${kind}.md`), '--cwd', repo],
+      { encoding: 'utf8', cwd: root, env: { ...env, CODEX_BIN: fake } },
+    );
+  run('investigate');
+  run('fix-cold');
+  const rows = fs
+    .readFileSync(path.join(repo, '.codex-runs/ledger.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l));
+  assert.deepEqual(rows.map((r) => r.kind), ['investigate', 'fix-cold']);
+  assert.match(rows[0].tree, /^[0-9a-f]{40}$/);
+  assert.equal(rows[0].branch, 'main');
+  assert.equal(git('cat-file', '-p', `${rows[0].tree}:a.txt`), 'edited after the commit');
+  // Tracked files only: no reviewer's diff shows an untracked file, so the tree leaves it out.
+  assert.equal(spawnSync('git', ['cat-file', '-e', `${rows[0].tree}:new.txt`], { cwd: repo, env }).status === 0, false);
+  assert.equal('tree' in rows[1] || 'branch' in rows[1], false);
+});
+
+/**
+ * A repository on branch `feature`, forked from `main` at `fork`, with `main` one commit further on
+ * and a.txt edited in the working tree. `run(args, fake)` runs the wrapper there and returns the
+ * ledger's last row.
+ */
+function landingRepo() {
+  const root = tmpDir('codex-run-landing-');
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  const env = cleanEnv({ CODEX_RUN: 'on' });
+  const git = (...args) => {
+    const r = spawnSync(
+      'git',
+      ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
+      { cwd: repo, env, encoding: 'utf8' },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.codex-runs/\n');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
+  fs.writeFileSync(path.join(root, 'p.md'), 'task');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const fork = git('rev-parse', 'HEAD');
+  git('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'feature\n');
+  git('commit', '-q', '-am', 'feature');
+  git('checkout', '-q', 'main');
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'main moved on\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'main');
+  git('checkout', '-q', 'feature');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'feature, uncommitted\n');
+  const run = (args, fake) => {
+    const res = spawnSync(
+      process.execPath,
+      [RUNNER, ...args, '--out', path.join(root, `${args[0]}.md`), '--cwd', repo],
+      { encoding: 'utf8', cwd: root, env: { ...env, CODEX_BIN: fake } },
+    );
+    const rows = fs.readFileSync(path.join(repo, '.codex-runs/ledger.jsonl'), 'utf8').trim().split('\n');
+    return { res, row: JSON.parse(rows.at(-1)) };
+  };
+  return { root, repo, git, fork, run };
+}
+
+test('a review row records baseTree, the tree of the merge base it diffed from, and treeAfter; other kinds do not', () => {
+  const { root, git, fork, run } = landingRepo();
+  const fake = fakeCodex('#!/bin/sh\ncat > /dev/null\necho nope >&2\nexit 1\n');
+  const { row } = run(['review', '--base', 'main'], fake);
+  assert.equal(row.kind, 'review');
+  assert.equal(row.outcome, 'failed');
+  assert.equal(row.baseTree, git('rev-parse', `${fork}^{tree}`));
+  assert.notEqual(row.baseTree, git('rev-parse', 'main^{tree}'));
+  assert.match(row.tree, /^[0-9a-f]{40}$/);
+  // Taken again after the model exits, on a failed run too; the tree did not move.
+  assert.equal(row.treeAfter, row.tree);
+  assert.equal('treeMoved' in row, false);
+  const { row: other } = run(['investigate', '--prompt', path.join(root, 'p.md')], fake);
+  assert.equal(other.kind, 'investigate');
+  assert.match(other.tree, /^[0-9a-f]{40}$/);
+  assert.equal('baseTree' in other || 'treeAfter' in other || 'treeMoved' in other, false);
+});
+
+test('an adversarial run records its optional --base as baseTree, never on the codex command line', () => {
+  const { root, git, run } = landingRepo();
+  const argvFile = path.join(root, 'argv.txt');
+  const fake = fakeCodex(`#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > /dev/null\nexit 1\n`);
+  const prompt = path.join(root, 'p.md');
+  const mainTree = git('rev-parse', 'main^{tree}');
+  for (const kind of ['adversarial', 'adversarial-frontier']) {
+    const { row } = run([kind, '--prompt', prompt, '--base', 'main'], fake);
+    assert.equal(row.kind, kind);
+    assert.equal(row.baseTree, mainTree, kind);
+    const argv = fs.readFileSync(argvFile, 'utf8').split('\n');
+    assert.equal(argv.includes('--base') || argv.includes('main'), false, argv.join(' '));
+  }
+  // A tree id is a base too.
+  assert.equal(run(['adversarial', '--prompt', prompt, '--base', mainTree], fake).row.baseTree, mainTree);
+  const { row: without } = run(['adversarial', '--prompt', prompt], fake);
+  assert.equal(without.baseTree, null);
+  assert.equal(without.treeAfter, without.tree);
+});
+
+test('a tracked file edited while the model runs gives treeMoved: true, and treeAfter holds the edit', () => {
+  const { root, git, repo, run } = landingRepo();
+  // Edits a tracked file mid-run, then answers with a verdict: an ok row whose tree moved.
+  const fake = fakeCodex(
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\necho during >> a.txt\necho "No findings." > "$out"\necho \'{"type":"turn.completed","usage":{}}\'\nexit 0\n',
+  );
+  const { res, row } = run(['adversarial', '--prompt', path.join(root, 'p.md'), '--base', 'main'], fake);
+  assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+  assert.equal(row.outcome, 'ok');
+  assert.equal(row.treeMoved, true);
+  assert.notEqual(row.treeAfter, row.tree);
+  assert.equal(git('cat-file', '-p', `${row.tree}:a.txt`), 'feature, uncommitted');
+  assert.equal(git('cat-file', '-p', `${row.treeAfter}:a.txt`), 'feature, uncommitted\nduring');
+  assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'feature, uncommitted\nduring\n');
 });
 
 /** Dirent-shaped entries as old Node 20.x returns them: `path` only, no `parentPath`. */

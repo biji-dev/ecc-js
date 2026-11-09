@@ -135,12 +135,29 @@ call it; never maintain the same sequence in three skill files.
   `env`, `sudo`, `timeout`, `nice`, `xargs`, `command`, `exec`, `time` and `nohup`
   stripped with their options) and refuses
   `git commit --no-verify` or `-n`, `git push`, `git merge` or `git pull --no-verify`,
-  `HUSKY=0` on a commit, merge or push, a `core.hooksPath`
-  override (`-c`, or an inline `GIT_CONFIG_*` such as `GIT_CONFIG_KEY_0=core.hooksPath`)
-  or `git config` write (setting it to the project's `[B]` `HOOKS_DIR`
-  stays allowed), a force-push or delete of the mainline, and (`codex-background`) a
-  Codex or run-wrapper launch sent to the background with a shell `&`; `EXTRA_RULES`
-  is `[B]`, and each rule gets the command's `env` and `background`. A commit message that *mentions* `--no-verify` passes. It
+  and, on any git command, `HUSKY=0` (or a `HUSKY` it cannot resolve), a
+  `core.hooksPath` override (`-c`, or an inline `GIT_CONFIG_*` such as
+  `GIT_CONFIG_KEY_0=core.hooksPath`) or a `PATH` (its values composed in order)
+  that adds a directory a node could be planted in (empty, relative, temporary,
+  inside the repository, or unresolvable), since every ref move runs a hook; on a
+  line that runs git, one of those names changed by a form it does not read
+  (`read`, `printf -v`, `for`, a nameref, `${NAME:=…}`); `NAME+=` and `NAME[i]=`
+  count as assignments;
+  `NODE_OPTIONS` and `$HOME/…` entries pass, as the guard's node runs with every
+  `NODE_*` unset; a
+  `git config` write of `core.hooksPath` (setting it to the project's `[B]`
+  `HOOKS_DIR`, to `<top>/<HOOKS_DIR>` or to
+  `"$(git rev-parse --show-toplevel)/<HOOKS_DIR>"` stays allowed), a force-push or delete of the mainline,
+  (`landing-override`) a line that sets `HARNESS_LANDING` in any form, or a git
+  line that names it other than to read it,
+  (`host-override`) a git line that names a host variable other than to read it
+  (`$NAME`), or clears it (`env -u`, `env -i`, `exec -c`)
+  (`HARNESS_HOST`, `CLAUDECODE`, `CODEX_THREAD_ID`, `CODEX_SANDBOX`, `ZCODE_*`),
+  (`merge-ff-mainline`) a `git merge` onto the mainline without `--no-ff` or a
+  `git pull .` there, which the guard's ref check would refuse less cleanly, and
+  (`codex-background`) a Codex or run-wrapper launch sent to the background
+  with a shell `&`; `EXTRA_RULES` is `[B]`, and each rule gets the command's `env` and
+  `background`. A commit message that *mentions* `--no-verify` passes. It
   exits 2 to block and 0 on any error. It stops an agent's own mistakes and the
   obvious retry, not a determined adversary — its header lists what it cannot see.
   It replaces a plugin's keyword hook: the harness depends on no plugin hook, since a

@@ -14,6 +14,18 @@
  * observations produced no instinct. A short committed digest -- a few numbers against their own
  * history, the outliers, the repeated friction and at most five candidates -- is what a reviewer, or
  * the next round, can read in one pass.
+ *
+ * WHAT V10 ADDED. The standing grant lets the agent take the recommendation on reversible cards, and
+ * each card kind the owner still answers is asked because a rule says so, not because anyone measured
+ * it. So the retro now reads the decision rows themselves: which kinds are still asked (askKinds), and a
+ * kind the owner took the recommendation on 90% of the last 20 times is proposed for the grant
+ * (promotions) -- the rule measured on the owner's own answers. A kind the grant covers comes back to
+ * the owner when more than one in ten of its granted decisions was reversed. Agreement is not
+ * correctness, though: an owner who would have said yes to a wrong default agrees with it. So each
+ * granted decision is also linked to what happened after its unit merged -- a reversal, or a fix within
+ * seven days on the merge's files (decisionOutcomes) -- and the linked ones are listed for the owner to
+ * judge, never counted as proof. The week's original plan rows, the owner wait per landed row, the
+ * oldest thing owed to the owner and an escaped-defect proxy sit beside them.
  */
 import { fmtMinutes, groupUnits, leftOutRows, leftOutWarning, parseLog, percentile, tables } from './estimate-core.mjs';
 import {
@@ -88,6 +100,18 @@ export const STEP_WORDS = [
 export const BASELINE_WEEKS = 4;
 export const MAX_BYTES = 8192;
 export const MAX_CANDIDATES = 5;
+// The kinds of decision card (harness-bootstrap's reference/gate-design.md › Who decides), and the ones the owner is asked by
+// default: a fact only the owner has, and what the grant never covers.
+export const CARD_KINDS = ['code', 'taste', 'owner-fact', 'never-auto'];
+export const ASK_DEFAULT = ['owner-fact', 'never-auto'];
+// A fix this many days after a unit's merge, on one of the merge's files, links the unit's granted
+// decisions to it; retro-gather reads this much first-parent history before the window for it.
+export const DEFECT_DAYS = 7;
+// A mainline commit that repairs one: a revert, or a conventional `fix`, `fix(scope)` or `fix!`.
+export const FIX_SUBJECT = /^(revert\b|fix(\(|!|:))/i;
+// One unit's owner wait counts at most this many minutes in the per-row figure: a unit parked over a
+// weekend would otherwise be the whole week's number.
+export const OWNER_WAIT_CAP_MIN = 24 * 60;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 // The runner's steps in sequence order (harness-bootstrap's reference/runner.md › The sequence), for listing.
@@ -263,6 +287,14 @@ export function logRecords(text, lineDates = new Map(), columns = undefined) {
 }
 
 const STATUS_KINDS = ['open', 'scheduled', 'fixed', 'dropped'];
+// A sticky or global flag would carry state from one row to the next.
+const stateless = (re) => (re ? new RegExp(re.source, re.flags.replace(/[gy]/g, '')) : null);
+// Each status kind with words, and the RegExp that reads a cell as that kind.
+const statusMatchers = (statusWords) =>
+  STATUS_KINDS.filter((kind) => statusWords[kind]?.length).map((kind) => [kind, new RegExp(`^(?:${statusWords[kind].map(escapeRe).join('|')})(?![A-Za-z])`, 'i')]);
+const prefixColumn = (names, prefixes) => names.findIndex((n) => prefixes.some((p) => n.startsWith(p.toLowerCase())));
+// A first cell as an id: its marks and outer spaces gone.
+const bareId = (c) => oneLine(c).replace(/^[`*\s]+|[`*\s]+$/g, '');
 
 /**
  * The filing date (UTC midnight, ms) the `filedAt` RegExp finds in a row: the first of `cells` it matches
@@ -294,10 +326,10 @@ export function followUpsSummary(
   now = Date.now(),
   { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS, filedAt = FILED_AT } = {},
 ) {
-  const filed = filedAt ? new RegExp(filedAt.source, filedAt.flags.replace(/[gy]/g, '')) : null; // a sticky or global flag would carry state between rows
+  const filed = stateless(filedAt);
   const out = { open: 0, scheduled: 0, fixed: 0, dropped: 0, other: 0, noStatus: 0, openP3: 0, oldestOpenDays: null, oldestOpenP3Days: null, oldestOpenP3Row: null };
-  const words = STATUS_KINDS.filter((kind) => statusWords[kind]?.length).map((kind) => [kind, new RegExp(`^(?:${statusWords[kind].map(escapeRe).join('|')})(?![A-Za-z])`, 'i')]);
-  const column = (names, prefixes) => names.findIndex((n) => prefixes.some((p) => n.startsWith(p.toLowerCase())));
+  const words = statusMatchers(statusWords);
+  const column = prefixColumn;
   let oldest = null;
   let oldestP3 = null;
   let oldestRow = null;
@@ -328,15 +360,76 @@ export function followUpsSummary(
 }
 
 /**
+ * The follow-ups doc's open rows (followUpsSummary's notion of open, from the same options): each with
+ * its id (the first cell, marks stripped), cells, line, the time it is aged from -- its filing date when
+ * `filedAt` finds one, else its line's commit, else null -- and the severities it names (a severity
+ * column's cell when the table has one, else any cell).
+ */
+export function openFollowUps(
+  text,
+  lineDates = new Map(),
+  { statusColumns = STATUS_COLUMNS, statusWords = STATUS_WORDS, severityColumns = SEVERITY_COLUMNS, filedAt = FILED_AT } = {},
+) {
+  const filed = stateless(filedAt);
+  const open = statusMatchers(statusWords).find(([kind]) => kind === 'open')?.[1];
+  const out = [];
+  if (!open) return out;
+  for (const { names, rows } of tables(text)) {
+    const st = prefixColumn(names, statusColumns);
+    if (st === -1) continue;
+    const sev = prefixColumn(names, severityColumns);
+    for (const { cells, line } of rows) {
+      if (!open.test(String(cells[st] ?? '').trim().replace(/^[*_`]+/, ''))) continue;
+      const at = filedOn(cells, filed) ?? lineDates.get(line);
+      const sevText = sev === -1 ? cells.join(' ') : String(cells[sev] ?? '');
+      out.push({ id: bareId(cells[0] ?? ''), cells, line, at: Number.isFinite(at) ? at : null, sevs: [...new Set(sevText.match(/\bP[0-3]\b/g) ?? [])] });
+    }
+  }
+  return out;
+}
+
+// What a follow-up row says the owner owes: `Owner supplies: <what>` or `Owner decides: <what>`.
+const OWED = /\bOwner (?:supplies|decides):\s*(.*)$/i;
+
+/**
+ * The open follow-up rows that wait on the owner (a cell holding `Owner supplies:` or `Owner decides:`
+ * text), oldest first, the undated ones last: [{ id, at, what }], `what` the text after the label, on one
+ * line. The options are openFollowUps'.
+ */
+export function owedRows(text, lineDates = new Map(), opts = {}) {
+  const out = [];
+  for (const r of openFollowUps(text, lineDates, opts)) {
+    const m = r.cells.map((c) => OWED.exec(oneLine(c))).find(Boolean);
+    if (m) out.push({ id: r.id, line: r.line, at: r.at, what: m[1].replace(/[`*]/g, '').trim() });
+  }
+  return out.sort((x, y) => (x.at ?? Infinity) - (y.at ?? Infinity));
+}
+
+/** Every first-column id in the follow-ups doc's tables, marks stripped: a plan row with one of these ids was filed later, not planned. */
+export function followUpIds(text) {
+  const ids = new Set();
+  for (const { rows } of tables(text)) for (const { cells } of rows) if (bareId(cells[0] ?? '')) ids.add(bareId(cells[0]));
+  return ids;
+}
+
+// Who decided, as the By cell says it; `owner-other` before `owner`, which would swallow it.
+const BY_WORD = /owner[- ]other|owner|grant|default|agent/i;
+const byWord = (cell) => {
+  const w = BY_WORD.exec(String(cell ?? ''))?.[0].toLowerCase();
+  return w === undefined ? null : w.startsWith('owner') && w !== 'owner' ? 'owner-other' : w;
+};
+
+/**
  * One state file -> its unit, its decision log by Class (a table with no Class column counts as
- * unclassified) and By, its open questions and its P3 findings still to do.
+ * unclassified) and By (`owner-other`, the owner choosing another option or adding a fact, under
+ * `ownerOther`), its open questions and its P3 findings still to do.
  */
 export function stateSummary(text) {
   const state = parseState(String(text ?? ''));
   const classes = { P: 0, C: 0, T: 0, other: 0, unclassified: 0 };
-  const by = { owner: 0, default: 0, agent: 0, other: 0 };
+  const by = { owner: 0, ownerOther: 0, grant: 0, default: 0, agent: 0, other: 0 };
   let questions = 0;
-  for (const section of String(text ?? '').split(/^(?=##\s)/m)) {
+  for (const section of unfenced(text).split(/^(?=##\s)/m)) {
     if (!/^##\s+decisions?\b/i.test(section)) continue;
     for (const { names, rows } of tables(section)) {
       const ci = names.findIndex((n) => n.startsWith('class'));
@@ -353,12 +446,196 @@ export function stateSummary(text) {
           continue;
         }
         classes[/^\W*([PCT])\b/i.exec(cells[ci] ?? '')?.[1].toUpperCase() ?? 'other'] += 1;
-        if (bi !== -1) by[/owner|default|agent/i.exec(cells[bi] ?? '')?.[0].toLowerCase() ?? 'other'] += 1;
+        if (bi !== -1) {
+          const w = byWord(cells[bi]);
+          by[w === 'owner-other' ? 'ownerOther' : (w ?? 'other')] += 1;
+        }
       }
     }
   }
   const p3 = state.findings.filter((f) => f.sev === 'P3' && (f.status === 'open' || f.status === 'follow-up')).length;
   return { unit: state.header.unit, classes, by, questions, p3 };
+}
+
+const unmark = (cell) => oneLine(cell).replace(/[`*]/g, '').trim();
+/**
+ * The text with every fenced code block (``` or ~~~, closed by a line of the same character at least as
+ * long, or the end of the text) blanked line for line: a table a state file shows as an example is not a
+ * decision, and the blank lines keep each remaining line at its number.
+ */
+function unfenced(text) {
+  let open = null; // [char, length] of the fence being read
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => {
+      const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line.replace(/\r$/, ''));
+      if (open === null) {
+        if (!m || (m[1][0] === '`' && m[2].includes('`'))) return line;
+        open = [m[1][0], m[1].length];
+        return '';
+      }
+      if (m && m[1][0] === open[0] && m[1].length >= open[1] && m[2].trim() === '') open = null;
+      return '';
+    })
+    .join('\n');
+}
+// `reverses DEC-3` or `reverses <unit>/DEC-3`: the unit is everything before the id's slash.
+const REVERSES = /\breverses\s+(?:(\S+)\/)?([A-Za-z][A-Za-z0-9]*-\d+)\b/i;
+
+/**
+ * One state file -> its decision rows (C6): [{ unit, id, date, cls, by, cardKind, decision, cost, kind,
+ * reverses, line }]. The unit is the file's `Unit:` header, else `unit`. Columns are found by the start
+ * of their lowercased name in any order (`by`, `card`, `kind` -- which never matches `card kind` --,
+ * `reversal`), cells read with backticks and bold stripped. `reverses` is set on a row of Kind `reversal`
+ * only, a bare id qualified with this file's unit. `line` is the row's table line as it stands in the
+ * file, so a caller can date the row by its line's commit. Q- rows are skipped, and a table with no ID
+ * column yields nothing. A table inside a fenced code block is an example, never a decision (unfenced).
+ */
+export function decisionRows(text, unit = null) {
+  const src = String(text ?? '');
+  const own = parseState(src).header.unit || unit;
+  const lines = src.split(/\r?\n/);
+  const out = [];
+  let offset = 0;
+  for (const section of unfenced(src).split(/^(?=##\s)/m)) {
+    const start = offset;
+    offset += section.split(/\r?\n/).length - 1;
+    if (!/^##\s+decisions?\b/i.test(section)) continue;
+    for (const { names, rows } of tables(section)) {
+      const col = (p) => names.findIndex((n) => n.startsWith(p));
+      const ii = col('id');
+      if (ii === -1) continue;
+      const [di, ci, dci, bi, ki, ri, ti] = ['date', 'class', 'decision', 'by', 'card', 'reversal', 'kind'].map(col);
+      const at = (cells, i) => (i === -1 ? '' : unmark(cells[i] ?? ''));
+      for (const { cells, line } of rows) {
+        const id = at(cells, ii);
+        if (!id || /^Q-/i.test(id)) continue;
+        const date = /\b(\d{4}-\d{2}-\d{2})\b/.exec(at(cells, di))?.[1] ?? null;
+        const card = at(cells, ki).toLowerCase();
+        const kind = at(cells, ti).toLowerCase();
+        const decision = at(cells, dci);
+        const rev = /^reversal\b/.test(kind) ? REVERSES.exec(decision) : null;
+        out.push({
+          unit: own,
+          id,
+          date,
+          cls: /^\W*([PCT])\b/i.exec(at(cells, ci))?.[1].toUpperCase() ?? null,
+          by: byWord(at(cells, bi)),
+          cardKind: CARD_KINDS.find((k) => new RegExp(`^${k}(?![a-z-])`).test(card)) ?? null,
+          decision,
+          cost: at(cells, ri),
+          kind,
+          reverses: rev ? `${rev[1] ?? own}/${rev[2]}` : null,
+          line: lines[start + line - 1],
+        });
+      }
+    }
+  }
+  return out;
+}
+
+const rowKey = (r) => `${r.unit}/${r.id}`;
+// Newest first by date, the undated after every dated row; ties keep their order.
+const newestFirst = (list) => [...list].sort((x, y) => (x.date === y.date ? 0 : x.date === null ? 1 : y.date === null ? -1 : x.date < y.date ? 1 : -1));
+const reversedKeys = (rows) => new Set(rows.map((r) => r.reverses).filter(Boolean));
+
+/** The owner's `KIND-<kind>` promote rows: the kinds promoted, the ones that cannot be (`never-auto`, an unknown kind), and each promoted kind's newest promotion date. */
+function promotedKinds(rows) {
+  const promoted = [];
+  const ignored = [];
+  const since = new Map(); // kind -> its newest promotion's date, or null when undated
+  for (const r of rows) {
+    const k = /^KIND-(.+)$/i.exec(r.id ?? '')?.[1].toLowerCase();
+    if (!k || r.by !== 'owner' || !/^promote\b/i.test(r.decision ?? '')) continue;
+    if (k === 'never-auto' || !CARD_KINDS.includes(k)) {
+      if (!ignored.includes(k)) ignored.push(k);
+      continue;
+    }
+    if (!promoted.includes(k)) promoted.push(k);
+    if (r.date !== null && !(since.get(k) >= r.date)) since.set(k, r.date);
+    else if (!since.has(k)) since.set(k, null);
+  }
+  return { promoted, ignored, since };
+}
+
+/**
+ * Which card kinds the owner is asked (C6), from every state file's decision rows: ASK_DEFAULT, less a
+ * kind an owner `KIND-<kind>` promote row widened the grant to (`never-auto` never: such a row goes to
+ * `ignored`), plus a granted kind whose last `window` grant rows -- after its newest promotion, when it
+ * has one -- were reversed more than `bar` of the time. Only a grant row dated after the promotion's day
+ * counts (C6): dates are days, so one dated the promotion's day cannot be told from the asked kind's own
+ * answers before it, and an undated grant row never counts after a promotion. A promotion with no date keeps
+ * every dated grant row and drops the undated ones.
+ */
+export function askKinds(rows, { window = 20, bar = 0.1 } = {}) {
+  const { promoted, ignored, since } = promotedKinds(rows);
+  const ask = new Set(ASK_DEFAULT.filter((k) => !promoted.includes(k)));
+  const reversed = reversedKeys(rows);
+  const demoted = [];
+  for (const k of ['code', 'taste', 'owner-fact']) {
+    const promotedKind = since.has(k); // a promotion with no date has a null cut, so `has`, not the cut, tells promoted
+    const cut = since.get(k) ?? null;
+    const granted = rows.filter((r) => r.by === 'grant' && r.cardKind === k && (!promotedKind || (r.date !== null && (cut === null || r.date > cut))));
+    const last = newestFirst(granted).slice(0, window);
+    const n = last.filter((r) => reversed.has(rowKey(r))).length;
+    if (last.length > 0 && n / last.length > bar) {
+      ask.add(k);
+      demoted.push({ kind: k, reversed: n, of: last.length });
+    }
+  }
+  return { ask: CARD_KINDS.filter((k) => ask.has(k)), demoted, promoted, ignored };
+}
+
+/**
+ * The asked kinds the owner's own answers say the grant could take (`never-auto` never): over a kind's
+ * last `window` rows the owner answered (`owner`, `owner-other`), proposed when there are `window` of
+ * them and the owner took the recommendation (`owner`) on at least `bar` of them -> [{ kind, took, of }].
+ */
+export function promotions(rows, ask, { window = 20, bar = 0.9 } = {}) {
+  const out = [];
+  for (const k of ask) {
+    if (k === 'never-auto') continue;
+    const last = newestFirst(rows.filter((r) => r.cardKind === k && (r.by === 'owner' || r.by === 'owner-other') && !/^KIND-/i.test(r.id))).slice(0, window);
+    const took = last.filter((r) => r.by === 'owner').length;
+    if (last.length >= window && took / last.length >= bar) out.push({ kind: k, took, of: last.length });
+  }
+  return out;
+}
+
+// A merge's branch names a unit when it is the unit's id, or ends in `/<id>`.
+const mergeOf = (m, unit) => m.unit === unit || (typeof m.unit === 'string' && m.unit.endsWith(`/${unit}`));
+// Is `f` after the merge `m`? By their first-parent order (`seq`, larger = later) when both carry it, as
+// commits in the same second cannot be ordered by time; else not before it in time and another commit.
+const after = (f, m) => (Number.isFinite(f.seq) && Number.isFinite(m.seq) ? f.seq > m.seq : f.t >= m.t && f.sha !== m.sha);
+// A fix on one of a merge's files, after it and within `days`; the earliest.
+const fixAfter = (m, fixes, days) => {
+  const files = new Set(m.files ?? []);
+  return fixes
+    .filter((f) => after(f, m) && f.t <= m.t + days * DAY && (f.files ?? []).some((p) => files.has(p)))
+    .sort((x, y) => x.t - y.t || (x.seq ?? 0) - (y.seq ?? 0))[0];
+};
+
+/**
+ * Each `By: grant` row with what came after it (pure): `reversed` when a reversal row names it; else
+ * `defect-linked`, with `fix: { sha, subject }`, when a revert or fix commit (FIX_SUBJECT) within `days`
+ * after its unit's merge touches one of that merge's files; else `kept`. `merges`: [{ sha, unit, t, seq,
+ * files }]; `fixes`: [{ sha, t, seq, subject, files }] (`seq`: the commit's place in the mainline's
+ * first-parent order, larger = later; it orders commits of one second when both sides carry it). A link is a lead for the owner to judge, not a verdict.
+ */
+export function decisionOutcomes(rows, { merges = [], fixes = [], days = DEFECT_DAYS } = {}) {
+  const reversed = reversedKeys(rows);
+  const repairs = (fixes ?? []).filter((f) => FIX_SUBJECT.test(f.subject ?? ''));
+  return rows
+    .filter((r) => r.by === 'grant')
+    .map((r) => {
+      if (reversed.has(rowKey(r))) return { ...r, outcome: 'reversed' };
+      const fix = (merges ?? [])
+        .filter((m) => mergeOf(m, r.unit))
+        .map((m) => fixAfter(m, repairs, days))
+        .filter(Boolean)
+        .sort((x, y) => x.t - y.t)[0];
+      return fix ? { ...r, outcome: 'defect-linked', fix: { sha: fix.sha, subject: fix.subject } } : { ...r, outcome: 'kept' };
+    });
 }
 
 /** The units a main-thread transcript wrote step markers for, from its `unit-step.mjs <unit>` commands. */
@@ -808,7 +1085,7 @@ export function candidates(d) {
   }
   const q = d.queue.followUps;
   if (q && q.oldestOpenDays !== null && q.oldestOpenDays >= QUEUE_ALERT_DAYS) {
-    sources[5].push({ kind: 'machinery', text: `the oldest open follow-up is ${q.oldestOpenDays} days old (${q.open} open, ${q.openP3} naming a P3): a hygiene unit is due`, evidence: 'follow-ups doc' });
+    sources[5].push({ kind: 'machinery', text: `the oldest open follow-up is ${q.oldestOpenDays} days old (${q.open} open, ${q.openP3} naming a P3): each passes the relevance test or is dropped (harness-bootstrap's reference/runner.md)`, evidence: 'follow-ups doc' });
   }
   sources.unshift((d.warnings ?? []).map((w) => ({ kind: 'machinery', text: w, evidence: 'Read line' })));
   const out = [];
@@ -863,11 +1140,51 @@ function warningsFor(d, records, claudeRows, leftOut = []) {
 }
 
 /**
+ * The window's landed product rows that were planned, not filed later (an id in `fuIds`, the follow-ups
+ * doc's first-column ids, was filed), and the owner wait per landed product row: each unit's Owner wait
+ * capped at OWNER_WAIT_CAP_MIN, summed, over the rows the units landed (productKpis' count); null with
+ * no row or no wait.
+ */
+export function planKpis(records, since, until, fuIds = new Set()) {
+  const rows = records.filter((r) => inWindow(r.landed, since, until) && !isHarnessUnit(r.id));
+  const named = new Map();
+  for (const r of rows) named.set(r.id, new Set([...(named.get(r.id) ?? []), ...r.batch]));
+  let landed = 0;
+  let originalRows = 0;
+  for (const [id, batch] of named) {
+    const ids = batch.size ? [...batch] : [id];
+    landed += ids.length;
+    originalRows += ids.filter((x) => !fuIds.has(x)).length;
+  }
+  const waits = groupUnits(rows).map((u) => u.ownerWait).filter(Number.isFinite);
+  const total = waits.reduce((s, w) => s + Math.min(w, OWNER_WAIT_CAP_MIN), 0);
+  return { originalRows, ownerWaitPerRowMin: landed > 0 && waits.length > 0 ? round1(total / landed) : null };
+}
+
+/**
+ * The escaped-defect proxy over the window: the mainline's reverts, its fixes within DEFECT_DAYS after a
+ * merge on that merge's files, and the open P0/P1 follow-ups filed in the window (`open`: openFollowUps).
+ * With no git history read (`merges` null), the two git counts are null.
+ */
+export function escapedKpis({ merges = null, fixes = null, open = [] }, since, until) {
+  const openP01 = open.filter((r) => inWindow(r.at, since, until) && r.sevs.some((s) => s === 'P0' || s === 'P1')).length;
+  if (merges === null || fixes === null) return { reverts: null, fixes: null, openP01 };
+  const inWin = fixes.filter((f) => FIX_SUBJECT.test(f.subject ?? '') && inWindow(f.t, since, until));
+  const reverts = inWin.filter((f) => /^revert\b/i.test(f.subject));
+  const linked = inWin.filter((f) => !/^revert\b/i.test(f.subject) && merges.some((m) => fixAfter(m, [f], DEFECT_DAYS)));
+  return { reverts: reverts.length, fixes: linked.length, openP01 };
+}
+
+// A state file's unit from its path, for a file with no Unit: header.
+const unitOfPath = (p) => (p ? String(p).replace(/^.*\//, '').replace(/\.state\.md$/, '') : null);
+
+/**
  * Everything the digest and the export say, from what retro-gather read: `g` is { log: { text,
- * dates }, followUps: { text, dates } | null, states: [{ text, changed }], steps: Map unit -> markers,
+ * dates }, followUps: { text, dates } | null, states: [{ text, changed, path? }], steps: Map unit -> markers,
  * rows, events (each tagged with its session), commands (contextCommands, tagged the same), sessionUnits:
  * Map session -> Set of units, sessions, ledger: entries | null, codex: [parsed Codex threads],
- * claudeRuns: entries | null, previous: [data] }; `columns` as for logRecords.
+ * claudeRuns: entries | null, merges and fixes: the mainline's (retro-gather's mainlineHistory) | absent,
+ * previous: [data] }; `columns` as for logRecords.
  */
 export function buildRetro(g, { project, now, since = null, until = null, columns = undefined }) {
   const win = windowFor({ since, until, now, previous: g.previous });
@@ -897,6 +1214,18 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     for (const [k, v] of Object.entries(pick(s))) acc[k] = (acc[k] ?? 0) + v;
     return acc;
   }, {});
+  // Every state file's decision rows feed the ask kinds (a rolling count, not the window's); the
+  // window's grant rows are the dated ones dated in it, an undated one by its file's last change.
+  const decisionList = g.states.flatMap((s) => decisionRows(s.text, unitOfPath(s.path)).map((r) => ({ ...r, changed: s.changed })));
+  const ask = askKinds(decisionList);
+  const history = Array.isArray(g.merges) && Array.isArray(g.fixes);
+  const outcomes = decisionOutcomes(decisionList, { merges: history ? g.merges : [], fixes: history ? g.fixes : [] });
+  const granted = outcomes.filter((r) => inWin(r.date === null ? r.changed : Date.parse(`${r.date}T00:00:00Z`)));
+  const reversedN = granted.filter((r) => r.outcome === 'reversed').length;
+  const linked = granted.filter((r) => r.outcome === 'defect-linked');
+  const open = g.followUps ? openFollowUps(g.followUps.text, g.followUps.dates) : [];
+  const owed = g.followUps ? owedRows(g.followUps.text, g.followUps.dates) : [];
+  const oldestOwed = owed[0] ?? null;
   const d = {
     schema: 1,
     project,
@@ -914,7 +1243,14 @@ export function buildRetro(g, { project, now, since = null, until = null, column
       codex: g.ledger ? summarizeLedger(g.ledger, { since: win.since, until: win.until }) : null,
       codexHost: g.codex?.length ? codexHostKpis(g.codex, win) : null,
       claudeRuns: g.claudeRuns ? claudeRunKpis(g.claudeRuns, win) : null,
+      plan: planKpis(records, win.since, win.until, g.followUps ? followUpIds(g.followUps.text) : new Set()),
+      owed: oldestOwed ? { days: oldestOwed.at === null ? null : Math.floor((now - oldestOwed.at) / DAY), row: oldestOwed.id } : null,
+      grants: { decisions: granted.length, reversed: reversedN, reversedPct: granted.length ? Math.round((reversedN / granted.length) * 100) : 0, defectLinked: linked.length },
+      escaped: escapedKpis({ merges: history ? g.merges : null, fixes: history ? g.fixes : null, open }, win.since, win.until),
     },
+    ask,
+    promotions: promotions(decisionList, ask.ask),
+    defectLinked: linked.map((r) => ({ unit: r.unit, id: r.id, decision: r.decision, fix: r.fix })),
     baseline: {
       log: logKpis(records, win.baselineSince, win.since),
       product: productKpis(records, win.baselineSince, win.since),
@@ -938,6 +1274,43 @@ export function buildRetro(g, { project, now, since = null, until = null, column
   d.warnings = warningsFor(d, records, g.rows.some((r) => inWin(r.ts)), leftOutRows(g.log.text));
   d.candidates = candidates(d);
   return d;
+}
+
+const hm = (m) => {
+  const r = Math.round(m);
+  return `${Math.floor(r / 60)}h${String(r % 60).padStart(2, '0')}m`;
+};
+
+/**
+ * The plain lines under the KPI table: plan rows, owner wait, what is owed, the granted decisions and
+ * what became of them, the ask kinds (always, so a reader can find the line), the promotions to put to
+ * the owner and at most five defect-linked decisions for the owner to judge. A data object from before
+ * these figures prints its defaults.
+ */
+function decisionLines(d, items) {
+  const k = d.kpis ?? {};
+  const pl = k.plan ?? {};
+  const gr = k.grants ?? { decisions: 0, reversed: 0, reversedPct: 0, defectLinked: 0 };
+  const es = k.escaped ?? { reverts: null, fixes: null, openP01: 0 };
+  const n = (v) => (v === null || v === undefined ? '—' : String(v));
+  const ask = d.ask ?? { ask: ASK_DEFAULT, demoted: [] };
+  const linked = d.defectLinked ?? [];
+  return [
+    `Original plan rows: ${pl.originalRows ?? 0} this week`,
+    `Owner wait per landed row: ${Number.isFinite(pl.ownerWaitPerRowMin) ? hm(pl.ownerWaitPerRowMin) : 'n/a'}`,
+    `OWED oldest: ${k.owed ? `${k.owed.days === null ? '?' : k.owed.days} days (${cell(k.owed.row)})` : 'none'}`,
+    `Grant decisions: ${gr.decisions} · reversed ${gr.reversed} (${gr.reversedPct}%) · defect-linked ${gr.defectLinked}`,
+    `Escaped-defect proxy: ${n(es.reverts)} reverts · ${n(es.fixes)} fixes within ${DEFECT_DAYS} days of a merge, on its files · ${es.openP01} open P0/P1 follow-ups filed this week`,
+    `Ask kinds: ${ask.ask.join(', ')}`,
+    ...(ask.demoted.length ? [`Demoted: ${ask.demoted.map((x) => `${x.kind} ${x.reversed}/${x.of}`).join(', ')}`] : []),
+    ...(d.promotions ?? []).map((p) => `Promote? ${p.kind}: took ${p.took}/${p.of} — one word from the owner widens the grant`),
+    ...(linked.length
+      ? [
+          'Defect-linked decisions (judge them):',
+          ...linked.slice(0, Math.min(5, Math.max(items, 1))).map((x) => `- ${x.unit}/${x.id} · ${clip(cell(x.decision), 60)} · ${String(x.fix.sha).slice(0, 7)} ${clip(cell(x.fix.subject), 50)}`),
+        ]
+      : []),
+  ];
 }
 
 const perWeek = (n) => `${round1(n / BASELINE_WEEKS)}/wk`;
@@ -1011,7 +1384,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
       `| Codex host: compactions · median tokens before | ${h.compactions} · ${h.compactPreTokens} | ${hb('compactions')} · ${hb('compactPreTokens')} |`,
     );
   }
-  L.push('');
+  L.push('', ...decisionLines(d, items), '');
 
   L.push('## Outliers', '');
   const outliers = [
@@ -1057,7 +1430,7 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
     const cl = dc.classes;
     const by = dc.by;
     const un = cl.unclassified ? ` · ${cl.unclassified} unclassified (no Class column)` : '';
-    L.push(`- Decisions in ${dc.units} state files changed this window: P ${cl.P ?? 0} · C ${cl.C ?? 0} · T ${cl.T ?? 0}${un} (owner ${by.owner ?? 0} · default ${by.default ?? 0} · agent ${by.agent ?? 0}) · open questions ${dc.questions}`);
+    L.push(`- Decisions in ${dc.units} state files changed this window: P ${cl.P ?? 0} · C ${cl.C ?? 0} · T ${cl.T ?? 0}${un} (owner ${by.owner ?? 0}${by.ownerOther ? ` · owner-other ${by.ownerOther}` : ''}${by.grant ? ` · grant ${by.grant}` : ''} · default ${by.default ?? 0} · agent ${by.agent ?? 0}) · open questions ${dc.questions}`);
   }
   L.push('');
 

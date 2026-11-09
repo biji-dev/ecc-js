@@ -1,6 +1,6 @@
 /**
  * Tests for skills/harness-bootstrap/templates/scripts/check-agent-docs.mjs (biji-dev/ecc-js):
- * runs the template's own node:test suite, then proves the rule-index, base and citations checks are load-bearing with mutants.
+ * runs the template's own node:test suite, then proves the rule-index, base, hard-limit and citations checks are load-bearing with mutants.
  */
 
 const assert = require('assert');
@@ -15,7 +15,7 @@ const SCRIPT = path.join(SCRIPTS, 'check-agent-docs.mjs');
 const TEMPLATE_TEST = path.join(SCRIPTS, 'lib', 'check-agent-docs.test.mjs');
 
 // Pinned: the number of tests in the template suite. Update it when tests are added or removed.
-const EXPECTED_PASS = 88;
+const EXPECTED_PASS = 92;
 
 let passed = 0;
 let failed = 0;
@@ -182,11 +182,32 @@ function heavyBaseFixture() {
 test('mutant without the base check passes a repo whose imports are over the base the shipped file catches', () => {
   const dir = heavyBaseFixture();
   const shipped = runScript(SCRIPT, dir);
-  assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
-  assert.match(shipped.err, /^FAIL base: every session loads \d+ bytes from this repository, budget 49152/m);
-  assert.doesNotMatch(shipped.err, /^FAIL budget: /m);
+  // The base is a size: it warns, and the exit code stays 0.
+  assert.strictEqual(shipped.status, 0, `shipped file should warn, not fail: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^WARN base: every session loads \d+ bytes from this repository, budget 49152/m);
+  assert.doesNotMatch(shipped.err, /^(FAIL|WARN) budget: /m);
   const result = runScript(mutantOf('if (baseTarget !== null) {', 'if (false) {'), dir);
   assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
+  assert.doesNotMatch(result.err, /^WARN base: /m, 'the mutant should not warn');
+});
+
+/** A clean repo whose AGENTS.md is one byte over Codex's 32 KiB read limit (and under the 40 KiB budget). */
+function oversizedAgentsFixture() {
+  return repoOf('agent-docs-hard-', {
+    'AGENTS.md': `# Agents\n${'x'.repeat(32768 - 9)}\n`,
+    'CLAUDE.md': '@AGENTS.md\n',
+  });
+}
+
+test('mutant with a raised or null hard limit passes an AGENTS.md the shipped file fails', () => {
+  const dir = oversizedAgentsFixture();
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 1, `shipped file should fail: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^FAIL hard-limit: AGENTS\.md 32769 bytes, over the Codex hard read limit 32768: the host drops the rest - move content out$/m);
+  const raised = runScript(mutantOf("hardLimits: { 'AGENTS.md': 32768 }", "hardLimits: { 'AGENTS.md': 65536 }"), dir);
+  assert.strictEqual(raised.status, 0, `mutant should report OK: ${raised.out}${raised.err}`);
+  const off = runScript(mutantOf("hardLimits: { 'AGENTS.md': 32768 }", "hardLimits: { 'AGENTS.md': null }"), dir);
+  assert.strictEqual(off.status, 0, `a null limit should report OK: ${off.out}${off.err}`);
 });
 
 test('mutant that reads @ inside code spans lists a file the shipped --base does not', () => {
@@ -223,6 +244,20 @@ test('mutant without the citations check passes a repo citing a renamed section 
   assert.strictEqual(shipped.err.match(/^FAIL /gm).length, 2, shipped.err);
   const result = runScript(mutantOf("if (isFile('AGENTS.md')) checkCitations(", 'if (false) checkCitations('), dir);
   assert.strictEqual(result.status, 0, `mutant should report OK: ${result.out}${result.err}`);
+});
+
+test('mutant that fails a budget instead of warning turns a warning-only repo into a failure', () => {
+  const dir = repoOf('agent-docs-warn-', { 'AGENTS.md': '# Agents\n', 'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(8192)}\n` });
+  const shipped = runScript(SCRIPT, dir);
+  assert.strictEqual(shipped.status, 0, `shipped file should warn only: ${shipped.out}${shipped.err}`);
+  assert.match(shipped.err, /^WARN budget: CLAUDE\.md \d+ bytes, budget 8192/m);
+  assert.match(shipped.out, /^check-agent-docs: OK \(\d+ checks\)$/m);
+  const json = JSON.parse(runScript(SCRIPT, dir, ['--json']).out);
+  assert.deepStrictEqual([json.ok, json.failures.length, json.warnings.map((w) => w.check)], [true, 0, ['budget']]);
+  const mutant = mutantOf('if (!cond) warnings.push({ check, file, line: line || 0, detail });', 'if (!cond) fail(check, file, line, detail);');
+  const result = runScript(mutant, dir);
+  assert.strictEqual(result.status, 1, `mutant should fail: ${result.out}${result.err}`);
+  assert.match(result.err, /^FAIL budget: CLAUDE\.md /m);
 });
 
 /** A repo with the given files, staged; `after(dir)` runs once they are. */

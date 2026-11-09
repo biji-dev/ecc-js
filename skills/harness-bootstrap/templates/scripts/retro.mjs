@@ -11,7 +11,9 @@
  * much the owner touched the sessions: prompts and /clear and /compact per unit landed, the median agent
  * run between prompts, counted from the transcripts' structure), outliers, where the money went by step,
  * friction, what the owner caught, the queue, and at most five candidates for the retro review
- * (harness-bootstrap's reference/learning.md).
+ * (harness-bootstrap's reference/learning.md). Under the KPIs: the granted decisions and what became of
+ * them (reversed, or a fix within 7 days on their unit's merged files, for the owner to judge), the card
+ * kinds the owner is still asked, and any kind the owner's own answers say the grant could take.
  *
  *   node scripts/retro.mjs [--since <ISO>] [--until <ISO>] [--projects-dir <dir>] [--ledger <path>]
  *     [--dry-run | --json | --export <dir>]
@@ -70,6 +72,7 @@ function main() {
       projectsDir: args.projectsDir ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'),
       ledger: args.ledger,
       sinceMs: Date.parse(win.baselineSince),
+      history: { sinceMs: Date.parse(win.since), untilMs: Date.parse(win.until) },
     });
     data = buildRetro({ ...g, previous }, { project: path.basename(top), now, since: args.since, until: args.until });
   } catch (e) {

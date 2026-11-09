@@ -944,8 +944,8 @@ async function main() {
     ['host-cleared', 'cmd.cleared?.find((n) => n === ALL_VARS || isHostVar(n))', 'undefined'],
     ['env-i', "if (w[k] === 'i') drops.push(ALL_VARS);", ''],
     ['env-unset-long', "if ('--unset'.startsWith(opt)) return", 'if (false) return'],
-    ['host-unset', 'if (line && runsGit && [...line.forms].some(isHostVar)) return HOST_HIT;', ''],
-    ['unset-git', 'runsGit && [...line.forms]', '[...line.forms]'],
+    ['host-unset', 'if (isHostVar(name) && (line.sets.has(name) || line.unsets.has(name))) return HOST_HIT;', ''],
+    ['unset-git', 'const forms = runsGit ? [...(line?.forms ?? [])] : [];', 'const forms = [...(line?.forms ?? [])];'],
     ['runtime', 'const planted = plantedEntry(composedPath(pathValues(cmd)), parts.cwd, opts.homeSet);', 'const planted = null;'],
     ['path-temp', 'if (!inHome && (under(abs, TEMP_DIRS) || under(real, TEMP_DIRS))) return entry;', ''],
     ['path-repo', 'if (top && (under(abs, [top]) || under(real, [top]))) return entry;', ''],
@@ -1032,7 +1032,6 @@ async function main() {
     ['host-cleared', 'ignoring what env drops lets env -u CLAUDECODE through', 'env -u CLAUDECODE git merge --no-ff task'],
     ['env-i', 'not reading env -i lets it through', 'env -i git merge --no-ff task'],
     ['env-unset-long', 'not reading env --unset lets it through', 'env --unset=CLAUDECODE git status'],
-    ['host-unset', 'ignoring an unset of a host variable lets it through', 'unset CODEX_THREAD_ID; git commit -m x'],
     ['runtime', 'ignoring PATH on git lets a relative entry through', 'PATH=./x:$PATH git commit -m x'],
     ['path-temp', 'dropping the temporary-directory check lets a /tmp entry through', 'PATH=/tmp/x:$PATH git merge --no-ff task'],
     ['path-repo', 'dropping the inside-the-repository check lets an entry under the repository through', `PATH=${REPO}/scripts:$PATH git commit -m x`, { cwd: REPO, currentBranch: 'feature/x' }],
@@ -1042,6 +1041,7 @@ async function main() {
     ['forms', 'dropping the guarded-name collection lets read CLAUDECODE through', 'read CLAUDECODE </dev/null; git merge --no-ff task'],
     ['forms', 'dropping the guarded-name collection lets a for loop over HARNESS_LANDING through', 'for HARNESS_LANDING in owner; do git commit -m x; done'],
     ['forms', 'dropping the guarded-name collection lets read PATH through', 'read PATH <<< ./bin; git commit -m x'],
+    ['forms', 'dropping the guarded-name collection lets an unset of a host variable through', 'unset CODEX_THREAD_ID; git commit -m x'],
     ['exec-c', 'not clearing the environment for exec -c lets it through', 'exec -c git merge --no-ff task'],
   ];
   for (const [label, title, command, o] of kills) {
@@ -1101,6 +1101,11 @@ async function main() {
   for (const [label, title, command, o = opts] of blockedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => surviving(label, command, o));
   }
+  test('mutation (host-unset): an unset of a host variable on a git line keeps host-override\'s reason, not the advice for a name only named', () => {
+    const command = 'unset CODEX_THREAD_ID; git commit -m x';
+    assert.match(guard.check(command, opts).reason, /^the landing check reads the host/);
+    assert.doesNotMatch(mutants['host-unset'].check(command, opts)?.reason ?? '', /^the landing check reads the host/);
+  });
   test('mutation (heredoc): without heredoc stripping a heredoc body of bypass commands is blocked', () => {
     const command = "git commit -F - <<'EOF'\ngit commit --no-verify\nEOF";
     assert.strictEqual(guard.check(command, opts), null);

@@ -224,7 +224,17 @@ test('a guarded name changed by a form the guard does not read is refused on a l
     ]) {
       assert.equal(at(c), name, c);
     }
-    assert.match(check('read PATH <<< ./bin; git commit -m x', { cwd: at.repo, currentBranch: TOPIC }).reason, /^`PATH` is changed here by a form the guard does not read/);
+    const reason = (c) => check(c, { cwd: at.repo, currentBranch: TOPIC })?.reason;
+    // A name only named gets the advice that works: split the line (quoting a one-word name does not).
+    for (const [c, name] of [
+      ['read PATH <<< ./bin; git commit -m x', 'PATH'],
+      ['git diff && rg -n HARNESS_LANDING scripts', 'HARNESS_LANDING'],
+      ['git log --oneline && grep -n "CLAUDECODE" README.md', 'CLAUDECODE'],
+    ]) {
+      assert.match(reason(c), new RegExp(`^\`${name}\` is named by another command on a line that runs git.*Run that command and git as separate commands`), c);
+    }
+    assert.match(reason('unset CODEX_THREAD_ID; git commit -m x'), /^the landing check reads the host/);
+    assert.match(reason('HARNESS_LANDING=owner; git commit -m x'), /^HARNESS_LANDING is the owner's override/);
     for (const c of [
       'echo $PATH; git status',
       'echo "${PATH:-}"; git status',

@@ -25,7 +25,8 @@
 //   ($NAME, ${NAME:-x}), git's own arguments and the forms the guard reads by value (an assignment
 //   or a declaration, unset or export -n of PATH, HUSKY or a GIT_CONFIG_* name) do not count.
 //   HARNESS_LANDING is landing-override, a host variable host-override, PATH and GIT_CONFIG_*
-//   hooks-path-override, HUSKY no-verify. [B]
+//   hooks-path-override, HUSKY no-verify; the reason says to run a search or a print of the name
+//   apart from git. [B]
 //   binding (re-derived per project): the MAINLINE, HOOKS_DIR and EXTRA_RULES lines below.
 // The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings are
 // held aside first (a commit message that mentions --no-verify is text, not a bypass), then each
@@ -1217,18 +1218,24 @@ const LANDING_HIT = {
  * guarded name in a form the guard does not read (line.forms; a declaration, assignment, `unset`
  * or `export -n` naming a host variable is one): HARNESS_LANDING (landing-override), a host
  * variable (host-override), PATH or a GIT_CONFIG_* name (hooks-path-override), HUSKY (no-verify).
+ * A host variable the line declares, assigns or unsets keeps host-override's reason; a name only
+ * named is most often a search pattern or a printed value, so its reason says how to run that.
  * Alone, or before `claude -p`, such a form reaches no landing check.
  */
 function lineHit(line, runsGit) {
   // The owner's override of the landing check (harness-guard.sh): an agent that sets it merges
   // past the review it owes, so it is refused on any command, whatever the value.
-  if (line?.sets.has('HARNESS_LANDING') || (runsGit && line?.forms.has('HARNESS_LANDING'))) return LANDING_HIT;
-  if (line && runsGit && [...line.forms].some(isHostVar)) return HOST_HIT;
-  const name = runsGit ? [...(line?.forms ?? [])].find(isValueVar) : undefined;
+  if (line?.sets.has('HARNESS_LANDING')) return LANDING_HIT;
+  const forms = runsGit ? [...(line?.forms ?? [])] : [];
+  const name = forms.find((n) => n === 'HARNESS_LANDING') ?? forms.find(isHostVar) ?? forms.find(isValueVar);
   if (!name) return null;
+  if (isHostVar(name) && (line.sets.has(name) || line.unsets.has(name))) return HOST_HIT;
+  const rule = name === 'HARNESS_LANDING' ? 'landing-override'
+    : isHostVar(name) ? 'host-override'
+    : name === 'HUSKY' ? 'no-verify' : 'hooks-path-override';
   return {
-    rule: name === 'HUSKY' ? 'no-verify' : 'hooks-path-override',
-    reason: `\`${name}\` is changed here by a form the guard does not read (read, printf -v, for, a nameref, \${NAME:=…}, …). Quote the name where it is text, or ask the owner.`,
+    rule,
+    reason: `\`${name}\` is named by another command on a line that runs git, and the guard cannot tell a search or a printed value from a change to it. Run that command and git as separate commands; an agent never changes \`${name}\`.`,
   };
 }
 

@@ -16,17 +16,30 @@ loses nothing but the current step.
 
 `[M]` **No hand-off: a queue run.** `/task-runner` resumes what is held, then the
 queue; `/task-runner <unit>` runs that unit, then the queue; `/task-runner <unit>
-only`, that unit alone. A kickoff may carry a `Grant:` line and a stop line
-(`gate-design.md` › The run grant). After a land, announce the next ready unit in
-one line and start it: answered parked units, then due-checks, then the next ready
-row. Stop only on a command's word — an empty queue, all left waiting on the owner
-(`gate-design.md` › Parking a unit), the stop line, the host's own usage limit —
-and end the turn on the state line (`rules.md` §1). An `escalate-adversarial`, a
-tripwire or a memory refusal at a live step parks its unit; a second family out of
-quota is `degraded`, never a stop.
+only`, that unit alone. It runs under the standing grant (`gate-design.md` › The
+standing grant); a kickoff only narrows it. After a land, announce the next unit in
+one line and start it, in this order: a unit that can land; answered parked units;
+the next ready **original plan row**; follow-ups the owner scheduled. Stop only on
+a command's word — all left waiting on the owner (`gate-design.md` › Parking a
+unit), a `Stop:` line, the host's own usage limit — or when nothing passes the
+relevance test: then end on `DONE — waiting on you:`, the `OWED` lines first
+(› Due-checks). Never invent work. A memory refusal at a live step parks its unit;
+a second family out of quota is `degraded`, never a stop.
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
+
+`[M]` **The relevance test.** Anything that is not a plan row or the owner's own
+request — a unit, a fix round, a review lane, a card option, a follow-up — passes
+one test, written in one line with its evidence, or it does not start. **Related:**
+it changes or protects the "Done when" or the write set of the deliverable in
+flight. **Critical:** a reproduced P0 or P1, a never-auto category, a blocker for
+landing or verifying the work in flight, or a guard or gate broken now (not one
+that "could be hardened"). Anything else is dropped or goes to the follow-ups doc's
+30-day list (`scope-guard.md`): never a row, a unit or a recommendation.
+> Origin, the v10 study: in v9 a due sweep, retro or hygiene became the next unit
+> ahead of the next product row; since v9, 6 of 7 merged units in three installs
+> were harness units, and in the v9 pilot harness work was 67% of units by count.
 
 `[M]` **The main session coordinates and reviews.** It owns the tier, the gates,
 the plan text, the slicing, every brief, the critique of every report, triage, the
@@ -91,8 +104,8 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8a docs        the doc sweep · then the FULL verify run
 8b record      written last, from the diff, as fields
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
-                                                          ══ GATE 2 ══  by the merge policy
-9  land        guard → land commit → release the lock → merge → push on the owner's word or the grant → due-checks
+                                                          ══ GATE 2 ══  merge when green
+9  land        guard → landing check → land commit → release the lock → merge → push by the grant → due-checks
 10 teardown    stop what was started; close the state file; start the next ready unit
 ```
 
@@ -147,31 +160,28 @@ and never asks a question. What each line makes the runner do:
 
 | Line | The runner |
 |---|---|
-| `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
-| `DUE sweep` · `DUE retro` · `DUE hygiene` · `DUE p3` | names it in the claim line and carries on; at step 9 the first one still due is the next unit after any answered parked one (› Shape), a `harness/<slug>` unit. Cadences count product landings only; before the flip they print `HELD … — foundation stage — they wait for the flip` instead |
-| `DUE disk` | starts the approved machine-sweep categories in the background (`machine.md`); with none approved, the line goes in the next owner brief |
-| `DUE worktrees` | removes each one no registry row names and no process runs in (`git worktree remove`, never `--force`) |
-| `NEW proposals <week>` | routes each proposal (`learning.md` › The retro review), then runs `--seen <week>` |
+| `OWED <id> since <date> — <what>`: an owner input older than 3 days (`Owner supplies:`, `Owner decides:`) | leads every `WAITING ON YOU:` and `DONE` line |
 | `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; once answered (its Cards cell), it is the next unit claimed |
+| `HOLD claims — …`, exit 1 with `--claim`: the digest unread past the valve | **stops the claim**; landing and merging go on. Cleared by the owner's `--digest-read` |
+| `SPLIT <unit> — …`: a held branch past the deliverable's line cap | lands the green slices, flag-off where unfinished; the rest is the next unit. No question |
+| `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
+| `REPORT sweep\|retro\|hygiene — <why> — <command>` | runs the command in the background; the report rides in the next unit's land commit. **Never a unit.** Cadences count product landings only; before the flip they print `HELD …` |
+| `ASK <kinds> — <why>` | the card kinds that ask the owner (`gate-design.md` › The standing grant) |
+| `DIGEST …` | goes to the owner with the next state line. `DIGEST disk` starts the approved machine-sweep categories (`machine.md`); `DIGEST worktrees` removes each one no row names and no process runs in (`git worktree remove`, never `--force`) |
 
-`[M]` **No queue is stored.** The checks re-read the files each time, so a unit
-that is due stays due until its report is committed, and nothing has to remember
-it. Reports are committed at `REPORTS.<kind>` in `harness-due-core.mjs` (default
-`docs/harness/reports/<file>`), never in a gitignored directory: a report nobody can
-count does not exist for the next check.
+`[M]` **No queue is stored.** The checks re-read the files each time, so a report
+that is due stays due until it is committed. Reports are committed at
+`REPORTS.<kind>` in `harness-due-core.mjs` (default `docs/harness/reports/<file>`),
+never in a gitignored directory: a report nobody can count does not exist for the
+next check.
 > Origin: 13 preflights and sweeps in two projects caught real problems, each one
 > because someone asked; two ran overdue, and one "sweep due" note lived in a
 > session's memory only.
 
 `[B]` In `scripts/lib/harness-due-core.mjs`: `MAIN`, `LOG`, `FOLLOW_UPS`, `REPORTS`
-(`null` for a kind the project does not run), `PHASE_OF`, `CADENCE`, `P3_AGE_DAYS`,
+(`null` for a kind the project does not run), `STATE_DIR`, `PHASE_OF`, `CADENCE`,
+`OWED_DAYS`, `DIGEST_LINES`, `VALVE_ITEMS`, `VALVE_DAYS`, `SPLIT_LINES`,
 `DISK_MIN_GB`, `WORKTREE_IDLE_HOURS`, `COMMANDS`.
-
-## The hygiene unit
-
-`[M]` **`DUE hygiene` queues a `harness/hygiene-<date>` unit** (`hygiene.md`): the P3
-batch, dead code, docs drift, the archive and the residue. With no hygiene unit
-bound, `DUE p3` queues the P3 batch alone.
 
 ## Which steps each tier runs
 
@@ -179,21 +189,23 @@ bound, `DUE p3` queues the P3 batch alone.
 |---|---|---|---|
 | 0 claim | type + tier in the claim line | + Scope block, frozen when stated | + Scope block for Gate 1 |
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
-| Gate 1 | — | **auto** unless the risk map or the policy is hit | owner — unit 1 of an approved intake: `intake.mjs --gate1` |
+| Gate 1 | — | **auto** unless the risk map or the policy is hit | the grant (the gate table) — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
 | 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
-| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s go to the P3 batch | the same (`gate-design.md`) |
+| 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s ride along | the same (`gate-design.md`) |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8a verify | scoped | FULL once before merge | FULL |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
 | 8c claims | — | **skipped; the record is generated** | blocking, **behaviour claims**, one round |
-| Gate 2 | by the merge policy | by the merge policy | owner |
+| Gate 2 | merge when green | merge when green | merge when green, the landing check passed |
 
-`[M]` **A P0 or P1 from review promotes Small to Full** — the unit then runs the
-plan check, lane A against a written plan, lane C and the adversarial pass.
+`[M]` **At `production: none`** critical code runs Small's column plus the adversarial
+pass (`gate-design.md` › Stakes). **A P0 or P1 from review promotes Small to Full**
+— the unit then runs the plan check, lane A against a written plan, lane C and the
+adversarial pass.
 **Hot-small**, once its cap is filled (`gate-design.md`), runs Full's column
 without the plan check, lane A and the separate doc sweep; step 8 is `--tier full`.
 
@@ -202,16 +214,22 @@ without the plan check, lane A and the separate doc sweep; step 8 is `--tier ful
 `[M]` **A diff of harness paths alone** (`HARNESS` in `review-gate-core.mjs`; a
 doc changes no tier's review) runs Small's column with these changes: step 1 is an
 impact note; 4 and 8c do not run; 5–7 are the shipped tests and
-`check-agent-docs.mjs`; step 8 is `--tier harness`, one cross-family review and one
-fix round, a second round the owner's call. Gate 1 is the claim line and Gate 2 the
-merge policy's, except that the owner takes both for a guard (the commit guard, its
-hooks), a gate (`run-gates.sh`, `review-gate.mjs`, the `gates` block), a reviewed
-block or the rules block. A diff Trivial fits stays Trivial unless it edits one.
+`check-agent-docs.mjs`; step 8 is `--tier harness`: one cross-family review, the
+adversarial pass on round 2, and round 3 drops the change. Gate 1 is the claim
+line and Gate 2 merge when green, except that the owner takes both for a diff to
+a guard (the commit guard, its hooks, the command guard) or a gate (`run-gates.sh`,
+`review-gate.mjs`, the `gates` block), a reviewed block or the rules block — the
+landing check says `NONE` on those paths (`GUARDS`). A diff Trivial fits stays Trivial unless it edits one.
 > Origin: seven of one install's first eight units were its own harness, each Full.
 
-`[M]` **Harness work waits for product work.** A non-blocking harness follow-up
-goes into one harness unit per milestone unless the owner orders it now; an owner's
-request runs when asked, its claim line saying what it displaces.
+`[M]` **The harness freeze: no harness unit inside a project**, except an upgrade
+(one unit, owner-merged: it rewrites the rules block and a reviewed block; the
+owner sees only its new C cards and reviewed blocks, `upgrade.md`), the flip
+(`foundation.md`), a vendor-trap skill (`vendor-skill.md`) and a guard or gate
+broken now, which passes the relevance test as critical. Any other harness finding
+is one line in `docs/harness/upstream-notes.md`, read at the next skill round;
+that file is not a queue. An owner's request runs when asked, its claim line
+saying what it displaces.
 
 ## Batched rows
 
@@ -238,7 +256,7 @@ as its own commit. Never reclaim a row you do not own.
 
 **Step 0 — claim.**
 - `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
-  this row opens stops the claim before anything is held.
+  this row opens, or a `HOLD claims` line, stops the claim before anything is held.
 - `[M]` **The host, once a session:** `node scripts/harness-host.mjs`. Its first line
   gives each role's model on this host for the claim line and the switch line, and
   each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
@@ -279,8 +297,8 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **Sync both directions.** Behind: pull before branching. **Ahead:** another
   session left unpushed work, and this push would publish it — ask first.
   > Origin: the local mainline was four commits ahead, and no step looked.
-- `[M]` Read the follow-ups doc: rows scheduled for this unit are part of its
-  requirement. Verify the dependency list before presenting it.
+- `[M]` Read the follow-ups doc: rows the owner scheduled for this unit are part
+  of its requirement. Verify the dependency list before presenting it.
 - `[M]` The IA, and the plan check where it runs, as in change mode, in the plan
   document.
 
@@ -324,7 +342,8 @@ as its own commit. Never reclaim a row you do not own.
    implementer. The owner may change any executor cell in the reply (› Executor
    override).
 
-A Gate 1 that waits on the owner parks the unit (`gate-design.md` › Parking a unit).
+Under the standing grant the sheet goes to the digest and the unit goes on; a
+Gate 1 that waits on the owner parks the unit (`gate-design.md` › Parking a unit).
 
 `[M]` **Unit 1 of an approved intake runs `node scripts/intake.mjs --gate1 <request>
 --state <state file>` first.** `Gate 1: auto — …` skips the sheet, quoted in the
@@ -383,7 +402,7 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
 
 **Step 4 — conform.** `[M]` Dispatch `plan-conformance-auditor` with
 `model: "sonnet"`, `effort: "high"`. A fix round that introduces a new blocking
-finding is a stop (`rules.md` §2). A scoped re-audit only after a fix round that
+finding trips the tripwire (`rules.md` §2). A scoped re-audit only after a fix round that
 touches a plan item. Tell it which columns are written at land.
 
 **Steps 5–7.** `[M]` Every validation line follows `rules.md` §1. Live pass: drive
@@ -410,22 +429,21 @@ DOM snapshot; send screenshots to a model that reads images.
   "fixed".
   > Origin: about 6% of claimed gaps in the third project were artefacts, such as
   > another worktree's test run.
-- `[M]` **Triage by scope class, then severity**: OUT → filed or dropped
-  (`scope-guard.md`) whatever its severity; P3 → **the P3 batch**, never a fix round,
-  unless on a line this round already changes.
+- `[M]` **Triage by scope class, then severity**: OUT → filed by the relevance test
+  or dropped (`scope-guard.md`) whatever its severity; P3 → rides along on a line
+  this round already changes, never a fix round.
 - `[M]` **Fix rounds** are bounded by `gate-design.md`, and each fix gets a
   regression test proven to fail without it. One brief per area; fix groups on
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
-  fix diff only; `--writer` is the role that wrote the fix, as for the unit.
-  `escalate-adversarial` is the third-round stop (`rules.md` §2): ask the owner,
-  and run the adversarial pass only for the round the owner orders.
-- `[M]` **The P3 batch** runs once per slice set, after the fix rounds: one Sonnet
-  fixer (or the second family's `fix-cold`) over every P3 still IN scope, its
-  targeted tests, no re-review (`review-gate.mjs` says `p3-batch`) — except a batch
-  over critical code that Opus did not write, which the Opus `code-reviewer` reads.
-  The P3s a unit defers go to the follow-ups doc, and the hygiene unit batches them.
+  fix diff only; `--writer` is the role that wrote the fix, as for the unit. Round 3
+  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks.
+- `[M]` **The P3 batch**, at `production: live` only, runs once per slice set after
+  the fix rounds: one Sonnet fixer (or the second family's `fix-cold`) over every P3
+  still IN scope, its targeted tests, no re-review (`review-gate.mjs` says
+  `p3-batch`) — except a batch over critical code that Opus did not write, which the
+  Opus `code-reviewer` reads. A P3 is never deferred to a later batch.
 
 **Step 8a — docs, then the FULL verify.**
 - `[M]` **The doc sweep**, only when the diff changes a public behaviour, a named
@@ -482,14 +500,17 @@ the P and C cards still open · verdicts · unresolved findings · diffstat · *
 against the Gate 1 estimate**: the deliverable's window (the record's Cost line) and the
 unit's total since the claim (`unit-cost.mjs`; `--by-step` for where it went) · what is still running · **the step
 ledger and its lists** (`context.md`). Never presented while a
-review round is outstanding. Decided by the merge policy and the run grant
-(`gate-design.md`); one that waits on the owner parks the unit.
+review round is outstanding. Decided by merge when green (`gate-design.md`): the
+brief goes to the digest; one that waits on the owner parks the unit.
 
 **Step 9 — land.**
-- `[M]` **Order:** run the guard → land commit **on the unit branch** (status,
-  evidence, log row, closed state file) → release the row → merge with `--no-ff` →
-  push only on the owner's word or the run grant. Releasing after the merge cannot
-  work under `SCOPE=repo`: the guard refuses a mainline commit while any row is held.
+- `[M]` **Order:** run the guard → `node scripts/review-gate.mjs --landing <branch>
+  --base <mainline>`, its `PASS` line copied into the state file's `Landing:` line →
+  land commit **on the unit branch** (status, evidence, log row, closed state file)
+  → release the row → merge with `--no-ff` → push by the grant. Releasing after the
+  merge cannot work under `SCOPE=repo`: the guard refuses a mainline commit while
+  any row is held. The merge hook re-runs the landing check on the merge's result
+  (`commit-guard.md`).
 - `[M]` **Re-verify if the mainline moved** since step 8a's verify, before an
   auto-merge — on the merged tree; `run-gates.sh` reuses the step 8a result when the
   tree is unchanged, so an unmoved mainline costs nothing. Never re-run after a
@@ -503,8 +524,8 @@ review round is outstanding. Decided by the merge policy and the run grant
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file, its subject `Merge <branch>: <title>`;
   `git merge` does not read stdin.
-- `[M]` **Then the due-checks** (› Due-checks): their first unit still due is the next
-  unit the close announces, after any answered parked unit (› Shape).
+- `[M]` **Then the due-checks** (› Due-checks): their `REPORT` lines start in the
+  background, and the close announces the next unit in the runner's order (› Shape).
 
 **Step 10 — teardown.** `[M]` Long commands ran in the background, awaited by
 their completion notice, never a sleep loop, each recorded at its start — also with

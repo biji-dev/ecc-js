@@ -48,14 +48,16 @@ suggestion, an owner's aside — each gets one class, the first time it appears.
 `[M]` **A pre-existing defect is OUT unless it is CRITICAL. "It's a one-liner" is
 not a class.** Fixing an OUT item widens the diff past what was reviewed.
 
-`[M]` **Filing OUT.** An OUT item gets a follow-ups row only when it is a
-reproduced P0–P2, work this unit owes and defers, an owner decision (`Owner
-decides:` in its why-it-waits cell) or the owner's own request. The row names this
-unit's write set or a reader of it, unless it is P0 or P1, and its why-it-waits
-cell says `If never done: <what breaks>`; a row that cannot fill that line is
-dropped. Everything else is dropped: a P3 outside the diff, a "could also", a
-refactor idea, speculative hardening, anything that does not reproduce. Deep
-reviews find more (`rules.md` §4); the filter is relevance, not volume.
+`[M]` **Filing OUT, by the relevance test** (`runner.md` › Shape). An OUT item
+gets a follow-ups row only when it is a reproduced P0 or P1, work this unit owes and
+defers (a `cut` area, a `SPLIT` remainder), an owner input (`Owner decides:` or
+`Owner supplies:` in its why-it-waits cell) or the owner's own request; its
+why-it-waits cell says `If never done: <what breaks>`, or it is dropped. A
+reproduced P2 outside the diff goes to the doc's **30-day list**, dropped unscheduled
+after 30 days. Everything else is dropped: a P3 outside the diff, a "could also", a
+refactor idea, speculative hardening, anything that does not reproduce. **A finding
+never becomes a plan row.** Deep reviews find more (`rules.md` §4); the filter is
+relevance, not volume.
 > Origin: one project held 1,547 open follow-ups, 1,331 of them P3; units filed 21
 > to 48 rows each, some on screens the unit never touched.
 
@@ -98,7 +100,9 @@ the data behind them, and the default. **Each fact carries its source**, a
 "no other caller") without its search is marked `unchecked`. Approval accepts every
 default the owner does not change. **T** decisions are taken now and listed under
 *Decided* — one line each with its reversal cost — so the owner can strike one;
-**H** never appears.
+**H** never appears. Under the standing grant a reversible card whose kind the
+`ASK` line does not list takes its recommendation as a `By: grant` row, and the
+sheet goes to the digest.
 > Origin: an owner's choice rested on an agent's unchecked "that folder holds no
 > secrets"; the next step's investigation found a live key there.
 
@@ -119,10 +123,15 @@ later. **Uncertainty about technique is not** — decide it, write why, and list
 `[M]` In the unit's state file, one table, rewritten in place:
 
 ```
-| ID | Date | Class (P / C / T) | Decision | By (owner / default / agent) | Why | Rejected alternative | Reversal cost | Kind (scope-in / scope-out / reversal / default) |
+| ID | Date | Class (P / C / T) | Card kind | Decision | By | Why | Rejected alternative | Reversal cost | Kind (scope-in / scope-out / reversal / default) |
 ```
 
-`By: agent` is allowed only on a T row. `Reversal cost` says what undoing it takes —
+`By` is `owner`, `owner-other` (the owner chose another option), `grant` (the
+standing grant took the recommendation), `default` or `agent`; `By: agent` is
+allowed only on a T row. `Card kind` is the card's (`gate-design.md` › Who decides).
+A reversal row's Decision says `reverses DEC-n` and states the fact it adds; the
+owner's promotion of a kind is a row with ID `KIND-<kind>` and a Decision starting
+`promote`. Columns are read by name, so the retro's reversal rates come from here. `Reversal cost` says what undoing it takes —
 `edit + tests`, `a migration`, `a customer-visible change`; a cost beyond `edit +
 tests` makes the row C, not T.
 
@@ -171,8 +180,9 @@ Worktree: <path, or main>
 Base: <merge-base sha>
 Claimed: <ISO time from the registry row>
 Owner wait: <e.g. 1h20m>
-Grant: <the kickoff's grant line, when one covers the unit>
+Grant: <a kickoff's narrowing of the standing grant>
 Stop: <the kickoff's stop line>
+Landing: <the landing check's PASS line, at step 9>
 Parked: <gate> <ISO time, while the unit is parked>
 Rows: <every plan row a batched unit carries, comma-separated>
 Paths: <planned risk-map paths this unit first gave code>
@@ -188,8 +198,9 @@ Paths: <planned risk-map paths this unit first gave code>
 `Deliverable:` and `Demo:` name the deliverable the run is on
 (`gate-design.md` › Milestone size); a unit that is one deliverable writes `1 of 1`. `Deliverable started:` is reset at
 each new deliverable; the record measures the row's time from it. `Grant:` and
-`Stop:` are copied from the kickoff at the claim and `Parked:` is written when the
-unit parks (`gate-design.md` › The run grant, › Parking a unit). `Rows:` marks a
+`Stop:` are copied from the kickoff at the claim, only to narrow the standing grant,
+and `Parked:` is written when the unit parks (`gate-design.md` › The standing grant,
+› Parking a unit). `Rows:` marks a
 batch (`runner.md` › Batched rows); `Paths:` is what the flip and the milestone
 re-derive read (`foundation.md`). Each is left out when it does not apply.
 
@@ -229,10 +240,14 @@ its `If never done:` line, › Filing OUT), the unit that filed it, and a **Stat
 `dropped — <why>`.
 
 `[M]` **At each close-out, every row still `open` from an earlier unit is marked
-`scheduled <unit>` or `dropped — <why>`.** The sweep fixes nothing; a row becomes
+`scheduled <unit>` only when it passes the relevance test for that unit, else
+`dropped — <why>`;** a row waiting on the owner stays `open`, and a 30-day-list
+row is dropped at its 30 days. The sweep fixes nothing; a row becomes
 `fixed` only by entering a later unit's Scope block.
 
-`[M]` Grounding reads it: rows scheduled for this unit are part of its requirement.
+`[M]` Grounding reads it: rows the owner scheduled for this unit are part of its
+requirement. Rows waiting on the owner print as `OWED` lines after 3 days
+(`runner.md` › Due-checks).
 
 `[B]` Path (default `docs/harness/follow-ups.md`), created as a scaffold. The path may
 be a list, with `<dir>/*.md` entries (a directory's markdown files, by name); a doc of

@@ -176,9 +176,9 @@ same upgrade, or do not install the hook yet.
 
 `[M]` **Cores that import each other land together.** A core that imports another
 (`import … from './<core>.mjs'`) is applied in the same change as that core: read
-the imports of every core the sheet changes. Two sets do today: `unit-step-core`,
+the imports of every core the sheet changes. One set does today: `unit-step-core`,
 `unit-record-core`, `estimate-core`, `retro-core`, `retro-gather`,
-`harness-due-core`, `unit-cost-core` and `run-sources`; and `harness-host-core`,
+`harness-due-core`, `unit-cost-core`, `run-sources`, `harness-host-core`,
 `review-gate-core` and `claude-run-core`. Applied one by one, a script run in
 between fails on a name the newer core imports.
 
@@ -214,7 +214,7 @@ change (then register the repository for the weekly job, `learning.md` › The w
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 9, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 10, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -293,6 +293,9 @@ a `SKILL.md`: frontmatter must be the first line.
 | `registry-no-markers` | add `<!-- harness:active -->` / `<!-- /harness:active -->` around the active table (`commit-guard.md` › Migrating a legacy registry) |
 | `guard-missing`, `guard-snippet-only`, `lock-missing` | install the registry and the git hook; delete the snippet once the hook is tested |
 | `merge-unguarded` | install the same guard as `pre-merge-commit` (`commit-guard.md`) |
+| `ref-unguarded` | install the same guard as `reference-transaction`; with husky, the `prepare` step writes its stub (`commit-guard.md` › Installing) |
+| `hooks-path-relative` | `git config core.hooksPath "$(git rev-parse --show-toplevel)/<path>"`, and the same line in the setup or `prepare` step; with husky, after `husky` |
+| `hooks-path-missing` | a moved clone: run the install line again |
 | `id-pattern-truncates`, `id-pattern-invalid` | bind `ID_PATTERN` to the full id shape and run the self-test (`commit-guard.md`); until then the guard refuses the branches that own those rows |
 | `skill-link-drift`, `skill-unlinked` | one real file under `.agents/skills/`, a committed relative symlink under `.claude/skills/` — unless the two copies are deliberate per-agent wrappers over one shared script (`harness-targets.md`); then keep both and say so. A directory becomes the symlink in two commits, the removal and then the link, where a pre-commit tool such as lint-staged stashes the tree; a copy serves where the project refuses committed symlinks |
 | `agents-md-codex-truncation`, `claude-md-large` | move rationale to `docs/harness/rule-origins.md` and area rules to path-scoped files (`harness-targets.md`). The script reads a raised `project_doc_max_bytes` from the Codex config |
@@ -310,8 +313,8 @@ a `SKILL.md`: frontmatter must be the first line.
 | `host-models-missing` | write `.agents/harness-models.json` from `templates/harness-models.json`, with an entry for each host the project runs on (the hosts it lists), not for every manifest target (`gate-design.md` › Model and effort); step 0 reads it through `harness-host.mjs`, which flags the session's own host |
 | `second-family-absent` | name the host's second family in the models file and install its wrapper — `codex-run.mjs`, or `claude-run.mjs` under a host other than Claude Code (`cross-model.md`); until then every cross-family pass on that host is `degraded`. A host the project never runs on is an entry to drop: the template lists every host |
 | `preflight-missing` | run the phase preflight for the phase under way (`preflight.md`) and commit its report at `REPORTS.preflight` in `harness-due-core.mjs` (default `docs/harness/reports/preflight-<phase>.md`); its escalations go to the next Gate 1 |
-| `sweep-overdue`, `retro-overdue`, `hygiene-overdue` | install `harness-due.mjs` where it is absent (steps 0 and 9 run it), commit each report at `REPORTS.<kind>` in `harness-due-core.mjs` (default `docs/harness/reports/<file>`) — never a gitignored directory — and make the overdue one the next unit |
-| `p3-queue-aging` | a hygiene unit: its P3 batch takes the oldest cold-code rows, each re-verified against the mainline first (`hygiene.md`). Follow-ups spread over many files are bound or merged into one doc first |
+| `sweep-overdue`, `retro-overdue`, `hygiene-overdue` | install `harness-due.mjs` where it is absent (steps 0 and 9 run it), commit each report at `REPORTS.<kind>` in `harness-due-core.mjs` (default `docs/harness/reports/<file>`) — never a gitignored directory — written in the background, never as a unit |
+| `p3-queue-aging` | the upgrade unit marks the open P3 rows outside any diff `dropped — v10, P3 outside the diff` (`scope-guard.md` › Filing OUT). Follow-ups spread over many files are bound or merged into one doc first |
 | `foundation-stage-has-tests` | the pass-signal unit landed and the flip did not run: claim the flip as a `harness/` unit (`foundation.md`) |
 | `stakes-line-missing` | ask the owner for the `Stakes:` line and open the policy block with it (`policy-derivation.md`); until then every reviewer brief judges severity with no threat model |
 | `block-in-base` | move the run's blocks to `.agents/skills/task-runner/process.md` (`harness-targets.md` › The run's blocks) and write the `run` block in their place |
@@ -337,13 +340,14 @@ entry is stale, and the sheet's list of what the owner reviews again.
 | 5 | 2.2.3-js.5 | step markers (`unit-step.mjs`), `unit-cost.mjs --times` and `--by-step`, `unit-record.mjs --steps`; the learning loop: `retro.mjs` and `run-sources.mjs`, Phase E's weekly retro and Phase F, the skill's own `retro-weekly.mjs` (`learning.md`); the context defaults (`context.md`): the budget hook warns at 220K, sits 40K under the auto-compact window, says nothing after a compaction until the next reply, and past 150K sends an owner gate as text; `check-agent-docs.mjs`'s base and citations checks (its ninth and tenth); due-checks at steps 0 and 9 (`harness-due.mjs`), the P3 batch and the hygiene unit (`hygiene.md`); the machine sweep (`machine.md`, the skill's own script) and the optional leftover-processes hook; `run-counted.mjs` behind every counted gate, `run-gates.sh --snapshot` and its colour strip; the edit guard; the tests of the guards, the budget hook and `run-gates.sh`, shipped to `scripts/lib/` and run by the counted `harness` gate; `unit-stack.sh`, bound to the commit guard's registry path; a `Traps:` line in every brief; the Intake type (`intake.md`, `intake.mjs`: unit 1's Gate 1 automatic while the approved request and its Scope block are unchanged); per-host models (`.agents/harness-models.json`, `harness-host.mjs`), `claude-run.mjs` as the second family under another host, `.codex/agents/<name>.toml` where Codex is a target; `review-gate.mjs --writer` by role on any host (`main`, `bounded`, `second` or `mixed`; on Claude Code `claude`, `sonnet` and `codex` still name them) and `--host`, and its P3 decision `p3-batch` (was `sweep`); hazards `preflight-missing`, `sweep-overdue`, `retro-overdue`, `hygiene-overdue`, `p3-queue-aging`, `host-models-missing` and `second-family-absent`. Generated blocks, agents and scripts from v4 are replaced or get section proposals |
 | 6 | 2.2.3-js.8 | the fixes from the v5 installs. The guards refuse what v5 let through: `push --no-verify`, a hook path set through the environment, `git` behind `command`, `exec` or `time`, a second-family run sent to the background with `&` (built-in rule `codex-background`), an indented patch header, every env-file form, and in either scope the merge of a branch that still holds a row; each hook file runs the guard first and passes its refusal on. The review gate reviews tests and the harness's instruction files (a unit of only those under a critical path at the full tier), and a P3 batch over critical code gets the Opus reviewer. `run-counted.mjs` fails a test file that registered no tests and forwards a stop signal; `run-gates.sh` keys reuse on `NODE_OPTIONS`; `unit-cost.mjs` counts a streamed message by its fullest copy and both run ledgers by the unit's worktree; the retro warns where a figure reads zero for a fixable reason, dates rows past re-indents and moves, and reads the follow-ups' columns as bound; step ids take one `/`; the FULL verify ends step 8a; `codex-run.mjs` keeps `max` behind `--allow-max`; each CLI in `scripts/` takes `--help`, and `check-agent-docs.mjs` refuses an argument it does not know; `harness-status.js` reports each entry's template state and prints its base (`--base`). Template-backed entries from v5 merge three-way (Step 2); the rest of an upgrade to v6 is in *Upgrading to v6* below |
 | 7 | 2.2.3-js.10 | the owner's eight: **decision first** at the claim, each card fact with its source (`scope-guard.md` › The decision sheet); OUT **filed or dropped** (› Filing OUT), the close-out listing the new rows only; the Impact Analysis's `found by` and `proof` cells and Small's one-line IA; the plan's **Drawbacks** and one **plan critique** by the other family (`cross-model.md` › The plan critique); the **simplicity lens**, once per family (`gate-design.md` › Review lineup); Hot-small runnable once its cap is filled, the rule audit looking (`learning.md`); `unit-step.mjs` refuses a marker on the wrong checkout (exit 1), with `--check` and `--where`; the state file's `Worktree:` line and the resume command naming the unit; `codex-run.mjs` and `claude-run.mjs --status` over a run sidecar (`lib/run-status.mjs`), `machine-sweep.mjs --status`, and "is it still running" answered from those commands. The rest of an upgrade to v7 is in *Upgrading to v7* below |
-| 8 | 2.2.3-js.11 | a run finishes without the owner: the owner never manages the context — the budget hook silent on `Stop`, no `/compact` or `/clear` offer anywhere, reading-heavy steps to subagents past the warning (`context.md` › No hand-off); the **session-resume hook** on `SessionStart` (held and parked units, their `## Next`, open `Q-n` cards, grant and stop lines); the **queue run** (`/task-runner` resumes, then the queue; `<unit> only` for one unit; it stops only on a command's word); gates **park** their unit and the run moves on (`gate-design.md` › Parking a unit: the registry's parked table, `harness-due.mjs`'s `INBOX` lines, answers in one message); the **run grant** (`gate-design.md` › The run grant: merge clean Full, push after merge, the recommendation on reversible P cards; never what the section excludes); the state line that ends a run's turn; the retro's owner-touch figures (`learning.md`). The rest of an upgrade to v8 is in *Upgrading to v8* below |
+| 8 | 2.2.3-js.11 | a run finishes without the owner: the owner never manages the context — the budget hook silent on `Stop`, no `/compact` or `/clear` offer anywhere, reading-heavy steps to subagents past the warning (`context.md` › No hand-off); the **session-resume hook** on `SessionStart` (held and parked units, their `## Next`, open `Q-n` cards, grant and stop lines); the **queue run** (`/task-runner` resumes, then the queue; `<unit> only` for one unit; it stops only on a command's word); gates **park** their unit and the run moves on (`gate-design.md` › Parking a unit: the registry's parked table, `harness-due.mjs`'s `INBOX` lines, answers in one message); the **run grant** (since v10 the standing grant, `gate-design.md` › The standing grant: merge clean Full, push after merge, the recommendation on reversible P cards; never what the section excludes); the state line that ends a run's turn; the retro's owner-touch figures (`learning.md`). The rest of an upgrade to v8 is in *Upgrading to v8* below |
 | 9 | 2.2.3-js.12 | the process fits the stakes and reaches product code first: Phase A's **stakes line** and forecast; the **short foundation** (`foundation.md`: the skeleton is the pass-signal unit, the flip follows it at once, `Paths:` lines feed the re-derive, no other harness unit first); the **harness lane** (`runner.md`, `review-gate.mjs --tier harness` over `HARNESS` paths); cadences count product landings and none is due in foundation (`harness-due.mjs`); severity judged against the stakes line, critical entries citing a harm, the narrowed tier test and taste as a card (`gate-design.md`, `policy-derivation.md`); the claim audit over **behaviour claims**, one round, record prose quote-or-delete at 8b (`claim-auditor.md`); **batched rows** (`runner.md`, the state file's `Rows:`); an owner's own push as a fact; the plan check only when the approach is open; the run's blocks in `process.md` (`harness-targets.md`); `estimate.mjs --log` repeatable; the retro's self-reference share and product rows per day; hazards `stakes-line-missing` and `block-in-base`. The rest of an upgrade to v9 is in *Upgrading to v9* below |
+| 10 | 2.2.3-js.13 | the run waits on the owner only where the owner must decide: the **standing grant** and the digest (`gate-design.md` › The standing grant), the decision rows' `By` and `Card kind`; **`production: none \| live`** on the stakes line; the **landing check** (`review-gate.mjs --landing`, `lib/snapshot-tree.mjs`, the guard's refusal, the guard also as `reference-transaction`); rounds 3 to 5 as adversarial, redesign and cut; the **relevance test** and the **harness freeze**, reports never units (`runner.md`); `harness-due.mjs`'s new lines; budgets that warn; an absolute `core.hooksPath`; a landing whose host names itself nowhere counts no review row; hazards `grant-line-missing`, `push-deploys-missing`, `production-missing`, `grant-without-machine-gates`, `ref-unguarded`, `hooks-path-relative` and `hooks-path-missing`. The rest is in *Upgrading to v10* below |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v8 install the v9 row, a v7 install the v8 and v9
-rows, a v3 install the v4 to v9 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v9 install the v10 row, a v8 install the v9 and v10
+rows, a v3 install the v4 to v10 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
@@ -354,7 +358,13 @@ with no manifest starts from the fingerprints (Step 1): its entries are `legacy`
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 9.
+`skillVersion` 10.
+
+`[M]` **The upgrade cadence.** At most one skill version a month, piloted on two
+installs before any other. An install upgrades only when a defect in its version
+costs product work, or when the owner asks; a new version alone is not a reason.
+> Origin, the v10 study: nine versions shipped in five weeks, and in three installs
+> 6 of 7 merged units were harness units, the upgrades among them.
 
 ### Upgrading to v6
 
@@ -495,7 +505,8 @@ unit), added while no row is held. `harness-due-core.mjs` gains `REGISTRY` and t
 owner rows (`learning.md` › The retro).
 
 `[M]` **What the owner reviews again.** Push stays the owner's unless a kickoff's
-`Grant:` line covers it, for that run only (`gate-design.md` › The run grant). After a
+`Grant:` line covers it, for that run only (since v10 the standing grant, `gate-design.md` › The standing
+grant). After a
 land the runner starts the next ready unit itself; `/task-runner <unit> only` keeps
 v7's one-unit run. A gate parks its unit and the run goes on, so the answers come
 in one message. **Land it between runs**, with no row held or parked.
@@ -543,3 +554,55 @@ claimed next, when its dependencies have landed; **B** the next product row, its
 "Done when" gaining one counted test. The flip follows either one, and the
 manifest's `flipAfter` names it. A harness follow-up already filed waits for the
 flip (`foundation.md`). **Land it between runs**, with no row held or parked.
+
+### Upgrading to v10
+
+`[M]` **One unit, owner-merged.** The upgrade is the harness unit the freeze allows
+(`runner.md` › The harness freeze). It rewrites the rules block and the `merge`
+block, so the landing check says `NONE` (`GUARDS`) and the owner merges it once
+its own gates pass: the shipped tests, `check-agent-docs.mjs`, and the status
+script with no hazard but `grant-without-machine-gates` (card 3). The new hook
+refuses that merge, since the mainline's committed `review-gate.mjs` has no
+`--landing` yet: the owner merges it with `HARNESS_LANDING=owner`. The sheet holds
+three cards and the reviewed blocks' proposals, nothing else:
+
+1. **The `Grant:` line**, the default recommended (`gate-design.md` › The standing
+   grant), with `Push deploys:` read from the workflows. It is the install's
+   consent, in writing. The sheet never recommends a narrower grant without citing an
+   incident (`policy-derivation.md` › The merge policy).
+2. **`production: none | live`** on the stakes line, with its evidence: a deploy
+   that ran, a production env in use, real users, real data. A C card, and its later
+   change a never-auto one.
+3. **The critical entries to demote** under the narrowed rule (`policy-derivation.md`:
+   an importer count makes a module hot, never critical), and **the gates to add**:
+   where the status script proposes `grant-without-machine-gates`, the grant covers
+   Small units only until the counted product test gate exists, and the first unit
+   recommended is the one that adds it.
+
+`[M]` **What regenerates.** The rules block, the runner skill and the implementer
+agent, the `context` and `scope` blocks, the blocks written from `gate-design.md`
+(proposals where `reviewed`), a sweep or hygiene skill the project generated (each
+now writes a report), and every script v10 changed, with its test. The wrappers
+import the new `lib/snapshot-tree.mjs`, so it ships with them. The guard is installed
+a third time, as `reference-transaction` (`commit-guard.md` › Installing), and
+`core.hooksPath` is set to an absolute path; the status script says `ref-unguarded`
+and `hooks-path-relative` until they are. Open P3 rows outside any diff are marked
+`dropped — v10, P3 outside the diff`.
+
+`[M]` **New bindings.** `STAKES`, `LANDING_KINDS` and `GUARDS` in
+`review-gate-core.mjs`: the stakes line is read from `AGENTS.md` at the base, so a
+branch cannot lower its own review, and an install without `production:` routes as
+`live`. In `harness-due-core.mjs`: `OWED_DAYS`, `STATE_DIR` (with `unit-step-core.mjs`'s
+`STEPS_DIR`), `DIGEST_LINES`, `VALVE_ITEMS`, `VALVE_DAYS` and `SPLIT_LINES`; `P3_AGE_DAYS`
+goes. In `check-agent-docs.mjs`: `hardLimits` (the `AGENTS.md` read limit of a Codex
+target), and every other budget now warns. The commit guard needs nothing bound: it
+runs the mainline's committed `scripts/review-gate.mjs` where the file exists.
+
+`[M]` **What the owner reviews again.** A clean merge no longer waits for the owner,
+and neither does a third or fourth fix round. The guard refuses a merge into the
+mainline whose critical content no cross-family review read (`commit-guard.md` ›
+The landing refusal, with its limits). A review row written before the upgrade has
+no `baseTree`, so a unit in flight across it lands on a fresh review of its
+critical files. The owner reads the digest (`harness-due.mjs --digest-read`) instead
+of each gate. **From v7 or older**, rows 8, 9 and 10 go together, and only after the
+pilot. **Land it between runs**, with no row held or parked.

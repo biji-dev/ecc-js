@@ -14,7 +14,7 @@ use took the rest back (› What is in use).
 
 | Part | What it covers | Where it runs | Whose |
 |---|---|---|---|
-| the machine sweep | caches, build output, residue worktrees, orphaned MCP servers, recorded processes | `scripts/machine-sweep.mjs`, this skill's own; never generated | the owner approves categories once; then `DUE disk` starts them |
+| the machine sweep | caches, build output, residue worktrees, orphaned MCP servers, recorded processes | `scripts/machine-sweep.mjs`, this skill's own; never generated | the owner approves categories once; then `DIGEST disk` starts them |
 | the leftover-processes hook | what this checkout left listening, and tight memory | `.claude/hooks/leftover-processes.mjs`, from `templates/leftover-processes.mjs` | optional, per project (`SKILL.md` › Phase C) |
 
 That project's `dev:ps` and `dev:clean` stay its own: the hook and the report's orphan
@@ -33,16 +33,16 @@ ports, and never stops one.
 `~/.agents/harness/machine-sweep/`, which a plugin update cannot move. `--unapprove
 <ids>` withdraws. Read the first report before approving anything.
 
-`[M]` **Then it runs on its own.** Under 25 GB free `[B]`, `harness-due` says `DUE
-disk` and the runner starts `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
+`[M]` **Then it runs on its own.** Under 25 GB free `[B]`, `harness-due` prints `DIGEST
+disk` — housekeeping, in the digest, never an owner line — and the runner starts `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
 --apply-approved` in the background (`runner.md` › Due-checks). It frees the
 approved categories alone and takes a lock so two runs never overlap: each run
 writes its own entry in `~/.agents/harness/machine-sweep.locks/` and removes only
 the entries of runs that are gone, so two runs that start together both stop. It
 refuses to run as root and appends one line to `~/.agents/harness/sweep-log.jsonl`.
 At the next step boundary the runner says what it freed, from the run's last line or the newest
-line of `sweep-log.jsonl`: once the disk is back over the floor, no `DUE disk` line
-says it. `--dry-run` prints the plan instead.
+line of `sweep-log.jsonl`: once the disk is back over the floor, no `DIGEST disk`
+line says it. `--dry-run` prints the plan instead.
 
 | Category | Frees | Keeps |
 |---|---|---|
@@ -63,7 +63,7 @@ says it. `--dry-run` prints the plan instead.
 commits of its own, has no change, holds no ignored file but rebuildable output (a
 link counts as none), names no held registry row, has no process inside, and has
 been idle 6 h. It goes with `git worktree remove`, never `--force`. These are the
-hygiene unit's rails (`hygiene.md` › Residue); the sweep also keeps a detached HEAD.
+hygiene report's rails (`hygiene.md` › Residue); the sweep also keeps a detached HEAD.
 
 `[M]` **An orphaned MCP server** is one whose every process above it, up to
 process 1, is an MCP launcher, and whose top one is no launchd job. One under a

@@ -67,21 +67,23 @@ to code instead of change categories.
 
 | List | What goes on it | Evidence each entry cites |
 |---|---|---|
-| **Hot modules** | named paths where a defect cannot be corrected forward | the policy category, a risk id, or an incident |
-| **Critical code** | the hot modules + the code implementing each never-auto category + schema and migrations + any module imported by at least *N* files | the category, the harm a defect there reaches under the stakes line, or the importer count |
+| **Hot modules** | named paths where a defect spreads or cannot be corrected forward, and any module imported by at least *N* files | the policy category, a risk id, an incident, or the importer count |
+| **Critical code** | the code implementing each never-auto category + schema and migrations + the harness's own guards + the hot modules that cite an irreversible harm under the stakes line | the category, or the harm a defect there reaches under the stakes line |
 | **Cold modules** | named paths where a defect is visible and cheap — leaf UI, internal tools, test helpers | the reason it is cheap |
 | everything else | standard | — |
 
-- **Critical wins over cold.** A cold-looking component with many importers is
-  critical.
-- **Every critical entry cites a harm, a category or its importer count.** A
-  coverage target or a layer name alone is no evidence: a module whose every defect
-  can be corrected forward is standard, and its tier test still applies.
+- **Hot wins over cold.** A cold-looking component with many importers is hot. **The
+  importer count makes a module hot, never critical.**
+- **Every critical entry cites a harm or a category.** A coverage target, a layer
+  name or an importer count alone is no evidence: a module whose every defect can be
+  corrected forward is standard, and its tier test still applies.
 - **Never put shared constants, formatters or date utilities on the cold list** —
-  their importers make them critical.
+  their importers make them hot.
 - `[B]` *N* — **left empty at generation.** List the ten most-imported modules with
-  their counts as candidates in the draft; the owner sets *N* or strikes entries at
-  review.
+  their counts as hot candidates in the draft; the owner sets *N* or strikes entries
+  at review.
+> Origin, the v10 study: in one install the hot modules and the modules with 25 or
+> more importers made every product change critical, so all 7 product units ran Full.
 - Read the history too: `git log --since=90.days --numstat` names the modules that
   change most and the fix commits that touched them. A hot module that never
   changes still belongs on the list; a frequently fixed one is a candidate.
@@ -120,11 +122,11 @@ and records, `HARNESS` in `review-gate-core.mjs` — runs the harness lane
 
 ## The merge policy
 
-Draft the default from `gate-design.md` — Small merges locally on its own when
-clean; Full, never-auto and taste calls wait for the owner; push is the owner's —
-and state any tightening the documents imply (a regulated project may want no
-auto-merge at all). Only a run grant loosens it, for one run (`gate-design.md` ›
-The run grant).
+Draft the default from `gate-design.md` — merge when green for every tier, the
+never-auto categories the owner's, and the standing grant with `Push deploys:` read
+from the workflows (› The standing grant) — and state any tightening the documents
+imply (a regulated project may want no auto-merge at all: `Grant: none`). An
+upgrade sheet never recommends narrowing the grant without citing an incident.
 
 ## Where it goes, and what not to do
 

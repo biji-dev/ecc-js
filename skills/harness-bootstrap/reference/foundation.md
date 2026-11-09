@@ -78,8 +78,9 @@ own.
 1. **Every product Code unit is Full** — no path is covered, and the coverage-map
    rule already makes every uncovered path Full. Say so in each claim line. A harness
    unit runs the harness lane (`runner.md`); the flip is Full (› The flip).
-2. **No auto-merge.** Gate 2 is always the owner's, whatever the merge policy says
-   for later.
+2. **No auto-merge.** Gate 2 is always the owner's, whatever the grant says for
+   later: until the flip no gate counts a product test, so nothing has a pass signal
+   to merge on. Gate 1 goes by the grant.
 3. **The skeleton is the pass-signal unit.** Take it from the plan's first
    foundation story; when the plan has none, Phase B asks the owner, defaulting to
    the plan's first row. Its "Done when" gains one counted product test, and Gate 1
@@ -97,8 +98,8 @@ own.
    follow-up; the flip re-derives the map from those lines. When the plan calls its
    paths working names, the skeleton fixes them and the flip renames the map.
 6. **No other harness unit before the flip** unless it blocks the flip. A follow-up
-   or a re-derive waits for it; `harness-due.mjs` holds the sweep, retro, hygiene and
-   P3 batch at this stage, and the preflight and disk checks still run.
+   or a re-derive waits for it; `harness-due.mjs` holds the sweep, retro and hygiene
+   reports at this stage, and the preflight and disk checks still run.
 
 ## The flip — stage 2
 
@@ -119,7 +120,7 @@ Full. Harness changes land between runs, never during one. It:
    (`policy-derivation.md`); writes the coverage map's first covered rows and lists
    what is still uncovered;
 4. unlocks Small in the tiers block and drops the foundation line from the merge
-   block — the merge policy the owner reviewed applies from here;
+   block — the standing grant applies in full from here;
 5. sets the manifest's `"stage"` to `"full"`, rehashes the blocks it changed, and
    records the flip as a decision-log line;
 6. goes to Gate 2 as the owner's merge. The flip edits two reviewed blocks — the
@@ -137,8 +138,8 @@ flip.
 
 ## What not to do
 
-- Never auto-merge in the foundation stage, and never let a merge policy's Small
-  rule apply before the flip.
+- Never auto-merge in the foundation stage, and never let the Small rule apply
+  before the flip.
 - Never run the flip inside the pass-signal unit; its diff is reviewed as product
   code, the flip as a harness change.
 - Never name a later row the pass-signal unit when the skeleton can ship a test.

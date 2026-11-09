@@ -10,7 +10,8 @@
  *
  * kinds: review (the diff against --base; --prompt adds a focus), adversarial, plan-blind,
  * investigate, lane-a (each from its --prompt brief). Writing is never a kind: the second family
- * reviews from here, and the host builds.
+ * reviews from here, and the host builds. adversarial takes an optional --base, a commit or a tree
+ * its brief's diff starts from: recorded in the ledger, never passed to claude.
  *
  * options:
  *   --kind <kind>          the kind, as a flag
@@ -44,6 +45,13 @@
  * reserves every kind. CLAUDE_BIN overrides the claude binary (default `claude` on PATH).
  *
  * Every run but a dry run or a usage error appends a row to <main checkout>/<LEDGER_DIR>/ledger.jsonl.
+ * A review or adversarial row also records `tree` (the git tree id of the tracked files at
+ * dispatch), `branch` (the checked-out branch, null when detached) and `baseTree` (the tree its diff
+ * starts from: review's merge base with --base, else the adversarial --base, else null), taken
+ * before the model starts. Once the model exits the row adds `treeAfter`, the same snapshot again,
+ * with `treeMoved: true` when it differs. The landing check (review-gate.mjs --landing) follows each
+ * critical file from the mainline through the reviewed `baseTree -> tree` changes. Each tree is null
+ * when git fails.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -62,6 +70,7 @@ import {
   resolveRoute,
   reviewPrompt,
 } from './lib/claude-run-core.mjs';
+import { baseTreeOf, currentBranch, snapshotTree } from './lib/snapshot-tree.mjs';
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.claude-runs';
@@ -240,7 +249,11 @@ async function main() {
 
   const ledger = ledgerPath(a.cwd);
   // Every row carries the verdict's path, so `--status --out` finds a run that stopped before the model.
-  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd, out: run.outFile };
+  const reviewed = a.kind === 'review' || a.kind === 'adversarial';
+  // review diffs from its merge base with --base (`git diff --merge-base`); adversarial from its optional --base.
+  const baseTree = () => (a.kind === 'review' ? baseTreeOf(a.cwd, a.base, { mergeBase: true }) : a.base ? baseTreeOf(a.cwd, a.base) : null);
+  const snapshot = reviewed ? { tree: snapshotTree(a.cwd), branch: currentBranch(a.cwd), baseTree: baseTree() } : {};
+  const base = { at: new Date().toISOString(), kind: a.kind, model: run.route.model, effort: run.route.effort, budgetUsd: a.budgetUsd, cwd: a.cwd, out: run.outFile, ...snapshot };
   const stop = !budget.run ? ['reserved', budget.reason] : !network.ok ? ['unavailable', network.why] : null;
   if (stop) {
     appendLedger(ledger, { ...base, outcome: stop[0], reason: stop[1] });
@@ -261,6 +274,9 @@ async function main() {
   try {
     const onSpawn = (pid) => sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
     const res = await runClaude(run.argv, { cwd: a.cwd, stdin: run.brief, timeoutMin: a.timeoutMin, onSpawn });
+    // The reviewer read the live working tree: an edit during the run detaches the row from `tree`.
+    const treeAfter = reviewed ? snapshotTree(a.cwd) : undefined;
+    const moved = reviewed ? { treeAfter, ...(treeAfter !== snapshot.tree ? { treeMoved: true } : {}) } : {};
     const result = classify({
       exitCode: res.code,
       stdout: res.stdout,
@@ -270,7 +286,7 @@ async function main() {
       budgetUsd: a.budgetUsd,
       binary: CLAUDE,
     });
-    return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base: { ...base, run: sidecar.record.run } });
+    return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base: { ...base, run: sidecar.record.run, ...moved } });
   } finally {
     sidecar.remove();
   }

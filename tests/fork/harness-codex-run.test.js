@@ -14,9 +14,13 @@ const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scr
 const TEST_REL = path.join('lib', 'codex-run-core.test.mjs');
 const CORE_REL = path.join('lib', 'codex-run-core.mjs');
 const WRAPPER_REL = 'codex-run.mjs';
+const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
+const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 55;
+const EXPECTED_TESTS = 59;
+// The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
+const EXPECTED_SNAPSHOT_TESTS = 16;
 
 let passed = 0;
 let failed = 0;
@@ -59,10 +63,10 @@ function tapCount(output, key) {
   return Number(match[1]);
 }
 
-function runSuite(scriptsDir, cleanup, extraEnv = {}) {
+function runSuite(scriptsDir, cleanup, extraEnv = {}, testRel = TEST_REL) {
   return spawnSync(
     process.execPath,
-    ['--test', '--test-reporter=tap', path.join(scriptsDir, TEST_REL)],
+    ['--test', '--test-reporter=tap', path.join(scriptsDir, testRel)],
     { encoding: 'utf8', env: hermeticEnv(cleanup, extraEnv), timeout: 120_000 },
   );
 }
@@ -166,6 +170,46 @@ test('mutant: the rule resolver run on the PATH node instead of the wrapper\'s o
   fs.writeFileSync(wrapperPath, mutated);
   const res = runSuite(copy, cleanup);
   assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('the shipped snapshot-tree suite passes with the pinned test count', () => {
+  const res = runSuite(SCRIPTS, cleanup, {}, SNAPSHOT_TEST_REL);
+  const out = res.stdout + res.stderr;
+  assert.strictEqual(res.status, 0, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_SNAPSHOT_TESTS);
+});
+
+test('mutant: building the tree in the real index (no GIT_INDEX_FILE override) makes the snapshot suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const modulePath = path.join(copy, SNAPSHOT_REL);
+  const before = fs.readFileSync(modulePath, 'utf8');
+  const needle = 'const env = { GIT_INDEX_FILE: temp };';
+  const mutated = before.replace(needle, 'const env = {};');
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(modulePath, mutated);
+  const res = runSuite(copy, cleanup, {}, SNAPSHOT_TEST_REL);
+  const out = res.stdout + res.stderr;
+  assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
+  assert.ok(tapCount(out, 'fail') > 0, out.slice(-800));
+});
+
+test('mutant: a temp index with a fresh mtime (no utimesSync) makes the snapshot suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const modulePath = path.join(copy, SNAPSHOT_REL);
+  const before = fs.readFileSync(modulePath, 'utf8');
+  const needle = 'fs.utimesSync(temp, st.atime, st.mtime);';
+  const mutated = before.replace(needle, '');
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(modulePath, mutated);
+  const res = runSuite(copy, cleanup, {}, SNAPSHOT_TEST_REL);
+  const out = res.stdout + res.stderr;
+  assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
+  assert.ok(tapCount(out, 'fail') > 0, out.slice(-800));
 });
 
 test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) leaves that repo untouched', () => {

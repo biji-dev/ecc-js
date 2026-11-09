@@ -219,6 +219,104 @@ test('the wrapper: refuses Claude Code and a sandbox with no network, honours th
   assert.deepEqual(rows.map((r) => r.outcome), ['unavailable', 'reserved', 'ok', 'unavailable']);
   assert.equal(rows[2].costUsd, 0.42);
   assert.equal(rows[2].verdict, verdict);
+  // Every review row carries the tree the reviewer read (the edited fee, uncommitted) and the branch.
+  const editedTree = execFileSync('git', ['show', `${rows[2].tree}:pay.js`], { cwd: repo, encoding: 'utf8' });
+  assert.equal(editedTree, 'export const fee = 2;\n');
+  assert.notEqual(rows[2].tree, git('rev-parse', 'HEAD^{tree}'));
+  assert.deepEqual(rows.map((r) => r.branch), ['main', 'main', 'main', 'main']);
+  assert.ok(rows.every((r) => /^[0-9a-f]{40}$/.test(r.tree)));
   assert.equal(run({ CODEX_THREAD_ID: 't' }, 'review', '--base', 'no-such-ref').status, EXIT.usage);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * A repository on branch `feature`, forked from `main` at `fork`, with `main` one commit further on
+ * and pay.js edited in the working tree, and a stub `claude` that answers ok (and, with STUB_EDIT
+ * set, edits pay.js while it runs). `run(env, ...args)` returns the exit and the ledger's last row.
+ */
+function landingRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-run-landing-'));
+  const bin = path.join(dir, 'bin');
+  const repo = path.join(dir, 'repo');
+  for (const d of [bin, repo]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$STUB_DIR/argv.txt"\ncat > /dev/null\n[ -n "$STUB_EDIT" ] && echo "// during" >> pay.js\ncat "$STUB_DIR/answer.json"\n');
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+  fs.writeFileSync(path.join(dir, 'answer.json'), result());
+  fs.writeFileSync(path.join(dir, 'p.md'), 'the focus');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.claude-runs/\n.review-work/\n');
+  fs.writeFileSync(path.join(repo, 'pay.js'), 'export const fee = 1;\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  const fork = git('rev-parse', 'HEAD');
+  git('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(repo, 'pay.js'), 'export const fee = 2;\n');
+  git('commit', '-qam', 'feature');
+  git('checkout', '-q', 'main');
+  fs.writeFileSync(path.join(repo, 'other.js'), 'export const x = 1;\n');
+  git('add', '.');
+  git('commit', '-qm', 'main');
+  git('checkout', '-q', 'feature');
+  fs.writeFileSync(path.join(repo, 'pay.js'), 'export const fee = 3;\n');
+  const run = (env, ...args) => {
+    const res = spawnSync(process.execPath, [RUNNER, ...args, '--cwd', repo], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, STUB_DIR: dir, CODEX_THREAD_ID: 't', ...env },
+    });
+    const rows = fs.readFileSync(path.join(repo, '.claude-runs', 'ledger.jsonl'), 'utf8').trim().split('\n');
+    return { res, row: JSON.parse(rows.at(-1)) };
+  };
+  return { dir, repo, git, fork, run, prompt: path.join(dir, 'p.md') };
+}
+
+test('the wrapper: a review row records baseTree, the tree of its merge base, and treeAfter; lane-a does not', () => {
+  const { dir, git, fork, run, prompt } = landingRepo();
+  try {
+    const { res, row } = run({}, 'review', '--base', 'main');
+    assert.equal(res.status, EXIT.ok, res.stderr + res.stdout);
+    assert.equal(row.kind, 'review');
+    assert.equal(row.baseTree, git('rev-parse', `${fork}^{tree}`));
+    assert.notEqual(row.baseTree, git('rev-parse', 'main^{tree}'));
+    assert.match(row.tree, /^[0-9a-f]{40}$/);
+    assert.equal(row.treeAfter, row.tree);
+    assert.equal('treeMoved' in row, false);
+    const { row: other } = run({}, 'lane-a', '--prompt', prompt);
+    assert.equal(other.kind, 'lane-a');
+    assert.equal('baseTree' in other || 'treeAfter' in other || 'treeMoved' in other || 'tree' in other, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the wrapper: adversarial records its optional --base as baseTree, never on the claude command line', () => {
+  const { dir, git, run, prompt } = landingRepo();
+  try {
+    const { res, row } = run({}, 'adversarial', '--prompt', prompt, '--base', 'main');
+    assert.equal(res.status, EXIT.ok, res.stderr + res.stdout);
+    assert.equal(row.baseTree, git('rev-parse', 'main^{tree}'));
+    const argv = fs.readFileSync(path.join(dir, 'argv.txt'), 'utf8').split('\n');
+    assert.equal(argv.includes('--base') || argv.includes('main'), false, argv.join(' '));
+    const { row: without } = run({}, 'adversarial', '--prompt', prompt);
+    assert.equal(without.baseTree, null);
+    assert.equal(without.treeAfter, without.tree);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the wrapper: a tracked file edited while the model runs gives treeMoved: true, and treeAfter holds the edit', () => {
+  const { dir, git, run, prompt } = landingRepo();
+  try {
+    const { res, row } = run({ STUB_EDIT: '1' }, 'adversarial', '--prompt', prompt, '--base', 'main');
+    assert.equal(res.status, EXIT.ok, res.stderr + res.stdout);
+    assert.equal(row.outcome, 'ok');
+    assert.equal(row.treeMoved, true);
+    assert.equal(git('cat-file', '-p', `${row.tree}:pay.js`), 'export const fee = 3;');
+    assert.equal(git('cat-file', '-p', `${row.treeAfter}:pay.js`), 'export const fee = 3;\n// during');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

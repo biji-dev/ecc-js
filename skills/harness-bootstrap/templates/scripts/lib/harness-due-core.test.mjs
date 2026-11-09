@@ -1,6 +1,7 @@
 // harness-bootstrap harness-due tests (generated YYYY-MM-DD). Run: node --test scripts/lib/harness-due-core.test.mjs
 // [M] mechanism (ships as-is): every test but the [B] one. [B] binding: the ids of the fixtures' rows (ROW and
-// PHASE_EXAMPLE, below); the rest reads the bindings of this core (MAIN, LOG, REGISTRY, REPORTS, CADENCE, WORKTREE_IDLE_HOURS ...)
+// PHASE_EXAMPLE, below); the rest reads the bindings of this core (MAIN, LOG, REGISTRY, REPORTS, CADENCE, WORKTREE_IDLE_HOURS,
+// STATE_DIR, OWED_DAYS, DIGEST_LINES, VALVE_ITEMS, VALVE_DAYS, SPLIT_LINES ...)
 // and of estimate-core (the log's columns, a tier word), never their values. A wrapper test a binding cannot
 // express asserts that binding's own behaviour, never skips.
 // Hermetic: the wrapper tests run in a temp git repo with every GIT_* variable stripped,
@@ -14,40 +15,53 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { COLUMNS, TIER_WORDS } from './estimate-core.mjs';
 import { blameDates } from './retro-gather.mjs';
-import { SEVERITY_COLUMNS, STATUS_COLUMNS, STATUS_WORDS } from './retro-core.mjs';
+import { ASK_DEFAULT, SEVERITY_COLUMNS, STATUS_COLUMNS, STATUS_WORDS, askKinds } from './retro-core.mjs';
+import { isProduction } from './review-gate-core.mjs';
 import {
   CADENCE,
+  COMMANDS,
+  DIGEST_LINES,
   FOLLOW_UPS,
+  KINDS,
   LOG,
   MAIN,
+  OWED_DAYS,
   PHASE_OF,
   REBUILDABLE,
   REGISTRY,
   REPORTS,
+  SPLIT_LINES,
+  STATE_DIR,
+  VALVE_DAYS,
+  VALVE_ITEMS,
   WORKTREE_IDLE_HOURS,
+  askLine,
   cadenceDue,
   checkAll,
+  digest,
   diskDue,
+  dueParts,
   formatDue,
+  heldBranches,
   heldKinds,
   inboxLines,
   isHarnessMerge,
   isHarnessUnit,
+  lastReadOf,
+  markDigestRead,
   markSeen,
   matchReports,
-  newestProposals,
-  p3Due,
-  p3Note,
+  owedItems,
   parkedUnits,
   parseArgs,
   parseWorktrees,
   phaseOf,
   preflightDue,
   projectName,
-  proposalCounts,
-  proposalsDue,
   registryWorktrees,
   reportShape,
+  splitItems,
+  valve,
   worktreesDue,
 } from './harness-due-core.mjs';
 
@@ -96,15 +110,19 @@ const PHASE_EXAMPLE = [ROW(2, 16), 'P2'];
 const PH1 = phaseOf(ROW(1, 1));
 const PH2 = phaseOf(ROW(2, 1));
 
-test('parseArgs takes a claim, --seen, --json, --now and --home, and rejects the rest', () => {
-  assert.deepEqual(parseArgs([]), { claim: null, seen: null, json: false, now: null, home: null });
+test('parseArgs takes a claim, --seen, --digest-read, --json, --now and --home, and rejects the rest', () => {
+  assert.deepEqual(parseArgs([]), { claim: null, seen: null, json: false, now: null, home: null, digestRead: false });
   assert.deepEqual(parseArgs(['--claim', 'P2-01', '--json', '--now', '2026-10-26T00:00:00Z', '--home', 'h']), {
     claim: 'P2-01',
     seen: null,
     json: true,
     now: '2026-10-26T00:00:00Z',
     home: 'h',
+    digestRead: false,
   });
+  assert.equal(parseArgs(['--digest-read', '--now', '2026-10-26T00:00:00Z']).digestRead, true);
+  assert.throws(() => parseArgs(['--digest-read', '--claim', 'P2-01']), /--digest-read records the read and checks nothing/);
+  assert.throws(() => parseArgs(['--digest-read', '--seen', '2026-W44']), /pick one of --seen and --digest-read/);
   assert.equal(parseArgs(['--claim', 'harness/hygiene-2026-10-26']).claim, 'harness/hygiene-2026-10-26');
   assert.equal(parseArgs(['--seen', '2026-W44']).seen, '2026-W44');
   assert.throws(() => parseArgs(['--claim']), /--claim needs a value/);
@@ -270,39 +288,184 @@ test('cadenceDue: due at its days or its landings (log rows or merges, the large
   assert.match(cadenceDue('sweep', { now: NOW, cadence }).why, /^no report yet, and no log to count from/);
 });
 
-test('the P3 queue is named on the hygiene line, and due on its own only with no hygiene unit bound', () => {
-  const summary = { openP3: 12, oldestOpenP3Days: 20 };
-  assert.equal(p3Note(summary), '; 12 open P3, the oldest 20 d');
-  assert.equal(p3Note({ openP3: 2, oldestOpenP3Days: null }), '; 2 open P3');
-  assert.equal(p3Note({ openP3: 0, oldestOpenP3Days: null }), '');
-  assert.equal(p3Note(null), '');
-  assert.equal(p3Due({ summary, hygieneBound: true, now: NOW }), null);
-  assert.deepEqual(p3Due({ summary, hygieneBound: false, now: NOW, ageDays: 14, command: 'batch <date>' }), {
-    kind: 'p3',
-    subject: null,
-    why: '12 open P3, the oldest 20 d (over 14)',
-    command: 'batch 2026-10-26',
-    blocking: false,
-  });
-  assert.equal(p3Due({ summary: { openP3: 12, oldestOpenP3Days: 13 }, hygieneBound: false, now: NOW, ageDays: 14 }), null);
+test('a due sweep, retro or hygiene is a REPORT line written in the background, never the next unit', () => {
+  for (const kind of ['sweep', 'retro', 'hygiene']) {
+    const days = CADENCE[kind].days + 1;
+    const item = cadenceDue(kind, { reports: [{ rel: `r/${kind}-x.md`, time: NOW - days * DAY }], now: NOW });
+    assert.equal(item.command, COMMANDS[kind], `${kind} runs its bound command`);
+    const text = formatDue({ items: [item] });
+    assert.equal(text, `REPORT ${kind} — ${days} d, 0 landings since ${kind}-x.md — ${COMMANDS[kind]}\n`, kind);
+    assert.doesNotMatch(text, /^DUE /m, `${kind} is no DUE line`);
+    assert.doesNotMatch(text, /the next unit: /, `${kind} is never the next unit`);
+  }
+  // with every cadence due, checkAll's items print as REPORT lines and the all-clear goes
+  const facts = { now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [] };
+  const items = checkAll(facts);
+  const bound = ['sweep', 'retro', 'hygiene'].filter((k) => REPORTS[k] !== null);
+  assert.deepEqual(items.map((i) => i.kind), bound);
+  const text = formatDue({ items });
+  assert.deepEqual(text.trimEnd().split('\n').map((l) => l.split(' — ')[0]), bound.length ? bound.map((k) => `REPORT ${k}`) : ['harness-due: nothing due']);
 });
 
-test('p3Note and p3Due name the oldest open P3 row when the summary knows it, and read as before when it does not', () => {
-  const summary = { openP3: 12, oldestOpenP3Days: 20, oldestOpenP3Row: 'FU-3' };
-  assert.equal(p3Note(summary), '; 12 open P3, the oldest FU-3 at 20 d', 'p3Note names the row');
-  assert.equal(p3Note({ ...summary, oldestOpenP3Row: null }), '; 12 open P3, the oldest 20 d');
-  assert.equal(p3Note({ openP3: 2, oldestOpenP3Days: null, oldestOpenP3Row: null }), '; 2 open P3');
-  assert.equal(p3Due({ summary, hygieneBound: false, now: NOW, ageDays: 14, command: 'batch <date>' }).why, '12 open P3, the oldest FU-3 at 20 d (over 14)', 'p3Due names the row');
-  assert.equal(p3Due({ summary: { ...summary, oldestOpenP3Row: null }, hygieneBound: false, now: NOW, ageDays: 14 }).why, '12 open P3, the oldest 20 d (over 14)');
-});
-
-test('checkAll counts a P3 by the Severity cell when the doc has one: a P1 row that names P3 elsewhere is not counted, and the oldest P3 is named', () => {
-  const fuText = `${table(['#', SEV, 'Area', ST], [['FU-1', 'P1', 'the P3 cleanup of a.ts', OPEN], ['FU-2', 'P3', 'b.ts', OPEN]])}\n`;
+test('no p3 and no proposals item ever: an old P3 queue and the week\'s proposals print nothing, and the hygiene line names no P3', () => {
+  assert.ok(!KINDS.includes('p3') && !KINDS.includes('proposals'), `KINDS: ${KINDS}`);
+  assert.ok(!('p3' in COMMANDS) && !('proposals' in COMMANDS), 'no p3 or proposals command');
+  const fuText = `${table(['#', SEV, 'Area', ST], [['FU-1', 'P3', 'a.ts', OPEN], ['FU-2', 'P3', 'b.ts', OPEN]])}\n`;
   const fuDates = new Map([[3, NOW - 90 * DAY], [4, NOW - 60 * DAY]]);
-  const items = checkAll({ now: NOW, log: null, followUps: { text: fuText, dates: fuDates }, reports: {}, merges: [], worktrees: [], proposals: null, seen: {}, project: 'p' });
-  const line = items.find((i) => i.kind === 'hygiene' || i.kind === 'p3');
-  assert.ok(line, `no hygiene or p3 line: ${items.map((i) => i.kind)}`);
-  assert.match(line.why, /1 open P3, the oldest FU-2 at 60 d/, 'one P3, and it is FU-2');
+  const proposals = { newest: { name: 'proposals-2026-W44.md', week: '2026-W44' }, text: '### 1. [rule] x\n- Projects: all\n', file: 'f' };
+  for (const stage of [null, 'foundation']) {
+    const facts = { now: NOW, log: null, followUps: { text: fuText, dates: fuDates }, reports: {}, merges: [], worktrees: [], proposals, seen: {}, project: 'p', stage };
+    const items = checkAll(facts);
+    assert.ok(items.every((i) => KINDS.includes(i.kind)), `${items.map((i) => i.kind)}`);
+    for (const i of items) assert.doesNotMatch(i.why, /P3/, `${i.kind}: ${i.why}`);
+    const text = formatDue({ ...dueParts(facts), inbox: [] });
+    assert.doesNotMatch(text, /^(?:DUE|NEW|REPORT) (?:p3|proposals)\b/m, text);
+    assert.doesNotMatch(text, /\bP3\b|proposal/i, text);
+  }
+  assert.deepEqual(heldKinds('foundation').filter((k) => k === 'p3'), []);
+});
+
+test('owedItems: an open row the owner supplies or decides, past OWED_DAYS, oldest first; not a younger one, a fixed one or one owing nothing', () => {
+  const FIXED = STATUS_WORDS.fixed[0];
+  const long = `Owner decides: ${'which export format the report keeps '.repeat(4)}`;
+  const fuText = `${table(['#', SEV, 'What', ST], [
+    ['FU-1', 'P2', 'Owner supplies: the staging API key name', OPEN],
+    ['FU-2', 'P2', 'Owner decides: keep or drop the export', OPEN],
+    ['FU-3', 'P2', 'Owner supplies: the logo file', FIXED],
+    ['FU-4', 'P2', 'a typo in the footer', OPEN],
+    ['FU-5', 'P1', long, OPEN],
+    ['FU-6', 'P2', 'Owner supplies: the boundary', OPEN],
+    ['FU-7', 'P2', 'Owner supplies: a row not committed yet', OPEN],
+  ])}\n`;
+  const ago = (days) => NOW - days * DAY;
+  // rows sit on lines 3-9: FU-1 one day past the binding, FU-2 one day short of it, FU-6 at it exactly
+  const dates = new Map([[3, ago(OWED_DAYS + 1)], [4, ago(OWED_DAYS - 1)], [5, ago(40)], [6, ago(40)], [7, ago(30)], [8, ago(OWED_DAYS)], [9, null]]);
+  const owed = owedItems(fuText, dates, NOW);
+  assert.deepEqual(owed.map((o) => o.id), ['FU-5', 'FU-1']);
+  assert.deepEqual(owed[1], { id: 'FU-1', since: new Date(ago(OWED_DAYS + 1)).toISOString().slice(0, 10), what: 'the staging API key name' });
+  assert.equal(owed[0].what.length, 80, 'the text after the label, cut to 80 characters');
+  assert.ok(owed[0].what.startsWith('which export format') && owed[0].what.endsWith('…'), owed[0].what);
+  assert.equal(formatDue({ owed: owed.slice(1) }), `OWED FU-1 since ${owed[1].since} — the staging API key name\nharness-due: nothing due\n`);
+  // the age is the binding's: the same rows, a day later, owe FU-6 too
+  assert.deepEqual(owedItems(fuText, dates, NOW + DAY).map((o) => o.id), ['FU-5', 'FU-1', 'FU-6']);
+  assert.deepEqual(owedItems('', new Map(), NOW), []);
+});
+
+// A decision row as retro-core's decisionRows gives one (C6).
+const dec = (unit, id, by, { date = null, decision = `decision ${id}`, cost = 'one file', cardKind = 'code', kind = 'decision', reverses = null } = {}) => ({
+  unit, id, date, cls: 'C', by, cardKind, decision, cost, kind, reverses, line: `| ${id} |`,
+});
+
+test('the digest counts the grant and default rows and the merged records after the last read, newest first', () => {
+  const lastRead = NOW - 5 * DAY;
+  const rows = [
+    dec('P2-16', 'DEC-1', 'grant', { date: '2026-10-25', cost: 'low: one file' }),
+    dec('P2-16', 'DEC-2', 'default', { date: '2026-10-24', cost: '' }),
+    dec('P2-16', 'DEC-3', 'grant', { date: '2026-10-01' }), // its line was committed before the last read
+    dec('P2-16', 'DEC-4', 'owner', { date: '2026-10-25' }),
+    dec('P2-16', 'DEC-5', 'agent', { date: '2026-10-25' }),
+    dec('P2-16', 'DEC-6', 'owner-other', { date: '2026-10-25' }),
+    dec('P2-17', 'DEC-1', 'grant', { decision: `${'a long decision '.repeat(10)}`, cost: 'a migration' }), // no date, no blame: unknown
+    dec('P2-18', 'DEC-1', 'grant', { date: '2026-10-02' }), // no blame: the end of its day, before the read
+  ];
+  const rowTimes = new Map([['P2-16/DEC-1', NOW - DAY], ['P2-16/DEC-3', NOW - 9 * DAY]]);
+  const records = [
+    { id: 'P1-03', landed: NOW - 2 * DAY },
+    { id: 'P1-02', landed: NOW - 10 * DAY },
+    { id: 'P1-04', landed: null },
+  ];
+  const d = digest({ rows, rowTimes, records, lastRead, now: NOW, housekeeping: [{ kind: 'disk', why: '20.0 GB free', command: 'sweep' }] });
+  assert.equal(d.unread, 4);
+  assert.deepEqual(d.lines, [
+    `DIGEST 4 unread since ${new Date(lastRead).toISOString()}`,
+    'DIGEST P2-16/DEC-1 2026-10-25 · decision DEC-1 · reversal: low: one file',
+    'DIGEST P2-16/DEC-2 2026-10-24 · decision DEC-2 · reversal: ?',
+    'DIGEST merged P1-03 2026-10-24',
+    `DIGEST P2-17/DEC-1 ? · ${'a long decision '.repeat(10).trim().slice(0, 79)}… · reversal: a migration`,
+    'DIGEST disk — 20.0 GB free — sweep',
+  ]);
+  // never read: every grant and default row and every landed record is unread
+  const never = digest({ rows, rowTimes, records, lastRead: null, now: NOW });
+  assert.equal(never.unread, 7);
+  assert.equal(never.lines[0], 'DIGEST 7 unread since never');
+  assert.equal(lastReadOf({ p: new Date(lastRead).toISOString(), q: 'not a time' }, 'p'), lastRead);
+  assert.equal(lastReadOf({ q: 'not a time' }, 'q'), null);
+  assert.equal(lastReadOf(null, 'p'), null);
+  assert.deepEqual(markDigestRead({ q: 'x' }, 'p', 'y'), { q: 'x', p: 'y' });
+  assert.deepEqual(markDigestRead(['x'], 'p', 'y'), { p: 'y' });
+});
+
+test('the digest lists at most DIGEST_LINES unread items, newest first, then `… k more`', () => {
+  const n = DIGEST_LINES + 5;
+  const rows = Array.from({ length: n }, (_, i) => dec('P2-16', `DEC-${i + 1}`, i % 2 ? 'grant' : 'default'));
+  const rowTimes = new Map(rows.map((r, i) => [`${r.unit}/${r.id}`, NOW - (n - i) * HOUR]));
+  const d = digest({ rows, rowTimes, records: [], lastRead: null, now: NOW });
+  assert.equal(d.unread, n);
+  assert.equal(d.lines.length, 1 + DIGEST_LINES + 1);
+  assert.equal(d.lines[1].split(' ')[1], `P2-16/DEC-${n}`, 'the newest first');
+  assert.equal(d.lines[DIGEST_LINES].split(' ')[1], `P2-16/DEC-${n - DIGEST_LINES + 1}`);
+  assert.equal(d.lines.at(-1), '… 5 more');
+  assert.equal(digest({ rows: rows.slice(0, DIGEST_LINES), rowTimes, now: NOW }).lines.length, 1 + DIGEST_LINES, 'no `more` line at the cap');
+});
+
+test('housekeeping lines are in the digest, never unread, and never hold a claim', () => {
+  const housekeeping = Array.from({ length: VALVE_ITEMS + 5 }, (_, i) => ({ kind: i % 2 ? 'disk' : 'worktrees', why: `w${i}`, command: 'c' }));
+  const d = digest({ rows: [], records: [], lastRead: null, now: NOW, housekeeping });
+  assert.equal(d.unread, 0);
+  assert.equal(d.holdCount, 0);
+  assert.equal(d.lines[0], 'DIGEST 0 unread since never');
+  assert.equal(d.lines.length, 1 + housekeeping.length);
+  assert.equal(valve(d, { claim: 'P2-01' }), null);
+  // checkAll's disk and worktrees items reach the digest, not a DUE line
+  const parts = dueParts({ now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [], disk: { free: 1e9, approved: ['caches'], last: null }, stage: 'foundation' });
+  assert.ok(parts.items.some((i) => i.kind === 'disk'));
+  assert.equal(parts.digest.unread, 0);
+  const text = formatDue(parts);
+  assert.match(text, /^DIGEST disk — .* — /m);
+  assert.doesNotMatch(text, /^DUE disk/m);
+  assert.match(text, /^harness-due: nothing due$/m, 'housekeeping leaves the all-clear in place');
+});
+
+test('the valve holds at VALVE_ITEMS + 1 unread items older than VALVE_DAYS, not at VALVE_ITEMS, and blocks only with --claim', () => {
+  const old = NOW - (VALVE_DAYS * DAY + HOUR);
+  const rows = (n, prefix = 'DEC') => Array.from({ length: n }, (_, i) => dec('P2-16', `${prefix}-${i + 1}`, 'grant'));
+  const times = (list, t) => new Map(list.map((r) => [`${r.unit}/${r.id}`, t]));
+  const over = rows(VALVE_ITEMS + 1);
+  const held = digest({ rows: over, rowTimes: times(over, old), lastRead: null, now: NOW });
+  assert.equal(held.holdCount, VALVE_ITEMS + 1);
+  const free = valve(held, { claim: null });
+  assert.equal(free.blocking, false, 'without --claim it is a line, not a stop');
+  const stop = valve(held, { claim: 'P2-01' });
+  assert.equal(stop.blocking, true);
+  assert.equal(formatDue({ hold: stop }), `HOLD claims — ${VALVE_ITEMS + 1} digest items unread for over ${VALVE_DAYS} days — read the digest, then node scripts/harness-due.mjs --digest-read\n`);
+  const at = rows(VALVE_ITEMS);
+  assert.equal(valve(digest({ rows: at, rowTimes: times(at, old), lastRead: null, now: NOW }), { claim: 'P2-01' }), null);
+  // the young, the unknown and the read never count
+  const young = rows(VALVE_ITEMS + 1, 'NEW');
+  const youngTimes = times(young, NOW - (VALVE_DAYS * DAY - HOUR));
+  assert.equal(valve(digest({ rows: [...at, ...young], rowTimes: new Map([...times(at, old), ...youngTimes]), lastRead: null, now: NOW }), { claim: 'P2-01' }), null);
+  const unknown = rows(VALVE_ITEMS + 1, 'UNK');
+  const mixed = digest({ rows: [...at, ...unknown], rowTimes: times(at, old), lastRead: null, now: NOW });
+  assert.equal(mixed.unread, 2 * VALVE_ITEMS + 1);
+  assert.equal(valve(mixed, { claim: 'P2-01' }), null, 'an item of unknown time is unread but never holds');
+  assert.equal(valve(digest({ rows: over, rowTimes: times(over, old), lastRead: old + HOUR, now: NOW }), { claim: 'P2-01' }), null, 'read items never hold');
+  // merged records count like decisions
+  const merged = Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => ({ id: `P1-${i + 1}`, landed: old }));
+  assert.equal(valve(digest({ records: merged, lastRead: null, now: NOW }), { claim: 'x' }).count, VALVE_ITEMS + 1);
+  // through dueParts: the claim decides whether the hold blocks
+  const facts = { now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [], stage: 'foundation', decisions: over, rowTimes: times(over, old) };
+  assert.equal(dueParts(facts).hold.blocking, false);
+  assert.equal(dueParts({ ...facts, claim: 'P1-03' }).hold.blocking, true);
+});
+
+test('the ASK line names the asked kinds: the default, and a granted kind demoted by its reversals', () => {
+  assert.equal(askLine(askKinds([])), `ASK ${ASK_DEFAULT.join(', ')} — default`);
+  const granted = Array.from({ length: 20 }, (_, i) => dec('P2-16', `DEC-${i + 1}`, 'grant', { date: `2026-10-${String(i + 1).padStart(2, '0')}` }));
+  const reversal = (n, target) => dec('P2-16', `DEC-${100 + n}`, 'owner', { date: '2026-10-25', kind: 'reversal', cardKind: null, decision: `reverses ${target}`, reverses: `P2-16/${target}` });
+  const three = [...granted, reversal(1, 'DEC-1'), reversal(2, 'DEC-2'), reversal(3, 'DEC-3')];
+  assert.equal(askLine(askKinds(three)), 'ASK code, owner-fact, never-auto — demoted: code 3/20');
+  assert.equal(askLine(askKinds(three.slice(0, 22))), `ASK ${ASK_DEFAULT.join(', ')} — default`, '2 of 20 does not demote');
+  assert.equal(askLine(null), `ASK ${ASK_DEFAULT.join(', ')} — default`);
 });
 
 test('diskDue: under the minimum it runs the approved categories, or says none is approved; with what the last sweep freed', () => {
@@ -373,36 +536,7 @@ test('worktrees: the porcelain list parses, and only a merged linked worktree wi
   assert.match(worktreesDue({ worktrees: [list[0], ...many], now: NOW, idleHours: 6, top: '/r' }).why, /: w0, w1, w2, w3 and 2 more$/);
 });
 
-test('proposals: the newest week\'s file, the sections naming this project or every project, and seen weeks', () => {
-  assert.deepEqual(newestProposals(['proposals-2026-W43.md', 'proposals-2026-W44.md', 'weekly-log.jsonl', 'proposals-latest.md']), {
-    name: 'proposals-2026-W44.md',
-    week: '2026-W44',
-  });
-  assert.equal(newestProposals(['seen.json']), null);
-  const text = [
-    '# Proposals 2026-W44',
-    '### 1. [rule] a gate that passed having run nothing',
-    '- Projects: shopbiz, ledger',
-    '### 2. [threshold] the sweep cadence',
-    '- Projects: shop',
-    '### 3. [promote] counted gates',
-    '- Projects: all four',
-  ].join('\n');
-  assert.deepEqual(proposalCounts(text, 'shop'), { total: 3, mine: 2 });
-  assert.deepEqual(proposalCounts(text, 'shopbiz'), { total: 3, mine: 2 });
-  assert.deepEqual(proposalCounts('No proposals this week: nothing cleared the bar.', 'shop'), { total: 0, mine: 0 });
-  const newest = { name: 'proposals-2026-W44.md', week: '2026-W44' };
-  const due = proposalsDue({ newest, text, seen: { shop: '2026-W43' }, project: 'shop', file: '/h/proposals-2026-W44.md', command: 'read <file>; --seen <week>' });
-  assert.deepEqual(due, {
-    kind: 'proposals',
-    subject: '2026-W44',
-    why: '2 of 3 proposals name shop, unread',
-    command: 'read /h/proposals-2026-W44.md; --seen 2026-W44',
-    blocking: false,
-    tag: 'NEW',
-  });
-  assert.equal(proposalsDue({ newest, text, seen: { shop: '2026-W44' }, project: 'shop', file: 'f' }), null);
-  assert.equal(proposalsDue({ newest, text: '### 1. [rule] x\n- Projects: ledger', seen: {}, project: 'shop', file: 'f' }), null);
+test('markSeen moves a project\'s seen week forward only, and projectName reads the weekly job\'s registry', () => {
   assert.deepEqual(markSeen({ shop: '2026-W44', ledger: '2026-W40' }, 'shop', '2026-W43'), { shop: '2026-W44', ledger: '2026-W40' });
   assert.deepEqual(markSeen(null, 'shop', '2026-W44'), { shop: '2026-W44' });
   assert.equal(projectName({ repos: [{ path: '/p/a', project: 'alpha' }] }, '/p/a'), 'alpha');
@@ -442,21 +576,24 @@ test('checkAll runs every bound check from what was read, in order, and formatDu
   if (REPORTS.sweep !== null) assert.ok(kinds.includes('sweep'));
   if (REPORTS.hygiene !== null) {
     const hygiene = items.find((i) => i.kind === 'hygiene');
-    assert.match(hygiene.why, /since the log began, and no report yet; 1 open P3, the oldest FU-1 at 20 d$/);
-    assert.ok(!kinds.includes('p3'));
-  } else assert.ok(kinds.includes('p3'));
+    assert.match(hygiene.why, /since the log began, and no report yet$/);
+  }
+  assert.ok(!kinds.includes('p3'));
   assert.ok(!kinds.includes('disk'));
-  assert.deepEqual(kinds, [...kinds].sort((x, y) => ['preflight', 'sweep', 'retro', 'hygiene', 'p3', 'disk', 'worktrees', 'proposals'].indexOf(x) - ['preflight', 'sweep', 'retro', 'hygiene', 'p3', 'disk', 'worktrees', 'proposals'].indexOf(y)));
+  assert.deepEqual(kinds, [...kinds].sort((x, y) => KINDS.indexOf(x) - KINDS.indexOf(y)));
   const preflight = items.find((i) => i.kind === 'preflight');
   // no preflight bound, or no phase for the claim to open: nothing waits
   if (REPORTS.preflight === null || PH2 === null) assert.ok(!kinds.includes('preflight'), 'no preflight is due');
   else assert.equal(preflight.blocking, true);
-  const text = formatDue([
-    { kind: 'sweep', subject: null, why: '8 d, 5 landings since sweep-2026-10-18.md', command: 'run the sweep', blocking: false },
-    { kind: 'proposals', subject: '2026-W44', why: '2 of 3 proposals name p, unread', command: 'read f', blocking: false, tag: 'NEW' },
-  ]);
-  assert.equal(text, 'DUE sweep — 8 d, 5 landings since sweep-2026-10-18.md — run the sweep\nNEW proposals 2026-W44 — 2 of 3 proposals name p, unread — read f\n');
-  assert.equal(formatDue([]), 'harness-due: nothing due\n');
+  const text = formatDue({
+    items: [
+      { kind: 'preflight', subject: 'P2', why: 'no report', command: 'run the preflight', blocking: true },
+      { kind: 'sweep', subject: null, why: '8 d, 5 landings since sweep-2026-10-18.md', command: 'run the sweep', blocking: false },
+    ],
+  });
+  assert.equal(text, 'DUE preflight P2 — no report — run the preflight\nREPORT sweep — 8 d, 5 landings since sweep-2026-10-18.md — run the sweep\n');
+  assert.equal(formatDue({}), 'harness-due: nothing due\n');
+  assert.equal(formatDue(), 'harness-due: nothing due\n');
 });
 
 test('isHarnessUnit: a harness/<slug> row id; a plan row, a task branch or a mention is not', () => {
@@ -507,7 +644,7 @@ test('checkAll counts product landings only: seven harness units and one product
   }
 });
 
-test('the foundation stage holds the cadences and the P3 batch; the preflight still blocks, and formatDue names what it holds', () => {
+test('the foundation stage holds the cadences; the preflight still blocks, and formatDue names what it holds', () => {
   const logText = `# Log\n\n${table(LOG_HEAD, [])}\n${logRow('harness/install')}\n`;
   const old = NOW - 40 * DAY;
   const fuText = `${table(['#', SEV, ST], [['FU-1', 'P3', OPEN]])}\n`;
@@ -532,11 +669,11 @@ test('the foundation stage holds the cadences and the P3 batch; the preflight st
   // what a full stage, or no stage, finds is what v8 found
   assert.deepEqual(checkAll(facts).map((i) => i.kind), full);
   const bound = ['sweep', 'retro', 'hygiene'].filter((k) => REPORTS[k] !== null);
-  assert.deepEqual(heldKinds('foundation'), REPORTS.hygiene === null ? [...bound, 'p3'] : bound);
+  assert.deepEqual(heldKinds('foundation'), bound);
   assert.deepEqual(heldKinds('full'), []);
   assert.deepEqual(heldKinds(null), []);
-  assert.equal(formatDue([], [], ['sweep', 'hygiene']), 'harness-due: nothing due\nHELD sweep, hygiene — foundation stage — they wait for the flip\n');
-  assert.equal(formatDue([], ['INBOX P2-17'], ['sweep']), 'harness-due: nothing due\nHELD sweep — foundation stage — they wait for the flip\nINBOX P2-17\n');
+  assert.equal(formatDue({ held: ['sweep', 'hygiene'] }), 'harness-due: nothing due\nHELD sweep, hygiene — foundation stage — they wait for the flip\n');
+  assert.equal(formatDue({ inbox: ['INBOX P2-17'], held: ['sweep'] }), 'INBOX P2-17\nharness-due: nothing due\nHELD sweep — foundation stage — they wait for the flip\n');
 });
 
 // ---- the registry: the parked table is the owner's inbox
@@ -659,12 +796,70 @@ test('worktreesDue never names a worktree that a registry row names; checkAll ta
   assert.equal(line({ ...facts, registry: { text: aliased, root: '/r', real } }), '.worktrees/b, .worktrees/c');
 });
 
-test('formatDue puts the inbox lines last, and nothing due stays nothing due while the owner has an inbox', () => {
+test('formatDue puts the inbox lines right after the owed ones, ahead of the due lines, and nothing due stays nothing due while the owner has an inbox', () => {
   const item = { kind: 'sweep', subject: null, why: '8 d', command: 'run the sweep', blocking: false };
-  assert.equal(formatDue([item], [CR_LINE, 'INBOX P2-17']), `DUE sweep — 8 d — run the sweep\n${CR_LINE}\nINBOX P2-17\n`);
-  assert.equal(formatDue([], [CR_LINE]), `harness-due: nothing due\n${CR_LINE}\n`);
-  assert.equal(formatDue([], []), 'harness-due: nothing due\n');
-  assert.equal(formatDue([item]), 'DUE sweep — 8 d — run the sweep\n');
+  assert.equal(formatDue({ items: [item], inbox: [CR_LINE, 'INBOX P2-17'] }), `${CR_LINE}\nINBOX P2-17\nREPORT sweep — 8 d — run the sweep\n`);
+  assert.equal(formatDue({ inbox: [CR_LINE] }), `${CR_LINE}\nharness-due: nothing due\n`);
+  assert.equal(formatDue({ inbox: [] }), 'harness-due: nothing due\n');
+  assert.equal(formatDue({ items: [item] }), 'REPORT sweep — 8 d — run the sweep\n');
+});
+
+test('SPLIT: a held unit past SPLIT_LINES production lines against the mainline, docs and tests aside; not at SPLIT_LINES', () => {
+  const exempt = ['docs/plan.md', 'README.md', 'src/a.test.ts', 'tests/b.js', 'e2e/c.spec.ts'];
+  for (const p of exempt) assert.equal(isProduction(p), false, `${p} counts as docs or tests`);
+  assert.equal(isProduction('src/a.ts'), true);
+  const numstat = (extra) => [`${SPLIT_LINES - 1}\t1\tsrc/a.ts`, ...exempt.map((p) => `900\t100\t${p}`), '-\t-\tsrc/logo.png', ...extra].join('\n');
+  assert.deepEqual(splitItems([{ unit: 'P2-16', branch: 'task/p2-16', numstat: numstat([]) }]), [], 'exactly the cap is no split');
+  const over = splitItems([{ unit: 'P2-16', branch: 'task/p2-16', numstat: numstat(['1\t0\tsrc/b.ts']) }, { unit: 'P2-17', branch: 'task/p2-17', numstat: '' }]);
+  assert.deepEqual(over, [{ unit: 'P2-16', branch: 'task/p2-16', lines: SPLIT_LINES + 1, cap: SPLIT_LINES }]);
+  assert.equal(
+    formatDue({ split: over }),
+    `SPLIT P2-16 — ${SPLIT_LINES + 1} production lines past the ${SPLIT_LINES}-line cap — land the green slices (flag-off where unfinished); the rest is the next unit\n`,
+  );
+  // the held rows' branches: row 0, a parked row, an empty or placeholder cell and an option-like word name none
+  const text = registryFile(
+    activeSection(['| 1 | P2-16 | 2 implement | `task/p2-16` | main | | |', '| 2 | P2-17 | 2 | - | main | | |', '| 3 | P2-18 | 2 | | main | | |', '| 4 | P2-19 | 2 | --output=x | main | | |', '| 5 | | 2 | task/no-unit | main | | |']),
+    parkedSection([CR_ROW]),
+  );
+  assert.deepEqual(heldBranches(text), [{ unit: 'P2-16', branch: 'task/p2-16' }, { unit: 'task/no-unit', branch: 'task/no-unit' }]);
+  assert.deepEqual(heldBranches(registryFile(parkedSection([CR_ROW]))), []);
+  assert.deepEqual(heldBranches(null), []);
+});
+
+test('formatDue prints the parts in C7\'s order: OWED, INBOX, HOLD, SPLIT, DUE, REPORT, ASK, then the digest', () => {
+  const preflight = { kind: 'preflight', subject: 'P2', why: 'no report', command: 'run the preflight', blocking: true };
+  const sweep = { kind: 'sweep', subject: null, why: '8 d', command: 'write the sweep', blocking: false };
+  const disk = { kind: 'disk', subject: null, why: '20.0 GB free', command: 'free disk', blocking: false };
+  const old = NOW - (VALVE_DAYS + 1) * DAY;
+  const rows = Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => dec('P2-16', `DEC-${i + 1}`, 'grant', { date: '2026-10-20' }));
+  const d = digest({ rows, rowTimes: new Map(rows.map((r) => [`${r.unit}/${r.id}`, old])), lastRead: null, now: NOW, housekeeping: [disk], max: 1 });
+  const text = formatDue({
+    items: [preflight, sweep, disk],
+    owed: [{ id: 'FU-1', since: '2026-10-20', what: 'the key name' }],
+    inbox: [CR_LINE],
+    hold: valve(d, { claim: 'P2-01' }),
+    split: [{ unit: 'P2-16', branch: 'b', lines: SPLIT_LINES + 1, cap: SPLIT_LINES }],
+    ask: askKinds([]),
+    digest: d,
+    held: [],
+  });
+  const lines = text.trimEnd().split('\n');
+  assert.deepEqual(lines.map((l) => l.split(' ')[0]), ['OWED', 'INBOX', 'HOLD', 'SPLIT', 'DUE', 'REPORT', 'ASK', 'DIGEST', 'DIGEST', '…', 'DIGEST']);
+  assert.equal(lines[0], 'OWED FU-1 since 2026-10-20 — the key name');
+  assert.equal(lines[1], CR_LINE);
+  assert.equal(lines[4], 'DUE preflight P2 — no report — run the preflight');
+  assert.equal(lines[5], 'REPORT sweep — 8 d — write the sweep');
+  assert.equal(lines[6], `ASK ${ASK_DEFAULT.join(', ')} — default`);
+  assert.equal(lines.at(-1), 'DIGEST disk — 20.0 GB free — free disk');
+  assert.ok(!lines.includes('harness-due: nothing due'));
+  // the all-clear: nothing that holds, splits, is due or is a report; OWED and INBOX lines leave it in place, before ASK
+  assert.deepEqual(
+    formatDue({ owed: [{ id: 'FU-1', since: '2026-10-20', what: 'x' }], inbox: [CR_LINE], ask: askKinds([]), digest: digest({ now: NOW }) }).trimEnd().split('\n'),
+    ['OWED FU-1 since 2026-10-20 — x', CR_LINE, 'harness-due: nothing due', `ASK ${ASK_DEFAULT.join(', ')} — default`, 'DIGEST 0 unread since never'],
+  );
+  for (const part of [{ hold: valve(d, {}) }, { split: [{ unit: 'u', lines: 2, cap: 1 }] }, { items: [preflight] }, { items: [sweep] }]) {
+    assert.doesNotMatch(formatDue(part), /nothing due/, Object.keys(part)[0]);
+  }
 });
 
 // ---- the wrapper, in a temp repo with dated commits and a temp --home
@@ -705,7 +900,11 @@ function fixture() {
     git(['commit', '-q', '-a', '-m', `${ROW(1, i + 3)} landed`], `2026-10-${d}T10:00:00Z`);
   }
   const home = tmpDir('harness-due-agents-');
-  return { repo, home, git, write };
+  // the owner read the digest after the fixture's last landing: a test that is not about the digest sees no unread item
+  const project = path.basename(repo);
+  fs.mkdirSync(path.join(home, '.agents', 'harness'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.agents', 'harness', 'digest-read.json'), JSON.stringify({ [project]: '2026-10-24T00:00:00.000Z' }));
+  return { repo, home, git, write, project };
 }
 
 // The fixture's sweep report is dated 2026-10-18 and its five landings follow, so the runner's clock stands CADENCE.sweep.days + 1
@@ -714,7 +913,7 @@ const SWEEP_DAYS = Math.max(8, CADENCE.sweep.days + 1);
 const RUN_NOW = new Date(Date.UTC(2026, 9, 18 + SWEEP_DAYS, 12)).toISOString();
 // a day of the fixture as YYYY-MM-DD; a day past the month's end rolls into the next month
 const dayOf = (n) => new Date(Date.UTC(2026, 9, n)).toISOString().slice(0, 10);
-const DUE_SWEEP = new RegExp(`^DUE sweep — ${SWEEP_DAYS} d, 5 landings since .*2026-10-18.* — `, 'm');
+const DUE_SWEEP = new RegExp(`^REPORT sweep — ${SWEEP_DAYS} d, 5 landings since .*2026-10-18.* — `, 'm');
 
 function run(f, args, cwd = f.repo) {
   return spawnSync(process.execPath, [RUNNER, '--now', RUN_NOW, '--home', f.home, ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
@@ -747,17 +946,22 @@ test('the wrapper: claiming the row that opens a phase with no preflight stops w
   assert.ok(!json.due.some((d) => d.kind === 'preflight'));
 });
 
-test('the wrapper: a sweep report that no commit holds does not clear the sweep; committed, it does', () => {
+test('the wrapper: a sweep report written but not committed yet clears the sweep, dated by its file; committed, it still does', () => {
   const f = fixture();
   const yesterday = dayOf(17 + SWEEP_DAYS);
-  if (REPORTS.sweep !== null) f.write(fill(REPORTS.sweep, yesterday), '# Sweep\n');
-  const unsaved = run(f, []);
-  assert.equal(unsaved.status, 0, unsaved.stderr);
-  if (REPORTS.sweep !== null) assert.match(unsaved.stdout, DUE_SWEEP);
   if (REPORTS.sweep === null) return;
+  assert.match(run(f, []).stdout, DUE_SWEEP);
+  // The report is written in the background and rides in the next unit's land commit: until then no commit holds it.
+  const file = fill(REPORTS.sweep, yesterday);
+  f.write(file, '# Sweep\n');
+  const stamp = new Date(`${yesterday}T10:00:00Z`);
+  fs.utimesSync(path.join(f.repo, file), stamp, stamp);
+  const pending = run(f, []);
+  assert.equal(pending.status, 0, pending.stderr);
+  assert.doesNotMatch(pending.stdout, /^REPORT sweep/m, 'an uncommitted report clears the line: the runner must not start the same report twice');
   f.git(['add', '.']);
   f.git(['commit', '-q', '-m', 'sweep'], `${yesterday}T10:00:00Z`);
-  assert.doesNotMatch(run(f, []).stdout, /^DUE sweep/m);
+  assert.doesNotMatch(run(f, []).stdout, /^REPORT sweep/m);
 });
 
 test('the wrapper: a foundation-stage manifest holds the sweep and says so; a full one, or none, does not', () => {
@@ -813,7 +1017,7 @@ test('blameDates dates a committed line by its commit and a line not committed y
   assert.equal(dates.get(7), at('19T10:00:00'));
 });
 
-test('the wrapper: a sweep report past its cadence with 5 landings since is due; the unread proposals are NEW until --seen', () => {
+test('the wrapper: a sweep report past its cadence with 5 landings since is a REPORT; the week\'s proposals print nothing, and --seen still records the week', () => {
   const f = fixture();
   const proposals = path.join(f.home, '.agents', 'harness', 'retro');
   fs.mkdirSync(proposals, { recursive: true });
@@ -821,12 +1025,12 @@ test('the wrapper: a sweep report past its cadence with 5 landings since is due;
   const res = run(f, []);
   assert.equal(res.status, 0, res.stderr);
   if (REPORTS.sweep !== null) assert.match(res.stdout, DUE_SWEEP);
-  assert.match(res.stdout, new RegExp(`^NEW proposals 2026-W44 — 1 of 2 proposals name ${path.basename(f.repo)}, unread — .*--seen 2026-W44`, 'm'));
+  assert.doesNotMatch(res.stdout, /proposals/);
   const seen = run(f, ['--seen', '2026-W44']);
   assert.equal(seen.status, 0, seen.stderr);
   assert.match(seen.stdout, /has read the proposals of 2026-W44/);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(proposals, 'seen.json'), 'utf8')), { [path.basename(f.repo)]: '2026-W44' });
-  assert.ok(!/^NEW proposals/m.test(run(f, []).stdout));
+  assert.doesNotMatch(run(f, []).stdout, /proposals/);
   assert.equal(f.git(['status', '--porcelain']), '');
 });
 
@@ -869,7 +1073,7 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
   assert.deepEqual(named, residue, res.stdout);
 });
 
-test('the wrapper: the parked units follow the due lines, with a claim or without, and never change the exit code', () => {
+test('the wrapper: the parked units come before the due lines, with a claim or without, and never change the exit code', () => {
   const f = fixture();
   const second = 'INBOX P2-17 Gate 1 since 2026-11-06T05:30Z · Q-1 scope';
   f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW, '| P2-17 | Gate 1 | 2026-11-06T05:30Z | task/p2-17 | main | Q-1 scope |'])));
@@ -877,13 +1081,13 @@ test('the wrapper: the parked units follow the due lines, with a claim or withou
   const plain = run(f, []);
   assert.equal(plain.status, 0, plain.stderr);
   assert.deepEqual(inbox(plain), [CR_LINE, second]);
-  assert.deepEqual(plain.stdout.trimEnd().split('\n').slice(-2), [CR_LINE, second], 'the inbox is last');
+  assert.deepEqual(plain.stdout.split('\n').slice(0, 2), [CR_LINE, second], 'the inbox is first, with nothing owed');
   if (REPORTS.sweep !== null) assert.match(plain.stdout, DUE_SWEEP);
   // a claim that stops (exit 1) still prints the inbox; one that does not stop exits 0
   const stops = REPORTS.preflight !== null && PH2 !== null;
   const claimed = run(f, ['--claim', ROW(2, 1)]);
   assert.equal(claimed.status, stops ? 1 : 0, claimed.stdout + claimed.stderr);
-  assert.deepEqual(claimed.stdout.trimEnd().split('\n').slice(-2), [CR_LINE, second]);
+  assert.deepEqual(claimed.stdout.split('\n').slice(0, 2), [CR_LINE, second]);
   const json = JSON.parse(run(f, ['--json']).stdout);
   assert.deepEqual(json.inbox.map((p) => [p.unit, p.gate, p.parked, p.branch, p.worktree, p.cards]), [
     ['CR-021', 'Gate 2', '2026-11-06T04:10Z', 'change/cr-021', '../wt-cr-021', 'Q-1 merge or hold · Q-2 button copy'],
@@ -957,6 +1161,103 @@ test('the wrapper: a worktree that a held row or a parked row names is never res
   const via = (name) => path.relative(f.repo, path.join(links, name));
   f.write(REGISTRY, registryFile(activeSection([held.replace('.worktrees/held', via('held'))]), parkedSection([parked.replace('.worktrees/parked', via('parked'))])));
   assert.deepEqual(residue(), ['plain']);
+});
+
+const reEsc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const DECISIONS_HEAD = ['ID', 'Date', 'Class', 'Decision', 'By', 'Card kind', 'Why', 'Rejected alternative', 'Reversal cost', 'Kind'];
+// A unit's state file with a `## Decisions` table: [id, date, decision, by, cost] rows.
+const stateFile = (rows) => `Status: landed\n\n## Decisions\n\n${table(DECISIONS_HEAD, rows.map(([id, date, decision, by, cost]) => [id, date, 'C', decision, by, 'code', 'why', 'the other way', cost, 'decision']))}\n`;
+
+test('the wrapper: --digest-read records now for this project and keeps the others; the next run reads DIGEST 0 unread', () => {
+  const f = fixture();
+  const file = path.join(f.home, '.agents', 'harness', 'digest-read.json');
+  fs.writeFileSync(file, JSON.stringify({ other: '2026-01-01T00:00:00.000Z' }));
+  const before = run(f, []);
+  assert.equal(before.status, 0, before.stderr);
+  assert.match(before.stdout, /^DIGEST 7 unread since never$/m, before.stdout);
+  assert.match(before.stdout, new RegExp(`^DIGEST merged ${reEsc(ROW(1, 7))} 2026-10-23$`, 'm'));
+  const read = run(f, ['--digest-read']);
+  assert.equal(read.status, 0, read.stderr);
+  assert.equal(read.stdout, `harness-due: ${f.project} has read the digest at ${RUN_NOW}\n`);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { other: '2026-01-01T00:00:00.000Z', [f.project]: RUN_NOW });
+  const after = run(f, []);
+  assert.equal(after.status, 0, after.stderr);
+  assert.match(after.stdout, new RegExp(`^DIGEST 0 unread since ${reEsc(RUN_NOW)}$`, 'm'));
+  assert.doesNotMatch(after.stdout, /^DIGEST merged/m);
+  assert.equal(JSON.parse(run(f, ['--json']).stdout).digest.unread, 0);
+  assert.equal(run(f, ['--digest-read', '--claim', ROW(1, 8)]).status, 2);
+  // a home with no harness directory yet: --digest-read makes it
+  fs.rmSync(path.join(f.home, '.agents'), { recursive: true, force: true });
+  assert.equal(run(f, ['--digest-read']).status, 0);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))), [f.project]);
+  assert.equal(f.git(['status', '--porcelain']), '');
+});
+
+test('the wrapper: the state files at the mainline feed ASK and the digest, each row dated by its line\'s commit; the valve stops a claim only', () => {
+  const f = fixture();
+  // the owner last read the digest on 10-24; these rows land on 10-25, one of them dated 10-01 in its cell
+  f.write(`${STATE_DIR}/unit-a.state.md`, stateFile([['DEC-1', '2026-10-25', 'use the queue', 'grant', 'one file'], ['DEC-2', '2026-10-01', 'keep the old name', 'default', 'low'], ['DEC-3', '2026-10-25', 'the owner chose', 'owner', 'x']]));
+  f.write(`${STATE_DIR}/archive/unit-c.state.md`, stateFile([['DEC-1', '2026-10-25', 'one level down', 'grant', 'x']]));
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-m', 'unit-a landed'], '2026-10-25T10:00:00Z');
+  f.write(`${STATE_DIR}/unit-b.state.md`, stateFile([['DEC-1', '2026-10-25', 'not landed yet', 'grant', 'x']]));
+  const res = run(f, []);
+  assert.equal(res.status, 0, res.stderr);
+  // the machine's own disk may add a housekeeping line: it is no item
+  const digestLines = res.stdout.split('\n').filter((l) => l.startsWith('DIGEST ') && !/^DIGEST (?:disk|worktrees) — /.test(l));
+  assert.deepEqual(digestLines, [
+    'DIGEST 2 unread since 2026-10-24T00:00:00.000Z',
+    'DIGEST unit-a/DEC-1 2026-10-25 · use the queue · reversal: one file',
+    'DIGEST unit-a/DEC-2 2026-10-01 · keep the old name · reversal: low',
+  ]);
+  assert.ok(res.stdout.split('\n').includes(askLine(askKinds([]))), res.stdout);
+  assert.ok(res.stdout.indexOf('\nASK ') < res.stdout.indexOf('\nDIGEST '), 'the ASK line comes before the digest');
+  // past the valve: more than VALVE_ITEMS unread rows older than VALVE_DAYS
+  f.write(`${STATE_DIR}/unit-d.state.md`, stateFile(Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => [`DEC-${i + 1}`, '2026-10-25', `step ${i + 1}`, 'grant', 'x'])));
+  f.git(['add', `${STATE_DIR}/unit-d.state.md`]);
+  f.git(['commit', '-q', '-m', 'unit-d landed'], '2026-10-25T11:00:00Z');
+  const later = new Date(Date.parse('2026-10-25T11:00:00Z') + VALVE_DAYS * DAY + HOUR).toISOString();
+  const hold = new RegExp(`^HOLD claims — ${VALVE_ITEMS + 3} digest items unread for over ${VALVE_DAYS} days — read the digest, then node scripts/harness-due\\.mjs --digest-read$`, 'm');
+  const plain = run(f, ['--now', later]);
+  assert.equal(plain.status, 0, 'without --claim the valve is a line, not a stop');
+  assert.match(plain.stdout, hold);
+  const claimed = run(f, ['--now', later, '--claim', ROW(1, 8)]);
+  assert.equal(claimed.status, 1, claimed.stdout + claimed.stderr);
+  assert.match(claimed.stdout, hold);
+  const json = JSON.parse(run(f, ['--now', later, '--claim', ROW(1, 8), '--json']).stdout);
+  assert.equal(json.hold.blocking, true);
+  assert.ok(json.blocking >= 1);
+  assert.deepEqual(json.ask.ask, askKinds([]).ask);
+  assert.equal(run(f, ['--now', later, '--digest-read']).status, 0);
+  const cleared = run(f, ['--now', later, '--claim', ROW(1, 8)]);
+  assert.equal(cleared.status, 0, cleared.stdout + cleared.stderr);
+  assert.doesNotMatch(cleared.stdout, /^HOLD/m);
+});
+
+test('the wrapper: a held row whose local branch is past SPLIT_LINES production lines against the mainline is a SPLIT line', () => {
+  const f = fixture();
+  const branch = (name, lines) => {
+    f.git(['checkout', '-q', '-b', name, MAIN]);
+    f.write(`src/${name.replace(/\W/g, '-')}.js`, 'x\n'.repeat(lines));
+    f.write(`tests/${name.replace(/\W/g, '-')}.test.js`, 'x\n'.repeat(50));
+    f.write(`docs/${name.replace(/\W/g, '-')}.md`, 'x\n'.repeat(50));
+    f.git(['add', '.']);
+    f.git(['commit', '-q', '-m', name], '2026-10-24T10:00:00Z');
+    f.git(['checkout', '-q', MAIN]);
+  };
+  branch('task/big', SPLIT_LINES + 1);
+  branch('task/even', SPLIT_LINES);
+  f.write(REGISTRY, registryFile(
+    activeSection(['| 1 | P2-16 | 2 implement | task/big | main | | |', '| 2 | P2-17 | 2 implement | task/even | main | | |', '| 3 | P2-18 | 2 implement | task/missing | main | | |']),
+    parkedSection(['| CR-021 | Gate 2 | 2026-11-06T04:10Z | task/big | main | Q-1 |']),
+  ));
+  const res = run(f, []);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(res.stdout.split('\n').filter((l) => l.startsWith('SPLIT ')), [
+    `SPLIT P2-16 — ${SPLIT_LINES + 1} production lines past the ${SPLIT_LINES}-line cap — land the green slices (flag-off where unfinished); the rest is the next unit`,
+  ]);
+  assert.doesNotMatch(res.stdout, /nothing due/);
+  assert.deepEqual(JSON.parse(run(f, ['--json']).stdout).split, [{ unit: 'P2-16', branch: 'task/big', lines: SPLIT_LINES + 1, cap: SPLIT_LINES }]);
 });
 
 test('the wrapper exits 2 with a usage line on a bad flag and outside a repository', () => {

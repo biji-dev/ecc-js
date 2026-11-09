@@ -121,9 +121,9 @@ function runHook(dir, opts = {}) {
 const source = (dir, s, opts = {}) => runHook(dir, { ...opts, input: { source: s, ...opts.input } });
 const lastLine = text => text.split('\n').at(-1);
 const COMPACT = "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.";
-const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.';
+const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.';
 const PARKED_ONLY = "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).";
-const NO_ROWS = "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).";
+const NO_ROWS = "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.";
 const FIRST = s => `[session-resume] ${s}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
 
 console.log('\nharness session-resume: the registry');
@@ -141,7 +141,7 @@ test("a held row in a linked worktree: CLAUDE_PROJECT_DIR wins over cwd, and the
     'HELD CR-021 · step 5 implement · change/cr-021 · ../wt-cr-021 · tier Full',
     '  next: next: 5 implement, slice 2',
     '  open: Q-1 Merge or hold?',
-    '  grant: merge clean Full; stop: after CR-021',
+    '  kickoff narrows: merge clean Full; stop: after CR-021',
     COMPACT,
   ].join('\n'));
   // the same from the main checkout, through cwd alone
@@ -282,7 +282,7 @@ test('headers before the first ## only, each present part only; ## Next quoted t
   put(main, 'docs/plans/CR-021.state.md', stateFile({ head: ['Stop: after CR-021', 'Stop: a second Stop line is not read'], scope: ['Grant: inside a section, not a header'], next: ['', `* ${long}`, '', '+ two', '- three', '- four'] }));
   const text = runHook(main);
   assert.match(text, /^ {2}stop: after CR-021$/m);
-  assert.doesNotMatch(text, /grant:|tier|second Stop/);
+  assert.doesNotMatch(text, /grant:|narrows|tier|second Stop/);
   const next = /^ {2}next: (.*)$/m.exec(text)[1].split(' / ');
   assert.strictEqual(next.length, 3);
   assert.strictEqual(next[0].length, 160);
@@ -290,7 +290,7 @@ test('headers before the first ## only, each present part only; ## Next quoted t
   assert.deepStrictEqual(next.slice(1), ['two', 'three']);
   // a held unit whose state file still carries a Parked line says so
   put(main, 'docs/plans/CR-021.state.md', stateFile({ head: ['Parked: Gate 2 2026-11-06T04:10Z', 'Grant: merge clean Full · push after merge'] }));
-  assert.match(runHook(main), /^ {2}parked: Gate 2 2026-11-06T04:10Z; grant: merge clean Full · push after merge$/m);
+  assert.match(runHook(main), /^ {2}parked: Gate 2 2026-11-06T04:10Z; kickoff narrows: merge clean Full · push after merge$/m);
 });
 
 test('a missing, unreadable or broken state file prints the row; an id that leaves the state directory is never read', () => {
@@ -353,6 +353,91 @@ test('the hook writes nothing: the fixture tree is the same after a run', () => 
   const before = tree(co.base);
   for (const s of ['compact', 'startup', 'resume', 'clear']) assert.ok(source(co.main, s));
   assert.deepStrictEqual(tree(co.base), before);
+});
+
+console.log('\nharness session-resume: the standing grant');
+
+const STANDING = 'merge when green · push after merge · recommendation on reversible cards';
+const mergeBlock = (...lines) => ['# Agents', '', '<!-- harness:begin merge -->', ...lines, '<!-- harness:end merge -->', ''].join('\n');
+const standingLine = (push = 'no') => `standing grant (AGENTS.md › merge): ${STANDING}; push deploys: ${push}`;
+
+/** The shipped module's exports, loaded in a child (the hook is ESM, this suite CommonJS): `expr` over `m`, as JSON. */
+function fromModule(expr) {
+  const code = `import * as m from ${JSON.stringify(pathToFileURL(HOOK).href)}; process.stdout.write(JSON.stringify(${expr}));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test("standingGrant reads the merge block's Grant: and Push deploys: lines, the first Grant: only, and nothing outside the block", () => {
+  const got = fromModule(`[
+    m.standingGrant(${JSON.stringify(mergeBlock(`Grant: ${STANDING}`, 'Push deploys: no'))}),
+    m.standingGrant(${JSON.stringify(mergeBlock('Grant:   none  ', 'Push deploys: Yes', 'Grant: a second line'))}),
+    m.standingGrant(${JSON.stringify(['Grant: before', 'Push deploys: yes', '<!-- harness:begin merge -->', '<!-- harness:end merge -->', 'Grant: after'].join('\n'))}),
+    m.standingGrant('<!-- harness:begin merge -->\\nGrant: never closed\\n'),
+    m.standingGrant(${JSON.stringify(mergeBlock(`Grant: ${'x'.repeat(400)}`))}).grant.length,
+    m.standingGrant(undefined),
+  ]`);
+  assert.deepStrictEqual(got[0], { grant: STANDING, pushDeploys: 'no' });
+  assert.deepStrictEqual(got[1], { grant: 'none', pushDeploys: 'yes' });
+  assert.deepStrictEqual(got[2], { grant: null, pushDeploys: null }, 'outside the block');
+  assert.deepStrictEqual(got[3], { grant: null, pushDeploys: null }, 'no end marker');
+  assert.strictEqual(got[4], 160, 'clipped like any quoted cell');
+  assert.deepStrictEqual(got[5], { grant: null, pushDeploys: null });
+});
+
+test('the standing grant line sits right after the first line, on every source, and with no row on a compaction', () => {
+  const { main } = checkout();
+  put(main, 'AGENTS.md', mergeBlock(`Grant: ${STANDING}`, 'Push deploys: no'));
+  put(main, '.claude/registry.md', registry());
+  assert.strictEqual(source(main, 'compact'), [FIRST('compact'), standingLine(), NO_ROWS].join('\n'));
+  assert.strictEqual(source(main, 'startup'), null, 'context sources stay silent with no row');
+  put(main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021')] }));
+  for (const s of ['compact', 'startup', 'resume', 'clear']) assert.strictEqual(source(main, s).split('\n').slice(0, 2).join('\n'), `${FIRST(s)}\n${standingLine()}`, s);
+  put(main, 'AGENTS.md', mergeBlock(`Grant: ${STANDING}`, 'Push deploys: yes'));
+  assert.strictEqual(source(main, 'compact').split('\n')[1], standingLine('yes'));
+  put(main, 'AGENTS.md', mergeBlock(`Grant: ${STANDING}`));
+  assert.strictEqual(source(main, 'compact').split('\n')[1], standingLine('?'));
+});
+
+test("a state Grant: that equals the standing grant prints nothing; a different one prints as 'kickoff narrows'", () => {
+  const { main } = checkout();
+  put(main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021')] }));
+  put(main, 'AGENTS.md', mergeBlock(`Grant: ${STANDING}`, 'Push deploys: no'));
+  put(main, 'docs/plans/CR-021.state.md', stateFile({ head: [`Grant: ${STANDING}`, 'Stop: after CR-021'] }));
+  const same = source(main, 'compact');
+  assert.doesNotMatch(same, /narrows|^ {2}grant:/m);
+  assert.match(same, /^ {2}stop: after CR-021$/m);
+  put(main, 'docs/plans/CR-021.state.md', stateFile({ head: ['Grant: merge when green', 'Stop: after CR-021'] }));
+  assert.match(source(main, 'compact'), /^ {2}kickoff narrows: merge when green; stop: after CR-021$/m);
+  // no standing grant: nothing to equal, so the state line shows
+  fs.rmSync(path.join(main, 'AGENTS.md'));
+  assert.match(source(main, 'compact'), /^ {2}kickoff narrows: merge when green; stop: after CR-021$/m);
+});
+
+test('a missing, unreadable or block-less AGENTS.md gives no grant line and no failure; a Grant: outside the block is not read', () => {
+  const { main } = checkout();
+  put(main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021')] }));
+  assert.doesNotMatch(runHook(main), /standing grant/, 'no AGENTS.md');
+  fs.mkdirSync(path.join(main, 'AGENTS.md'));
+  assert.doesNotMatch(runHook(main), /standing grant/, 'a directory');
+  fs.rmdirSync(path.join(main, 'AGENTS.md'));
+  put(main, 'AGENTS.md', '# Agents\nGrant: outside any block\nPush deploys: yes\n');
+  assert.doesNotMatch(runHook(main), /standing grant/, 'no merge block');
+  put(main, 'AGENTS.md', `${mergeBlock('Grant: inside')}Grant: after the block\n`);
+  assert.match(runHook(main), /^standing grant \(AGENTS\.md › merge\): inside; push deploys: \?$/m);
+});
+
+test('the standing grant line is kept inside MAX_BYTES with the closing line, and is the last body line cut', () => {
+  const { main } = checkout();
+  put(main, 'AGENTS.md', mergeBlock(`Grant: ${STANDING}`, 'Push deploys: no'));
+  put(main, '.claude/registry.md', registry({ held: Array.from({ length: 60 }, (_, i) => heldRow(i + 1, `CR-${100 + i}`, { branch: `change/cr-${100 + i}-a-long-branch-name`, wt: `../wt-cr-${100 + i}` })) }));
+  const text = runHook(main);
+  assert.ok(Buffer.byteLength(text) <= 4000, `${Buffer.byteLength(text)} bytes`);
+  const lines = text.split('\n');
+  assert.strictEqual(lines[1], standingLine());
+  assert.match(lines.at(-2), /^… \d+ more lines: read /);
+  assert.strictEqual(lines.at(-1), COMPACT);
 });
 
 console.log('\nharness session-resume: the text');

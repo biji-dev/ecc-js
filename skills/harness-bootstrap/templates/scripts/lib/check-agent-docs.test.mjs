@@ -37,11 +37,15 @@ const budgetsLine = (over = {}) => {
   return `budgets: { ${parts.join(', ')} },`;
 };
 const BUDGET_KEYS = ['AGENTS.md', 'CLAUDE.md', 'rule', 'stateFile', 'skillLines', 'base', 'process.md'];
+// A host's hard read limit (Codex's default project_doc_max_bytes): over it, a file fails rather than warns.
+const HARD_LIMIT = 32768;
+const HARD_LINE = `hardLimits: { 'AGENTS.md': ${HARD_LIMIT} },`;
 // The task runner's process file: the policy blocks moved out of AGENTS.md.
 const PROCESS = '.agents/skills/task-runner/process.md';
 // The rest is the shipped default, which the fixtures below are written against.
 const CONFIG_BLOCK = `export const CONFIG = {
   ${BUDGETS_LINE}
+  ${HARD_LINE}
   rulesDir: '.claude/rules',
   indexFile: 'AGENTS.md',
   skillDirs: ['.claude/skills', '.agents/skills'],
@@ -132,6 +136,16 @@ function expectFail(overrides, check, needle, after = null) {
   return r;
 }
 
+/** Over a budget is a warning: exit 0, the check named on a WARN line, and no FAIL line. */
+function expectWarn(overrides, check, needle, after = null) {
+  const r = run(fixture(overrides, after));
+  assert.equal(r.status, 0, `expected exit 0, got ${r.status}: ${r.all}`);
+  assert.match(r.err, new RegExp(`^WARN ${check}: .*${needle}`, 'm'), r.all);
+  assert.doesNotMatch(r.err, /^FAIL /m, r.all);
+  assert.match(r.out, /^check-agent-docs: OK \(\d+ checks\)$/m);
+  return r;
+}
+
 function expectOk(overrides = {}, after = null) {
   const r = run(fixture(overrides, after));
   assert.equal(r.status, 0, r.all);
@@ -196,27 +210,27 @@ test('budget: a file at its budget passes', () => {
   expectOk({ 'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(BUDGETS.claude - 12)}\n` });
 });
 
-test('budget: CLAUDE.md over its byte budget fails', () => {
-  expectFail({ 'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(BUDGETS.claude)}\n` }, 'budget', `CLAUDE\\.md .*budget ${BUDGETS.claude}`);
+test('budget: CLAUDE.md over its byte budget warns', () => {
+  expectWarn({ 'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(BUDGETS.claude)}\n` }, 'budget', `CLAUDE\\.md .*budget ${BUDGETS.claude}`);
 });
 
-test('budget: AGENTS.md over its byte budget fails', () => {
+test('budget: AGENTS.md over its byte budget warns', () => {
   const text = `${baseFiles()['AGENTS.md']}${'x'.repeat(BUDGETS.agents)}\n`;
-  expectFail({ 'AGENTS.md': text }, 'budget', `AGENTS\\.md .*budget ${BUDGETS.agents}`);
+  expectWarn({ 'AGENTS.md': text }, 'budget', `AGENTS\\.md .*budget ${BUDGETS.agents}`);
 });
 
-test('budget: a rule file over its byte budget fails', () => {
+test('budget: a rule file over its byte budget warns', () => {
   const rule = `---\npaths:\n  - "src/db/**"\n---\n${'x'.repeat(BUDGETS.rule)}\n`;
-  expectFail({ '.claude/rules/db.md': rule }, 'budget', `db\\.md .*budget ${BUDGETS.rule}`);
+  expectWarn({ '.claude/rules/db.md': rule }, 'budget', `db\\.md .*budget ${BUDGETS.rule}`);
 });
 
-test('budget: a state file over its byte budget fails', () => {
-  expectFail({ 'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n` }, 'budget', `a\\.state\\.md .*budget ${BUDGETS.stateFile}`);
+test('budget: a state file over its byte budget warns', () => {
+  expectWarn({ 'docs/plans/a.state.md': `${'x'.repeat(BUDGETS.stateFile)}\n` }, 'budget', `a\\.state\\.md .*budget ${BUDGETS.stateFile}`);
 });
 
 test('budget: the task runner\'s process.md has its own byte budget and is no part of --base', () => {
   expectOk({ [PROCESS]: 'x'.repeat(BUDGETS.process) });
-  expectFail({ [PROCESS]: 'x'.repeat(BUDGETS.process + 1) }, 'budget', `task-runner/process\\.md ${BUDGETS.process + 1} bytes, budget ${BUDGETS.process}`);
+  expectWarn({ [PROCESS]: 'x'.repeat(BUDGETS.process + 1) }, 'budget', `task-runner/process\\.md ${BUDGETS.process + 1} bytes, budget ${BUDGETS.process}`);
   const r = run(fixture({ [PROCESS]: 'x'.repeat(BUDGETS.process + 1) }), ['--base']);
   assert.equal(r.status, 0, r.all);
   assert.doesNotMatch(r.out, /process\.md/, 'only what CLAUDE.md imports with @ joins the base');
@@ -224,7 +238,7 @@ test('budget: the task runner\'s process.md has its own byte budget and is no pa
 
 test('budget: a state file that git ignores is still read, from the pattern\'s static prefix only', () => {
   const ignore = { 'docs/plans/.gitignore': '*.state.md\n' };
-  expectFail({ ...ignore, 'docs/plans/a.state.md': 'x'.repeat(9216) }, 'budget', 'docs/plans/a\\.state\\.md 9216 bytes, budget 1024');
+  expectWarn({ ...ignore, 'docs/plans/a.state.md': 'x'.repeat(9216) }, 'budget', 'docs/plans/a\\.state\\.md 9216 bytes, budget 1024');
   // An ignored small one passes, and is counted like a tracked one.
   assert.equal(checksIn(expectOk(ignore)), checksIn(expectOk()), 'an ignored state file is not counted');
   // With no static prefix the git list is the only source: an ignored match elsewhere is never read.
@@ -232,17 +246,18 @@ test('budget: a state file that git ignores is still read, from the pattern\'s s
   const big = { 'notes/b.state.md': 'x'.repeat(9216) };
   const hidden = run(fixture({ '.gitignore': 'notes/\n', ...big }), [], anywhere);
   assert.equal(hidden.status, 0, `an ignored file outside any static prefix was read: ${hidden.all}`);
+  assert.doesNotMatch(hidden.err, /^WARN /m, `an ignored file outside any static prefix was read: ${hidden.all}`);
   const shown = run(fixture(big), [], anywhere);
-  assert.equal(shown.status, 1, `the control (not ignored) did not fail: ${shown.all}`);
-  assert.match(shown.err, /^FAIL budget: notes\/b\.state\.md 9216 bytes/m, shown.all);
+  assert.equal(shown.status, 0, `a warning changed the exit code: ${shown.all}`);
+  assert.match(shown.err, /^WARN budget: notes\/b\.state\.md 9216 bytes/m, shown.all);
 });
 
 test('budget: a state pattern with a leading ./ still finds an ignored state file', () => {
   const dotted = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: './docs/plans/**/*.state.md'");
   const dir = fixture({ 'docs/plans/.gitignore': '*.state.md\n', 'docs/plans/a.state.md': 'x'.repeat(9216) });
   const r = run(dir, [], dotted);
-  assert.equal(r.status, 1, `the ignored state file was not read through a ./ pattern: ${r.all}`);
-  assert.match(r.err, /^FAIL budget: docs\/plans\/a\.state\.md 9216 bytes/m, r.all);
+  assert.equal(r.status, 0, r.all);
+  assert.match(r.err, /^WARN budget: docs\/plans\/a\.state\.md 9216 bytes/m, r.all);
 });
 
 test('budget: the state walk follows the pattern\'s own segments - a workspace glob and braces still find ignored files', () => {
@@ -251,12 +266,12 @@ test('budget: the state walk follows the pattern\'s own segments - a workspace g
   const star = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/*/docs/plans/**/*.state.md'");
   const files = { ...ignore, 'apps/web/docs/plans/a.state.md': big, 'apps/api/docs/plans/sub/deep/b.state.md': big };
   const found = run(fixture(files), [], star);
-  assert.equal(found.status, 1, found.all);
-  assert.match(found.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `the workspace glob missed a state file: ${found.all}`);
-  assert.match(found.err, /^FAIL budget: apps\/api\/docs\/plans\/sub\/deep\/b\.state\.md /m, `a file under ** was pruned: ${found.all}`);
+  assert.equal(found.status, 0, found.all);
+  assert.match(found.err, /^WARN budget: apps\/web\/docs\/plans\/a\.state\.md /m, `the workspace glob missed a state file: ${found.all}`);
+  assert.match(found.err, /^WARN budget: apps\/api\/docs\/plans\/sub\/deep\/b\.state\.md /m, `a file under ** was pruned: ${found.all}`);
   const braces = withConfig("statePattern: 'docs/plans/**/*.state.md'", "statePattern: 'apps/{web,api}/docs/plans/*.state.md'");
   const both = run(fixture(files), [], braces);
-  assert.match(both.err, /^FAIL budget: apps\/web\/docs\/plans\/a\.state\.md /m, `a brace alternative missed its file: ${both.all}`);
+  assert.match(both.err, /^WARN budget: apps\/web\/docs\/plans\/a\.state\.md /m, `a brace alternative missed its file: ${both.all}`);
   assert.doesNotMatch(both.err, /deep\/b\.state\.md/, `a file below a single-segment pattern was read: ${both.all}`);
 });
 
@@ -283,12 +298,12 @@ test('budget: the state walk stays out of directories the pattern cannot match, 
   }
 });
 
-test('budget: a SKILL.md over its line budget fails and exactly the budget passes', () => {
+test('budget: a SKILL.md over its line budget warns and exactly the budget passes', () => {
   const head = '---\nname: demo\ndescription: Demo\n---\n';
   const body = (n) => `${head}${'line\n'.repeat(n - 4)}`;
   const max = BUDGETS.skillLines;
   expectOk({ '.claude/skills/demo/SKILL.md': body(max) });
-  expectFail({ '.claude/skills/demo/SKILL.md': body(max + 1) }, 'budget', `SKILL\\.md ${max + 1} lines, budget ${max}`);
+  expectWarn({ '.claude/skills/demo/SKILL.md': body(max + 1) }, 'budget', `SKILL\\.md ${max + 1} lines, budget ${max}`);
 });
 
 /** Every file over its test budget, and so the always-loaded total over the base. */
@@ -304,12 +319,13 @@ function overEveryBudget() {
 }
 const allNull = Object.fromEntries(BUDGET_KEYS.map((k) => [k, 'null']));
 
-test('budget: a null budget is off - files over the default budgets pass and no budget check is counted', () => {
+test('budget: a null budget is off - files over the default budgets draw no warning and no budget check is counted', () => {
   const nulls = withConfig(BUDGETS_LINE, budgetsLine(allNull));
   const dir = fixture(overEveryBudget());
-  assert.equal(run(dir).status, 1, 'the default budgets must fail this fixture, or the null run proves nothing');
+  assert.match(run(dir).err, /^WARN budget: /m, 'the default budgets must warn on this fixture, or the null run proves nothing');
   const off = run(dir, [], nulls);
   assert.equal(off.status, 0, `every budget null still fails: ${off.all}`);
+  assert.doesNotMatch(off.err, /^WARN /m, `every budget null still warns: ${off.all}`);
   // AGENTS.md, CLAUDE.md, rule, state file, skill and base: one check each in a default run.
   assert.equal(checksIn(run(fixture(), [], nulls)), checksIn(run(fixture())) - 6, 'a null budget still counts a check');
 });
@@ -322,6 +338,7 @@ test('budget: a missing key fails once, names the key and its files are not chec
     assert.equal(r.status, 1, `${key} missing: expected exit 1, got ${r.status}: ${r.all}`);
     const lines = r.err.match(/^FAIL budget: .*$/gm) ?? [];
     assert.deepEqual(lines, [`FAIL budget: CONFIG.budgets.${key} is missing - set a number, or null to turn it off`], `${key} missing: ${r.all}`);
+    assert.doesNotMatch(r.err, /^WARN /m, `${key} missing: its files were still checked: ${r.all}`);
   }
 });
 
@@ -334,6 +351,72 @@ test('budget: a value that is not a whole number or null fails once, with the va
     const lines = r.err.match(/^FAIL budget: .*$/gm) ?? [];
     assert.deepEqual(lines, [`FAIL budget: CONFIG.budgets.${key} is ${shown}, not a whole number or null`], `${key} ${source}: ${r.all}`);
   }
+});
+
+test('budget: over a budget is a warning - exit 0, ok true, listed under warnings, never under failures', () => {
+  const over = { 'CLAUDE.md': `@AGENTS.md\n${'x'.repeat(BUDGETS.claude)}\n` };
+  const text = expectWarn(over, 'budget', `CLAUDE\\.md .*budget ${BUDGETS.claude}`);
+  assert.equal(text.err.match(/^WARN /gm).length, 1, text.err);
+  const r = run(fixture(over), ['--json']);
+  assert.equal(r.status, 0, r.all);
+  const parsed = JSON.parse(r.out);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.failures, []);
+  assert.equal(parsed.warnings.length, 1, r.out);
+  assert.deepEqual(Object.keys(parsed.warnings[0]).sort(), ['check', 'detail', 'file', 'line']);
+  assert.equal(parsed.warnings[0].check, 'budget');
+  assert.equal(parsed.warnings[0].file, 'CLAUDE.md');
+  // A failure beside it keeps the exit code at 1, and the warning still prints.
+  const both = run(fixture({ ...over, 'docs/guide.md': null }));
+  assert.equal(both.status, 1, both.all);
+  assert.match(both.err, /^WARN budget: CLAUDE\.md /m, both.all);
+  assert.match(both.err, /^FAIL links: /m, both.all);
+});
+
+// hard-limit
+test('hard-limit: AGENTS.md over the host read limit fails; exactly the limit only warns', () => {
+  const pad = (bytes) => `${baseFiles()['AGENTS.md']}${'x'.repeat(bytes - Buffer.byteLength(baseFiles()['AGENTS.md']) - 1)}\n`;
+  const at = pad(HARD_LIMIT);
+  assert.equal(Buffer.byteLength(at), HARD_LIMIT);
+  expectWarn({ 'AGENTS.md': at }, 'budget', `AGENTS\\.md ${HARD_LIMIT} bytes, budget ${BUDGETS.agents}`);
+  const over = pad(HARD_LIMIT + 1);
+  const r = expectFail(
+    { 'AGENTS.md': over },
+    'hard-limit',
+    `AGENTS\\.md ${HARD_LIMIT + 1} bytes, over the Codex hard read limit ${HARD_LIMIT}: the host drops the rest - move content out$`,
+  );
+  assert.equal(r.err.match(/^FAIL /gm).length, 1, 'the budget beside it only warns');
+  assert.match(r.err, /^WARN budget: AGENTS\.md /m, r.all);
+  const json = JSON.parse(run(fixture({ 'AGENTS.md': over }), ['--json']).out);
+  assert.equal(json.ok, false);
+  assert.deepEqual(json.failures.map((f) => f.check), ['hard-limit']);
+  assert.ok(json.warnings.some((w) => w.check === 'budget'), JSON.stringify(json.warnings));
+});
+
+test('hard-limit: a null limit is off, a missing hardLimits key is no limit, and each counts one check less', () => {
+  const dir = fixture({ 'AGENTS.md': `${baseFiles()['AGENTS.md']}${'x'.repeat(HARD_LIMIT)}\n` });
+  assert.equal(run(dir).status, 1, 'the control must fail, or the runs below prove nothing');
+  const off = run(dir, [], withConfig(HARD_LINE, "hardLimits: { 'AGENTS.md': null },"));
+  assert.equal(off.status, 0, off.all);
+  assert.doesNotMatch(off.all, /hard-limit/, off.all);
+  const missing = run(dir, [], withConfig(`  ${HARD_LINE}\n`, ''));
+  assert.equal(missing.status, 0, missing.all);
+  assert.doesNotMatch(missing.all, /hard-limit/, missing.all);
+  const small = fixture();
+  assert.equal(checksIn(run(small, [], withConfig(HARD_LINE, "hardLimits: { 'AGENTS.md': null },"))), checksIn(run(small)) - 1, 'a null limit still counts a check');
+  assert.equal(checksIn(run(small, [], withConfig(`  ${HARD_LINE}\n`, ''))), checksIn(run(small)) - 1, 'a missing key still counts a check');
+});
+
+test('hard-limit: a value that is not a whole number or null fails once, with the value', () => {
+  const dir = fixture();
+  for (const [source, shown] of [['-1', '-1'], ['1.5', '1.5'], ["'32768'", '"32768"'], ['true', 'true']]) {
+    const r = run(dir, [], withConfig(HARD_LINE, `hardLimits: { 'AGENTS.md': ${source} },`));
+    assert.equal(r.status, 1, `${source}: expected exit 1, got ${r.status}: ${r.all}`);
+    assert.deepEqual(r.err.match(/^FAIL .*$/gm), [`FAIL hard-limit: CONFIG.hardLimits.AGENTS.md is ${shown}, not a whole number or null`], `${source}: ${r.all}`);
+  }
+  const notObject = run(dir, [], withConfig(HARD_LINE, 'hardLimits: 32768,'));
+  assert.equal(notObject.status, 1, notObject.all);
+  assert.match(notObject.err, /^FAIL hard-limit: CONFIG\.hardLimits is 32768, not an object$/m, notObject.all);
 });
 
 // 3. rule-paths
@@ -779,16 +862,16 @@ test('secrets: a file name that holds a key is masked; task-<20 alnum> is not a 
 });
 
 // 9. base and --base
-test('base: the always-loaded total over its budget fails, though every file is under its own', () => {
+test('base: the always-loaded total over its budget warns, though every file is under its own', () => {
   const big = 'x'.repeat(3500);
   const agents = `${baseFiles()['AGENTS.md']}${big}\n`;
   expectOk({ 'AGENTS.md': agents, 'docs/notes.md': `${big}\n` });
-  const r = expectFail(
+  const r = expectWarn(
     { 'AGENTS.md': agents, 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${big}\n` },
     'base',
     `every session loads \\d+ bytes from this repository, budget ${BUDGETS.base}`,
   );
-  assert.doesNotMatch(r.err, /^FAIL budget: /m, r.all);
+  assert.doesNotMatch(r.err, /^WARN budget: /m, r.all);
 });
 
 test('--base: CLAUDE.md, imports relative to the importer, AGENTS.md and rules without paths, largest first', () => {
@@ -867,8 +950,10 @@ test('--base --json: the files, their total, the target and the excess', () => {
 test('base: an install with a null base budget skips the check, and --base says no target is set', () => {
   const script = withConfig(`, base: ${BUDGETS.base},`, ', base: null,');
   const dir = fixture({ 'CLAUDE.md': '@AGENTS.md\n@docs/notes.md\n', 'docs/notes.md': `${'n'.repeat(7000)}\n` });
-  assert.equal(run(dir).status, 1, 'the shipped copy fails the base');
-  assert.equal(run(dir, [], script).status, 0);
+  assert.match(run(dir).err, /^WARN base: /m, 'the shipped copy warns on the base');
+  const off = run(dir, [], script);
+  assert.equal(off.status, 0);
+  assert.doesNotMatch(off.err, /^WARN /m, off.all);
   assert.match(run(dir, ['--base'], script).out, /no target set \(budgets\.base\)/);
 });
 
@@ -1066,7 +1151,7 @@ test('--rules-for: does not run the checks (a failing repo still exits 0)', () =
 test('--json: ok on a clean repo', () => {
   const r = run(fixture(), ['--json']);
   assert.equal(r.status, 0, r.all);
-  assert.deepEqual(JSON.parse(r.out), { ok: true, failures: [] });
+  assert.deepEqual(JSON.parse(r.out), { ok: true, failures: [], warnings: [] });
 });
 
 test('--json: failures carry check, file, line and detail', () => {

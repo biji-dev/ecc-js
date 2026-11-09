@@ -13,7 +13,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  ASK_DEFAULT,
   BASELINE_WEEKS,
+  CARD_KINDS,
   EXTRA_COLUMNS,
   FILED_AT,
   FOLLOW_UPS,
@@ -31,12 +33,15 @@ import {
   STATUS_COLUMNS,
   STATUS_WORDS,
   agentCosts,
+  askKinds,
   batchRows,
   buildRetro,
   candidates,
   claimRows,
   contextCommand,
   contextCommands,
+  decisionOutcomes,
+  decisionRows,
   dispatchOwners,
   fitDigest,
   followUpsSummary,
@@ -46,12 +51,14 @@ import {
   logKpis,
   logRecords,
   markerUnits,
+  owedRows,
   ownerKpis,
   parseArgs,
   parseDefects,
   previousData,
   previousKpis,
   productKpis,
+  promotions,
   rowsForUnit,
   stateSummary,
   stepOfDescription,
@@ -63,7 +70,8 @@ import {
   windowFor,
 } from './retro-core.mjs';
 import { COLUMNS, TIER_WORDS, fmtMinutes } from './estimate-core.mjs';
-import { blameDates, gather, lastCommitTimes, readFollowUps } from './retro-gather.mjs';
+import { MAIN } from './harness-due-core.mjs';
+import { blameDates, gather, lastCommitTimes, mainlineHistory, readFollowUps } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { FINDINGS_HEADING } from './unit-record-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
@@ -358,7 +366,7 @@ test('stateSummary counts the decision log by Class and By, open questions apart
   assert.deepEqual(stateSummary(text), {
     unit: 'EP-9',
     classes: { P: 1, C: 1, T: 1, other: 1, unclassified: 0 },
-    by: { owner: 1, default: 1, agent: 1, other: 1 },
+    by: { owner: 1, ownerOther: 0, grant: 0, default: 1, agent: 1, other: 1 },
     questions: 1,
     p3: 2,
   });
@@ -1442,4 +1450,298 @@ test('gather: a state file moved into archive/ inside the window does not count 
   assert.equal(d.decisions.classes.T, 1);
   assert.match(formatDigest(d), /^- Decisions in 1 state files changed this window: /m);
   assert.deepEqual(g.states.map((s) => s.path).sort(), [`${PLANS_DIR}/NEW-1.state.md`, `${PLANS_DIR}/archive/OLD-1.state.md`]);
+});
+
+// ---- v10: decision rows, ask kinds, promotions and what became of a granted decision
+
+const DEC_HEAD = ['ID', 'Date', 'Class (P / C / T)', 'Decision', 'By (owner / default / agent)', 'Card kind', 'Why', 'Rejected alternative', 'Reversal cost', 'Kind'];
+/** A decisionRows-shaped row, for the pure rules. */
+const dr = (o) => ({ unit: 'U', id: 'DEC-1', date: null, cls: 'T', by: 'grant', cardKind: 'code', decision: 'x', cost: 'edit + tests', kind: 'default', reverses: null, line: '', ...o });
+const day = (n) => `2026-10-${String(n).padStart(2, '0')}`;
+/** `n` grant rows of `kind` in unit `unit`, DEC-1..n, dated from `from` a day apart. */
+const grants = (n, { unit = 'U', kind = 'code', from = 1, by = 'grant' } = {}) => Array.from({ length: n }, (_, i) => dr({ unit, id: `DEC-${i + 1}`, date: day(from + i), by, cardKind: kind }));
+/** Reversal rows in another unit naming `keys` (`<unit>/DEC-n`). */
+const reversals = (keys) => keys.map((k, i) => dr({ unit: 'R', id: `DEC-${i + 1}`, by: 'owner', cardKind: null, kind: 'reversal', decision: `reverses ${k}`, reverses: k }));
+
+test('decisionRows: columns in any order, marks stripped, owner-other apart from owner, reversals qualified, Q- rows skipped, the line as it stands', () => {
+  const head = ['Kind', 'Card kind', 'By', 'Decision', 'ID', 'Date', 'Class', 'Reversal cost'];
+  const text = [
+    'Unit: EP-4',
+    '',
+    '## Decisions',
+    table(head, [
+      ['default', '`code`', '**grant**', 'use the pool', 'DEC-1', '2026-10-20', 'T', 'edit + tests'],
+      ['default', 'taste', 'owner-other', 'the blue one', 'DEC-2', '2026-10-21', 'C', 'a customer-visible change'],
+      ['default', 'owner-fact', 'owner', 'the key is in the vault', '**DEC-3**', '—', 'P', 'none'],
+      ['reversal', 'code', 'owner', 'reverses DEC-1: the pool leaked', 'DEC-4', '2026-10-22', 'T', 'edit + tests'],
+      ['reversal', 'code', 'owner', 'reverses harness/x/DEC-3', 'DEC-5', '2026-10-23', 'T', 'edit + tests'],
+      ['default', 'never-auto', 'owner', 'reverses DEC-2 (named, not a reversal)', 'DEC-6', '2026-10-23', 'C', 'a migration'],
+      ['default', 'code', 'owner', 'open?', 'Q-1', '2026-10-23', 'T', ''],
+    ]),
+    '|  DEC-9 |  x |',
+  ].join('\n');
+  const rows = decisionRows(text, 'ignored');
+  assert.deepEqual(rows.map((r) => [r.unit, r.id, r.date, r.cls, r.by, r.cardKind, r.kind, r.reverses]), [
+    ['EP-4', 'DEC-1', '2026-10-20', 'T', 'grant', 'code', 'default', null],
+    ['EP-4', 'DEC-2', '2026-10-21', 'C', 'owner-other', 'taste', 'default', null],
+    ['EP-4', 'DEC-3', null, 'P', 'owner', 'owner-fact', 'default', null],
+    ['EP-4', 'DEC-4', '2026-10-22', 'T', 'owner', 'code', 'reversal', 'EP-4/DEC-1'],
+    ['EP-4', 'DEC-5', '2026-10-23', 'T', 'owner', 'code', 'reversal', 'harness/x/DEC-3'],
+    ['EP-4', 'DEC-6', '2026-10-23', 'C', 'owner', 'never-auto', 'default', null],
+  ]);
+  assert.deepEqual([rows[0].decision, rows[1].cost], ['use the pool', 'a customer-visible change']);
+  const lines = text.split('\n');
+  assert.equal(rows[0].line, lines[5], "a row's line is its table line as it stands in the file");
+  assert.ok(rows.every((r) => lines.includes(r.line)));
+  // A loose row below the table, with fewer cells, is no decision; no Unit: header takes the argument.
+  assert.equal(decisionRows(`## Decisions\n${table(['ID', 'By'], [['DEC-1', 'grant']])}\n`, 'EP-5')[0].unit, 'EP-5');
+  assert.deepEqual(decisionRows(`Unit: EP-6\n\n## Decisions\n${table(['Decision', 'By'], [['x', 'grant']])}\n`), [], 'a table with no ID column yields nothing');
+  assert.deepEqual(decisionRows(`Unit: EP-6\n\n## Notes\n${table(DEC_HEAD, [['DEC-1', day(1), 'T', 'x', 'grant', 'code', '', '', '', 'default']])}\n`), [], 'only the Decisions section is read');
+});
+
+test('askKinds: the default, a granted kind demoted past one in ten reversed of its last 20, promotions, never-auto never promoted', () => {
+  assert.deepEqual(CARD_KINDS, ['code', 'taste', 'owner-fact', 'never-auto']);
+  assert.deepEqual(ASK_DEFAULT, ['owner-fact', 'never-auto']);
+  assert.deepEqual(askKinds([]), { ask: ['owner-fact', 'never-auto'], demoted: [], promoted: [], ignored: [] });
+  // 25 code grants: the 5 oldest all reversed, outside the last 20; of the last 20, 3 reversed demotes, 2 does not.
+  const code = grants(25);
+  const old = ['U/DEC-1', 'U/DEC-2', 'U/DEC-3', 'U/DEC-4', 'U/DEC-5'];
+  const three = askKinds([...code, ...reversals([...old, 'U/DEC-10', 'U/DEC-15', 'U/DEC-25'])]);
+  assert.deepEqual(three.ask, ['code', 'owner-fact', 'never-auto'], 'in CARD_KINDS order');
+  assert.deepEqual(three.demoted, [{ kind: 'code', reversed: 3, of: 20 }]);
+  assert.deepEqual(askKinds([...code, ...reversals([...old, 'U/DEC-10', 'U/DEC-25'])]).ask, ['owner-fact', 'never-auto'], '2 of the last 20 is not past the bar');
+  // The same reversal ids in another unit name other rows.
+  assert.deepEqual(askKinds([...grants(20), ...reversals(['V/DEC-1', 'V/DEC-2', 'V/DEC-3'])]).demoted, []);
+  // Promotions: owner-fact leaves the ask; never-auto is ignored and stays; an agent's or a non-promote row is nothing.
+  const promote = (kind, date, by = 'owner', decision = `promote ${kind}`) => dr({ id: `KIND-${kind}`, date, by, cardKind: null, decision });
+  const p = askKinds([promote('owner-fact', day(10)), promote('never-auto', day(10)), promote('taste', day(10), 'agent'), promote('code', day(10), 'owner', 'keep asking')]);
+  assert.deepEqual(p, { ask: ['never-auto'], demoted: [], promoted: ['owner-fact'], ignored: ['never-auto'] });
+  // Only grant rows dated from the newest promotion of their kind count: 3 of the 10 before it reversed, none of the 5 after.
+  const taste = grants(15, { kind: 'taste' });
+  const before = reversals(['U/DEC-2', 'U/DEC-5', 'U/DEC-8']);
+  assert.deepEqual(askKinds([...taste, ...before]).demoted, [{ kind: 'taste', reversed: 3, of: 15 }], 'without the promotion they demote');
+  const after = askKinds([...taste, ...before, promote('taste', day(3)), promote('taste', day(11))]);
+  assert.deepEqual([after.demoted, after.promoted], [[], ['taste']], 'rows older than the newest promote row do not count');
+});
+
+test('promotions: an asked kind the owner took the recommendation on 18 of its last 20 times is proposed, 17 is not, never-auto never', () => {
+  const answered = (kind, took) => [...grants(took, { kind, by: 'owner' }), ...grants(20 - took, { kind, by: 'owner-other', from: took + 1 }).map((r) => ({ ...r, id: `DEC-${r.id.slice(4)}b` }))];
+  assert.deepEqual(promotions(answered('owner-fact', 18), ['owner-fact', 'never-auto']), [{ kind: 'owner-fact', took: 18, of: 20 }]);
+  assert.deepEqual(promotions(answered('owner-fact', 17), ['owner-fact']), []);
+  assert.deepEqual(promotions(answered('never-auto', 20), ['owner-fact', 'never-auto']), [], 'never-auto is never proposed');
+  assert.deepEqual(promotions(grants(19, { kind: 'taste', by: 'owner' }), ['taste']), [], 'fewer than 20 answers proposes nothing');
+  assert.deepEqual(promotions(answered('taste', 20), ['owner-fact']), [], 'a kind not asked is not proposed');
+});
+
+test("decisionOutcomes: a reversal beats a defect link; a fix within 7 days on the merge's files links, later or elsewhere keeps", () => {
+  const t = at('20T12:00:00');
+  const merges = [{ unit: 'U', t, files: ['src/a.js', 'docs/plans/U.state.md'] }, { unit: 'other', t, files: ['src/b.js'] }];
+  const fix = (days, files, subject = 'fix(a): off by one', sha = 'a'.repeat(40)) => ({ sha, t: t + days * DAY, subject, files });
+  const rows = [dr({ id: 'DEC-1' }), dr({ id: 'DEC-2' }), dr({ id: 'DEC-3', by: 'owner' }), ...reversals(['U/DEC-2'])];
+  const out = (fixes) => decisionOutcomes(rows, { merges, fixes }).map((r) => [r.id, r.outcome, r.fix?.sha.slice(0, 1) ?? null]);
+  assert.deepEqual(out([fix(6, ['src/a.js'])]), [['DEC-1', 'defect-linked', 'a'], ['DEC-2', 'reversed', null]], 'grant rows only; the reversed one stays reversed');
+  assert.deepEqual(decisionOutcomes(rows, { merges, fixes: [fix(6, ['src/a.js'])] })[0].fix, { sha: 'a'.repeat(40), subject: 'fix(a): off by one' });
+  assert.deepEqual(out([fix(8, ['src/a.js'])]), [['DEC-1', 'kept', null], ['DEC-2', 'reversed', null]], 'eight days after is not linked');
+  assert.deepEqual(out([fix(2, ['src/b.js'])]), [['DEC-1', 'kept', null], ['DEC-2', 'reversed', null]], "a fix on another unit's file is not linked");
+  assert.deepEqual(out([fix(2, ['src/a.js'], 'feat: more')]), [['DEC-1', 'kept', null], ['DEC-2', 'reversed', null]], 'a commit that is no fix or revert is not linked');
+  assert.deepEqual(out([fix(-1, ['src/a.js'])]), [['DEC-1', 'kept', null], ['DEC-2', 'reversed', null]], 'a fix before the merge is not linked');
+  assert.deepEqual(out([fix(3, ['src/a.js'], 'Revert "feat: pool"', 'c'.repeat(40)), fix(1, ['src/a.js'], 'fix!: drop it', 'b'.repeat(40))]).slice(0, 1), [['DEC-1', 'defect-linked', 'b']], 'the earliest repair links');
+});
+
+/** A gather with a follow-ups doc, two landed units, a state file of granted decisions and the mainline's merge and repairs. */
+function grantFixture(over = {}) {
+  const FIXED = STATUS_WORDS.fixed[0];
+  const fu = table(['#', cap(SEV), 'Note', cap(ST)], [
+    ['FU-7', 'P1', 'Owner supplies: the staging key', OPEN],
+    ['FU-8', 'P3', 'Owner decides: `which plan`', OPEN],
+    ['FU-9', 'P0', 'x', FIXED],
+  ]);
+  const state = `Unit: U-1\n\n## Decisions\n${table(DEC_HEAD, [
+    ['DEC-1', day(22), 'T', 'pool the connections per tenant', 'grant', 'code', 'w', 'r', 'edit + tests', 'default'],
+    ['DEC-2', day(22), 'T', 'retry twice', 'grant', 'code', 'w', 'r', 'edit + tests', 'default'],
+    ['DEC-3', day(23), 'T', 'reverses DEC-2', 'owner', 'code', 'w', 'r', 'edit + tests', 'reversal'],
+  ])}\n`;
+  return gatherOf({
+    log: { text: table(BATCH_HEAD, [batchRow('T0.01', 10, 'rows T0.01, FU-7 — two'), batchRow('harness/a', 5)]), dates: datesFor('22T10:00:00', '23T10:00:00') },
+    rows: [row({ ts: at('22T10:00:00') })],
+    sessions: 1,
+    followUps: { text: fu, dates: new Map([[3, NOW - 5 * DAY], [4, NOW - 9 * DAY], [5, NOW - 2 * DAY]]) },
+    states: [{ text: state, changed: at('23T10:00:00') }],
+    merges: [{ unit: 'U-1', t: at('22T12:00:00'), files: ['src/a.js'] }],
+    fixes: [
+      { sha: 'b'.repeat(40), t: at('24T09:00:00'), subject: 'fix(a): off by one', files: ['src/a.js'] },
+      { sha: 'c'.repeat(40), t: at('24T10:00:00'), subject: 'Revert "feat: b"', files: ['src/b.js'] },
+    ],
+    ...over,
+  });
+}
+
+test('buildRetro and formatDigest: plan rows, owner wait per row, what is owed, the granted decisions, the escaped-defect proxy and the ask kinds under the KPIs', () => {
+  const d = buildRetro(grantFixture(), { project: 'demo', now: NOW });
+  assert.deepEqual(d.kpis.plan, { originalRows: 1, ownerWaitPerRowMin: 5 }, 'FU-7 was filed, not planned; 10m of owner wait over 2 landed rows');
+  assert.deepEqual(d.kpis.owed, { days: 9, row: 'FU-8' });
+  assert.deepEqual(d.kpis.grants, { decisions: 2, reversed: 1, reversedPct: 50, defectLinked: 1 });
+  assert.deepEqual(d.kpis.escaped, { reverts: 1, fixes: 1, openP01: 1 });
+  assert.deepEqual(d.ask.demoted, [{ kind: 'code', reversed: 1, of: 2 }]);
+  const text = formatDigest(d);
+  const block = text.slice(text.indexOf('\nOriginal plan rows'), text.indexOf('\n## Outliers'));
+  assert.deepEqual(block.trim().split('\n'), [
+    'Original plan rows: 1 this week',
+    'Owner wait per landed row: 0h05m',
+    'OWED oldest: 9 days (FU-8)',
+    'Grant decisions: 2 · reversed 1 (50%) · defect-linked 1',
+    'Escaped-defect proxy: 1 reverts · 1 fixes within 7 days of a merge, on its files · 1 open P0/P1 follow-ups filed this week',
+    'Ask kinds: code, owner-fact, never-auto',
+    'Demoted: code 1/2',
+    'Defect-linked decisions (judge them):',
+    '- U-1/DEC-1 · pool the connections per tenant · bbbbbbb fix(a): off by one',
+  ]);
+  assert.ok(text.indexOf('| Units landed') < text.indexOf('Original plan rows'), 'the lines follow the KPI table');
+  const back = previousData(text).kpis;
+  assert.deepEqual([back.grants, back.escaped, back.plan], [d.kpis.grants, d.kpis.escaped, d.kpis.plan], 'the data block carries the new numbers');
+  assert.deepEqual(owedRows(grantFixture().followUps.text, grantFixture().followUps.dates).map((r) => [r.id, r.what]), [['FU-8', 'which plan'], ['FU-7', 'the staging key']]);
+  // No git history read, no follow-ups doc, no decisions: the git counts are unknown, the rest default.
+  const bare = formatDigest(buildRetro(grantFixture({ merges: undefined, fixes: undefined, followUps: null, states: [] }), { project: 'demo', now: NOW }));
+  assert.match(bare, /^Escaped-defect proxy: — reverts · — fixes within 7 days of a merge, on its files · 0 open P0\/P1 follow-ups filed this week$/m);
+  assert.match(bare, /^OWED oldest: none$/m);
+  assert.match(bare, /^Ask kinds: owner-fact, never-auto$/m);
+  assert.doesNotMatch(bare, /^Demoted:|^Defect-linked|^Promote\?/m);
+  assert.match(formatDigest(fixtureData()), /^Owner wait per landed row: 0h10m$/m, 'two units of 10m over their two rows');
+  assert.match(formatDigest(buildRetro(gatherOf(), { project: 'demo', now: NOW })), /^Owner wait per landed row: n\/a$/m, 'no landed row: n/a');
+  // An older data block, from before these figures, still reads back.
+  assert.equal(previousData(`<!-- retro-data ${JSON.stringify({ week: '2026-W40', since: 'x', until: 'y', kpis: { log: { units: 1 } } })} -->`).kpis.grants, undefined);
+});
+
+test('formatDigest prints the Ask kinds line and fitDigest keeps a worst case with every v10 line within MAX_BYTES', () => {
+  const d = buildRetro(grantFixture(), { project: 'demo', now: NOW });
+  const long = (i) => `${'a long cell that quotes the log at length '.repeat(10)}${i}`;
+  const ids = Array.from({ length: 40 }, (_, i) => `EP-${String(i).padStart(2, '0')}.01`);
+  d.frictionCells = ids.slice(0, 12).map((unit, i) => ({ unit, friction: long(i) }));
+  d.missed = ids.slice(0, 12).map((unit, i) => ({ unit, missed: long(i) }));
+  d.friction = ['state file', 'stale env', 'fix round', 'false claims', 'wrong port', 'env file'].map((word) => ({ word, units: ids }));
+  d.stepOutliers = ids.slice(0, 12).map((unit) => ({ step: '8b', unit, source: 'descriptions', usd: 12.65, share: 32.9, median: 13.9, x: 2.4, n: 14 }));
+  d.unitOutliers = ids.slice(0, 12).map((unit) => ({ unit, tier: 'full', metric: 'work', value: 461, median: 128, x: 3.6, n: 14 }));
+  d.steps = ids.slice(0, 12).map((unit) => ({ unit, source: 'descriptions', total: 57.83, steps: ['8', '2', '8c', '8b'].map((step) => ({ step, usd: 10, share: 25 })) }));
+  d.ask = { ask: ['code', 'taste', 'owner-fact', 'never-auto'], demoted: [{ kind: 'code', reversed: 5, of: 20 }, { kind: 'taste', reversed: 4, of: 20 }], promoted: [], ignored: [] };
+  d.promotions = [{ kind: 'owner-fact', took: 20, of: 20 }];
+  d.defectLinked = ids.slice(0, 12).map((unit) => ({ unit, id: 'DEC-12', decision: long(1), fix: { sha: 'd'.repeat(40), subject: long(2) } }));
+  d.candidates = candidates(d);
+  const size = (text) => new TextEncoder().encode(text).length;
+  assert.match(formatDigest(d), /^Ask kinds: code, taste, owner-fact, never-auto$/m);
+  assert.ok(size(formatDigest(d)) > MAX_BYTES, `the unfitted digest is ${size(formatDigest(d))} bytes`);
+  const fitted = fitDigest(d);
+  assert.ok(size(fitted) <= MAX_BYTES, `${size(fitted)} bytes`);
+  assert.match(fitted, /^Ask kinds: code, taste, owner-fact, never-auto$/m);
+  assert.match(fitted, /^Demoted: code 5\/20, taste 4\/20$/m);
+  assert.match(fitted, /^Promote\? owner-fact: took 20\/20 — one word from the owner widens the grant$/m);
+  const linked = fitted.split('\n').filter((l) => l.startsWith('- EP-') && l.includes('/DEC-12 · '));
+  assert.ok(linked.length >= 1 && linked.length <= 5, `${linked.length} defect-linked lines`);
+  assert.ok(linked.every((l) => l.length <= 160), 'each linked line is short');
+  assert.match(fitted, /^- EP-00\.01: a long cell/m, 'the other lists shrink, never empty first');
+  assert.equal(formatDigest(d).split('\n').filter((l) => l.includes('/DEC-12 · ')).length, 5, 'at most five, unshrunk');
+});
+
+test("mainlineHistory: the mainline's merges with their unit and files and its fixes and reverts, first parent only, from 7 days before the window", () => {
+  const m = miniRepo();
+  m.write('src/old.js', '0\n');
+  m.commit('fix: ancient', '09-01');
+  m.write('src/a.js', '1\n');
+  m.commit('base', '10-01');
+  m.git(['checkout', '-q', '-b', 'U-1'], '10-09');
+  m.write('src/a.js', '2\n');
+  m.write('src/u.js', 'u\n');
+  m.commit('fix: inside the branch', '10-10');
+  m.git(['checkout', '-q', 'main'], '10-11');
+  m.git(['merge', '-q', '--no-ff', '-m', "Merge branch 'U-1'", 'U-1'], '10-12');
+  m.write('src/a.js', '3\n');
+  m.commit('fix(a): off by one', '10-14');
+  m.write('src/b.js', 'b\n');
+  m.commit('chore: tidy', '10-15');
+  m.write('src/c.js', 'c\n');
+  m.commit('Revert "feat: c"', '10-16');
+  m.write('src/a.js', '4\n');
+  m.commit('fix: after the window', '10-25');
+  const h = mainlineHistory(m.repo, { sinceMs: Date.parse('2026-10-15T00:00:00Z'), untilMs: Date.parse('2026-10-20T00:00:00Z') });
+  assert.deepEqual(h.merges.map((x) => [x.unit, new Date(x.t).toISOString().slice(5, 10), x.files]), [['U-1', '10-12', ['src/a.js', 'src/u.js']]]);
+  assert.deepEqual(h.fixes.map((x) => [x.subject, x.files]), [['Revert "feat: c"', ['src/c.js']], ['fix(a): off by one', ['src/a.js']]], "a branch's own commit, a commit older than 7 days before the window and one after it are not read");
+  assert.ok(h.fixes.every((x) => /^[0-9a-f]{40}$/.test(x.sha)));
+  assert.deepEqual(mainlineHistory(tmpDir('retro-nogit-'), { sinceMs: 0, untilMs: NOW }), { merges: [], fixes: [] }, 'outside a repository: nothing');
+  // gather reads it only when given the window.
+  const opts = { top: m.repo, log: null, plansDirs: [], projectsDir: path.join(m.repo, 'none'), codexDir: path.join(m.repo, 'none'), ledger: path.join(m.repo, 'none'), claudeLedger: path.join(m.repo, 'none') };
+  assert.deepEqual([gather(opts).merges, gather(opts).fixes], [null, null]);
+  assert.equal(gather({ ...opts, history: { sinceMs: Date.parse('2026-10-15T00:00:00Z'), untilMs: Date.parse('2026-10-20T00:00:00Z') } }).merges.length, 1);
+});
+
+test('decisionRows and stateSummary: a table shown inside a fenced code block is an example, not a decision', () => {
+  const rowsOf = (n) => Array.from({ length: n }, (_, i) => [`DEC-${i + 1}`, day(1), 'T', 'example', 'grant', 'code', 'w', 'r', 'edit + tests', 'default']);
+  const fenced = (fence, close = fence) => [`Unit: EP-7`, '', '## Decisions', '', `${fence}markdown`, table(DEC_HEAD, rowsOf(11)), close, '', table(DEC_HEAD, [['DEC-20', day(2), 'C', 'real', 'owner', 'taste', 'w', 'r', 'edit + tests', 'default']]), ''].join('\n');
+  for (const [fence, close] of [['```'], ['~~~'], ['````', '````'], ['```', '```   ']]) {
+    const text = fenced(fence, close);
+    assert.deepEqual(decisionRows(text).map((r) => r.id), ['DEC-20'], `a ${fence} block is skipped, the table after it is read`);
+    assert.equal(stateSummary(text).classes.T, 0, 'the example rows are not counted in the classes');
+  }
+  // A fence of the other kind, or a shorter close, does not end the block; an unclosed one runs to the end.
+  assert.deepEqual(decisionRows(fenced('```', '~~~')).map((r) => r.id), [], 'a ~~~ line does not close a ``` block');
+  // The row's line still points at its place in the file (blank lines stand in for the fenced ones).
+  const text = fenced('```');
+  assert.equal(decisionRows(text)[0].line, text.split('\n').find((l) => l.startsWith('| DEC-20')));
+});
+
+test('askKinds: a grant row dated the promotion day does not count after it, one dated later does; an undated grant row never counts after a promotion', () => {
+  const promote = dr({ id: 'KIND-code', date: day(5), by: 'owner', cardKind: null, decision: 'promote code' });
+  const same = [dr({ id: 'DEC-1', date: day(5) })];
+  assert.deepEqual(askKinds([promote, ...same, ...reversals(['U/DEC-1'])]).demoted, [], 'the same day is not after the promotion');
+  const later = [dr({ id: 'DEC-2', date: day(6) })];
+  assert.deepEqual(askKinds([promote, ...same, ...later, ...reversals(['U/DEC-1', 'U/DEC-2'])]).demoted, [{ kind: 'code', reversed: 1, of: 1 }], 'a later row counts, the same-day one does not');
+  const undated = [dr({ id: 'DEC-3', date: null })];
+  assert.deepEqual(askKinds([promote, ...undated, ...reversals(['U/DEC-3'])]).demoted, [], 'an undated grant row never counts after a promotion');
+});
+
+test('askKinds: a promotion with no date keeps every dated grant row and drops the undated ones', () => {
+  const promote = dr({ id: 'KIND-code', date: null, by: 'owner', cardKind: null, decision: 'promote code' });
+  const undated = [dr({ id: 'DEC-1', date: null })];
+  assert.deepEqual(askKinds([promote, ...undated, ...reversals(['U/DEC-1'])]).demoted, [], 'an undated grant row and its reversal do not demote a promoted kind');
+  const dated = [dr({ id: 'DEC-2', date: day(6) })];
+  assert.deepEqual(askKinds([promote, ...undated, ...dated, ...reversals(['U/DEC-1', 'U/DEC-2'])]).demoted, [{ kind: 'code', reversed: 1, of: 1 }], 'a dated grant row after the undated promotion still counts');
+});
+
+test('decisionOutcomes: a fix committed in the same second as the merge links by first-parent order (seq), and a fix before the merge in the same second does not', () => {
+  const t = at('20T12:00:00');
+  const rows = [dr({ id: 'DEC-1' })];
+  const fix = { sha: 'f'.repeat(40), t, subject: 'fix(a): off by one', files: ['src/a.js'] };
+  const merge = { sha: 'e'.repeat(40), unit: 'U', t, files: ['src/a.js'] };
+  const out = (m, f) => decisionOutcomes(rows, { merges: [m], fixes: [f] })[0].outcome;
+  assert.equal(out(merge, fix), 'defect-linked', 'without seq: the same second counts when it is another commit');
+  assert.equal(out({ ...merge, sha: fix.sha }, fix), 'kept', 'the merge itself is no fix of itself');
+  assert.equal(out({ ...merge, seq: 4 }, { ...fix, seq: 5 }), 'defect-linked', 'with seq: later in the first-parent order');
+  assert.equal(out({ ...merge, seq: 5 }, { ...fix, seq: 4 }), 'kept', 'with seq: committed before the merge in the same second');
+  assert.equal(out({ ...merge, seq: 4 }, { ...fix, seq: 5, t: t + 8 * DAY }), 'kept', 'still within the 7 days');
+  assert.equal(out(merge, { ...fix, t: t - 1000 }), 'kept', 'a fix an earlier second is not after it');
+});
+
+test('mainlineHistory: read from the mainline, not the checked-out branch; a missing mainline falls back to HEAD with a note; commits carry their first-parent order', () => {
+  const m = miniRepo();
+  m.git(['branch', '-q', '-m', MAIN]); // the mainline is whatever the install binds
+  m.write('src/a.js', '1\n');
+  m.commit('base', '10-01');
+  m.git(['checkout', '-q', '-b', 'feature'], '10-02');
+  m.write('src/f.js', 'f\n');
+  m.commit('feat: on the branch', '10-03');
+  m.git(['checkout', '-q', MAIN], '10-04');
+  m.write('src/a.js', '2\n');
+  m.commit('fix: repair a', '10-05');
+  m.write('src/a.js', '3\n');
+  m.commit('fix: repair a again', '10-05');
+  m.git(['checkout', '-q', 'feature'], '10-06');
+  const window = { sinceMs: Date.parse('2026-10-01T00:00:00Z'), untilMs: Date.parse('2026-10-20T00:00:00Z') };
+  const h = mainlineHistory(m.repo, window);
+  assert.deepEqual(h.fixes.map((x) => x.subject), ['fix: repair a again', 'fix: repair a'], 'the mainline fixes are read from a linked branch checkout');
+  assert.equal(h.note, undefined, 'no note when the mainline is read');
+  assert.ok(h.fixes[0].seq > h.fixes[1].seq, 'seq: larger is later in the first-parent order');
+  // No mainline branch: HEAD is read, and the result says so.
+  m.git(['branch', '-q', '-m', MAIN, 'renamed-mainline']);
+  const fb = mainlineHistory(m.repo, window);
+  assert.deepEqual(fb.fixes, [], "the branch's own history holds no fix");
+  assert.ok(fb.note.includes(MAIN) && fb.note.includes('HEAD'), 'the fallback is named');
+  assert.equal(gather({ top: m.repo, log: null, plansDirs: [], projectsDir: path.join(m.repo, 'none'), codexDir: path.join(m.repo, 'none'), ledger: path.join(m.repo, 'none'), claudeLedger: path.join(m.repo, 'none'), history: window }).note, fb.note, 'gather passes it on');
 });

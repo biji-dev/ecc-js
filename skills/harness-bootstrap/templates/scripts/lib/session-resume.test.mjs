@@ -110,7 +110,7 @@ test("a held row in a linked worktree: the main checkout's registry, and its sta
   assert.match(text, /^ {2}next: done: 4 tests \/ next: 5 implement, slice 2 \/ then: 6 review$/m, 'the first three non-empty lines of ## Next');
   assert.match(text, /^ {2}open: Q-1 Merge or hold\? · Q-2 Which button copy\?$/m);
   assert.doesNotMatch(text, /DEC-1/, 'an answered card is a DEC row, not open');
-  assert.match(text, /^ {2}grant: merge clean Full · push after merge; stop: after CR-021$/m);
+  assert.match(text, /^ {2}kickoff narrows: merge clean Full · push after merge; stop: after CR-021$/m);
 });
 
 test('a parked row: its gate, since when and its cards, its state file read from its branch when the checkout is on another; with no held row a compaction points at the next ready unit', () => {
@@ -135,7 +135,7 @@ test('no held or parked row, rows outside the marked sections only, or no regist
   assert.equal(run(main), null, 'no registry');
   const none = [
     "[session-resume] compact: the harness's resume point, read from the registry and the state files (newer than any summary).",
-    "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).",
+    "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.",
   ].join('\n');
   put(main, REGISTRY, registry());
   assert.equal(run(main, 'startup'), null, 'row 0 alone is the mainline, never held');
@@ -191,8 +191,65 @@ test('compact says continue the held unit; startup, resume and clear are context
   for (const source of ['startup', 'resume', 'clear']) {
     const text = run(main, source);
     assert.match(text, new RegExp(`^\\[session-resume\\] ${source}: `));
-    assert.equal(lastLine(text), 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.', source);
+    assert.equal(lastLine(text), 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.', source);
   }
+});
+
+const MERGE_BLOCK = (...lines) => ['# Agents', '', '<!-- harness:begin merge -->', ...lines, '<!-- harness:end merge -->', ''].join('\n');
+const STANDING = 'merge when green · push after merge · recommendation on reversible cards';
+
+test("standingGrant: the merge block's Grant: and Push deploys: lines only, clipped; none of it outside the block", () => {
+  const { standingGrant } = bound;
+  assert.deepEqual(standingGrant(MERGE_BLOCK(`Grant: ${STANDING}`, 'Push deploys: no')), { grant: STANDING, pushDeploys: 'no' });
+  assert.deepEqual(standingGrant(MERGE_BLOCK('Grant:   none  ', 'Push deploys: Yes', 'Grant: a second Grant line is not read')), { grant: 'none', pushDeploys: 'yes' });
+  assert.deepEqual(standingGrant(MERGE_BLOCK('Push deploys: maybe')), { grant: null, pushDeploys: null });
+  const outside = ['Grant: merge everything', 'Push deploys: yes', '<!-- harness:begin merge -->', '<!-- harness:end merge -->', 'Grant: after the block'].join('\n');
+  assert.deepEqual(standingGrant(outside), { grant: null, pushDeploys: null }, 'lines outside the block');
+  assert.deepEqual(standingGrant('<!-- harness:begin merge -->\nGrant: no end marker\n'), { grant: null, pushDeploys: null });
+  assert.equal(standingGrant(MERGE_BLOCK(`Grant: ${'x'.repeat(400)}`)).grant.length, 160, 'clipped like every quoted cell');
+  assert.deepEqual(standingGrant(undefined), { grant: null, pushDeploys: null });
+});
+
+test('the standing grant line follows the first line, on every source and with no row on a compaction', () => {
+  const { main } = checkout();
+  put(main, 'AGENTS.md', MERGE_BLOCK(`Grant: ${STANDING}`, 'Push deploys: no'));
+  const line = `standing grant (AGENTS.md › merge): ${STANDING}; push deploys: no`;
+  put(main, REGISTRY, registry());
+  assert.equal(run(main, 'compact'), [
+    "[session-resume] compact: the harness's resume point, read from the registry and the state files (newer than any summary).",
+    line,
+    "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.",
+  ].join('\n'));
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
+  for (const source of ['compact', 'startup', 'resume', 'clear']) assert.equal(run(main, source).split('\n')[1], line, source);
+  put(main, 'AGENTS.md', MERGE_BLOCK(`Grant: ${STANDING}`));
+  assert.match(run(main), /^standing grant \(AGENTS\.md › merge\): .*; push deploys: \?$/m, 'no Push deploys: line');
+});
+
+test("a state file's Grant: equal to the standing grant prints no 'kickoff narrows'; a different one does", () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
+  put(main, 'AGENTS.md', MERGE_BLOCK(`Grant: ${STANDING}`, 'Push deploys: no'));
+  put(main, `${STATE_DIR}/CR-021.state.md`, stateFile({ head: ['Tier: Full', `Grant: ${STANDING}`, 'Stop: after CR-021'] }));
+  const same = run(main);
+  assert.doesNotMatch(same, /kickoff narrows|grant:/);
+  assert.match(same, /^ {2}stop: after CR-021$/m);
+  put(main, `${STATE_DIR}/CR-021.state.md`, stateFile({ head: ['Tier: Full', 'Grant: merge when green', 'Stop: after CR-021'] }));
+  assert.match(run(main), /^ {2}kickoff narrows: merge when green; stop: after CR-021$/m);
+  // with no standing grant a state Grant: has nothing to be compared with, so it shows
+  fs.rmSync(path.join(main, 'AGENTS.md'));
+  assert.match(run(main), /^ {2}kickoff narrows: merge when green; stop: after CR-021$/m);
+});
+
+test('a missing, unreadable or block-less AGENTS.md prints no grant line, and the hook exits 0', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
+  assert.doesNotMatch(run(main), /standing grant/, 'no AGENTS.md');
+  fs.mkdirSync(path.join(main, 'AGENTS.md')); // a directory: unreadable as a file
+  assert.doesNotMatch(run(main), /standing grant/, 'unreadable');
+  fs.rmdirSync(path.join(main, 'AGENTS.md'));
+  put(main, 'AGENTS.md', '# Agents\nGrant: outside any block\n');
+  assert.doesNotMatch(run(main), /standing grant/, 'no merge block');
 });
 
 test('not a git checkout: silent, even with a registry holding a row', () => {

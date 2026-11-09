@@ -21,7 +21,8 @@
 // submodule, or a core.hooksPath, including a relative or ~/ path),
 // `git rev-parse --git-common-dir` (finds the main checkout, where the registry lives, as the
 // commit guard does), `git check-ignore -q` (a gitignored scaffold that is absent reads
-// `ignored`) and, for --base, `git log` and `git cat-file blob` in this skill's own repository
+// `ignored`), `git ls-files --cached --others --exclude-standard -z` (the files git knows: the
+// foundation check and the grant check count a test file only when git would not ignore it; the grant check also reads `git ls-files --cached -z`, to count only tracked files) and, for --base, `git log` and `git cat-file blob` in this skill's own repository
 // or the clone --history names. This is an accepted deviation from "git config --get /
 // ls-files only": none of them writes, every inherited GIT_* variable is removed (a git hook's
 // GIT_DIR must not redirect the lookup) and GIT_OPTIONAL_LOCKS=0 is set so no git command
@@ -31,6 +32,10 @@
 // project_doc_max_bytes, and this skill's own templates/: each template-backed entry's
 // `template` state compares the template it names with the templateSha256 its manifest
 // recorded.
+//
+// Hazard ids that read the standing grant (skillVersion 10): grant-line-missing,
+// push-deploys-missing, production-missing, grant-without-machine-gates. Below 10 the same gaps
+// are `proposals` (the v10 upgrade's cards), not hazards.
 //
 // The read-only claim rule is exported (READONLY_CLAIM) so the agent-docs lint can use the
 // same regex: `require('./harness-status.js').READONLY_CLAIM`.
@@ -49,7 +54,14 @@ const MANIFEST = '.agents/harness-manifest.json';
 const PROCESS_FILE = '.agents/skills/task-runner/process.md';
 const RUN_BLOCKS = ['types', 'tiers', 'gates', 'stops', 'scope', 'context', 'triggers', 'models'];
 const PROCESS_VERSION = 9;
+// skillVersion 10 adds the standing grant (the merge block's Grant: and Push deploys: lines) and
+// the policy block's production: field; PROCESS_VERSION stays the version the run blocks moved
+const GRANT_VERSION = 10;
 const STAKES_LINE = /^\s*Stakes:/m;
+const STAKES_PRODUCTION = /^\s*Stakes:.*?\bproduction:\s*(none|live)\b/m;
+const GRANT_LINE = /^\s*Grant:(.*)$/m;
+const PUSH_DEPLOYS_LINE = /^\s*Push deploys:\s*(yes|no)\b/im;
+const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.(py|go)|[^/]+_spec\.rb)$/;
 // the skill this script ships in: a template-backed manifest entry names a file under its
 // templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
 const SKILL_DIR = path.join(__dirname, '..');
@@ -192,6 +204,42 @@ function walk(startRel, maxDepth = Infinity) {
     }
   })(startRel, 0);
   return out;
+}
+
+/** The files git knows (tracked, plus untracked that .gitignore does not hide), sorted, with the
+ *  walk's own exclusions (SKIP_DIRS segments, .claude/worktrees) kept. Gitignored files never
+ *  count, so review scratch is not the project. When git fails, or <repo> is not itself a
+ *  repository top level, it is walk('') as before. */
+function projectFiles() {
+  const out = isRepoTop() ? gitAt(REPO, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']) : null;
+  if (out === null) return walk('');
+  return [...new Set(out.split('\0').filter(Boolean))]
+    .filter(rel => !rel.split('/').some(seg => SKIP_DIRS.has(seg)) && !rel.startsWith('.claude/worktrees/') && isFile(rel))
+    .sort();
+}
+
+/** The test files that count as the project's own for the grant check (not `own`, the harness's manifest
+ *  entries): a tracked regular file, or a tracked symlink whose resolved target is a tracked file inside
+ *  the project. A link to an ignored or outside file, or one that dangles (a fresh clone), proves no
+ *  test: nothing in the repository would run. When git cannot list the files, a regular file found by
+ *  the walk counts as before and a link never does. */
+function projectTests(own) {
+  const listed = isRepoTop() ? gitAt(REPO, ['ls-files', '--cached', '-z']) : null;
+  const tracked = listed === null ? null : new Set(listed.split('\0').filter(Boolean));
+  let top = null;
+  try { top = fs.realpathSync(REPO); } catch { /* the repository is gone: no link resolves */ }
+  const countsLink = rel => {
+    if (tracked === null || top === null || !tracked.has(rel)) return false;
+    let target;
+    try { target = path.relative(top, fs.realpathSync(abs(rel))); } catch { return false; }
+    return target !== '' && !target.startsWith('..') && !path.isAbsolute(target) && tracked.has(target.split(path.sep).join('/'));
+  };
+  const isLinkRel = rel => { try { return fs.lstatSync(abs(rel)).isSymbolicLink(); } catch { return false; } };
+  return projectFiles().filter(rel => {
+    if (!TEST_FILE.test(rel) || own.has(rel)) return false;
+    if (isLinkRel(rel)) return countsLink(rel);
+    return tracked === null || tracked.has(rel);
+  });
 }
 
 /** True when a path sits below a directory named archive: finished work kept there is not budgeted. */
@@ -716,13 +764,19 @@ function buildReport() {
     const hooksPre = readAbs(path.join(hooks, 'pre-commit'));
     let installed = hooksPre !== null;
     let mergeGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'pre-merge-commit')) || '');
+    // and with a reference-transaction hook that runs it: a fast-forward, reset or update-ref of the
+    // mainline writes no commit, so no other hook sees it. husky v9 writes .husky/_ stubs only for its
+    // own hook list, which lacks reference-transaction, so the project must write that stub too.
+    let refGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'reference-transaction')) || '');
     if (husky !== null && /harness-guard/.test(husky)) {
       installed = true;
       if (GUARD_RUN.test(read('.husky/pre-merge-commit') || '')) mergeGuarded = true;
+      if (GUARD_RUN.test(read('.husky/reference-transaction') || '') && isFile('.husky/_/reference-transaction')) refGuarded = true;
     }
     if (/harness-guard/.test(lefthook)) {
       installed = true;
       if (/harness-guard/.test(lefthookSection(lefthook, 'pre-merge-commit') || '')) mergeGuarded = true;
+      if (/harness-guard/.test(lefthookSection(lefthook, 'reference-transaction') || '')) refGuarded = true;
     }
     if (!installed) {
       const snippet = DOCS.some(f => {
@@ -736,6 +790,20 @@ function buildReport() {
       }
     } else if (!mergeGuarded) {
       haz('merge-unguarded', 'a pre-commit guard is installed but no pre-merge-commit hook runs it; a non-conflicting `git merge` runs pre-merge-commit, not pre-commit');
+    } else if (!refGuarded) {
+      haz('ref-unguarded', 'a pre-commit guard is installed but no reference-transaction hook runs it; a fast-forward, reset or update-ref of the mainline runs no other hook');
+    } else {
+      // git resolves a relative core.hooksPath against the directory a command runs in; unset, git
+      // uses $GIT_DIR/hooks (lefthook's place), which it always finds
+      const hooksPath = isRepoTop() ? gitOut(['config', '--local', '--get', 'core.hooksPath']) : null;
+      if (hooksPath && !hooksPath.startsWith('/') && !hooksPath.startsWith('~/')) {
+        haz('hooks-path-relative', `core.hooksPath is relative (${hooksPath}); git run from inside .git, or with --git-dir or GIT_DIR from another directory, finds no hook, so a mainline move skips the guard: set it to "$(git rev-parse --show-toplevel)/${hooksPath}"`);
+      } else if (hooksPath) {
+        const dir = hooksPath.startsWith('~/') ? path.join(os.homedir(), hooksPath.slice(2)) : hooksPath;
+        let found = false;
+        try { found = fs.statSync(dir).isDirectory(); } catch { found = false; }
+        if (!found) haz('hooks-path-missing', `core.hooksPath names a directory that does not exist (${hooksPath}); git runs no hook at all, so nothing is guarded. A moved clone needs the install step again`);
+      }
     }
   } else if (verdict !== 'none' || manifest) {
     haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
@@ -973,7 +1041,7 @@ function buildReport() {
   overdue('sweep', hasSkill('workstream-sweep') || dueReports(due.reports.sweep).length > 0);
   overdue('retro', isFile('scripts/retro.mjs'));
   overdue('hygiene', isFile('scripts/harness-due.mjs'));
-  // open P3s, and no P3 batch (a hygiene unit) for as long as a P3 may wait
+  // open P3s past the age a P3 may wait: v10 queues none outside a diff (scope-guard.md › Filing OUT)
   // The template's own rules, not a project's retro-core bindings (this script never imports a core): the
   // status column starts with `status`, open is the word `open`, and a table with a column starting with
   // `sev` or `priority` makes a P3 of that cell alone, else of any cell.
@@ -996,15 +1064,14 @@ function buildReport() {
   }
   const h = dueReports(due.reports.hygiene)[0];
   if (!held && openP3 && (!h || ageOf(h) >= DUE_DAYS.p3) && settled(DUE_DAYS.p3)) {
-    haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: the P3 batch has not taken them`, fuRel);
+    haz('p3-queue-aging', `${openP3} open P3 row${openP3 === 1 ? '' : 's'}, and ${h ? `the newest hygiene report is ${ageOf(h)} days old` : 'no hygiene report'}: a P3 outside any diff is dropped, never queued`, fuRel);
   }
 
   // foundation stage: the pass-signal unit landed and the flip did not run
   if (manifest && manifest.stage === 'foundation') {
-    const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.(py|go)|[^/]+_spec\.rb)$/;
     // the harness's own template tests are manifest entries, not the project's first test
     const own = new Set(entries.map((e) => e.path));
-    const found = walk('').find((rel) => TEST_FILE.test(rel) && !own.has(rel));
+    const found = projectFiles().find((rel) => TEST_FILE.test(rel) && !own.has(rel));
     if (found) haz('foundation-stage-has-tests', `manifest says foundation, and test files exist (e.g. ${found}): run the flip`, MANIFEST);
   }
 
@@ -1023,6 +1090,52 @@ function buildReport() {
       const line = lineOf(agentsText, new RegExp(`^\\s*<!-- harness:begin ${block} -->\\s*$`));
       if (v !== null && v >= PROCESS_VERSION) haz('block-in-base', `the ${block} block is in AGENTS.md, which every session and Codex run loads; at skillVersion ${v} it lives in ${PROCESS_FILE}`, 'AGENTS.md', line);
       else proposals.push({ id: 'block-in-base', path: 'AGENTS.md', ...(line !== undefined ? { line } : {}), detail: `the ${block} block is in AGENTS.md; the v9 upgrade moves it to ${PROCESS_FILE}` });
+    }
+
+    // v10: the standing grant and the production field. A gap is a hazard at skillVersion 10 and an
+    // upgrade proposal below it (the v10 sheet's cards). No merge block: no grant hazards.
+    const grantNow = v !== null && v >= GRANT_VERSION;
+    const grantGap = (id, rel, line, detail, proposal) => {
+      if (grantNow) haz(id, detail, rel, line);
+      else proposals.push({ id, path: rel, ...(line !== undefined ? { line } : {}), detail: proposal });
+    };
+    if (policyText !== null && !STAKES_PRODUCTION.test(policyText)) {
+      grantGap('production-missing', 'AGENTS.md', lineOf(agentsText, /^\s*<!-- harness:begin policy -->\s*$/),
+        'the policy block\'s Stakes line has no "production: none" or "production: live": the review routing cannot tell a project with nothing live from one with users',
+        'the v10 upgrade adds production: none|live to the policy block\'s Stakes line');
+    }
+    const mergeText = blockText(agentsText, 'merge');
+    if (mergeText !== null) {
+      const mergeLine = lineOf(agentsText, /^\s*<!-- harness:begin merge -->\s*$/);
+      const grantMatch = GRANT_LINE.exec(mergeText);
+      if (!grantMatch) {
+        grantGap('grant-line-missing', 'AGENTS.md', mergeLine,
+          'the merge block has no line starting "Grant:": the standing grant is unwritten',
+          'the v10 upgrade writes the standing grant into the merge block');
+      }
+      if (!PUSH_DEPLOYS_LINE.test(mergeText)) {
+        grantGap('push-deploys-missing', 'AGENTS.md', mergeLine,
+          'the merge block has no "Push deploys: yes" or "Push deploys: no" line: a grant to push after merge does not say whether a push ships',
+          'the v10 upgrade writes the Push deploys line into the merge block');
+      }
+      // an absent line is the default grant below 10 and no grant at 10 (grant-line-missing covers it)
+      const granted = grantMatch ? grantMatch[1].trim().toLowerCase() !== 'none' : !grantNow;
+      if (granted) {
+        const gaps = [];
+        const gates = read('scripts/run-gates.sh');
+        const gateLines = gates === null ? [] : norm(gates).split('\n');
+        const from = gateLines.findIndex(l => /^#\s*>>>\s*harness:gates\b/.test(l));
+        const to = gateLines.findIndex((l, i) => i > from && /^#\s*<<<\s*harness:gates\b/.test(l));
+        if (from < 0 || to < 0 || !gateLines.slice(from + 1, to).some(l => /^\s*gate_counted\s/.test(l))) {
+          gaps.push(`scripts/run-gates.sh ${gates === null ? 'is missing' : 'has no gate_counted line between its harness:gates markers'}`);
+        }
+        const own = new Set(entries.map(e => e.path));
+        if (projectTests(own).length === 0) gaps.push('git lists no test file');
+        if (gaps.length) {
+          const detail = `the merge grant is on, and ${gaps.join(' and ')}: until a counted product test gate exists, the grant narrows to Small-only auto-merge; the first unit adds the gate`;
+          grantGap('grant-without-machine-gates', 'AGENTS.md', mergeLine, detail, detail);
+        }
+      }
     }
   }
 

@@ -5,7 +5,7 @@
  * The machine sweep: the caches, build output and residue that agent work leaves on the owner's
  * machine, one category each, with what it holds, what freeing it runs, and whether the owner
  * approved it. The report changes nothing. Approving is the owner's, once per category; after
- * that, `harness-due` says `DUE disk` under 25 GB free and the runner starts the approved
+ * that, `harness-due` says `DIGEST disk` under 25 GB free and the runner starts the approved
  * categories in the background.
  *
  * WHY. One project's incident: 73 MCP server processes, 11.25 of 12 GB of swap in use and 3.1 GB

@@ -18,7 +18,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 41;
+const EXPECTED_TESTS = 51;
 
 let passed = 0;
 let failed = 0;
@@ -153,7 +153,12 @@ const INSTALL = [
   [DUE_CORE, 'export const PHASE_OF = /^([A-Za-z]+-?\\d+)[-.]\\w/;', 'export const PHASE_OF = (id) => /^(M\\d+)\\.\\d/.exec(id)?.[1] ?? null;'],
   [DUE_CORE, '  sweep: { days: 7, landings: 5 },', '  sweep: { days: 10, landings: 8 },'],
   [DUE_CORE, '  hygiene: { days: 14, landings: 5 },', '  hygiene: { days: 21, landings: null },'],
-  [DUE_CORE, 'export const P3_AGE_DAYS = 14;', 'export const P3_AGE_DAYS = 30;'],
+  [DUE_CORE, "export const STATE_DIR = 'docs/plans';", "export const STATE_DIR = '.claude/plans';"],
+  [DUE_CORE, 'export const OWED_DAYS = 3;', 'export const OWED_DAYS = 5;'],
+  [DUE_CORE, 'export const DIGEST_LINES = 20;', 'export const DIGEST_LINES = 12;'],
+  [DUE_CORE, 'export const VALVE_ITEMS = 10;', 'export const VALVE_ITEMS = 6;'],
+  [DUE_CORE, 'export const VALVE_DAYS = 3;', 'export const VALVE_DAYS = 2;'],
+  [DUE_CORE, 'export const SPLIT_LINES = 10000;', 'export const SPLIT_LINES = 4000;'],
   [DUE_CORE, 'export const DISK_MIN_GB = 25;', 'export const DISK_MIN_GB = 40;'],
   [DUE_CORE, 'export const WORKTREE_IDLE_HOURS = 6;', 'export const WORKTREE_IDLE_HOURS = 72;'],
   [
@@ -162,13 +167,11 @@ const INSTALL = [
     'export const REBUILDABLE = /(^|\\/)(node_modules|dist|\\.turbo|\\.output)\\/?$|\\.DS_Store$/;',
   ],
   [DUE_CORE, String.raw`  preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',`, "  preflight: 'run /phase-check <phase>; its escalations are Gate 1 cards',"],
-  [DUE_CORE, String.raw`  sweep: 'the next unit: harness/sweep-<date> (harness-bootstrap\'s reference/sweep.md)',`, "  sweep: 'run /sweep-check, the next unit: harness/sweep-<date>',"],
-  [DUE_CORE, String.raw`  retro: 'the next unit: harness/retro-<date> (node scripts/retro.mjs, then commit the digest)',`, "  retro: 'run /weekly-retro, the next unit: harness/retro-<date>, then commit the digest',"],
-  [DUE_CORE, String.raw`  hygiene: 'the next unit: harness/hygiene-<date> (harness-bootstrap\'s reference/hygiene.md)',`, "  hygiene: 'run /hygiene-pass, the next unit: harness/hygiene-<date>',"],
-  [DUE_CORE, String.raw`  p3: 'the next unit: harness/p3-batch-<date>, the hygiene unit\'s P3 batch alone (harness-bootstrap\'s reference/hygiene.md)',`, "  p3: 'run /p3-batch, the next unit: harness/p3-batch-<date>, the P3 batch alone',"],
+  [DUE_CORE, String.raw`  sweep: 'write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',`, "  sweep: 'run /sweep-check in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  retro: 'node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',`, "  retro: 'run /weekly-retro in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  hygiene: 'write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',`, "  hygiene: 'run /hygiene-pass in the background; the report rides in the next land commit',"],
   [DUE_CORE, "  disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',", "  disk: 'run /free-disk, in the background',"],
   [DUE_CORE, "  worktrees: 'git worktree remove <paths>, each once no registry row names it',", "  worktrees: 'run /prune-worktrees <paths>, each once no registry row names it',"],
-  [DUE_CORE, "  proposals: 'read <file>; route each proposal (T: a harness/<slug> unit, C: the next Gate 2 brief), then node scripts/harness-due.mjs --seen <week>',", "  proposals: 'run /read-proposals <file>, then node scripts/harness-due.mjs --seen <week>',"],
   [DUE_CORE, String.raw`  inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',`, "  inbox: 'carry on; /resume-parked <unit> once the owner has answered',"],
   // the suite's [B] block: how the fixtures spell a row id, and an example of the phase PHASE_OF gives one
   [DUE_TEST, "const ROW = (p, n) => `P${p}-${String(n).padStart(2, '0')}`;", 'const ROW = (p, n) => `M${p}.${n}`;'],
@@ -211,7 +214,13 @@ console.log(JSON.stringify({
   reports: c.REPORTS,
   phases: ['P2-16', 'EP-27.04', 'p3-12a', 'T-DATA-037', 'CR-021', 'P2'].map((id) => c.phaseOf(id)),
   cadence: c.CADENCE,
-  p3: c.P3_AGE_DAYS,
+  kinds: c.KINDS,
+  stateDir: c.STATE_DIR,
+  owed: c.OWED_DAYS,
+  digestLines: c.DIGEST_LINES,
+  valve: [c.VALVE_ITEMS, c.VALVE_DAYS],
+  split: c.SPLIT_LINES,
+  commands: { sweep: c.COMMANDS.sweep, retro: c.COMMANDS.retro, hygiene: c.COMMANDS.hygiene, p3: c.COMMANDS.p3 ?? null, proposals: c.COMMANDS.proposals ?? null },
   disk: c.DISK_MIN_GB,
   idle: c.WORKTREE_IDLE_HOURS,
   rebuildable: ['node_modules/', 'dist', '.next/', 'coverage', '.husky/_', '.DS_Store', 'x.tsbuildinfo', '.env.local', 'src/'].map((p) => c.REBUILDABLE.test(p)),
@@ -235,7 +244,23 @@ console.log(JSON.stringify({
   );
   assert.deepStrictEqual(got.phases, ['P2', 'EP-27', 'p3', null, null, null], 'the template PHASE_OF');
   assert.deepStrictEqual(got.cadence, { sweep: { days: 7, landings: 5 }, retro: { days: 7, landings: null }, hygiene: { days: 14, landings: 5 } }, 'the template CADENCE');
-  assert.strictEqual(got.p3, 14, 'the template P3_AGE_DAYS');
+  assert.deepStrictEqual(got.kinds, ['preflight', 'sweep', 'retro', 'hygiene', 'disk', 'worktrees'], 'the template KINDS');
+  assert.strictEqual(got.stateDir, 'docs/plans', 'the template STATE_DIR');
+  assert.strictEqual(got.owed, 3, 'the template OWED_DAYS');
+  assert.strictEqual(got.digestLines, 20, 'the template DIGEST_LINES');
+  assert.deepStrictEqual(got.valve, [10, 3], 'the template VALVE_ITEMS and VALVE_DAYS');
+  assert.strictEqual(got.split, 10000, 'the template SPLIT_LINES');
+  assert.deepStrictEqual(
+    got.commands,
+    {
+      sweep: "write the sweep report in the background (a Sonnet runner, harness-bootstrap's reference/sweep.md); it rides in the next unit's land commit",
+      retro: "node scripts/retro.mjs in the background; the report rides in the next unit's land commit",
+      hygiene: "write the hygiene report in the background (harness-bootstrap's reference/hygiene.md); it rides in the next unit's land commit",
+      p3: null,
+      proposals: null,
+    },
+    'the template COMMANDS for the reports',
+  );
   assert.strictEqual(got.disk, 25, 'the template DISK_MIN_GB');
   assert.strictEqual(got.idle, 6, 'the template WORKTREE_IDLE_HOURS');
   assert.deepStrictEqual(got.rebuildable, [true, true, true, true, true, true, true, false, false], 'the template REBUILDABLE');
@@ -245,15 +270,15 @@ test('the template core ships its default bindings', () => {
   checkDefaults(SCRIPTS);
 });
 
-test('mutant: a template P3_AGE_DAYS of 15 fails the defaults check', () => {
+test('mutant: a template OWED_DAYS of 4 fails the defaults check', () => {
   const copy = tmp('harness-due-defaults-');
   cleanup.push(copy);
   fs.cpSync(SCRIPTS, copy, { recursive: true });
   const corePath = path.join(copy, CORE_REL);
   const before = fs.readFileSync(corePath, 'utf8');
-  assert.strictEqual(before.split('export const P3_AGE_DAYS = 14;').length - 1, 1);
-  fs.writeFileSync(corePath, before.replace('export const P3_AGE_DAYS = 14;', 'export const P3_AGE_DAYS = 15;'));
-  assert.throws(() => checkDefaults(copy), /P3_AGE_DAYS/);
+  assert.strictEqual(before.split('export const OWED_DAYS = 3;').length - 1, 1);
+  fs.writeFileSync(corePath, before.replace('export const OWED_DAYS = 3;', 'export const OWED_DAYS = 4;'));
+  assert.throws(() => checkDefaults(copy), /OWED_DAYS/);
 });
 
 /** The template with only these bindings changed: the shipped suite must pass, with its pinned count. */
@@ -299,15 +324,13 @@ mutantFails('counting a harness unit\'s log row as a landing', 'records.filter((
 mutantFails('counting a harness branch\'s merge as a landing', '(f.merges ?? []).filter((m) => !isHarnessMerge(m.subject)).map((m) => m.t)', '(f.merges ?? []).map((m) => m.t)');
 mutantFails('running the cadences in the foundation stage', "if (stage !== 'foundation') return [];", 'return [];');
 mutantFails('reading no stage from the manifest', 'stage: readJson(path.join(top, MANIFEST))?.stage ?? null,', 'stage: null,', CLI_REL);
-mutantFails('dropping the P3 queue from the hygiene line', "note: kind === 'hygiene' ? p3Note(summary) : ''", "note: ''");
 mutantFails('taking a dirty worktree for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.own)');
 mutantFails('taking a branch with no commits of its own for residue', 'w.merged && w.own && w.clean)', 'w.merged && w.clean)');
 mutantFails('losing an ignored file that is not rebuildable', '.every((p) => rebuildable.test(p))', '.every(() => true)');
 mutantFails('counting an ignored link as a file it would lose', ".filter((p) => !isLink(path.join(w.path, p.replace(/\\/$/, ''))))", '', CLI_REL);
 mutantFails('reading a fast-forwarded branch as one cut and never started', 'const own = merged && (!mainline.has(w.head) || moved);', 'const own = merged && !mainline.has(w.head);', CLI_REL);
-mutantFails('matching a project name inside a longer one', '${esc(project)}(?![A-Za-z0-9_-])', '${esc(project)}');
 mutantFails('moving a seen week backward', "if (!(typeof out[project] === 'string' && out[project] >= week)) out[project] = week;", 'out[project] = week;');
-mutantFails('counting a report no commit holds by its file time', 'found.filter((r) => times.has(r.rel)).map((r) => ({ rel: r.rel, time: times.get(r.rel) }))', 'found.map((r) => ({ rel: r.rel, time: times.get(r.rel) ?? mtime(path.join(top, r.rel)) }))', CLI_REL);
+mutantFails('ignoring a report no commit holds yet', 'return time === null ? [] : [{ rel: r.rel, time, pending: true }];', 'return [];', CLI_REL);
 mutantFails("counting a landed branch's merge of the mainline as a landing", "'--merges', '--first-parent', ", "'--merges', ", CLI_REL);
 mutantFails('dating a line not committed yet by the time of the blame', 'committed ? time : null', 'time', GATHER_REL);
 mutantFails('counting every merge subject as naming a function-bound phase', '.some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())', '.some(() => true)');
@@ -315,7 +338,23 @@ mutantFails('reading only separator-joined words of a merge subject as ids', 'co
 mutantFails('exiting 0 when the claim is blocked', 'if (blocking) process.exitCode = 1;', '', CLI_REL);
 mutantFails('letting the inbox change the exit code', 'if (blocking) process.exitCode = 1;', 'if (blocking || inboxLines(registryText).length) process.exitCode = 1;', CLI_REL);
 mutantFails('reading the registry of the linked worktree instead of the main checkout', 'readRegistry(mainTop)', 'readRegistry(top)', CLI_REL);
-mutantFails('printing the inbox before the due lines', "return [...lines, ...inbox.map((l) => `${l}\\n`)].join('');", "return [...inbox.map((l) => `${l}\\n`), ...lines].join('');");
+const INBOX_AT = '    ...inbox,\n';
+const REPORT_AT = '    ...reports.map((i) => `REPORT ${i.kind} — ${i.why} — ${i.command}`),\n';
+const LINES_BLOCK = (text) => text.slice(text.indexOf(INBOX_AT), text.indexOf(REPORT_AT) + REPORT_AT.length);
+const DUE_CORE_TEXT = fs.readFileSync(path.join(SCRIPTS, CORE_REL), 'utf8');
+mutantFails('printing the inbox after the due lines', LINES_BLOCK(DUE_CORE_TEXT), LINES_BLOCK(DUE_CORE_TEXT).replace(INBOX_AT, '') + INBOX_AT);
+mutantFails('printing the inbox before the owed lines', '    ...owed.map((o) => `OWED ${o.id} since ${o.since} — ${o.what}`),\n    ...inbox,\n', '    ...inbox,\n    ...owed.map((o) => `OWED ${o.id} since ${o.since} — ${o.what}`),\n');
+mutantFails('owing a row at OWED_DAYS, not past it', 'now - r.at > days * DAY', 'now - r.at >= days * DAY');
+mutantFails('counting a housekeeping line as unread', 'const n = items.length;', 'const n = items.length + housekeeping.length;');
+mutantFails('holding on a digest item of unknown time', 'items.filter((i) => i.time !== null && now - i.time > olderDays * DAY).length', 'items.filter((i) => i.time === null || now - i.time > olderDays * DAY).length');
+mutantFails('holding at VALVE_ITEMS unread items, not past them', 'if (!d || d.holdCount <= items) return null;', 'if (!d || d.holdCount < items) return null;');
+mutantFails('holding claims without --claim', 'blocking: Boolean(claim),', 'blocking: true,');
+mutantFails('printing the disk check as a DUE line', 'const due = items.filter((i) => !REPORT_KINDS.includes(i.kind) && !HOUSEKEEPING.includes(i.kind));', 'const due = items.filter((i) => !REPORT_KINDS.includes(i.kind));');
+mutantFails('counting docs and tests as production lines', '.filter((f) => production(f.path))', '.filter(() => true)');
+mutantFails('splitting at the cap, not past it', 'return n > cap ? [', 'return n >= cap ? [');
+mutantFails('dating a decision row by its Date cell alone', 'if (Number.isFinite(t)) rowTimes.set(key, t);', '', CLI_REL);
+mutantFails('reading no last read of the digest', 'lastRead: lastReadOf(readJson(readFile), project),', 'lastRead: null,', CLI_REL);
+mutantFails('exiting 0 when the valve holds a claim', ' + (hold?.blocking ? 1 : 0)', '', CLI_REL);
 mutantFails('reading the active table as the parked one', "registryTable(registryText, 'parked');", "registryTable(registryText, 'active');");
 mutantFails('reading the rows outside the markers', 'else if (on && row) rows.push(line);', 'else if (row) rows.push(line);');
 mutantFails('naming a worktree that a parked row names', "['parked', () => true]", "['parked', () => false]");
@@ -351,7 +390,7 @@ test('the COMMANDS defaults cite the references that hold the procedures, not sk
   const lines = block[1].split('\n');
   const line = (kind) => lines.find((l) => l.trim().startsWith(`${kind}:`)) ?? '';
   for (const word of ['phase-preflight', 'workstream-sweep', 'task-runner']) assert.ok(!block[1].includes(word), `COMMANDS still names ${word}`);
-  for (const [kind, reference] of [['preflight', 'preflight'], ['sweep', 'sweep'], ['hygiene', 'hygiene'], ['p3', 'hygiene'], ['inbox', 'runner']]) {
+  for (const [kind, reference] of [['preflight', 'preflight'], ['sweep', 'sweep'], ['hygiene', 'hygiene'], ['inbox', 'runner']]) {
     assert.ok(line(kind).includes(`harness-bootstrap\\'s reference/${reference}.md`), `COMMANDS.${kind} does not cite reference/${reference}.md: ${line(kind)}`);
   }
   assert.ok(line('inbox').includes('<unit>'), `COMMANDS.inbox does not name the unit it resumes: ${line('inbox')}`);
@@ -374,6 +413,128 @@ test('CLI smoke: claiming the first row of a phase with no preflight report exit
   const res = spawnSync(process.execPath, [path.join(SCRIPTS, CLI_REL), '--claim', 'P2-01', '--home', repo, '--now', '2026-10-21T10:00:00Z'], { cwd: repo, encoding: 'utf8', env });
   assert.strictEqual(res.status, 1, res.stdout + res.stderr);
   assert.match(res.stdout, /^DUE preflight P2 — no report at docs\/harness\/reports\/preflight-P2\.md, and P2-01 opens the phase: the claim waits for it — /m);
+});
+
+/** A temp repository with one commit of `files` at `date`, and a runner of the CLI in it with a temp --home. */
+function cliRepo(files, date) {
+  const repo = tmp('harness-due-cli-');
+  const home = tmp('harness-due-cli-home-');
+  cleanup.push(repo, home);
+  const env = hermeticEnv(cleanup, { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+  const git = (args) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+  };
+  git(['init', '-q', '-b', 'main']);
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  }
+  git(['add', '.']);
+  git(['commit', '-q', '-m', 'start']);
+  const run = (...args) => spawnSync(process.execPath, [path.join(SCRIPTS, CLI_REL), '--home', home, ...args], { cwd: repo, encoding: 'utf8', env });
+  return { repo, home, run };
+}
+
+const SMOKE_LOG = '| Unit · Mode · Type · Tier | Elapsed (work) | Cost |\n|---|---|---|\n| P1-01 · plan · Code · Small | 60m | $1 |\n';
+
+test('CLI: --digest-read records the read, and the next run shows DIGEST 0 unread', () => {
+  const { repo, home, run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-10-20T10:00:00Z');
+  const now = '2026-10-21T10:00:00.000Z';
+  const first = run('--now', now);
+  assert.strictEqual(first.status, 0, first.stdout + first.stderr);
+  assert.match(first.stdout, /^DIGEST 1 unread since never$/m);
+  assert.match(first.stdout, /^DIGEST merged P1-01 2026-10-20$/m);
+  const read = run('--digest-read', '--now', now);
+  assert.strictEqual(read.status, 0, read.stderr);
+  assert.match(read.stdout, /has read the digest at 2026-10-21T10:00:00\.000Z/);
+  const file = path.join(home, '.agents', 'harness', 'digest-read.json');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { [path.basename(repo)]: now });
+  const second = run('--now', now);
+  assert.strictEqual(second.status, 0, second.stderr);
+  assert.match(second.stdout, /^DIGEST 0 unread since 2026-10-21T10:00:00\.000Z$/m);
+  assert.doesNotMatch(second.stdout, /^DIGEST merged/m);
+});
+
+test('CLI: an open follow-up the owner supplies, past OWED_DAYS, is the first line; a fixed one and a young one are not', () => {
+  const followUps = [
+    '| # | Sev | What | Status |',
+    '|---|---|---|---|',
+    '| FU-1 | P2 | Owner supplies: the sandbox account id | open |',
+    '| FU-2 | P2 | Owner decides: which plan tier | fixed |',
+    '',
+  ].join('\n');
+  const { run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG, 'docs/harness/follow-ups.md': followUps }, '2026-10-15T10:00:00Z');
+  const res = run('--now', '2026-10-21T10:00:00Z');
+  assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+  assert.strictEqual(res.stdout.split('\n')[0], 'OWED FU-1 since 2026-10-15 — the sandbox account id');
+  assert.doesNotMatch(res.stdout, /^OWED FU-2/m);
+  const young = run('--now', '2026-10-17T10:00:00Z');
+  assert.strictEqual(young.status, 0, young.stderr);
+  assert.doesNotMatch(young.stdout, /^OWED /m);
+});
+
+test('CLI: a report written in the background but not committed yet clears its REPORT line, as pending; none on disk, it prints', () => {
+  const { repo, run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-10-20T10:00:00Z');
+  const now = '2026-11-05T10:00:00Z';
+  const due = run('--now', now);
+  assert.strictEqual(due.status, 0, due.stdout + due.stderr);
+  assert.match(due.stdout, /^REPORT sweep — /m);
+  assert.match(due.stdout, /^REPORT hygiene — /m);
+  // The report rides in the next unit's land commit: until then the file is on disk and in no commit.
+  const file = path.join(repo, 'docs', 'harness', 'reports', 'sweep-2026-11-05.md');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '# Sweep\n');
+  const stamp = new Date('2026-11-05T09:00:00Z');
+  fs.utimesSync(file, stamp, stamp);
+  const pending = run('--now', now);
+  assert.strictEqual(pending.status, 0, pending.stdout + pending.stderr);
+  assert.doesNotMatch(pending.stdout, /^REPORT sweep/m, 'an uncommitted report clears the line: the runner must not start the same report twice');
+  assert.match(pending.stdout, /^REPORT hygiene — /m, 'only its own kind');
+  // Its file time dates it, so the cadence counts from there: a week on, it is due again.
+  assert.match(run('--now', '2026-11-13T10:00:00Z').stdout, /^REPORT sweep — /m);
+  // A file that is not a report of the kind (the wrong name) clears nothing.
+  fs.renameSync(file, path.join(repo, 'docs', 'harness', 'reports', 'sweep-notes.md'));
+  assert.match(run('--now', now).stdout, /^REPORT sweep — /m);
+});
+
+test('CLI: a committed report rewritten and not committed yet is pending: its file time, not its commit, counts for the cadence', () => {
+  const { repo, run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-11-04T00:00:00Z');
+  const git = (date, ...args) => {
+    const env = hermeticEnv(cleanup, { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+  };
+  const rel = 'docs/harness/reports/sweep-2026-11-05.md';
+  const file = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '# Sweep\n');
+  git('2026-11-05T00:00:00Z', 'add', '.');
+  git('2026-11-05T00:00:00Z', 'commit', '-q', '-m', 'sweep report');
+  // Five product landings after the committed report.
+  for (let hour = 1; hour <= 5; hour += 1) {
+    const at = `2026-11-05T0${hour}:00:00Z`;
+    git(at, 'checkout', '-q', '-b', `feat-${hour}`);
+    fs.writeFileSync(path.join(repo, `feat-${hour}.txt`), 'x\n');
+    git(at, 'add', '.');
+    git(at, 'commit', '-q', '-m', `feat ${hour}`);
+    git(at, 'checkout', '-q', 'main');
+    git(at, 'merge', '-q', '--no-ff', '-m', `Merge branch 'feat-${hour}'`, `feat-${hour}`);
+  }
+  const now = '2026-11-05T07:00:00Z';
+  const clean = run('--now', now);
+  assert.strictEqual(clean.status, 0, clean.stdout + clean.stderr);
+  assert.match(clean.stdout, /^REPORT sweep — .*5 landings since sweep-2026-11-05\.md/m, 'a clean committed report keeps its commit time');
+  // The report is rewritten at 06:00 and rides in the next unit's land commit: after the landings, it is the newest report.
+  fs.writeFileSync(file, '# Sweep, rewritten\n');
+  const stamp = new Date('2026-11-05T06:00:00Z');
+  fs.utimesSync(file, stamp, stamp);
+  const rewritten = run('--now', now);
+  assert.strictEqual(rewritten.status, 0, rewritten.stdout + rewritten.stderr);
+  assert.doesNotMatch(rewritten.stdout, /^REPORT sweep/m, 'a rewrite of a committed report clears the line: the runner must not start the same report twice');
+  // Staged, it is still pending.
+  git('2026-11-05T06:30:00Z', 'add', rel);
+  assert.doesNotMatch(run('--now', now).stdout, /^REPORT sweep/m, 'a staged rewrite is pending too');
 });
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

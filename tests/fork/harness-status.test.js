@@ -163,11 +163,13 @@ function manifestFixture() {
     '.githooks/pre-commit': PRE_COMMIT,
     'docs/harness-log.md': '# Harness log\n',
     'scripts/gone.sh': 'echo hi\n',
-    // the commit lock (item 3) and its merge hook (item 4) of a complete install
+    // the commit lock (item 3), its merge hook (item 4) and its ref hook of a complete install
     '.claude/registry.md': '# Registry\n<!-- harness:active -->\n<!-- /harness:active -->\n',
     '.githooks/pre-merge-commit': '#!/bin/sh\nsh .githooks/harness-guard.sh\n',
+    '.githooks/reference-transaction': '#!/bin/sh\nsh .githooks/harness-guard.sh "$@"\n',
   });
-  git(repo, ['config', 'core.hooksPath', '.githooks']);
+  // absolute, as the install sets it: a relative core.hooksPath is a hazard of its own
+  git(repo, ['config', 'core.hooksPath', path.join(repo, '.githooks')]);
   const h = hashes(repo, ['AGENTS.md#gates', '.githooks/pre-commit', 'scripts/gone.sh']);
   const manifest = {
     schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19',
@@ -492,6 +494,138 @@ test('foundation stage: reported, and flagged once tests exist', () => {
   const noStage = report(mk({ '.agents/harness-manifest.json': manifest(null), 'src/a.test.js': 'x\n' }));
   assert.strictEqual(noStage.manifest.stage, 'full');
   assert.ok(!ids(noStage).includes('foundation-stage-has-tests'));
+});
+
+test('foundation stage (js.13): a gitignored test file is not the first test; a tracked one is, and so is an untracked one git does not ignore', () => {
+  const manifest = JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 2, generated: '2026-10-19', modes: ['plan'], stage: 'foundation', entries: [] });
+  const base = { '.agents/harness-manifest.json': manifest, '.gitignore': 'scratch/\n' };
+  const ignored = mk({ ...base, 'scratch/x.test.js': 'x\n' });
+  assert.ok(!ids(report(ignored)).includes('foundation-stage-has-tests'), 'review scratch under .gitignore is not the project');
+  git(ignored, ['add', '-A']);
+  assert.ok(!ids(report(ignored)).includes('foundation-stage-has-tests'), 'staging does not un-ignore it');
+  const tracked = mk({ ...base, 'src/x.test.js': 'x\n' });
+  git(tracked, ['add', '-A']);
+  const h = report(tracked).hazards.find(x => x.id === 'foundation-stage-has-tests');
+  assert.ok(h && /src\/x\.test\.js/.test(h.detail), 'a tracked test file counts');
+  assert.ok(ids(report(mk({ ...base, 'src/x.test.js': 'x\n' }))).includes('foundation-stage-has-tests'), 'an untracked, unignored one counts');
+  // mutant: a walk of the disk (the old check) counts the ignored file
+  const mutant = mutantOf("const out = isRepoTop() ? gitAt(REPO, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']) : null;", 'const out = null;');
+  assert.ok(ids(report(ignored, mutant)).includes('foundation-stage-has-tests'));
+});
+
+// v10: the merge block's standing grant, the policy block's production field
+const GRANT_TEXT = 'Grant: merge when green · push after merge · recommendation on reversible cards';
+function grantRepo({ v = 10, policy = ['Stakes: account data · one owner · production: none', 'Never-auto policy: REVIEWED'], merge = [GRANT_TEXT, 'Push deploys: no'], gates, files = {}, track = true } = {}) {
+  const lines = ['# Agents', '', '<!-- harness:begin policy -->', ...policy, '<!-- harness:end policy -->', ''];
+  if (merge) lines.push('<!-- harness:begin merge -->', ...merge, '<!-- harness:end merge -->', '');
+  const repo = mk({
+    'AGENTS.md': lines.join('\n'),
+    '.agents/harness-manifest.json': JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: v, generated: '2026-11-09', modes: ['plan'], entries: [] }),
+    ...(gates === undefined ? {} : { 'scripts/run-gates.sh': gates }),
+    ...files,
+  });
+  if (track) git(repo, ['add', '-A']);
+  return repo;
+}
+const COUNTED_GATES = "#!/bin/bash\n# >>> harness:gates [B]\n# gate_counted test always 'x' 'y'\ngate_counted test always '^COUNTED node [1-9]' 'node scripts/run-counted.mjs'\n# <<< harness:gates\n";
+const UNCOUNTED_GATES = "#!/bin/bash\n# >>> harness:gates [B]\n# gate_counted test always 'x' 'y'\ngate test always 'npm test'\n# <<< harness:gates\n";
+const GRANT_IDS = ['grant-line-missing', 'push-deploys-missing', 'production-missing', 'grant-without-machine-gates'];
+const grantHazards = rep => rep.hazards.filter(h => GRANT_IDS.includes(h.id));
+
+test('grant (v10): a merge block with no Grant: line is grant-line-missing at skillVersion 10; with one, not', () => {
+  const missing = report(grantRepo({ merge: ['Small merges locally.', 'Push deploys: no'] }));
+  const h = missing.hazards.find(x => x.id === 'grant-line-missing');
+  assert.ok(h, ids(missing).join());
+  assert.deepStrictEqual([h.path, h.line], ['AGENTS.md', 8]);
+  assert.ok(!ids(report(grantRepo())).includes('grant-line-missing'));
+  assert.ok(!ids(report(grantRepo({ merge: ['  Grant: none', 'Push deploys: yes'] }))).includes('grant-line-missing'));
+  assert.deepStrictEqual(grantHazards(report(grantRepo({ merge: null }))), [], 'no merge block: no grant hazards');
+});
+
+test('grant (v10): push-deploys-missing without a Push deploys: yes|no line', () => {
+  assert.ok(ids(report(grantRepo({ merge: [GRANT_TEXT] }))).includes('push-deploys-missing'));
+  assert.ok(ids(report(grantRepo({ merge: [GRANT_TEXT, 'Push deploys: maybe'] }))).includes('push-deploys-missing'));
+  assert.ok(!ids(report(grantRepo({ merge: [GRANT_TEXT, 'Push deploys: yes'] }))).includes('push-deploys-missing'));
+  assert.ok(!ids(report(grantRepo())).includes('push-deploys-missing'));
+});
+
+test('production (v10): a Stakes line without production: none|live is production-missing; with one, or with no policy block, not', () => {
+  const h = report(grantRepo({ policy: ['Stakes: account data · one owner', 'Never-auto policy: REVIEWED'] })).hazards.find(x => x.id === 'production-missing');
+  assert.ok(h);
+  assert.deepStrictEqual([h.path, h.line], ['AGENTS.md', 3]);
+  assert.ok(ids(report(grantRepo({ policy: ['Stakes: a · production: maybe'] }))).includes('production-missing'));
+  assert.ok(ids(report(grantRepo({ policy: ['production: none', 'Stakes: a · b'] }))).includes('production-missing'), 'the field belongs on the Stakes line');
+  assert.ok(!ids(report(grantRepo())).includes('production-missing'));
+  assert.ok(!ids(report(grantRepo({ policy: ['Stakes: a · production: live'] }))).includes('production-missing'));
+  assert.ok(!ids(report(mk({ 'AGENTS.md': '# Agents\n', '.agents/harness-manifest.json': JSON.stringify({ schema: 1, skill: 'harness-bootstrap', skillVersion: 10, generated: '2026-11-09', modes: ['plan'], entries: [] }) }))).includes('production-missing'));
+});
+
+test('grant (v10): grant-without-machine-gates needs a gate_counted line in run-gates.sh and a tracked test file', () => {
+  const test_ = { 'src/a.test.js': 'x\n' };
+  const none = report(grantRepo({ gates: UNCOUNTED_GATES, files: test_ }));
+  const h = none.hazards.find(x => x.id === 'grant-without-machine-gates');
+  assert.ok(h, ids(none).join());
+  assert.match(h.detail, /no gate_counted line/);
+  assert.doesNotMatch(h.detail, /no test file/);
+  assert.match(h.detail, /until a counted product test gate exists, the grant narrows to Small-only auto-merge; the first unit adds the gate/);
+  assert.deepStrictEqual([h.path, h.line], ['AGENTS.md', 8]);
+  const noFile = report(grantRepo({ gates: COUNTED_GATES })).hazards.find(x => x.id === 'grant-without-machine-gates');
+  assert.ok(noFile && /git lists no test file/.test(noFile.detail) && !/gate_counted/.test(noFile.detail), JSON.stringify(noFile));
+  const both = report(grantRepo({})).hazards.find(x => x.id === 'grant-without-machine-gates');
+  assert.ok(both && /is missing/.test(both.detail) && /git lists no test file/.test(both.detail), 'a missing run-gates.sh counts as no counted gate');
+  assert.ok(!ids(report(grantRepo({ gates: COUNTED_GATES, files: test_ }))).includes('grant-without-machine-gates'), 'both present: no hazard');
+  assert.ok(ids(report(grantRepo({ gates: '# gate_counted a b c d\n', files: test_ }))).includes('grant-without-machine-gates'), 'a commented line, outside the markers, is no gate');
+  // a gitignored test file is not a test file; the manifest's own template test is not the project's
+  const ignored = grantRepo({ gates: COUNTED_GATES, files: { '.gitignore': 'scratch/\n', 'scratch/x.test.js': 'x\n' } });
+  assert.ok(ids(report(ignored)).includes('grant-without-machine-gates'));
+});
+
+test('grant (v10): a tracked symlink named *.test.js to an ignored or outside file is no test; a tracked regular file or a link to a tracked file inside the project is', () => {
+  const linked = ({ target, files }) => {
+    const repo = grantRepo({ gates: COUNTED_GATES, files: { '.gitignore': 'outside.js\n', 'outside.js': 'x\n', ...files }, track: false });
+    fs.mkdirSync(path.join(repo, 'test'), { recursive: true });
+    fs.symlinkSync(target, path.join(repo, 'test', 'foo.test.js'));
+    git(repo, ['add', '-A']);
+    return repo;
+  };
+  const gap = repo => report(repo).hazards.find(x => x.id === 'grant-without-machine-gates');
+  // The link's target is gitignored: git tracks the link, and nothing in the repository holds a test.
+  const phony = linked({ target: '../outside.js', files: {} });
+  assert.deepStrictEqual(git(phony, ['ls-files', 'test']).trim(), 'test/foo.test.js');
+  assert.ok(gap(phony) && /git lists no test file/.test(gap(phony).detail), 'a link to an ignored file clears nothing');
+  // A fresh clone has the link and no target at all.
+  fs.rmSync(path.join(phony, 'outside.js'));
+  assert.ok(gap(phony), 'a dangling link clears nothing');
+  // A link out of the project, to a file that is there.
+  const away = tmp('harness-status-away-');
+  write(away, 'real.js', 'x\n');
+  assert.ok(gap(linked({ target: path.join(away, 'real.js'), files: {} })), 'a link to a file outside the project clears nothing');
+  // A link to a tracked file inside the project counts, and so does a plain tracked test file.
+  assert.ok(!gap(linked({ target: '../src/real.js', files: { 'src/real.js': 'x\n' } })), 'a link to a tracked file inside the project is a test');
+  assert.ok(!gap(grantRepo({ gates: COUNTED_GATES, files: { 'src/a.test.js': 'x\n' } })), 'a tracked regular test file counts');
+});
+
+test('grant (v10): Grant: none raises no grant-without-machine-gates', () => {
+  assert.ok(!ids(report(grantRepo({ merge: ['Grant: none', 'Push deploys: no'] }))).includes('grant-without-machine-gates'));
+  assert.ok(!ids(report(grantRepo({ merge: ['Grant:   NONE  ', 'Push deploys: no'] }))).includes('grant-without-machine-gates'));
+  assert.ok(!ids(report(grantRepo({ merge: ['Push deploys: no'] }))).includes('grant-without-machine-gates'), 'at 10 an absent line is grant-line-missing, not a grant');
+});
+
+test('grant (v10): below skillVersion 10 the same gaps are upgrade proposals, not hazards', () => {
+  const gaps = { v: 9, policy: ['Stakes: account data · one owner'], merge: ['Small merges locally.'] };
+  const rep = report(grantRepo(gaps));
+  assert.deepStrictEqual(grantHazards(rep), []);
+  assert.deepStrictEqual(rep.proposals.map(p => p.id).sort(), ['grant-line-missing', 'grant-without-machine-gates', 'production-missing', 'push-deploys-missing']);
+  const line = rep.proposals.find(p => p.id === 'grant-line-missing');
+  assert.deepStrictEqual([line.path, line.line, line.detail], ['AGENTS.md', 7, 'the v10 upgrade writes the standing grant into the merge block']);
+  assert.match(rep.proposals.find(p => p.id === 'grant-without-machine-gates').detail, /the first unit adds the gate/, 'an absent Grant: below 10 is the default grant');
+  assert.deepStrictEqual(report(grantRepo({ v: 9, merge: ['Grant: none', 'Push deploys: no'] })).proposals.map(p => p.id), [], 'a written none and every line present: nothing to propose');
+  const text = run(grantRepo(gaps), ['--text']).stdout;
+  assert.match(text, /\nupgrade proposals \(4\):\n/);
+  assert.match(text, /- grant-line-missing AGENTS\.md:7 -- the v10 upgrade writes the standing grant into the merge block/);
+  const hazText = run(grantRepo({ v: 10, merge: [GRANT_TEXT] }), ['--text']).stdout;
+  assert.match(hazText, /- push-deploys-missing AGENTS\.md:8 -- /);
+  assert.match(hazText, /- grant-without-machine-gates AGENTS\.md:8 -- /);
 });
 
 test('lineage fingerprints: Missed by harness, codex-run, tier table, both', () => {
@@ -1029,6 +1163,81 @@ test('4. merge-unguarded: husky and lefthook', () => {
   assert.ok(ids(report(lh)).includes('merge-unguarded'));
 });
 
+test('4. ref-unguarded: a hooks-dir guard with no reference-transaction hook that runs it', () => {
+  const run = '#!/bin/sh\nsh .githooks/harness-guard.sh "$@"\n';
+  const repo = mk({ '.claude/registry.md': REGISTRY, '.githooks/harness-guard.sh': '#!/bin/sh\nexit 0\n', '.githooks/pre-commit': run, '.githooks/pre-merge-commit': run });
+  git(repo, ['config', 'core.hooksPath', '.githooks']);
+  const rep = report(repo);
+  assert.ok(ids(rep).includes('ref-unguarded') && !ids(rep).includes('merge-unguarded'), ids(rep).join());
+  assert.ok(/reference-transaction/.test(rep.hazards.find(h => h.id === 'ref-unguarded').detail));
+  write(repo, '.githooks/reference-transaction', '#!/bin/sh\nexit 0\n');
+  assert.ok(ids(report(repo)).includes('ref-unguarded'), 'a hook that does not run the guard');
+  write(repo, '.githooks/reference-transaction', run);
+  assert.ok(!ids(report(repo)).includes('ref-unguarded'));
+  // merge-unguarded fires alone for the same install
+  fs.rmSync(path.join(repo, '.githooks', 'pre-merge-commit'));
+  fs.rmSync(path.join(repo, '.githooks', 'reference-transaction'));
+  const both = ids(report(repo));
+  assert.ok(both.includes('merge-unguarded') && !both.includes('ref-unguarded'), both.join());
+});
+
+test('4. ref-unguarded: husky needs its .husky/_ stub too; lefthook needs the section', () => {
+  const call = 'sh .githooks/harness-guard.sh "$@" || exit 1\n';
+  const husky = mk({ '.claude/registry.md': REGISTRY, '.husky/pre-commit': call, '.husky/pre-merge-commit': call, '.husky/reference-transaction': call });
+  assert.ok(ids(report(husky)).includes('ref-unguarded'), 'no .husky/_/reference-transaction stub');
+  write(husky, '.husky/_/reference-transaction', '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n');
+  assert.ok(!ids(report(husky)).includes('ref-unguarded'));
+  write(husky, '.husky/reference-transaction', 'echo hi\n');
+  assert.ok(ids(report(husky)).includes('ref-unguarded'), 'a husky hook that does not run the guard');
+  // a husky install missing pre-merge-commit: merge-unguarded alone
+  const half = mk({ '.claude/registry.md': REGISTRY, '.husky/pre-commit': call });
+  assert.ok(ids(report(half)).includes('merge-unguarded') && !ids(report(half)).includes('ref-unguarded'));
+  const section = name => `${name}:\n  commands:\n    guard:\n      run: sh .githooks/harness-guard.sh\n`;
+  const lh = mk({ '.claude/registry.md': REGISTRY, 'lefthook.yml': `${section('pre-commit')}${section('pre-merge-commit')}` });
+  assert.ok(ids(report(lh)).includes('ref-unguarded'));
+  write(lh, 'lefthook.yml', `${section('pre-commit')}${section('pre-merge-commit')}${section('reference-transaction')}`);
+  assert.ok(!ids(report(lh)).includes('ref-unguarded'));
+});
+
+const HOOKS_PATH_HAZARDS = ['hooks-path-relative', 'hooks-path-missing'];
+const hooksPathIds = rep => ids(rep).filter(id => HOOKS_PATH_HAZARDS.includes(id));
+
+test('4. hooks-path-relative: a complete .githooks install with a relative core.hooksPath; not with the absolute one, nor beside ref-unguarded', () => {
+  const run = '#!/bin/sh\nsh .githooks/harness-guard.sh "$@"\n';
+  const repo = mk({ '.claude/registry.md': REGISTRY, '.githooks/harness-guard.sh': '#!/bin/sh\nexit 0\n', '.githooks/pre-commit': run, '.githooks/pre-merge-commit': run, '.githooks/reference-transaction': run });
+  git(repo, ['config', 'core.hooksPath', '.githooks']);
+  const rep = report(repo);
+  assert.deepStrictEqual(hooksPathIds(rep), ['hooks-path-relative'], ids(rep).join());
+  assert.strictEqual(rep.hazards.find(h => h.id === 'hooks-path-relative').detail,
+    'core.hooksPath is relative (.githooks); git run from inside .git, or with --git-dir or GIT_DIR from another directory, finds no hook, so a mainline move skips the guard: set it to "$(git rev-parse --show-toplevel)/.githooks"');
+  git(repo, ['config', 'core.hooksPath', path.join(repo, '.githooks')]);
+  assert.deepStrictEqual(hooksPathIds(report(repo)), [], 'the absolute path');
+  git(repo, ['config', 'core.hooksPath', '.githooks']);
+  fs.rmSync(path.join(repo, '.githooks', 'reference-transaction'));
+  const beside = ids(report(repo));
+  assert.ok(beside.includes('ref-unguarded') && !beside.includes('hooks-path-relative'), beside.join());
+});
+
+test('4. hooks-path-missing: a husky install whose core.hooksPath names no directory; not once it exists, nor beside ref-unguarded, nor unset', () => {
+  const call = 'sh .githooks/harness-guard.sh "$@" || exit 1\n';
+  const husky = mk({ '.claude/registry.md': REGISTRY, '.husky/pre-commit': call, '.husky/pre-merge-commit': call, '.husky/reference-transaction': call, '.husky/_/reference-transaction': '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n' });
+  git(husky, ['config', 'core.hooksPath', '/nonexistent/x']);
+  const rep = report(husky);
+  assert.deepStrictEqual(hooksPathIds(rep), ['hooks-path-missing'], ids(rep).join());
+  assert.strictEqual(rep.hazards.find(h => h.id === 'hooks-path-missing').detail,
+    'core.hooksPath names a directory that does not exist (/nonexistent/x); git runs no hook at all, so nothing is guarded. A moved clone needs the install step again');
+  git(husky, ['config', 'core.hooksPath', path.join(husky, '.husky', '_')]);
+  assert.deepStrictEqual(hooksPathIds(report(husky)), [], 'the directory exists');
+  git(husky, ['config', 'core.hooksPath', '/nonexistent/x']);
+  fs.rmSync(path.join(husky, '.husky', '_', 'reference-transaction'));
+  const beside = ids(report(husky));
+  assert.ok(beside.includes('ref-unguarded') && !beside.includes('hooks-path-missing'), beside.join());
+  // unset: git uses $GIT_DIR/hooks, which it always finds (a complete lefthook install)
+  const section = name => `${name}:\n  commands:\n    guard:\n      run: sh .githooks/harness-guard.sh\n`;
+  const lh = mk({ '.claude/registry.md': REGISTRY, 'lefthook.yml': `${section('pre-commit')}${section('pre-merge-commit')}${section('reference-transaction')}` });
+  assert.deepStrictEqual(ids(report(lh)).filter(id => id.includes('unguarded') || HOOKS_PATH_HAZARDS.includes(id)), []);
+});
+
 test('5. hook-undocumented-var: every line, and the detail says the hook receives nothing', () => {
   const settings = [
     '{', '  "hooks": { "PostToolUse": [', '    { "matcher": "Edit", "hooks": [',
@@ -1451,7 +1660,7 @@ test('p3-queue-aging: open P3 rows and no hygiene report for as long as a P3 may
   const found = hazardsOf(report(repo), 'p3-queue-aging');
   assert.strictEqual(found.length, 1);
   assert.strictEqual(found[0].path, 'docs/harness/follow-ups.md');
-  assert.match(found[0].detail, /^1 open P3 row, and no hygiene report: the P3 batch has not taken them$/);
+  assert.match(found[0].detail, /^1 open P3 row, and no hygiene report: a P3 outside any diff is dropped, never queued$/);
   write(repo, `docs/harness/reports/hygiene-${daysAgo(3)}.md`, '# hygiene\n');
   assert.deepStrictEqual(hazardsOf(report(repo), 'p3-queue-aging'), []);
   write(repo, `docs/harness/reports/hygiene-${daysAgo(3)}.md`, '');

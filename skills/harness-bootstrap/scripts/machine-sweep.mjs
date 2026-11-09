@@ -13,7 +13,7 @@
  *                     and the orphaned dev processes. It changes nothing
  *   --approve <ids>   the owner's approval, once per category, in <home>/.agents/harness/sweep.json;
  *                     it also installs this script at <home>/.agents/harness/machine-sweep/, the
- *                     path harness-due's DUE disk line runs
+ *                     path harness-due's DIGEST disk line runs
  *   --unapprove <ids> withdraws approvals
  *   --apply-approved  frees the approved categories alone (with --only, the approved ones named)
  *                     and appends one line to <home>/.agents/harness/sweep-log.jsonl; --dry-run

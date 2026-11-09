@@ -12,6 +12,8 @@
 // reference/context.md). Reads files and runs `git rev-parse` and `git show` only: never writes, never
 // blocks, never starts work, and says nothing when anything fails, or when no row is held or parked
 // but on a compaction, which points a queue run at its next unit.
+// The standing grant comes from AGENTS.md's merge block, read here from the main checkout: it is written
+// once, so it survives a compaction and needs no kickoff; a unit's state-file Grant: line only narrows it.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -35,8 +37,8 @@ const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const CLOSING = {
   compact: "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
   parkedOnly: "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).",
-  none: "No unit is held or parked. If a queue run is on, run harness-due and start the next ready unit under the kickoff's Grant: and Stop: lines (the runner's Shape).",
-  context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then due-checks, then the queue.',
+  none: "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.",
+  context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.',
 };
 
 const clip = (value) => {
@@ -65,6 +67,21 @@ export function section(text, name) {
   const header = at >= 0 ? body[at] : above;
   const rows = body.filter((l, i) => i !== at && !isSep(l)).map(cellsOf);
   return { header: header ? cellsOf(header).map((c) => trimCell(c).toLowerCase()) : null, rows };
+}
+
+/**
+ * The standing grant in AGENTS.md's merge block (`<!-- harness:begin merge -->` … `<!-- harness:end merge -->`,
+ * each marker alone on its line): the first `Grant:` line's value and the `Push deploys:` value (yes or no),
+ * each a string or null. Lines outside the block are never read, and a block with no end marker reads nothing.
+ */
+export function standingGrant(text) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const begin = lines.findIndex((l) => l.trim() === '<!-- harness:begin merge -->');
+  const end = lines.findIndex((l, i) => i > begin && l.trim() === '<!-- harness:end merge -->');
+  const block = begin < 0 || end < 0 ? [] : lines.slice(begin + 1, end);
+  const grant = block.map((l) => /^\s*Grant:(.*)$/.exec(l)).find(Boolean);
+  const push = block.map((l) => /^\s*Push deploys:\s*(yes|no)\b/i.exec(l)).find(Boolean);
+  return { grant: grant ? clip(grant[1]) || null : null, pushDeploys: push ? push[1].toLowerCase() : null };
 }
 
 /** A Worktree cell as the guard reads it: the first word, a placeholder (-, n/a, none) read as empty. */
@@ -178,8 +195,15 @@ function stateOf(row, root) {
   }
 }
 
+/** A unit's `; `-joined terms (a Grant line lists its own with ` · `): parked, kickoff narrows, stop. */
+function termsOf(row, head, standing) {
+  // a state Grant: only narrows the standing one, so it shows when it differs from it
+  const narrows = head.grant && clip(head.grant) !== standing && `kickoff narrows: ${head.grant}`;
+  return [row.kind === 'held' && head.parked && `parked: ${head.parked}`, narrows, head.stop && `stop: ${head.stop}`].filter(Boolean);
+}
+
 /** One row's lines: its head line, then what its state file says (or why it says nothing). */
-export function unitLines(row, { head = {}, sections = {}, note } = {}) {
+export function unitLines(row, { head = {}, sections = {}, note } = {}, standing = null) {
   const parts = (list) => list.filter(Boolean).map(clip).join(' · ');
   const lines = [];
   if (row.kind === 'held') {
@@ -194,9 +218,8 @@ export function unitLines(row, { head = {}, sections = {}, note } = {}) {
   // a parked row's Cards cell already names its open cards
   const open = row.kind === 'parked' && row.cards ? [] : openQuestions(sections.decisions);
   if (open.length) lines.push(`  open: ${open.join(' · ')}`);
-  // `; ` between these: a Grant line lists its own terms with ` · `
-  const terms = [row.kind === 'held' && head.parked && `parked: ${head.parked}`, head.grant && `grant: ${head.grant}`, head.stop && `stop: ${head.stop}`];
-  if (terms.some(Boolean)) lines.push(`  ${terms.filter(Boolean).map(clip).join('; ')}`);
+  const terms = termsOf(row, head, standing);
+  if (terms.length) lines.push(`  ${terms.map(clip).join('; ')}`);
   return lines;
 }
 
@@ -222,11 +245,16 @@ export function capped(first, body, last, max = MAX_BYTES) {
   return bytes.subarray(0, end).toString('utf8');
 }
 
-/** The text for a SessionStart from `source`; with no held or parked row, a compaction's pointer at the queue, else null. */
-export function resumeText(source, rows, root) {
+/**
+ * The text for a SessionStart from `source`; with no held or parked row, a compaction's pointer at the queue,
+ * else null. `grant` is standingGrant's { grant, pushDeploys }; a grant line follows the first line.
+ */
+export function resumeText(source, rows, root, grant = null) {
   if (!rows.length && source !== 'compact') return null;
   const first = `[session-resume] ${source}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
-  const body = rows.flatMap((row) => unitLines(row, stateOf(row, root)));
+  const standing = grant?.grant ?? null;
+  const body = rows.flatMap((row) => unitLines(row, stateOf(row, root), standing));
+  if (standing !== null) body.unshift(`standing grant (AGENTS.md › merge): ${standing}; push deploys: ${grant.pushDeploys ?? '?'}`);
   const held = rows.some((row) => row.kind === 'held');
   return capped(first, body, source !== 'compact' ? CLOSING.context : held ? CLOSING.compact : rows.length ? CLOSING.parkedOnly : CLOSING.none);
 }
@@ -237,6 +265,15 @@ export function mainCheckout(dir) {
   const top = git(dir, '--show-toplevel');
   const common = resolve(top, git(top, '--git-common-dir'));
   return realpathSync(basename(common) === '.git' ? dirname(common) : top);
+}
+
+/** The main checkout's standing grant; no AGENTS.md, or one that cannot be read, is no grant. */
+function readGrant(root) {
+  try {
+    return standingGrant(readFileSync(join(root, 'AGENTS.md'), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -250,7 +287,7 @@ async function main() {
     // the registry lives in the main checkout, so every linked worktree reads the same lock
     const root = mainCheckout(dir);
     const rows = registryRows(readFileSync(join(root, REGISTRY), 'utf8'));
-    const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root);
+    const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root, readGrant(root));
     if (text) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }));
   } catch {
     // No registry, not a checkout, or anything else: a resume note must never break a session's start.

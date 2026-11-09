@@ -17,11 +17,11 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
-  'command-guard': 17,
+  'command-guard': 31,
   'edit-guard': 9,
-  'harness-guard': 12,
+  'harness-guard': 57,
   'context-budget': 8,
-  'session-resume': 8,
+  'session-resume': 12,
   'run-gates': 10,
 };
 
@@ -33,9 +33,12 @@ const LAYOUT = [
   ['session-resume.mjs', '.claude/hooks/session-resume.mjs'],
   ['harness-guard.sh', '.githooks/pre-commit'],
   ['harness-guard.sh', '.githooks/pre-merge-commit'],
+  ['harness-guard.sh', '.githooks/reference-transaction'],
   ['run-gates.sh', 'scripts/run-gates.sh'],
   ['scripts/run-counted.mjs', 'scripts/run-counted.mjs'],
   ['scripts/lib/run-counted-core.mjs', 'scripts/lib/run-counted-core.mjs'],
+  // what the guard's landing check runs (scripts/review-gate.mjs --landing) and every file it imports
+  ...['review-gate.mjs', 'lib/review-gate-core.mjs', 'lib/harness-host-core.mjs', 'lib/run-sources.mjs', 'lib/unit-cost-core.mjs', 'lib/unit-step-core.mjs'].map(f => [`scripts/${f}`, `scripts/${f}`]),
   ...Object.keys(SUITES).map(name => [`scripts/lib/${name}.test.mjs`, `scripts/lib/${name}.test.mjs`]),
 ];
 
@@ -79,17 +82,19 @@ function edit(dir, rel, from, to) {
   fs.writeFileSync(file, after);
 }
 
-const GUARD_COPIES = ['.githooks/pre-commit', '.githooks/pre-merge-commit'];
+const GUARD_COPIES = ['.githooks/pre-commit', '.githooks/pre-merge-commit', '.githooks/reference-transaction'];
 const TEST_COPY = 'scripts/lib/harness-guard.test.mjs';
 // A husky install (commit-guard.md): the guard kept at .githooks/harness-guard.sh and called first from
-// .husky/pre-commit and .husky/pre-merge-commit, which husky v9 runs with sh from .husky/_ (no exec bit
-// needed). core.hooksPath stays unset: the suite runs GUARD itself in its throwaway repos and reads the
-// two .husky files it is bound to, so nothing here commits through them.
+// .husky/pre-commit, .husky/pre-merge-commit and .husky/reference-transaction, which husky v9 runs with
+// sh from .husky/_ (no exec bit needed). core.hooksPath stays unset: the suite runs GUARD itself in its
+// throwaway repos and reads the three .husky files it is bound to, so nothing here commits through them.
 const HUSKY_CALL = 'sh .githooks/harness-guard.sh || exit 1\n';
+// reference-transaction gets its state as "$1" and its ref lines on stdin: the call passes both on.
+const HUSKY_REF_CALL = 'sh .githooks/harness-guard.sh "$@" || exit 1\n';
 // The hook's next command succeeds anywhere, so a refusal the hook does not pass on ends it with 0.
 const HUSKY_REST = 'echo "pre-commit checks passed"\n';
-const GUARD_LINES = "const GUARD = '.githooks/pre-commit';\nconst MERGE_GUARD = '.githooks/pre-merge-commit';";
-const HOOK_FILES_LINE = "const HOOK_FILES = ['.githooks/pre-commit', '.githooks/pre-merge-commit'];";
+const GUARD_LINES = "const GUARD = '.githooks/pre-commit';\nconst MERGE_GUARD = '.githooks/pre-merge-commit';\nconst REF_GUARD = '.githooks/reference-transaction';";
+const HOOK_FILES_LINE = "const HOOK_FILES = ['.githooks/pre-commit', '.githooks/pre-merge-commit', '.githooks/reference-transaction'];";
 
 /**
  * A fresh install in a temp git repo: every template where it lands, the [B] lines bound unless `bind`
@@ -106,11 +111,12 @@ function install({ bind = true, variant = 'default' } = {}) {
   if (bind) edit(dir, TEST_COPY, IDS_LINE, "const IDS = ['P2-20', 'EP-27', 'CR-025b'];");
   if (variant === 'husky') {
     fs.renameSync(path.join(dir, GUARD_COPIES[0]), path.join(dir, '.githooks/harness-guard.sh'));
-    fs.rmSync(path.join(dir, GUARD_COPIES[1]));
+    for (const copy of GUARD_COPIES.slice(1)) fs.rmSync(path.join(dir, copy));
     fs.mkdirSync(path.join(dir, '.husky'));
     for (const hook of ['pre-commit', 'pre-merge-commit']) fs.writeFileSync(path.join(dir, '.husky', hook), `${HUSKY_CALL}${HUSKY_REST}`, { mode: 0o644 });
-    edit(dir, TEST_COPY, GUARD_LINES, "const GUARD = '.githooks/harness-guard.sh';\nconst MERGE_GUARD = '.githooks/harness-guard.sh';");
-    edit(dir, TEST_COPY, HOOK_FILES_LINE, "const HOOK_FILES = ['.husky/pre-commit', '.husky/pre-merge-commit'];");
+    fs.writeFileSync(path.join(dir, '.husky', 'reference-transaction'), `${HUSKY_REF_CALL}${HUSKY_REST}`, { mode: 0o644 });
+    edit(dir, TEST_COPY, GUARD_LINES, "const GUARD = '.githooks/harness-guard.sh';\nconst MERGE_GUARD = '.githooks/harness-guard.sh';\nconst REF_GUARD = '.githooks/harness-guard.sh';");
+    edit(dir, TEST_COPY, HOOK_FILES_LINE, "const HOOK_FILES = ['.husky/pre-commit', '.husky/pre-merge-commit', '.husky/reference-transaction'];");
   }
   if (variant === 'checkout') for (const hook of GUARD_COPIES) edit(dir, hook, 'SCOPE="repo"', 'SCOPE="checkout"');
   const init = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, encoding: 'utf8' });
@@ -265,6 +271,20 @@ mutantFails(
   '.husky/pre-merge-commit',
   HUSKY_CALL,
   '',
+  { variant: 'husky' },
+);
+mutantFails(
+  'a husky install whose reference-transaction no longer calls the guard',
+  '.husky/reference-transaction',
+  HUSKY_REF_CALL,
+  '',
+  { variant: 'husky' },
+);
+mutantFails(
+  'a husky reference-transaction whose guard call drops "$@", so the state never reaches the guard',
+  '.husky/reference-transaction',
+  HUSKY_REF_CALL,
+  HUSKY_CALL,
   { variant: 'husky' },
 );
 mutantFails(

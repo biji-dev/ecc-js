@@ -131,7 +131,7 @@ Ops steps, a deploying push included.
 
 **The design says the owner no longer does:** approve steps or merges, manage the context, restart
 sessions, ask what is next, or answer technical questions. These are the aims of v8 to v10, and
-no install runs them yet ([§16](#install-state-2026-11-06)).
+no install runs all of them yet: five run v9, none v10 ([§16](#install-state-2026-11-10)).
 
 **v10 in one line:** the run waits on the owner only where the owner must decide, and it
 reaches product code first, by subtraction ([§3](#the-arc-of-the-versions)).
@@ -472,7 +472,7 @@ Runtime directories stay gitignored: `.review-work/`, `.codex-runs/`, `.claude-r
 | File | Fires | What it does |
 |---|---|---|
 | `.githooks/pre-commit`, `.githooks/pre-merge-commit`, `.githooks/reference-transaction` | Every commit, merge and ref move, by anyone | Commit guard: refuses a task-id branch with no row, a commit by a non-owner while a row locks, and a merge of a branch that holds a row. A commit, merge or any other move of mainline (a fast-forward, reset, pull or `update-ref`) also runs the landing check on its result, and refuses unless `HARNESS_LANDING=owner`; without `node`, or when git runs outside the working tree, it refuses. No registry at all exits 0; bad markers or a bad `SCOPE` refuse |
-| `.claude/hooks/command-guard.mjs` | Before a shell command on Claude Code, Codex and ZCode | Parses the command. Refuses `--no-verify`, hook-path overrides, mainline force-push or delete, a fast-forward merge onto mainline, a line that sets `HARNESS_LANDING`, a git command that changes a host variable, and a backgrounded Codex run. `EXTRA_RULES` adds project rules |
+| `.claude/hooks/command-guard.mjs` | Before a shell command on Claude Code, Codex and ZCode | Parses the command. Refuses `--no-verify`, hook-path overrides, mainline force-push or delete, a fast-forward merge onto mainline, a line that sets `HARNESS_LANDING`, a git command that changes a host variable, and a backgrounded Codex run. On a line that runs git, it also refuses any other command that names one of those variables, even a search; the reason says to run the two apart ([§19](#candidates-not-in-v10)). `EXTRA_RULES` adds project rules |
 | `.claude/hooks/edit-guard.mjs` | Before an agent's file edit | Refuses env files (except `.example`, `.sample`, `.template`) and installed packages, case-insensitively and through symlinks |
 | `.claude/hooks/context-budget.mjs`* | `UserPromptSubmit`, `PostToolUse` | Gives the model a one-line context figure in 25K bands. Silent after a compaction until the next reply, and on `Stop`. Never blocks |
 | `.claude/hooks/session-resume.mjs`* | `SessionStart`: startup, resume, clear, compact | For each held or parked unit, prints step, branch, worktree, the state file's `## Next`, open `Q-n` cards, the standing grant from `AGENTS.md`, a kickoff's narrowing and `Stop:` line, and the inbox. Writes nothing and is capped at 4,000 bytes |
@@ -1370,24 +1370,42 @@ own `metadata.version` is a whole number that moves when an install must upgrade
 first, then the others one at a time after the pilot's checks, at most one version a month
 ([§5](#upgrading-an-install)).
 
-### Install state, 2026-11-06
+### Install state, 2026-11-10
+
+Each install's `skillVersion` in `.agents/harness-manifest.json` (*measured*, 12 installs):
 
 | Skills version | Installs |
 |---|---|
+| v10 | 0 |
+| v9 | 5 |
 | v8 | 0 |
-| v7 | 5 |
-| v6 | 5 |
-| v5 | 2 |
+| v7 | 4 |
+| v6 | 2 |
+| v5 | 1 |
 
-Claude Code's plugin, Codex's plugin and the ZCode copies are at `2.2.3-js.13`, equal to main. One remote
-machine's plugin was last noted at js.9. The weekly job ran for weeks W44 and W45 with no failed exports,
-and next runs on 2026-11-09.
+Claude Code's plugin, Codex's plugin and the ZCode copies have been at `2.2.3-js.13`, equal to main, since
+2026-11-10. One remote machine's plugin was last noted at js.9. The weekly job ran for weeks W44 to W46 with
+no failed exports (W46 exported all 12 installs), and next runs on 2026-11-16.
 
 **The v8 pilot's checks, none run yet:** auto-compaction is followed by the right next step; zero typed
 clears; parked gates are answered in one message; nothing merges beyond the grant. v9 is piloted
 together with v8, on the documents-only install of [§18](#a-documents-only-start-on-v7), and adds two:
 the self-reference share and product rows per day, against a stop-loss the owner sets for the pilot.
-v10 is piloted on two installs, and the rest wait for the pilot.
+
+**The v10 pilot** runs on two v9 installs with no production, for five working days, each upgraded in a
+session opened after the 2026-11-10 host update, between units. No other install upgrades until it passes.
+Its checks, against each install's post-v9 baseline:
+- original plan rows landed per active day at three times the baseline or more, and above zero every day
+  worked;
+- harness units at most 10% of merges, the upgrade excluded;
+- per landed row, at most 0.5 owner-blocking stops and 30 minutes of capped owner wait;
+- bare go-aheads at most 15% of owner touches;
+- safety: at most one escaped P0 or P1 per 10 rows, at most 10% of grant decisions reversed, and every grant
+  merge of critical code with a cross-family review of the merged tree.
+
+The stop-loss: under twice the baseline rows, or a harness share over 20%, cuts further, down to the guards,
+the local CI gate and one cross-family review. Over one escaped P0 or P1 per 10 rows, or reversals over 25%,
+restores the owner's Gate 2 for critical code only.
 
 ## 17. Version history
 
@@ -1408,7 +1426,7 @@ Ten versions in 31 days. To v8, 103 commits, and the skill's tree grew from 17 f
 | v7 | 2.2.3-js.10 | 2026-11-04 | `251f6918` | The owner's eight ideas | Decision first, OUT filed or dropped, plan critique, simplicity lens, marker refusal, `--status` |
 | v8 | 2.2.3-js.11 | 2026-11-06 | `50478698` | The agent ran a median of 8 minutes between owner touches | No offers, session-resume hook, queue run, parked gates, run grant, state line, owner-touch KPIs |
 | v9 | 2.2.3-js.12 | 2026-11-07 | `aa04b76e` | A documents-only install landed 1 of 115 plan rows in 29 hours, 7 of its 8 units on the harness | Stakes line and forecast, short foundation, harness lane, product-only cadences, stakes-scaled severity, one-round behaviour claims, batched rows, `process.md` |
-| v10 | 2.2.3-js.13 | 2026-11-09 | `7b0d04f6` | Product delivery 2 to 3 times slower at v5+ (estimate), about 40% of it self-work | Standing grant and digest, `production: none \| live`, the landing check, fix rounds 3 to 5 that end themselves, relevance test and harness freeze, reports never units, new due lines, warning budgets, outcome and decision-kind retro, upgrade cadence |
+| v10 | 2.2.3-js.13 | 2026-11-09 | `7b0d04f6`, `c6d93d7b` | Product delivery 2 to 3 times slower at v5+ (estimate), about 40% of it self-work | Standing grant and digest, `production: none \| live`, the landing check, fix rounds 3 to 5 that end themselves, relevance test and harness freeze, reports never units, new due lines, warning budgets, outcome and decision-kind retro, upgrade cadence |
 
 Per-version detail is in [`reference/upgrade.md`](../skills/harness-bootstrap/reference/upgrade.md).
 
@@ -1626,7 +1644,7 @@ Since v9, Phase A's fit check offers the last two the no-harness route: hard rul
 1. **Add the outcome metric first.** Count reverts, hotfixes and production defects per unit per week. Without it,
    every other number describes activity.
 2. **Hold the next version until v8 to v10 have a measured pilot.** Run the checks in
-   [§16](#install-state-2026-11-06), and re-run the session study over the pilot window. v9 and v10 broke
+   [§16](#install-state-2026-11-10), and re-run the session study over the pilot window. v9 and v10 broke
    this rule, the first because a documents-only install showed the foundation stage stalling.
 3. **Re-measure the projected figures** on 2026-11-16 as planned: v3's saving and the 300K window.
 4. **Decide what the gates are.** v10 enforces the landing check in code. Either enforce the rest of Gate 2 and push
@@ -1708,6 +1726,11 @@ From the weekly reviews and the v8 round. None is decided.
 - Mutation probing and Phase F's first pass, deferred until after the pilot.
 - The landing check's limits ([§9](#the-landing-check)): a branch that edits the hook itself, and a remote
   mainline ref moved by hand. Hooks installed outside the working tree would close the first.
+- The command guard's reach. On a line that also runs git, any other command whose words name a guarded
+  variable is refused, so `git diff && rg -n PATH src` stops: 8 of 25 everyday lines tried (*measured*, v10's
+  third review round). Quoting a one-word pattern does not help. Since `c6d93d7b` the reason says to run that
+  command and git as separate commands; which lines are refused is unchanged. Counting only commands that can
+  set a shell variable (builtins and keywords) would narrow it.
 - Per-review worktrees, a padding check on state-file budgets, and write-once review returns.
 - A machine-wait field, so that a long build is not counted as work.
 - A nested-subagent coordinator, if the pilot shows the main thread's context staying high.

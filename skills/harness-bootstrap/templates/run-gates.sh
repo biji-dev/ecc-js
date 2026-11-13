@@ -2,10 +2,10 @@
 # harness-bootstrap run-gates (generated YYYY-MM-DD)
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
 #     format, exit status = number of failed gates, the --since scoped mode, the --snapshot
-#     commit mode, the result cache keyed by tree, the single-flight lock and the
-#     instant-failure note.
+#     commit mode, the result cache keyed by tree, the single-flight lock, the
+#     instant-failure note, the per-gate timeout, the admission step and the executor refusal.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers,
-#     the SCOPED_PATHS line and the SNAPSHOT_COPY line.
+#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT and GATE_TIMEOUT lines.
 #
 # Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
@@ -25,6 +25,10 @@
 #   --no-cache       run the gates even when a cached all-PASS result exists for this tree
 #                    (RUN_GATES_NO_CACHE=1 does the same). A passing run still refreshes the cache.
 #   --list           print "<name> <mode>" per gate and exit 0.
+#   With HARNESS_ROLE=executor (codex-run and claude-run set it for every run they start) a run
+#   with neither --since nor --list exits 99 before anything runs, saying on stderr: "run-gates:
+#   FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since
+#   <the slice's base>". --snapshot is a FULL run and is refused too; --list still works.
 # Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
 #   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
@@ -34,14 +38,40 @@
 #   unrun, so the regex is '^COUNTED <kind> [1-9][0-9]* passed'.
 # Output: one line per gate, in registration order, then a SUMMARY line:
 #   PASS <name> <secs>s <logpath> | FAIL <name> <secs>s <logpath> (exit <n>)
-#   | FAIL <name> <secs>s <logpath> (no count line matched) | SKIP <name> (full only)
+#   | FAIL <name> <secs>s <logpath> (no count line matched)
+#   | FAIL <name> <secs>s <logpath> (timeout after <n>s) | SKIP <name> (full only)
 #   SUMMARY <p> passed, <f> failed, <s> skipped (<full|scoped>)
+#   A refused admission prints "NOT ADMITTED (exit <n>)" instead and exits 97: no gate ran, no SUMMARY.
 #   A FAIL in under RUN_GATES_INSTANT_SECS seconds (default 10) ends with
 #   " (instant: if the log shows no real failure, check the command/env before re-running)":
 #   a gate that dies at once is often the command or the environment, not the code (a
 #   genuine fast failure gets the note too, so read the log first).
 #   A --snapshot run prints "input: commit <short sha>" (and the untracked count) after the
 #   "logs:" line.
+# Timeout: each gate runs in a process group of its own (set -m around its launch; the group id is
+#   its pid). Past GATE_TIMEOUT seconds ([B], default 3600; env RUN_GATES_GATE_TIMEOUT overrides,
+#   0 = no limit) the group gets TERM, then KILL 10 s later, and the gate is a FAIL ending
+#   "(timeout after <n>s)". When a gate ends, whatever it left running in its group gets TERM, and
+#   KILL after 10 s: a gate's children in its process group never outlive it. INT or TERM to run-gates stops the running
+#   gate's group the same way before the EXIT cleanup (snapshot, lock). With no group (set -m made
+#   none) the signals go to the gate's pid alone, never to run-gates' own group.
+# Admission: a FULL run only (a scoped run is never held), after the cache check and before the lock
+#   (so a run waiting on the machine holds no lock, and one waiting on the lock waits only for the
+#   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --top <repo top>` runs ([B]
+#   ADMIT, scripts/lib/admission.mjs: memory, disk and load). Its stdout is passed through once it
+#   ends (`ADMISSION ...`, after a wait `MACHINE WAIT <ISO> → <ISO> <reason>`; never part of a cache
+#   record); its stderr goes straight through. It runs in the background under `wait`, in a process
+#   group of its own (`set -m`), so INT or TERM ends the run at once: the group gets TERM (a compound
+#   ADMIT's node, not only the bash wrapping it), or the admission's pid alone when set -m made no
+#   group, the group and the pid are checked every 0.1 s and get KILL when either is still there
+#   after 100 sleeps, only then is the admission reaped, and what it printed (the CLI's closing pair
+#   included) is passed through. A non-zero exit prints "NOT ADMITTED (exit <n>)" and exits 97. After
+#   a wait the changed files, the mode, the variant and the tree are worked out again and the cache
+#   is read again, as after a lock wait. A cache hit never runs it. After a lock wait that is not a
+#   cache hit, a FULL run runs it once more, given `--wait 0 --top <repo top>`, while it holds the
+#   lock: the machine may have gone short meanwhile; a refusal exits 97 (the EXIT trap releases the
+#   lock); it never waits for the machine holding the lock. So an ADMIT override must not fix its
+#   own --wait (the CLI refuses a repeated flag: exit 2, so 97).
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
 #   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
 #   the real index is never touched. A run with every gate PASS is recorded under that tree,
@@ -74,15 +104,23 @@
 #   whose ignored inputs differ needs KEY_EXTRA to name them. Keep the cache dir out of any
 #   writer's reach (a sandboxed Codex run must not be able to write a PASS record): the
 #   default is under the git common dir, outside the working tree.
-# Lock: one run per worktree and mode at a time. A second run prints "WAITING for run <pid>"
-#   on stderr, polls every RUN_GATES_LOCK_POLL seconds (default 5) for up to
+# Lock: one run per worktree and mode at a time, taken after admission. A second run prints
+#   "WAITING for run <pid>" on stderr, polls every RUN_GATES_LOCK_POLL seconds (default 5) for up to
 #   RUN_GATES_LOCK_WAIT seconds (default 1800), then works out the changed files, the mode
 #   (scoped or promoted to full), the cache variant and the tree again and looks at the
-#   cache before it runs (the other run's result is usually a hit). A lock whose pid is dead
+#   cache before it runs (the other run's result is usually a hit). Once the wait ends it prints
+#   "MACHINE WAIT <ISO> → <ISO> lock run <pid>" on stderr. When that changed the mode (a scoped
+#   run promoted to FULL), it releases the lock it holds, runs admission (a FULL run) and takes
+#   the new mode's lock (waiting as usual), then makes these checks again. A lock whose pid is dead
 #   is taken over (only while it still names that pid); a lock is removed only by its owner;
 #   after the wait limit the run goes ahead without the lock.
-# Exit status = number of FAIL lines (capped at 98); 99 = usage error (including no gates
-#   bound, a refused --snapshot and a snapshot that could not be built).
+# Exit status = number of FAIL lines (capped at 98); 97 = not admitted (no SUMMARY line);
+#   99 = usage error (including no gates bound, a refused --snapshot, a snapshot that could
+#   not be built and a FULL run under HARNESS_ROLE=executor).
+# Known limits: a gate's child that starts its own session (setsid, a daemon) outlives the gate:
+#   the gate must stop what it starts. --snapshot does not see an edit to a file whose index entry
+#   has the skip-worktree bit (git status hides it): a sparse checkout sets that bit on every file
+#   outside its cone, so refusing it would refuse every snapshot there.
 # Env: RUN_GATES_LOG_DIR overrides the log dir. Each gate runs in the repo top (in the
 #      snapshot under --snapshot) and sees RUN_GATES_MODE=full|scoped,
 #      RUN_GATES_SINCE=<ref or empty>, RUN_GATES_CHANGED_FILE=<changed-file list, scoped only>.
@@ -90,7 +128,9 @@
 #      RUN_GATES_CACHE_DIR overrides the cache dir (default: run-gates-cache inside the git
 #      common dir, which worktrees of one repository share). RUN_GATES_NO_CACHE,
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
-#      RUN_GATES_INSTANT_SECS: above.
+#      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
+#      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
+#      HARNESS_ROLE=executor refuses a FULL run (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "run-gates: needs bash (it uses arrays); run it as: bash scripts/run-gates.sh" >&2
@@ -151,6 +191,8 @@ gate_counted() {
 # pass count under the floor (--min: today's count; it prints the raise when the count grows).
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run'
 # gate_counted harness full '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
+# a scoped run may run only the tests related to the changed files (vitest related, jest --findRelatedTests)
+# gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'if [ "$RUN_GATES_MODE" = scoped ]; then node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest related --run $(cat "$RUN_GATES_CHANGED_FILE"); else node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run; fi'
 # <<< harness:gates
 
 # [B] extended regex for the paths a scoped run may cover; a change outside it runs FULL.
@@ -164,6 +206,11 @@ KEY_EXTRA=''
 # monorepo adds each package's own: 'node_modules apps/*/node_modules packages/*/node_modules .env*'.
 # A name with no glob character that is missing is a usage error.
 SNAPSHOT_COPY='node_modules .env*'
+# [B] admission: the command run before a FULL run's gates (see Admission above), given --top <repo
+# top>; a non-zero exit refuses the run (97). Its floors are the [B] block of scripts/lib/admission-core.mjs.
+ADMIT='node scripts/lib/admission.mjs'
+# [B] seconds a gate may run before its process group is stopped (see Timeout above); 0 = no limit.
+GATE_TIMEOUT=3600
 
 SINCE=""
 LIST=0
@@ -192,6 +239,12 @@ while [ $# -gt 0 ]; do
     *) usage "unknown argument: $1" ;;
   esac
 done
+
+# An executor (codex-run and claude-run set HARNESS_ROLE=executor) runs scoped; FULL is the session's.
+if [ "${HARNESS_ROLE:-}" = executor ] && [ "$LIST" -eq 0 ] && { [ -z "$SINCE" ] || [ "$SNAPSHOT" -eq 1 ]; }; then
+  echo "run-gates: FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since <the slice's base>" >&2
+  exit 99
+fi
 
 [ "${#GATE_NAMES[@]}" -gt 0 ] || usage "no gates bound - edit the [B] block between the harness:gates markers"
 [ "$SNAPSHOT" -eq 0 ] || [ -z "$SINCE" ] || usage "--snapshot is a FULL run on the commit; it does not take --since"
@@ -232,6 +285,8 @@ LOCK_POLL=$(num_or "${RUN_GATES_LOCK_POLL:-}" 5)
 INSTANT_SECS=$(num_or "${RUN_GATES_INSTANT_SECS:-}" 10)
 DOCS_RX="${RUN_GATES_DOCS_ONLY-$DOCS_ONLY}"
 KEY_EXTRA_CMD="${RUN_GATES_KEY_EXTRA-$KEY_EXTRA}"
+ADMIT_CMD="${RUN_GATES_ADMIT-$ADMIT}"
+GATE_TIMEOUT_S=$(num_or "${RUN_GATES_GATE_TIMEOUT:-}" "$(num_or "$GATE_TIMEOUT" 3600)")
 
 # Reads paths on stdin; drops blanks, .review-work/ and the log dir by LITERAL prefix
 # (never a regex built from a path).
@@ -322,6 +377,8 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 LOCK_DIR=""
 LOCK_OWNED=0
 LOCK_WAITED=0
+LOCK_WAIT_START=""
+LOCK_HOLDER=""
 release_lock() {
   if [ "$LOCK_OWNED" -eq 1 ] && [ -n "$LOCK_DIR" ]; then
     LOCK_OWNED=0
@@ -341,9 +398,118 @@ remove_snapshot() {
   SNAP_DIR=""
   return 0
 }
+# Stops an admission still running (the run was interrupted): TERM makes the CLI print its closing MACHINE
+# WAIT pair, which is passed through, so the wait is not lost from the record. The admission runs in a
+# process group of its own whose id is ADMIT_PID, so TERM goes to the group: a compound ADMIT's node, not
+# only the wrapper bash. The pid fallback is for a run where set -m made no group (monitor mode unavailable,
+# or setpgid refused): the admission then sits in run-gates' own group, so TERM and KILL go to its pid alone,
+# never to that group, and a compound ADMIT's children are not reached. Then it checks the group and the
+# pid every 0.1 s, as long as either is there; after 100 sleeps (10 s) it sends KILL, to the group or else
+# the pid. Only then is the admission reaped with wait (never before the bound: one that ignores TERM would
+# block it, and with it the lock this run may hold), and the output is passed through.
+ADMIT_PID=""
+ADMIT_OUT=""
+stop_admit() {
+  local n=0
+  if [ -n "$ADMIT_PID" ]; then
+    kill -TERM -- -"$ADMIT_PID" 2>/dev/null || kill -TERM "$ADMIT_PID" 2>/dev/null
+    while kill -0 -- -"$ADMIT_PID" 2>/dev/null || kill -0 "$ADMIT_PID" 2>/dev/null; do
+      n=$((n + 1))
+      if [ "$n" -gt 100 ]; then
+        kill -KILL -- -"$ADMIT_PID" 2>/dev/null || kill -KILL "$ADMIT_PID" 2>/dev/null
+        break
+      fi
+      sleep 0.1
+    done
+    wait "$ADMIT_PID" 2>/dev/null
+    ADMIT_PID=""
+    [ ! -s "$ADMIT_OUT" ] || cat "$ADMIT_OUT"
+  fi
+  [ -z "$ADMIT_OUT" ] || rm -f "$ADMIT_OUT"
+  ADMIT_OUT=""
+  return 0
+}
+# Runs $ADMIT_CMD given "$@" and --top <repo top>, in the background under wait (a trap interrupts wait,
+# and the INT or TERM trap stops it), in a process group of its own (set -m: the group id is its pid).
+# Passes its stdout through once it ends and keeps it in ADMIT_TEXT; a non-zero exit prints NOT ADMITTED
+# (exit <n>) and exits 97. Its lines go through echo, never emit, so no record carries a wait.
+ADMIT_TEXT=""
+run_admission() {
+  local rc=0
+  ADMIT_OUT=$(mktemp "${TMPDIR:-/tmp}/run-gates-admit.XXXXXX") || usage "cannot create a temp file for the admission output"
+  set -m
+  bash -c "$ADMIT_CMD \"\$@\"" admit "$@" --top "$TOP" </dev/null >"$ADMIT_OUT" &
+  ADMIT_PID=$!
+  set +m
+  wait "$ADMIT_PID" || rc=$?
+  ADMIT_PID=""
+  ADMIT_TEXT=$(cat "$ADMIT_OUT")
+  rm -f "$ADMIT_OUT"
+  ADMIT_OUT=""
+  [ -z "$ADMIT_TEXT" ] || printf '%s\n' "$ADMIT_TEXT"
+  if [ "$rc" -ne 0 ]; then
+    echo "NOT ADMITTED (exit $rc)"
+    exit 97
+  fi
+}
+# The running gate (see Timeout in the header): GATE_PID is its pid and its process group's id, WATCH_PID
+# its watchdog's. kill_gate <signal> signals the gate's group, or its pid alone when there is no such group
+# (set -m made none), never run-gates' own group; 1 = neither is there.
+GATE_PID=""
+WATCH_PID=""
+kill_gate() { kill -"$1" -- -"$GATE_PID" 2>/dev/null || kill -"$1" "$GATE_PID" 2>/dev/null; }
+alive_gate() { kill -0 -- -"$GATE_PID" 2>/dev/null || kill -0 "$GATE_PID" 2>/dev/null; }
+# The watchdog, started in the background in a group of its own: after GATE_TIMEOUT_S seconds it creates
+# the timeout mark ($1), sends the gate TERM and, 10 s later, KILL. TERM ends it at once, its sleep with it.
+watch_gate() {
+  local s=""
+  trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
+  sleep "$GATE_TIMEOUT_S" &
+  s=$!
+  wait "$s" || exit 0
+  : >"$1"
+  kill_gate TERM
+  sleep 10 &
+  s=$!
+  wait "$s" || exit 0
+  kill_gate KILL
+}
+# Ends the gate run: stops the watchdog, then sends whatever is left in the gate's group TERM, checks it
+# every 0.1 s and sends KILL when it is still there after 100 sleeps (10 s); then reaps the gate. Called
+# when the gate's own process has ended (its children may not have) and from the INT and TERM traps.
+end_gate() {
+  local n=0
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM -- -"$WATCH_PID" 2>/dev/null || kill -TERM "$WATCH_PID" 2>/dev/null
+    wait "$WATCH_PID" 2>/dev/null
+    WATCH_PID=""
+  fi
+  [ -n "$GATE_PID" ] || return 0
+  if kill_gate TERM; then
+    while alive_gate; do
+      n=$((n + 1))
+      if [ "$n" -gt 100 ]; then
+        kill_gate KILL
+        break
+      fi
+      sleep 0.1
+    done
+  fi
+  wait "$GATE_PID" 2>/dev/null
+  GATE_PID=""
+  return 0
+}
+# INT or TERM: the admission and the running gate are stopped first, then the EXIT trap removes the
+# snapshot and releases the lock.
+on_signal() {
+  trap '' INT TERM
+  stop_admit
+  end_gate
+  exit "$1"
+}
 trap 'remove_snapshot; release_lock' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 
 # Sets MODE_ID, VARIANT and REC_DIR: the mode, the bound gates, the KEY_EXTRA output and
 # NODE_OPTIONS (what every node child runs; unset = empty) decide which records can answer this
@@ -473,6 +639,29 @@ try_reuse() {
   return 1
 }
 
+# Admission (see the header) for a FULL run: after the cache check (a hit needs no machine), before the
+# lock, so its wait (up to an hour) is never held against another run's lock wait (30 minutes). After a
+# machine wait the tree may have changed and may be a hit, as after a lock wait.
+admit_full() {
+  [ -n "$ADMIT_CMD" ] && [ "$MODE" = full ] || return 0
+  run_admission
+  printf '%s\n' "$ADMIT_TEXT" | grep -q '^MACHINE WAIT ' || return 0
+  if [ "$CACHE_ON" -eq 1 ]; then
+    refresh_state || CACHE_ON=0
+    if [ "$CACHE_ON" -eq 1 ] && [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
+  else
+    compute_scope
+  fi
+}
+
+# Sets LOCK_DIR to the lock of MODE_ID, the mode the run is in now (unchanged when it cannot be hashed).
+lock_for_mode() {
+  local h
+  h=$(hash_str "$MODE_ID")
+  [ -z "$h" ] || LOCK_DIR="$CACHE_DIR/locks/${TOP_H:0:16}-${h:0:16}"
+  return 0
+}
+
 # mkdir lock holding our pid. Sets LOCK_WAITED=1 when another live run held it. Returns 1 when
 # no lock could be taken (wait limit reached or the cache dir is unwritable): the run goes on.
 acquire_lock() {
@@ -511,6 +700,8 @@ acquire_lock() {
     if [ "$LOCK_WAITED" -eq 0 ]; then
       echo "WAITING for run $holder" >&2
       LOCK_WAITED=1
+      LOCK_WAIT_START=$(iso_now)
+      LOCK_HOLDER=$holder
     fi
     if [ "$waited" -ge "$LOCK_WAIT" ]; then
       echo "run-gates: waited ${waited}s for run $holder; running without the lock" >&2
@@ -524,16 +715,37 @@ acquire_lock() {
 if [ "$CACHE_ON" -eq 1 ]; then
   if compute_key; then
     if [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
-    acquire_lock || true
-    if [ "$LOCK_WAITED" -eq 1 ]; then
+    admit_full
+    while :; do
+      # The lock of the mode the run is in now: an admission wait or a lock wait may have changed it.
+      lock_for_mode
+      LOCK_MODE_ID=$MODE_ID
+      acquire_lock || true
+      [ "$LOCK_WAITED" -eq 1 ] || break
+      echo "MACHINE WAIT $LOCK_WAIT_START → $(iso_now) lock run $LOCK_HOLDER" >&2
       # The other run took its time: the changed files, the mode, the variant and the tree may
       # all differ now, and its result may be a hit.
       refresh_state || CACHE_ON=0
       if [ "$CACHE_ON" -eq 1 ] && [ "$NO_CACHE" -eq 0 ] && try_reuse; then exit 0; fi
-    fi
+      if [ "$MODE_ID" != "$LOCK_MODE_ID" ]; then
+        # The mode changed (a scoped run promoted to FULL, or back): the lock held is the other
+        # mode's. Released; then admission (a FULL run's), the new mode's lock and these checks again.
+        release_lock
+        admit_full
+        continue
+      fi
+      # Not a hit: the machine may have gone short while this run waited. A FULL run is checked once
+      # more, holding the lock, and never waits for it here (a wait would hold the lock against the
+      # next run's lock wait).
+      if [ -n "$ADMIT_CMD" ] && [ "$MODE" = full ]; then run_admission --wait 0; fi
+      break
+    done
   else
     CACHE_ON=0
+    admit_full
   fi
+else
+  admit_full
 fi
 
 # Builds the --snapshot input: a detached worktree of the commit in a fresh temp dir (no git
@@ -602,13 +814,28 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
     continue
   fi
   logfile="$LOG/$name.log"
+  mark="$logfile.timeout"
+  rm -f "$mark"
   start=$SECONDS
+  # The gate (and its watchdog) in a process group of its own, under wait, so a trap can stop it.
+  set -m
   (cd "$GATE_DIR" && RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
-    exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null
-  rc=$?
+    exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null &
+  GATE_PID=$!
+  if [ "$GATE_TIMEOUT_S" -gt 0 ]; then
+    watch_gate "$mark" </dev/null >/dev/null 2>&1 &
+    WATCH_PID=$!
+  fi
+  set +m
+  rc=0
+  wait "$GATE_PID" || rc=$?
+  end_gate
   secs=$((SECONDS - start))
   why=""
-  if [ "$rc" -ne 0 ]; then
+  if [ -e "$mark" ]; then
+    rm -f "$mark"
+    why="timeout after ${GATE_TIMEOUT_S}s"
+  elif [ "$rc" -ne 0 ]; then
     why="exit $rc"
   elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
     why="no count line matched"
@@ -618,7 +845,8 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
     passed=$((passed + 1))
   else
     instant=""
-    if [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
+    # A timeout is never instant: the gate ran its whole allowance.
+    if [ "${why#timeout}" = "$why" ] && [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
     emit "FAIL $name ${secs}s $logfile ($why)$instant"
     failed=$((failed + 1))
   fi

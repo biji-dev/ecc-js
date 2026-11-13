@@ -21,7 +21,8 @@ const SCRIPT = path.join(ROOT, 'scripts', 'run-gates.sh');
 const SOURCE = fs.readFileSync(SCRIPT, 'utf8');
 const BLOCK = /# >>> harness:gates[\s\S]*?# <<< harness:gates/;
 
-const ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && !k.startsWith('RUN_GATES_')));
+// HARNESS_ROLE is dropped too: under a wrapped run (HARNESS_ROLE=executor) every FULL run here would be refused.
+const ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && !k.startsWith('RUN_GATES_') && k !== 'HARNESS_ROLE'));
 Object.assign(ENV, { GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' });
 
 const dirs = [];
@@ -68,9 +69,10 @@ function newRepo() {
 /**
  * A copy of the runner, its gate block replaced by `lines`, run in a repo (a new one unless `repo`
  * is given) with a cache dir (a new one unless `cache` is given), so two runs can share both. The
- * docs-only pattern and KEY_EXTRA are off unless `env` sets them; `scoped` replaces SCOPED_PATHS in
- * the copy; `out` ([stdout file, stderr file]) starts the run in the background and returns its
- * child. No bound value is read. Returns the spawn result with `repo`, `cache` and `lines`.
+ * docs-only pattern, KEY_EXTRA and admission are off unless `env` sets them; `scoped` replaces
+ * SCOPED_PATHS in the copy; `admit` replaces the ADMIT line in the copy (and leaves admission on);
+ * `out` ([stdout file, stderr file]) starts the run in the background and returns its child. No
+ * bound value is read. Returns the spawn result with `repo`, `cache` and `lines`.
  */
 function runCopy(lines, args, opts = {}) {
   const o = typeof opts === 'function' ? { prepare: opts } : opts;
@@ -85,6 +87,11 @@ function runCopy(lines, args, opts = {}) {
     text = text.replace(/^SCOPED_PATHS=.*$/m, () => `SCOPED_PATHS='${o.scoped}'`);
     assert.notEqual(text, before, 'no SCOPED_PATHS line in scripts/run-gates.sh');
   }
+  if (o.admit !== undefined) {
+    const before = text;
+    text = text.replace(/^ADMIT=.*$/m, () => `ADMIT='${o.admit}'`);
+    assert.notEqual(text, before, 'no ADMIT line in scripts/run-gates.sh');
+  }
   fs.writeFileSync(copy, text);
   const env = {
     ...ENV,
@@ -93,6 +100,7 @@ function runCopy(lines, args, opts = {}) {
     RUN_GATES_SNAPSHOT_COPY: '',
     RUN_GATES_DOCS_ONLY: '',
     RUN_GATES_KEY_EXTRA: '',
+    ...(o.admit === undefined ? { RUN_GATES_ADMIT: '' } : {}),
     ...o.env,
   };
   if (o.out) {
@@ -272,5 +280,150 @@ test('lock: a second run waits for the first, looks at the cache again and reuse
     fs.writeFileSync(go, ''); // first, so no gate shell lingers for the cap after a failure
     first.child.kill();
     if (second) second.child.kill();
+  }
+});
+
+/** The pids whose command is exactly `sleep 61`: the marker only the timeout test's gate starts. */
+function sleepers() {
+  const r = spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout
+    .split('\n')
+    .map((l) => /^\s*(\d+)\s+sleep 61$/.exec(l)?.[1])
+    .filter(Boolean)
+    .map(Number);
+}
+
+test('timeout: a gate past RUN_GATES_GATE_TIMEOUT FAILs as a timeout, and its whole process group is stopped', () => {
+  try {
+    const t0 = Date.now();
+    const r = runCopy(["gate hang always 'sh -c \"sleep 61 & sleep 61\"'", "gate ok always 'true'"], ['--no-cache'], { env: { RUN_GATES_GATE_TIMEOUT: '2' } });
+    const ms = Date.now() - t0;
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^FAIL hang \d+s \S+ \(timeout after 2s\)$/m);
+    assert.match(r.stdout, /^PASS ok \d+s \S+$/m, 'the gate after the timeout did not run');
+    assert.match(r.stdout, /^SUMMARY 1 passed, 1 failed, 0 skipped \(full\)$/m);
+    assert.ok(ms < 20000, `the timed-out run took ${ms} ms`);
+    assert.deepEqual(sleepers(), [], 'a child of the timed-out gate outlived it');
+  } finally {
+    for (const pid of sleepers()) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+});
+
+test('timeout: RUN_GATES_GATE_TIMEOUT=0 sets no limit', () => {
+  const r = runCopy(["gate slow always 'sleep 1'"], ['--no-cache'], { env: { RUN_GATES_GATE_TIMEOUT: '0' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^PASS slow \d+s \S+$/m);
+});
+
+test('HARNESS_ROLE=executor: a FULL run (no arguments, --snapshot) exits 99 before anything runs; --since and --list run', () => {
+  const c = counter();
+  const env = { HARNESS_ROLE: 'executor' };
+  const refusal = "run-gates: FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since <the slice's base>\n";
+  const full = runCopy([c.gate()], [], { env });
+  const shared = { repo: full.repo, cache: full.cache, env };
+  for (const r of [full, runCopy([c.gate()], ['--snapshot'], shared), runCopy([c.gate()], ['--no-cache'], shared)]) {
+    assert.equal(r.status, 99, r.stdout + r.stderr);
+    assert.equal(r.stderr, refusal);
+    assert.equal(r.stdout, '', 'something ran before the refusal');
+  }
+  assert.equal(c.n(), 0, 'a gate ran in a refused run');
+  const list = runCopy([c.gate()], ['--list'], shared);
+  assert.equal(list.status, 0, list.stdout + list.stderr);
+  assert.deepEqual(list.lines, ['t always']);
+  const since = runCopy([c.gate()], ['--since', 'HEAD'], shared);
+  assert.equal(since.status, 0, since.stdout + since.stderr);
+  assert.match(since.lines.at(-1), /^SUMMARY 1 passed, 0 failed, 0 skipped \(scoped\)$/);
+  assert.equal(c.n(), 1, 'the scoped run did not run its gate');
+});
+
+/** An admission stand-in: appends its arguments to a calls file and exits `code`; `n()` counts the calls. */
+function admitter(code) {
+  const dir = tmp('run-gates-admit-');
+  const calls = path.join(dir, 'calls');
+  const script = path.join(dir, 'admit.sh');
+  fs.writeFileSync(script, `echo "$*" >> ${calls}\nexit ${code}\n`);
+  const n = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean).length : 0);
+  return { cmd: `sh ${script}`, calls, n };
+}
+
+test('admission: a refused FULL run prints NOT ADMITTED (exit <n>) and exits 97, with no gate run and no SUMMARY', () => {
+  const c = counter();
+  const a = admitter(1);
+  const r = runCopy([c.gate()], [], { admit: a.cmd });
+  assert.equal(r.status, 97, r.stdout + r.stderr);
+  assert.ok(r.lines.includes('NOT ADMITTED (exit 1)'), r.stdout);
+  assert.doesNotMatch(r.stdout, /^(SUMMARY|PASS|FAIL|logs:) /m);
+  assert.equal(c.n(), 0, 'a gate ran in a refused run');
+  assert.deepEqual(fs.readFileSync(a.calls, 'utf8').trim().split('\n'), [`--top ${r.repo}`], 'the bound ADMIT was not run once with --top <repo top>');
+  const env = runCopy([c.gate()], [], { repo: r.repo, cache: r.cache, env: { RUN_GATES_ADMIT: admitter(3).cmd } });
+  assert.equal(env.status, 97, env.stdout + env.stderr);
+  assert.ok(env.lines.includes('NOT ADMITTED (exit 3)'), `RUN_GATES_ADMIT does not override ADMIT: ${env.stdout}`);
+});
+
+test('admission: a scoped run, RUN_GATES_ADMIT=\'\' and a cache hit never call it; an admitted FULL run runs its gates', () => {
+  const c = counter();
+  const a = admitter(0);
+  const scoped = runCopy([c.gate()], ['--since', 'HEAD'], { admit: a.cmd });
+  assert.equal(scoped.status, 0, scoped.stdout + scoped.stderr);
+  assert.equal(a.n(), 0, 'a scoped run was admitted');
+  assert.equal(c.n(), 1, 'the scoped run did not run its gate');
+  const shared = { repo: scoped.repo, cache: scoped.cache, admit: a.cmd };
+  const first = runCopy([c.gate()], [], shared);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.equal(a.n(), 1, 'an uncached FULL run was not admitted');
+  assert.match(first.lines.at(-1), /^SUMMARY 1 passed, 0 failed, 0 skipped \(full\)$/);
+  assert.equal(c.n(), 2);
+  const hit = runCopy([c.gate()], [], shared);
+  assert.match(hit.lines[0], REUSED_RX, `the same tree was not reused: ${hit.stdout}`);
+  assert.equal(a.n(), 1, 'a cache hit was admitted');
+  assert.equal(c.n(), 2);
+  const off = runCopy([c.gate()], ['--no-cache'], { ...shared, env: { RUN_GATES_ADMIT: '' } });
+  assert.equal(off.status, 0, off.stdout + off.stderr);
+  assert.equal(a.n(), 1, "RUN_GATES_ADMIT='' did not turn admission off");
+  assert.equal(c.n(), 3, 'the run with admission off did not run its gate');
+});
+
+test('lock: a run promoted to FULL after a lock wait takes the FULL lock, so a later FULL run waits for it', async () => {
+  const dir = tmp('run-gates-promote-lock-');
+  const [started, go, glog, outA, outB, errB, outC, errC] = ['started', 'go', 'glog', 'outA', 'outB', 'errB', 'outC', 'errC'].map((f) => path.join(dir, f));
+  // `hold` keeps a scoped run on the scoped lock until the test writes `go` (cap 60 s); `gfull` logs
+  // its start and end, so two FULL runs whose full-only gates overlap show as start, start.
+  const lines = [
+    `gate hold always 'if [ "$RUN_GATES_MODE" = scoped ]; then touch ${started}; i=0; while [ ! -f ${go} ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; fi'`,
+    `gate gfull full 'echo start >> ${glog}; sleep 3; echo end >> ${glog}'`,
+  ];
+  const env = { RUN_GATES_LOCK_POLL: '1' };
+  const exited = (run) => new Promise((resolve) => run.child.on('exit', (code) => resolve(code)));
+  const a = runCopy(lines, ['--since', 'HEAD', '--no-cache'], { out: [outA, outA] });
+  const shared = { repo: a.repo, cache: a.cache, env };
+  const aDone = exited(a);
+  let b;
+  let c;
+  try {
+    waitFor(started);
+    b = runCopy(lines, ['--since', 'HEAD', '--no-cache'], { ...shared, out: [outB, errB] });
+    const bDone = exited(b);
+    waitFor(errB, 'WAITING for run');
+    fs.writeFileSync(path.join(a.repo, 'config.json'), '{}\n'); // untracked, outside SCOPED_PATHS: promotes b
+    fs.writeFileSync(go, '');
+    assert.equal(await aDone, 0, fs.readFileSync(outA, 'utf8'));
+    waitFor(glog, 'start');
+    c = runCopy(lines, ['--no-cache'], { ...shared, out: [outC, errC] });
+    const cDone = exited(c);
+    assert.equal(await bDone, 0, fs.readFileSync(outB, 'utf8') + fs.readFileSync(errB, 'utf8'));
+    assert.equal(await cDone, 0, fs.readFileSync(outC, 'utf8') + fs.readFileSync(errC, 'utf8'));
+    assert.ok(fs.readFileSync(outB, 'utf8').includes('PROMOTED to FULL: config.json'), fs.readFileSync(outB, 'utf8'));
+    assert.deepEqual(fs.readFileSync(glog, 'utf8').split('\n').filter(Boolean), ['start', 'end', 'start', 'end'], 'the two FULL runs ran their full-only gate at the same time');
+    assert.ok(fs.readFileSync(errC, 'utf8').includes(`WAITING for run ${b.child.pid}`), fs.readFileSync(errC, 'utf8'));
+  } finally {
+    fs.writeFileSync(go, ''); // first, so no gate shell lingers for the cap after a failure
+    for (const r of [a, b, c]) if (r) r.child.kill();
   }
 });

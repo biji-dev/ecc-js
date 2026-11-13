@@ -17,7 +17,7 @@ jobs:
   test:
     name: npm test + fork verify
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,7 +44,9 @@ jobs:
           printf 'ecc-pcre2-probe\n' | rg --pcre2 -- '^ecc-pcre2-probe$'
 
       - name: Run tests
+        id: tests
         shell: bash
+        timeout-minutes: 40
         run: |
           # tests/run-all.js loops synchronously over every suite and then exits, so
           # stdout queued for a pipe is discarded: a failing run shows only the first
@@ -63,6 +65,13 @@ jobs:
           fi
           tail -n 12 "$log"
           exit "$status"
+
+      - name: Show the test log after a timeout
+        if: always() && (steps.tests.outcome == 'cancelled' || steps.tests.outcome == 'failure')
+        shell: bash
+        run: |
+          # A step killed at its time limit prints nothing of its own; the tail names the suite that was running.
+          tail -n 40 "$RUNNER_TEMP/test-output.log" 2>/dev/null || echo "no test log"
 
       - name: Verify fork invariants
         shell: bash

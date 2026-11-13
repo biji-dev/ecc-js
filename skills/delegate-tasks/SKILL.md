@@ -183,8 +183,9 @@ Templates for every kind are in `reference/spec-templates.md`.
    chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
 5. **Per-slice review, by the other family.** After a serial slice passes its gate,
    one reviewer reads that slice's diff before the next slice builds on it — the
-   **second family's review** over a Claude-written slice (with the host's own background option, never a shell `&`, while
-   the next independent slice starts). A cold second-family slice waits for the
+   **second family's review** over a Claude-written slice (with the host's own
+   background option and its default time limit, never a shell `&`, while the next
+   independent slice starts). A cold second-family slice waits for the
    unit review (a harness's `review-gate.mjs` says `defer`; standalone, a Sonnet
    reviewer reads it). **Never an Opus reviewer per Claude-written slice** — in one
    measured milestone 63 of them found no P0 or P1; Opus reads a slice only when

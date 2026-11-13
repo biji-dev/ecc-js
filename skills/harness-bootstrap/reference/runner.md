@@ -426,6 +426,11 @@ every surface that states it. Visual: assert against the accessibility tree or a
 DOM snapshot; send screenshots to a model that reads images. **The local dev stack
 is the agent's** — the project's own `docker compose`, local migrations and seeds,
 package installs in the project — and the rest of the host the owner's (the rules block).
+A dev server, watcher or worker starts with the host's own background option (Claude Code:
+the Bash tool's `run_in_background`), never a shell `&`: once its shell has ended, the leftover
+hook reaps an `&` job 10 minutes old unless something in it listens (`npm run dev &` is npm,
+whose server is its child) or its command line matches the hook's `KEEP` binding, and a
+listening one at 6 hours or once its directory is gone.
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier

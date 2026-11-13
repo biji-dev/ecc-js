@@ -18,7 +18,7 @@ const CORE_REL = path.join('lib', 'claude-run-core.mjs');
 const CLI_REL = 'claude-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 16;
+const EXPECTED_TESTS = 17;
 
 let passed = 0;
 let failed = 0;

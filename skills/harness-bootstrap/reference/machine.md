@@ -36,7 +36,8 @@ ports, and never stops one.
 
 `[M]` **Then it runs on its own.** Under 10 GB free (`DISK_MIN_GB`, `[B]`), `harness-due` prints `DIGEST
 disk` — housekeeping, in the digest, never an owner line — and the runner starts `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
---apply-approved` in the background (`runner.md` › Due-checks). It frees the
+--apply-approved` with the host's own background option (Claude Code: the Bash tool's
+`run_in_background`, never a shell `&`; `runner.md` › Due-checks). It frees the
 approved categories alone and takes a lock so two runs never overlap: each run
 writes its own entry in `~/.agents/harness/machine-sweep.locks/` and removes only
 the entries of runs that are gone, so two runs that start together both stop. It
@@ -104,10 +105,16 @@ category's directory; any other process.
 (`harness-targets.md`) it reads `ps` and `lsof` once, then:
 
 - **reaps** (`SIGTERM`, `SIGKILL` a second later) a process of its own uid, parent
-  process 1, no TTY, `REAP_MINUTES` (10) old, listening on nothing, whose group leader
-  is gone and that no service manager runs, when it runs in this checkout or its
-  `WORKTREES`, or is a `sh -c` on 30% of a CPU anywhere. A failed reading reaps
-  nothing; each pid is re-read before each signal; the model hears `reaped <n>: …`;
+  process 1, no TTY, `REAP_MINUTES` (10) old, with nothing in its subtree listening
+  and no match for `KEEP` (`[B]`, empty by default), whose group leader is gone and
+  that no service manager runs, when it runs in this checkout or its `WORKTREES`, or
+  is a `sh -c` on 30% of a CPU anywhere. A package runner never listens itself:
+  `npm run dev &` stays because its server, npm's child, listens, but in this
+  checkout only until `LISTEN_HOURS` (6) old or until its directory is gone, so a
+  finished unit's server never keeps its worktree from the sweep. A failed reading
+  reaps nothing; each pid is re-read before each signal; the model hears
+  `reaped <n>: …` with how to keep a job running, and a Stop with nothing stuck
+  keeps that line for the next prompt;
 - **reports** on Stop, once, a tool shell of this session `STUCK_MINUTES` (30) old
   with no CPU and no listener, so the session stops it (`TaskStop`) or keeps it;
 - **lists** this checkout's listeners and the `MACHINE_WIDE` executables to the

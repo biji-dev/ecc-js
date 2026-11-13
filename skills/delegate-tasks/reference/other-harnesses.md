@@ -132,7 +132,8 @@ yourself, then integrate (Phase D).
 ## Codex
 
 No workflow engine is needed. Run one non-interactive builder per spec, each with
-the host's own background option (never a shell `&` or a `( … ) &` subshell), then
+the host's own background option and its default time limit (never a shell `&` or a
+`( … ) &` subshell, never a shortened `--timeout-min`), then
 gate in the main session:
 
 ```sh

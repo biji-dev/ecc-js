@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // harness-bootstrap leftover-processes hook (generated YYYY-MM-DD). Claude Code, SessionStart + Stop +
 // UserPromptSubmit. [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding:
-// WORKTREES, MACHINE_WIDE, REAP_MINUTES, STUCK_MINUTES and DISK_NOTICE_GB below, re-derived per project.
+// WORKTREES, MACHINE_WIDE, REAP_MINUTES, LISTEN_HOURS, STUCK_MINUTES, DISK_NOTICE_GB and KEEP below, re-derived per project.
 // One install: a probe's spawnSync timeout killed only its direct child, so about 96 `zsh -c`
 // grandchildren went to process 1 and spun for about 9.5 hours on 5-8 cores; background waits stayed
 // alive 19-26 hours. Each run reads `ps` once and `lsof` for cwds and TCP listeners, then:
-//   reaps      own-uid orphans (parent 1, no TTY, REAP_MINUTES old, no listener, their group's
-//              leader gone) that run in this checkout or are runaway `sh -c` shells anywhere:
+//   reaps      own-uid orphans (parent 1, no TTY, REAP_MINUTES old, no KEEP match in their subtree,
+//              their group's leader gone) that run in this checkout or are runaway `sh -c` shells
+//              anywhere; one whose subtree listens only in this checkout, once LISTEN_HOURS old or
+//              its directory is gone:
 //              SIGTERM, SIGKILL 1 s later. A tool shell leads its group and its leftover job keeps
 //              that group once the shell exits. Spared: a group leader (tmux, an editor, `ssh -f`,
 //              a terminal's `nohup` job, a daemon) and a process its service manager runs (launchd's
@@ -16,7 +18,8 @@
 //   UserPromptSubmit -> additionalContext to the model: the listeners in this checkout and every
 //                       MACHINE_WIDE executable, at most once per LIST_MINUTES
 //   SessionStart, Stop -> one desktop notification a day machine-wide under DISK_NOTICE_GB free
-// The reaped line goes to the model (SessionStart, UserPromptSubmit, a Stop block). Never fails the
+// The reaped line goes to the model (SessionStart, UserPromptSubmit, a Stop block; a Stop with nothing
+// stuck keeps it for the next prompt) and says how to keep a job running. Never fails the
 // turn. A failed ps or listener reading reaps nothing; right before each signal a fresh ps reading
 // spares a pid that is no longer the orphan it was. Test seams: LEFTOVER_PS, LEFTOVER_PS_RECHECK
 // (that fresh reading), LEFTOVER_KILL=0, LEFTOVER_REAP_MINUTES, LEFTOVER_RUNAWAY=0 (no
@@ -31,11 +34,14 @@ import { pathToFileURL } from 'node:url';
 const WORKTREES = '.worktrees'; // [B] where this project's worktrees live, relative to the main checkout
 const MACHINE_WIDE = /^(qemu-system|emulator64-)/; // [B] executables named whoever started them (an Android emulator is ~2 GB)
 const REAP_MINUTES = 10; // [B] an orphan this old is reaped
+const LISTEN_HOURS = 6; // [B] an orphan in the checkout whose subtree listens is reaped at this age, and at once when its directory is gone (6: the sweep's idle-worktree hours)
 const STUCK_MINUTES = 30; // [B] a tool shell this old with no CPU is stuck
 const DISK_NOTICE_GB = 5; // [B] the desktop notification's free-space floor
+const KEEP = null; // [B] a regex: an orphan whose command line, or a child's, matches is never reaped (an owner-named worker, e.g. /\bqueue:work\b/)
 const RUNAWAY_CPU = 0.3; // a shell spinning at this share of one core since it started
 const STUCK_CPU = 0.01; // a tool shell's subtree under this share is waiting, not working
 const LIST_MINUTES = 60; // the leftover listing repeats this often at most
+const PENDING_MAX = 5; // reaped lines a Stop keeps for the next prompt
 const SHELLS = new Set(['zsh', 'bash', 'sh', 'dash']);
 const TOOL_SHELLS = new Set(['zsh', 'bash', 'sh']);
 const NO_TTY = new Set(['??', '?']);
@@ -126,15 +132,34 @@ const cwdOf = (cwds, pid) => {
 const inside = (p, dir) => Boolean(p && dir) && (p === dir || p.startsWith(dir + sep));
 
 /**
- * The rows the reaper may consider at all: own uid, parent 1, no TTY, old enough, no listener, not
- * this hook's chain, and its process group's leader gone (pgid !== pid, no row with pid === pgid).
- * A tool shell leads its own group with no TTY; its background job keeps that group once the shell
- * exits. What the owner starts (tmux, an editor, `ssh -f`, a terminal's `nohup` job, a daemon) leads
- * its own live group and is never a candidate.
+ * Whether a cwd lsof printed is proven gone: stat says ENOENT or ENOTDIR for it. A printed name with a
+ * backslash or a caret is no proof (lsof doubles a backslash, prints a tab as `\t` and other control
+ * characters as `^X`), nor is any other stat error (a parent without search permission).
  */
-function orphans(rows, { uid, listeners, selfChain = new Set(), minutes = REAP_MINUTES }) {
+export function dirGone(cwd, stat = fs.statSync) {
+  if (!cwd || /[\\^]/.test(cwd)) return false;
+  try {
+    stat(cwd);
+    return false;
+  } catch (e) {
+    return e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+  }
+}
+
+/**
+ * The rows the reaper may consider at all: own uid, parent 1, no TTY, old enough, not this hook's
+ * chain, its process group's leader gone (pgid !== pid, no row with pid === pgid), and no `keep`
+ * match anywhere in its subtree. A tool shell leads its own group with no TTY; its background job
+ * keeps that group once the shell exits. What the owner starts (tmux, an editor, `ssh -f`, a
+ * terminal's `nohup` job, a daemon) leads its own live group and is never a candidate.
+ */
+function orphans(rows, { uid, selfChain = new Set(), minutes = REAP_MINUTES, keep = KEEP }) {
   const live = new Set(rows.map((r) => r.pid));
-  return rows.filter((r) => r.pid > 1 && r.uid === uid && r.ppid === 1 && NO_TTY.has(r.tty) && r.elapsed >= minutes * 60_000 && !has(listeners, r.pid) && !selfChain.has(r.pid) && r.pgid !== r.pid && !live.has(r.pgid));
+  const kids = childMap(rows);
+  // without its g or y flag: a stateful test would carry lastIndex from row to row and from the candidates' pass to reapable()'s
+  const keepRe = keep && new RegExp(keep.source, keep.flags.replace(/[gy]/g, ''));
+  const kept = (r) => subtree(r, kids).some((t) => Boolean(keepRe?.test(t.args)));
+  return rows.filter((r) => r.pid > 1 && r.uid === uid && r.ppid === 1 && NO_TTY.has(r.tty) && r.elapsed >= minutes * 60_000 && !selfChain.has(r.pid) && r.pgid !== r.pid && !live.has(r.pgid) && !kept(r));
 }
 
 
@@ -216,15 +241,25 @@ export function managedPids(pids, { platform = process.platform, readCgroup = (p
  * (`managed`, the pids managedPids() keeps; null: it could not tell, so none) and that run in the
  * checkout (`root`, null when there is none: its cwd is in it or in `worktrees`, or its argv holds
  * `root/`) or, unless `runaway` is false, are runaway shells anywhere (a shell with a `-c` word that
- * has used RUNAWAY_CPU of a core since it started).
+ * has used RUNAWAY_CPU of a core since it started). One whose subtree listens on TCP is a server left
+ * running (`npm run dev &`: a package runner never listens itself, its server is a child): spared
+ * outside the checkout, and in it until `listenHours` old or its directory is proven gone (`gone`,
+ * dirGone(): a cwd not read, or not provable, counts as there), so a finished unit's server never
+ * holds its worktree from the sweep. Such a row comes back with `why`.
  */
-export function reapable(rows, { uid, root = null, worktrees = null, listeners = new Map(), cwds = new Map(), selfChain = new Set(), minutes = REAP_MINUTES, runaway = true, managed = new Set() } = {}) {
+export function reapable(rows, { uid, root = null, worktrees = null, listeners = new Map(), cwds = new Map(), selfChain = new Set(), minutes = REAP_MINUTES, runaway = true, managed = new Set(), keep = KEEP, listenHours = LISTEN_HOURS, gone = dirGone } = {}) {
   if (!managed) return [];
-  return orphans(rows, { uid, listeners, selfChain, minutes }).filter((r) => {
-    if (managed.has(r.pid)) return false;
+  const kids = childMap(rows);
+  return orphans(rows, { uid, selfChain, minutes, keep }).flatMap((r) => {
+    if (managed.has(r.pid)) return [];
     const cwd = cwdOf(cwds, r.pid);
-    if (root && (inside(cwd, root) || inside(cwd, worktrees) || r.args.includes(`${root}/`))) return true;
-    return runaway && SHELLS.has(r.name) && r.args.split(/\s+/).includes('-c') && r.cpu / r.elapsed >= RUNAWAY_CPU;
+    const ours = Boolean(root) && (inside(cwd, root) || inside(cwd, worktrees) || r.args.includes(`${root}/`));
+    if (subtree(r, kids).some((t) => has(listeners, t.pid))) {
+      const removed = Boolean(cwd) && gone(cwd);
+      return ours && (removed || r.elapsed >= listenHours * 3_600_000) ? [{ ...r, why: removed ? 'listening, its directory gone' : 'listening' }] : [];
+    }
+    if (ours) return [r];
+    return runaway && SHELLS.has(r.name) && r.args.split(/\s+/).includes('-c') && r.cpu / r.elapsed >= RUNAWAY_CPU ? [r] : [];
   });
 }
 
@@ -272,12 +307,12 @@ export function age(ms) {
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-/** `reaped <n>: <name> (pid <p>, <age>)[, …]`, five named at most; null when nothing was reaped. */
+/** `reaped <n>: <name> (pid <p>, <age>[, <why>])[, …] — <how to keep one>`, five named at most; null when nothing was reaped. */
 export function formatReaped(list) {
   if (!list.length) return null;
-  const named = list.slice(0, 5).map((r) => `${r.name} (pid ${r.pid}, ${age(r.elapsed)})`);
+  const named = list.slice(0, 5).map((r) => `${r.name} (pid ${r.pid}, ${age(r.elapsed)}${r.why ? `, ${r.why}` : ''})`);
   if (list.length > 5) named.push(`+${list.length - 5} more`);
-  return `reaped ${list.length}: ${named.join(', ')}`;
+  return `reaped ${list.length}: ${named.join(', ')} — each outlived the shell that started it (one that listens is kept ${LISTEN_HOURS} h, while its directory exists); start what must keep running with the host's own background option (Claude Code: the Bash tool's run_in_background), not a shell \`&\`.`;
 }
 
 /** The Stop block's reason for stuck shells (their command lines go to the model only). */
@@ -378,7 +413,7 @@ async function kill(list) {
   return termed;
 }
 
-/** A session state file's content as { reported: pid[], listed: ms }; any other shape starts fresh. */
+/** A session state file's content as { reported: pid[], listed: ms, pending: reaped line[] }; any other shape starts fresh. */
 export function parseState(text) {
   let j = null;
   try {
@@ -389,7 +424,8 @@ export function parseState(text) {
   const plain = j !== null && typeof j === 'object' && !Array.isArray(j);
   const reported = plain && Array.isArray(j.reported) ? j.reported.filter((p) => Number.isInteger(p) && p > 0) : [];
   const listed = plain && Number.isFinite(j.listed) ? j.listed : 0;
-  return { reported, listed };
+  const pending = plain && Array.isArray(j.pending) ? j.pending.filter((l) => typeof l === 'string' && l.startsWith('reaped ')).slice(-PENDING_MAX) : [];
+  return { reported, listed, pending };
 }
 
 /** Under DISK_NOTICE_GB free on `root`'s file system: one desktop notification a day, machine-wide. Never model text. */
@@ -428,7 +464,7 @@ function diskNotice(root) {
   child.unref();
 }
 
-/** The session's state file (stuck pids reported, when the listing last went out). */
+/** The session's state file (stuck pids reported, when the listing last went out, reaped lines kept for the next prompt). */
 function sessionState(input) {
   const file = join(tmpdir(), `harness-stuck-${String(input.session_id ?? 'x').replace(/[^\w-]/g, '')}.json`);
   let text = '';
@@ -450,29 +486,39 @@ function sessionState(input) {
   return { state, save };
 }
 
-/** Stop: block once on the tool shells newly stuck, the reaped line after them; else nothing. */
+/** Stop: block once on the tool shells newly stuck, the reaped line after them; else keep the reaped line for the next prompt. */
 function onStop(input, { rows, listeners, selfChain, reaped }) {
-  if (input.stop_hook_active === true) return;
+  const { state, save } = sessionState(input);
+  const keepForPrompt = () => {
+    if (!reaped) return;
+    state.pending = [...state.pending, reaped].slice(-PENDING_MAX);
+    save();
+  };
+  if (input.stop_hook_active === true) return keepForPrompt();
   const byPid = new Map(rows.map((r) => [r.pid, r]));
   const claudePid = chainOf(rows, process.ppid).find((pid) => byPid.get(pid)?.name === 'claude') ?? process.ppid;
-  const { state, save } = sessionState(input);
   const reported = new Set(state.reported);
   const stuck = stuckShells(rows, { claudePid, listeners, selfChain }).filter((r) => !reported.has(r.pid));
-  if (!stuck.length) return;
+  if (!stuck.length) return keepForPrompt();
   state.reported = [...reported, ...stuck.map((r) => r.pid)];
   if (!save()) return;
   process.stdout.write(JSON.stringify({ decision: 'block', reason: formatStuck(stuck) + (reaped ? `\n${reaped}` : '') }));
 }
 
-/** UserPromptSubmit: the leftover listing at most once per LIST_MINUTES, and the reaped line. */
+/** UserPromptSubmit: the leftover listing at most once per LIST_MINUTES, the reaped lines a Stop kept, and this run's. */
 function onPrompt(input, root, { rows, listeners, cwds, reaped }) {
   const parts = [];
   const found = leftovers(root, { rows, listeners, cwds });
   const { state, save } = sessionState(input);
   const now = Date.now();
-  if (found.length && !(now - state.listed < LIST_MINUTES * 60_000)) {
-    state.listed = now;
-    if (save()) parts.push(`[leftover-processes] Still running from this checkout: ${found.join('; ')}. Stop the ones you started unless the task still needs them: by recorded PID, never pkill (the runner's teardown).`);
+  const listing = found.length > 0 && !(now - state.listed < LIST_MINUTES * 60_000);
+  const kept = state.pending;
+  if (listing) state.listed = now;
+  state.pending = [];
+  // each goes out only once its state is recorded, else it would repeat every turn
+  if ((listing || kept.length) && save()) {
+    if (listing) parts.push(`[leftover-processes] Still running from this checkout: ${found.join('; ')}. Stop the ones you started unless the task still needs them: by recorded PID, never pkill (the runner's teardown).`);
+    parts.push(...kept);
   }
   if (reaped) parts.push(reaped);
   if (parts.length) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: parts.join('\n') } }));
@@ -498,7 +544,7 @@ async function reapAndRead(event, root) {
   const minutes = process.env.LEFTOVER_REAP_MINUTES && Number(process.env.LEFTOVER_REAP_MINUTES) >= 0 ? Number(process.env.LEFTOVER_REAP_MINUTES) : REAP_MINUTES;
 
   // one cwd reading: the reaper's candidates, and the listeners when they are listed
-  const candidates = whole ? orphans(rows, { uid, listeners, selfChain, minutes }).map((r) => r.pid) : [];
+  const candidates = whole ? orphans(rows, { uid, selfChain, minutes }).map((r) => r.pid) : [];
   const pids = new Set(candidates.map(String));
   if (event === 'UserPromptSubmit') for (const pid of listeners.keys()) pids.add(pid);
   const cwds = pids.size ? parseLsof(run('lsof', ['-w', '-a', '-d', 'cwd', '-Fpn', '-p', [...pids].join(',')])) : new Map();

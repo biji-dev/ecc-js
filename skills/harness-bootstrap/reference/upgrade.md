@@ -632,8 +632,12 @@ entries, the leftover hook on three events and session-resume on two
 (`harness-targets.md`); `.gitattributes`; the rules block's dev-stack line.
 **Removed bindings:** `VALVE_ITEMS`, `VALVE_DAYS` (`harness-due`), `NOTICE_MINUTES`
 (the leftover hook). **New bindings:** `GATE_TIMEOUT` and `ADMIT` (`run-gates.sh`),
-the admission floors, `REAP_MINUTES`, `STUCK_MINUTES`, `DISK_NOTICE_GB` and
-`WORKTREES` (the leftover hook), `MAIN` (session-resume).
+the admission floors, `REAP_MINUTES`, `LISTEN_HOURS`, `STUCK_MINUTES`, `DISK_NOTICE_GB`,
+`WORKTREES` and `KEEP` (the leftover hook; `KEEP` is empty unless the owner names a
+job the agent leaves running that listens on nothing or must outlive `LISTEN_HOURS`),
+`MAIN` (session-resume).
+`codex-run` and `claude-run` raise a `--timeout-min` under 20 to 20: a session that
+carries a rule to run them in the foreground with a short limit drops that rule.
 
 `[M]` **Local additions v11 subsumes.** An install's own admission or machine-load
 module is replaced by the template's when it does the same job; its floors carry

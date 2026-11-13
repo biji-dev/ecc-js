@@ -27,7 +27,7 @@
  *   --network              workspace-write kinds: allow network (local services for tests)
  *   --image <files...>     attach screenshots (ui-review; any exec kind)
  *   --threshold <pct>      budget guard (default CODEX_RUN_THRESHOLD, else 85)
- *   --timeout-min <n>      kill the run after n minutes (default 45)
+ *   --timeout-min <n>      kill the run after n minutes (default 45; under 20 is raised to 20)
  *   --dry-run              print the resolved route and the codex argv, run nothing
  *
  *   node scripts/codex-run.mjs --status [--out <file>] [--cwd <dir>] [--sample-ms <n>]
@@ -397,6 +397,8 @@ async function main() {
     usage(e.message);
   }
   if (a.status) return showStatus(a);
+  if (a.timeoutRaisedFrom !== undefined)
+    process.stderr.write(`codex-run: --timeout-min ${a.timeoutRaisedFrom} raised to ${a.timeoutMin}: a run keeps its time; launch it with the host's own background option (Claude Code: the Bash tool's run_in_background) instead of shortening it\n`);
   if (!a.kind || !ROUTES[a.kind] || a.kind === 'route')
     usage(
       `kind must be one of: ${Object.keys(ROUTES)

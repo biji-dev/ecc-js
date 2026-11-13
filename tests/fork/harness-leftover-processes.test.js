@@ -153,13 +153,16 @@ const PROJECT = '/work/project';
 const inRoot = { pid: 91001, pgid: 91900, etime: '11:00', comm: '/usr/local/bin/node', args: 'node server.js' };
 const argvRoot = { pid: 91002, pgid: 91900, etime: '11:00', comm: '/usr/local/bin/node', args: `node ${PROJECT}/scripts/probe.mjs` };
 const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm: '/bin/zsh', args: '/bin/zsh -c until false; do :; done' };
+// what each reaped line ends with
+const HINT = " — each outlived the shell that started it (one that listens is kept 6 h, while its directory exists); start what must keep running with the host's own background option (Claude Code: the Bash tool's run_in_background), not a shell `&`.";
 
 (async () => {
   console.log('\nharness-bootstrap leftover-processes hook');
   const noLsof = !LSOF && 'lsof is not installed';
   const hook = await import(pathToFileURL(HOOK).href);
   const cwds = new Map([['91001', [`${PROJECT}/app`]], ['91002', ['/elsewhere']], ['91003', ['/elsewhere']]]);
-  const opts = (extra = {}) => ({ uid: UID, root: PROJECT, worktrees: null, listeners: new Map(), cwds, selfChain: new Set(), ...extra });
+  // the fixture directories exist unless a case says otherwise
+  const opts = (extra = {}) => ({ uid: UID, root: PROJECT, worktrees: null, listeners: new Map(), cwds, selfChain: new Set(), gone: () => false, ...extra });
   const pick = (specs, extra) => hook.reapable(hook.parsePsRows(specs.map(psLine).join('\n')), opts(extra)).map((r) => r.pid);
 
   await test('parsePsRows reads both platforms\' columns, and completes a comm ps cut short from argv[0]', () => {
@@ -189,6 +192,50 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     assert.deepStrictEqual(pick([inRoot], { listeners: new Map([['91001', ['*:3000']]]) }), []);
     assert.deepStrictEqual(pick([inRoot], { selfChain: new Set([91001]) }), []);
     assert.deepStrictEqual(pick([{ ...runaway, tty: 'ttys003' }]), [], 'a runaway shell on a terminal is the owner\'s');
+  });
+
+  await test('kept: `npm run dev &` and the like, whose server listens as a child or grandchild of the orphaned runner', () => {
+    const npm = { pid: 91010, pgid: 91900, etime: '14:00', comm: '/usr/local/bin/npm', args: 'npm run dev' };
+    const sh = { pid: 91011, ppid: 91010, pgid: 91900, etime: '14:00', comm: '/bin/sh', args: 'sh -c next dev' };
+    const server = { pid: 91012, ppid: 91011, pgid: 91900, etime: '14:00', comm: '/usr/local/bin/node', args: 'node node_modules/.bin/next dev' };
+    const at = new Map([['91010', [`${PROJECT}/web`]]]);
+    assert.deepStrictEqual(pick([npm, sh, server], { cwds: at }), [91010], 'control: nothing listens');
+    assert.deepStrictEqual(pick([npm, sh, server], { cwds: at, listeners: new Map([['91012', ['*:3000']]]) }), [], 'the grandchild listens');
+    assert.deepStrictEqual(pick([npm, { ...server, ppid: 91010 }], { cwds: at, listeners: new Map([['91012', ['*:3000']]]) }), [], 'the child listens');
+    assert.deepStrictEqual(pick([npm, sh, server, inRoot], { cwds: new Map([...cwds, ...at]), listeners: new Map([['91012', ['*:3000']]]) }), [91001], 'an unrelated orphan is still reaped');
+  });
+
+  await test('a server left running in the checkout is kept LISTEN_HOURS, and only while its directory exists; elsewhere, or named by KEEP, it stays', () => {
+    const listens = { listeners: new Map([['91001', ['*:3000']]]) };
+    const at = (etime) => [{ ...inRoot, etime }];
+    const why = (specs, extra) => hook.reapable(hook.parsePsRows(specs.map(psLine).join('\n')), opts({ ...listens, ...extra })).map((r) => [r.pid, r.why]);
+    assert.deepStrictEqual(why(at('05:59:59')), [], 'under 6 h');
+    assert.deepStrictEqual(why(at('06:00:00')), [[91001, 'listening']], 'at 6 h');
+    assert.deepStrictEqual(why(at('30:00'), { gone: (p) => p === `${PROJECT}/app` }), [[91001, 'listening, its directory gone']], 'its directory removed');
+    const wt = { worktrees: '/work/wt', cwds: new Map([['91001', ['/work/wt/p1-01 (deleted)']]]), gone: hook.dirGone };
+    assert.deepStrictEqual(why(at('30:00'), wt), [[91001, 'listening, its directory gone']], 'a worktree removed, as Linux names its cwd');
+    assert.deepStrictEqual(why([{ ...argvRoot, etime: '30:00' }], { listeners: new Map([['91002', ['*:3000']]]), cwds: new Map(), gone: () => true }), [], 'a cwd not read counts as there');
+    assert.deepStrictEqual(why(at('07:00:00'), { root: null, gone: () => true }), [], 'outside the checkout');
+    assert.deepStrictEqual(why([{ ...runaway, etime: '07:00:00', time: '3:00:00' }], { listeners: new Map([['91003', ['*:3000']]]) }), [], 'a runaway shell that listens, anywhere');
+    assert.deepStrictEqual(why(at('07:00:00'), { keep: /server\.js/, gone: () => true }), [], 'KEEP names it');
+    assert.deepStrictEqual(why(at('07:00:00'), { managed: new Set([91001]) }), [], 'its service manager runs it');
+    assert.match(hook.formatReaped([{ name: 'pnpm', pid: 7, elapsed: 7 * 3_600_000, why: 'listening' }, { name: 'zsh', pid: 8, elapsed: 660_000 }]), /^reaped 2: pnpm \(pid 7, 7h, listening\), zsh \(pid 8, 11m\) — /);
+    assert.match(fs.readFileSync(HOOK, 'utf8'), /^const LISTEN_HOURS = 6; \/\/ \[B\] /m);
+  });
+
+  await test('kept: an orphan whose command line, or a child\'s, matches the KEEP binding; none is kept by default', () => {
+    const worker = { ...inRoot, args: 'node artisan queue:work' };
+    const child = { pid: 91020, ppid: 91001, pgid: 91900, etime: '11:00', comm: '/usr/local/bin/php', args: 'php artisan queue:work' };
+    assert.deepStrictEqual(pick([worker]), [91001], 'control: KEEP is empty');
+    assert.deepStrictEqual(pick([worker], { keep: /\bqueue:work\b/ }), []);
+    assert.deepStrictEqual(pick([inRoot, child], { keep: /\bqueue:work\b/ }), [], 'a child matches');
+    assert.deepStrictEqual(pick([inRoot], { keep: /\bqueue:work\b/ }), [91001]);
+    const twin = { ...argvRoot, args: `${argvRoot.args} queue:work` };
+    assert.deepStrictEqual(pick([twin, worker], { keep: /\bqueue:work\b/g }), [], 'a g flag carries nothing from row to row');
+    const g = /\bqueue:work\b/g;
+    assert.deepStrictEqual([pick([worker], { keep: g }), pick([worker], { keep: g })], [[], []], 'nor from call to call');
+    assert.deepStrictEqual(pick([worker], { keep: /queue:work/y }), [], 'a y flag matches anywhere too');
+    assert.match(fs.readFileSync(HOOK, 'utf8'), /^const KEEP = null; \/\/ \[B\] /m);
   });
 
   await test('kept elsewhere: a `zsh -c` at 10% CPU, a `node` at 90%, a shell with no `-c`, and nothing in a checkout when there is none', () => {
@@ -281,13 +328,13 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
   await test('formatReaped names five and counts the rest', () => {
     const list = Array.from({ length: 7 }, (_, i) => ({ name: 'zsh', pid: 100 + i, elapsed: 12 * 60_000 }));
     const line = hook.formatReaped(list);
-    assert.strictEqual(line, 'reaped 7: zsh (pid 100, 12m), zsh (pid 101, 12m), zsh (pid 102, 12m), zsh (pid 103, 12m), zsh (pid 104, 12m), +2 more');
+    assert.strictEqual(line, `reaped 7: zsh (pid 100, 12m), zsh (pid 101, 12m), zsh (pid 102, 12m), zsh (pid 103, 12m), zsh (pid 104, 12m), +2 more${HINT}`);
     assert.strictEqual(hook.formatReaped([]), null);
   });
 
   await test('SessionStart prints the reaped line to the model', () => {
     const out = runHook('SessionStart', checkout().root, { env: { LEFTOVER_PS: fixture([psLine(runaway)]), LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_RUNAWAY: undefined } });
-    assert.deepStrictEqual(out, { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'reaped 1: zsh (pid 91003, 12m)' } });
+    assert.deepStrictEqual(out, { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `reaped 1: zsh (pid 91003, 12m)${HINT}` } });
   });
 
   await test('Stop blocks once on a stuck tool shell; a second Stop with the same pid says nothing', () => {
@@ -309,7 +356,22 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     assert.strictEqual(runHook('Stop', dir, { env: { LEFTOVER_PS: ps, LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_RUNAWAY: undefined }, input: { stop_hook_active: true } }), null);
     assert.strictEqual(runHook('Stop', dir, { env: { LEFTOVER_PS: fixture([psLine(runaway)]), LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_RUNAWAY: undefined } }), null);
     const both = runHook('Stop', dir, { env: { LEFTOVER_PS: ps, LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_RUNAWAY: undefined } });
-    assert.match(both.reason, /^STUCK 1: .* then finish\.\nreaped 1: zsh \(pid 91003, 12m\)$/);
+    assert.strictEqual(both.reason.split('\n')[1], `reaped 1: zsh (pid 91003, 12m)${HINT}`);
+    assert.match(both.reason, /^STUCK 1: .* then finish\.\n/);
+  });
+
+  await test('a reaped line no Stop block carried reaches the model at the next prompt, once; another session never sees it', () => {
+    const dir = checkout().root;
+    const state = tmp('leftover-t-');
+    const reap = { LEFTOVER_PS: fixture([psLine(runaway)]), LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_RUNAWAY: undefined };
+    const idle = { LEFTOVER_PS: fixture([]) };
+    const line = `reaped 1: zsh (pid 91003, 12m)${HINT}`;
+    assert.strictEqual(runHook('Stop', dir, { tmpdir: state, env: reap }), null);
+    assert.strictEqual(runHook('Stop', dir, { tmpdir: state, env: reap, input: { stop_hook_active: true } }), null);
+    assert.strictEqual(runHook('UserPromptSubmit', dir, { tmpdir: state, session: 'other', env: idle }), null, 'another session');
+    assert.strictEqual(runHook('UserPromptSubmit', dir, { tmpdir: state, env: idle })?.hookSpecificOutput?.additionalContext, `${line}\n${line}`);
+    assert.strictEqual(runHook('UserPromptSubmit', dir, { tmpdir: state, env: idle }), null, 'only once');
+    assert.deepStrictEqual(hook.parseState(JSON.stringify({ reported: [1], listed: 2, pending: [line, 7, 'rm -rf /', ...Array(6).fill(line)] })).pending, Array(5).fill(line), 'only reaped lines, five at most');
   });
 
   await test('under 5 GB free, one disk notice a day machine-wide: the creator of the day\'s lock notifies, never in model text', async () => {
@@ -368,9 +430,18 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     const dir = checkout().root;
     const ps = fixture([psLine(argvRoot).replace(PROJECT, dir)]);
     const env = { LEFTOVER_PS: ps, LEFTOVER_REAP_MINUTES: undefined };
-    assert.match(runHook('SessionStart', dir, { env })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\)$/, 'control');
+    assert.match(runHook('SessionStart', dir, { env })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\) — /, 'control');
     assert.strictEqual(runHook('SessionStart', dir, { env: { ...env, PATH: `${fakeBin({ lsof: 'exit 2' })}:${process.env.PATH}` } }), null, 'lsof failed');
     assert.strictEqual(runHook('SessionStart', dir, { env: { ...env, PATH: fakeBin({}) } }), null, 'no lsof');
+  });
+
+  await test('a KEEP with a g or y flag matches in both of the hook\'s readings of the rows (candidates, then reapable)', () => {
+    if (process.platform === 'win32') return;
+    const dir = checkout().root;
+    const env = { LEFTOVER_PS: fixture([psLine({ ...argvRoot, args: `${argvRoot.args} queue:work` }).replace(PROJECT, dir)]), LEFTOVER_REAP_MINUTES: undefined };
+    assert.match(runHook('SessionStart', dir, { env })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\) — /, 'control: KEEP is empty');
+    for (const re of ['/\\bqueue:work\\b/g', '/queue:work/y'])
+      assert.strictEqual(runHook('SessionStart', dir, { script: quiet('const KEEP = null;', `const KEEP = ${re};`), env }), null, re);
   });
 
   await test('lsof exit 1 counts as no match only with nothing on stderr; both scans run with -w', () => {
@@ -379,7 +450,7 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     const ps = fixture([psLine(argvRoot).replace(PROJECT, dir)]);
     const log = path.join(tmp('leftover-n-'), 'lsof.log');
     const env = (body) => ({ LEFTOVER_PS: ps, LEFTOVER_REAP_MINUTES: undefined, PATH: `${fakeBin({ lsof: `printf '%s\\n' "$*" >> '${log}'\n${body}` })}:${process.env.PATH}` });
-    assert.match(runHook('SessionStart', dir, { env: env('exit 1') })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\)$/, 'control: no match');
+    assert.match(runHook('SessionStart', dir, { env: env('exit 1') })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\) — /, 'control: no match');
     const calls = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
     assert.ok(calls.length >= 2 && calls.every((c) => c.split(' ').includes('-w')), calls.join(' | '));
     assert.strictEqual(runHook('SessionStart', dir, { env: env("printf 'p92000\\nn*:1\\n'\necho 'lsof: status error on /some/path' >&2\nexit 1") }), null, 'a partial scan with an error');
@@ -392,7 +463,7 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     const ps = fixture([psLine({ ...argvRoot, pid }).replace(PROJECT, dir)]);
     const again = `${pid}     1 91900 ??          11:01`;
     const env = (status) => ({ LEFTOVER_PS: undefined, LEFTOVER_MANAGED: managedFile([]), LEFTOVER_REAP_MINUTES: undefined, LEFTOVER_KILL: undefined, PATH: `${fakeBin({ ps: `if [ "$1" = "-axo" ]; then cat '${ps}'; exit 0; fi\necho '${again}'\nexit ${status}` })}:${process.env.PATH}` });
-    assert.match(runHook('SessionStart', dir, { env: env(0) })?.hookSpecificOutput?.additionalContext ?? '', new RegExp(`^reaped 1: node \\(pid ${pid}, 11m\\)$`), 'control: a whole re-read');
+    assert.match(runHook('SessionStart', dir, { env: env(0) })?.hookSpecificOutput?.additionalContext ?? '', new RegExp(`^reaped 1: node \\(pid ${pid}, 11m\\) — `), 'control: a whole re-read');
     assert.strictEqual(runHook('SessionStart', dir, { env: env(2) }), null, 'a failed re-read with output');
   });
 
@@ -409,7 +480,7 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     const dir = checkout().root;
     const ps = fixture([psLine(argvRoot).replace(PROJECT, dir)]);
     const env = (status) => ({ LEFTOVER_PS: undefined, LEFTOVER_MANAGED: managedFile([]), LEFTOVER_REAP_MINUTES: undefined, PATH: `${fakeBin({ ps: `cat '${ps}'\nexit ${status}` })}:${process.env.PATH}` });
-    assert.match(runHook('SessionStart', dir, { env: env(0) })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\)$/, 'control');
+    assert.match(runHook('SessionStart', dir, { env: env(0) })?.hookSpecificOutput?.additionalContext ?? '', /^reaped 1: node \(pid 91002, 11m\) — /, 'control');
     assert.strictEqual(runHook('SessionStart', dir, { env: env(1) }), null);
   });
 
@@ -500,6 +571,84 @@ const runaway = { pid: 91003, pgid: 91900, etime: '12:00', time: '4:48.00', comm
     } finally {
       for (const g of groups) killGroup(g);
     }
+  });
+
+  await test('a real server left with `&` in a worktree is kept while it listens, and reaped once the worktree directory is gone; a name lsof escapes, or a directory stat cannot reach, is no proof', async () => {
+    if (process.platform === 'win32') return;
+    const { root: dir, worktree } = checkout();
+    const escaped = path.join(dir, '.worktrees', 'p1\\02'); // lsof prints its backslash doubled
+    const locked = path.join(dir, '.worktrees', 'locked'); // its search permission goes after the start
+    fs.mkdirSync(escaped);
+    fs.mkdirSync(path.join(locked, 'p1-03'), { recursive: true });
+    const groups = [];
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // a tool shell's `npm run dev &`, in short: the shell leads the group and exits, its server goes to process 1
+    const orphanServer = async (cwd) => {
+      const portFile = path.join(tmp('leftover-port-'), 'port');
+      const server = `require('net').createServer().listen(0, '127.0.0.1', function () { require('fs').writeFileSync(${JSON.stringify(portFile)}, String(this.address().port)); }); setTimeout(() => {}, 120000);`;
+      const sh = spawn('/bin/sh', ['-c', `"${process.execPath}" -e "$0" &`, server], { cwd, detached: true, stdio: 'ignore' });
+      groups.push(sh.pid);
+      await new Promise((resolve) => sh.once('exit', resolve));
+      for (let i = 0; i < 100; i++) {
+        const row = spawnSync('ps', ['-axo', 'pid=,ppid=,pgid='], { encoding: 'utf8' }).stdout.split('\n').map((l) => l.trim().split(/\s+/).map(Number)).find((f) => f[1] === 1 && f[2] === sh.pid);
+        if (row && fs.existsSync(portFile)) return row[0];
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return assert.fail(`the server in ${cwd} did not start listening under process 1`);
+    };
+    try {
+      const plain = await orphanServer(worktree);
+      const odd = await orphanServer(escaped);
+      const shut = await orphanServer(path.join(locked, 'p1-03'));
+      const env = { CLAUDE_PROJECT_DIR: dir, LEFTOVER_REAP_MINUTES: '0', LEFTOVER_KILL: undefined };
+      const reaped = () => runHook('SessionStart', dir, { env })?.hookSpecificOutput?.additionalContext ?? '';
+      const first = reaped();
+      for (const pid of [plain, odd, shut]) assert.ok(!first.includes(`pid ${pid},`), `pid ${pid} was reaped while its directory exists`);
+      fs.rmSync(worktree, { recursive: true, force: true });
+      fs.chmodSync(locked, 0o600);
+      const second = reaped();
+      assert.match(second, new RegExp(`(: |, )node \\(pid ${plain}, 0m, listening, its directory gone\\)`));
+      assert.ok(!second.includes(`pid ${odd},`), 'a backslash in its name, doubled by lsof, read as gone');
+      assert.ok(!second.includes(`pid ${shut},`), 'a directory stat cannot reach read as gone');
+      for (let i = 0; i < 40 && alive(plain); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.ok(!alive(plain), 'the server still runs');
+      assert.ok(alive(odd) && alive(shut), 'a kept server was killed');
+    } finally {
+      try {
+        fs.chmodSync(locked, 0o700);
+      } catch {
+        // already removed
+      }
+      for (const g of groups) killGroup(g);
+    }
+  }, { skip: noLsof });
+
+  await test('dirGone: proof only — a removed directory is gone; one there, one lsof printed escaped, or one stat cannot reach is not', () => {
+    const base = tmp('leftover-gone-');
+    const removed = path.join(base, 'p1-01');
+    fs.mkdirSync(removed);
+    fs.rmdirSync(removed);
+    fs.writeFileSync(path.join(base, 'file'), '');
+    fs.mkdirSync(path.join(base, 'a\\b'));
+    assert.strictEqual(hook.dirGone(removed), true, 'removed');
+    assert.strictEqual(hook.dirGone(path.join(base, 'file', 'x')), true, 'ENOTDIR');
+    assert.strictEqual(hook.dirGone(base), false, 'there');
+    assert.strictEqual(hook.dirGone(path.join(base, 'a\\\\b')), false, 'a backslash, doubled as lsof prints it');
+    assert.strictEqual(hook.dirGone(path.join(base, 'a\\tb')), false, 'a tab, as lsof prints it');
+    assert.strictEqual(hook.dirGone(path.join(base, 'a^Ab')), false, 'a control character, as lsof prints it');
+    const failing = (code) => () => {
+      throw Object.assign(new Error(code), { code });
+    };
+    assert.strictEqual(hook.dirGone('/x', failing('EACCES')), false, 'a parent without search permission');
+    assert.strictEqual(hook.dirGone('/x', failing('ELOOP')), false);
+    assert.strictEqual(hook.dirGone(undefined), false, 'not read');
   });
 
   await test('silent when nothing runs from the checkout', () => {

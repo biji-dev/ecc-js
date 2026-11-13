@@ -76,6 +76,8 @@ function cleanEnv(extra = {}) {
   env.HOME = tmpDir('codex-run-home-');
   env.CODEX_HOME = tmpDir('codex-run-codexhome-');
   env.PATH = [GUARD_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  // the timeout cases run in seconds; the floor has its own case
+  env.CODEX_RUN_TIMEOUT_FLOOR = '0';
   return { ...env, ...extra };
 }
 
@@ -526,8 +528,26 @@ test('F9: invalid threshold and timeout flags are usage errors', () => {
     assert.equal(res.status, EXIT.usage);
     assert.ok(res.stderr.includes(flag));
   }
-  assert.equal(parseArgs(['docs', '--threshold', '100', '--timeout-min', '0.5']).timeoutMin, 0.5);
+  assert.equal(parseArgs(['docs', '--threshold', '100', '--timeout-min', '0.5'], { CODEX_RUN_TIMEOUT_FLOOR: '0' }).timeoutMin, 0.5);
   assert.equal(parseArgs(['docs', '--threshold', '1']).threshold, 1);
+});
+
+test('a --timeout-min under 20 is raised to 20 and named on stderr; 20 and over, and the default 45, stay', () => {
+  const a = parseArgs(['docs', '--timeout-min', '9']);
+  assert.equal(a.timeoutMin, 20);
+  assert.equal(a.timeoutRaisedFrom, 9);
+  assert.equal(parseArgs(['docs', '--timeout-min', '20']).timeoutRaisedFrom, undefined);
+  assert.equal(parseArgs(['docs', '--timeout-min', '30']).timeoutMin, 30);
+  assert.equal(parseArgs(['docs']).timeoutMin, 45);
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: '' }).timeoutMin, 20, 'empty is unset');
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: 'x' }).timeoutMin, 20, 'a bad value is unset');
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: '1e9' }).timeoutMin, 20, 'a floor past a Node timer is unset');
+  const dir = tmpDir('codex-run-floor-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const res = runWrapper(dir, ['adversarial', '--prompt', 'p.md', '--out', 'v.md', '--timeout-min', '9', '--dry-run'], { CODEX_RUN_TIMEOUT_FLOOR: '' });
+  assert.equal(res.status, EXIT.ok, res.stderr);
+  assert.match(res.stderr, /^codex-run: --timeout-min 9 raised to 20: .*run_in_background/m);
+  assert.equal(runWrapper(dir, ['adversarial', '--prompt', 'p.md', '--out', 'v.md', '--dry-run'], { CODEX_RUN_TIMEOUT_FLOOR: '' }).stderr.includes('raised'), false);
 });
 
 test('F10: reserved auto and routed kinds never call the router', async () => {

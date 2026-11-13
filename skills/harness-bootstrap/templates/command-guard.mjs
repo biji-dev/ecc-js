@@ -1415,7 +1415,7 @@ function backgroundHit(cmd) {
   return {
     rule: 'codex-background',
     reason:
-      "a `&` launch detaches the run from the session, so the host never reports its exit and a run that died with its shell leaves no verdict. Use the host's own background option (Claude Code: the Bash tool's run_in_background), then count the run only once its ledger row or output file exists.",
+      "launch it in the background with the host's own option instead (Claude Code: the Bash tool's run_in_background) and the default --timeout-min; only a shell `&` is refused. A `&` launch detaches the run from the session, so the host never reports its exit and a run that died with its shell leaves no verdict. Count the run only once its ledger row or output file exists.",
   };
 }
 

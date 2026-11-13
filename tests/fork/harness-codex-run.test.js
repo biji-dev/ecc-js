@@ -18,7 +18,7 @@ const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
 const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 62;
+const EXPECTED_TESTS = 63;
 // The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
 const EXPECTED_SNAPSHOT_TESTS = 16;
 

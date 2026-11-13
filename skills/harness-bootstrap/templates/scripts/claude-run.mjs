@@ -20,7 +20,7 @@
  *   --critical             the diff touches critical code (adversarial -> xhigh)
  *   --model <m> --effort <high|xhigh>  explicit override (max is the owner's word, not a flag)
  *   --budget-usd <n>       the dollar cap of this run (default BUDGET_USD)
- *   --timeout-min <n>      kill the run after n minutes (default 45)
+ *   --timeout-min <n>      kill the run after n minutes (default 45; under 20 is raised to 20)
  *   --dry-run              print the route and the claude argv, run and write nothing
  *
  *   node scripts/claude-run.mjs --status [--out <file>] [--cwd <dir>] [--sample-ms <n>]
@@ -258,6 +258,8 @@ async function main() {
     return usage(e.message);
   }
   if (a.status) return showStatus(a);
+  if (a.timeoutRaisedFrom !== undefined)
+    process.stderr.write(`claude-run: --timeout-min ${a.timeoutRaisedFrom} raised to ${a.timeoutMin}: a run keeps its time; launch it with the host's own background option (Claude Code: the Bash tool's run_in_background) instead of shortening it\n`);
   try {
     const host = hostCheck(process.env);
     if (!host.ok) throw new Error(host.why);

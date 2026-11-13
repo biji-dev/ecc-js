@@ -46,6 +46,15 @@ test('parseArgs: the kind as a word or --kind; review needs --base, the others a
   assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--write']), /unknown option --write/);
 });
 
+test('parseArgs: a --timeout-min under 20 is raised to 20 and remembered; 20 and over stay', () => {
+  const a = parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '9']);
+  assert.equal(a.timeoutMin, 20);
+  assert.equal(a.timeoutRaisedFrom, 9);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '25']).timeoutRaisedFrom, undefined);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '0.5'], { CLAUDE_RUN_TIMEOUT_FLOOR: '0' }).timeoutMin, 0.5);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '9'], { CLAUDE_RUN_TIMEOUT_FLOOR: '1e9' }).timeoutMin, 20, 'a floor past a Node timer is unset');
+});
+
 test('parseArgs --status: no kind, only --out, --cwd and --sample-ms (default 5000), and the env is not read', () => {
   assert.deepEqual(parseArgs(['--status']), { status: true, out: null, cwd: null, sampleMs: 5000 });
   assert.deepEqual(parseArgs(['--status', '--out', 'v.md', '--cwd', '/w', '--sample-ms', '250'], { CLAUDE_RUN: 'of' }), { status: true, out: 'v.md', cwd: '/w', sampleMs: 250 });
@@ -327,7 +336,8 @@ function stubDir(body) {
   fs.mkdirSync(path.join(dir, 'bin'));
   fs.writeFileSync(path.join(dir, 'bin', 'claude'), `#!/bin/sh\n${body}`, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'p.md'), 'the task');
-  const env = (extra = {}) => ({ PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, HOME: dir, CODEX_THREAD_ID: 't', ...extra });
+  // the timeout cases run in seconds: no floor
+  const env = (extra = {}) => ({ PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, HOME: dir, CODEX_THREAD_ID: 't', CLAUDE_RUN_TIMEOUT_FLOOR: '0', ...extra });
   const args = ['lane-a', '--prompt', path.join(dir, 'p.md'), '--out', path.join(dir, 'v.md'), '--cwd', dir];
   return { dir, env, args };
 }

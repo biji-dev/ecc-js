@@ -124,7 +124,13 @@ call it; never maintain the same sequence in three skill files.
   `implementer.md`.
 - **Hooks:** the commit guard is a git hook, not a Claude hook, so every agent
   and every human is guarded. The context-budget and session-resume hooks are
-  Claude-only (`context.md`).
+  Claude-only (`context.md`); session-resume runs on `SessionStart` and `UserPromptSubmit`.
+- **The leftover hook** (`machine.md`), on every Claude Code install: one entry each
+  on `SessionStart`, `Stop` and `UserPromptSubmit`, `node
+  "$CLAUDE_PROJECT_DIR/.claude/hooks/leftover-processes.mjs"` with `"timeout": 30`.
+  The user's settings allow the machine sweep in auto mode, scoped to its path:
+  `"Bash(node ~/.agents/harness/machine-sweep/machine-sweep.mjs:*)"` in
+  `permissions.allow` (the classifier blocked it 12 times in one install).
 - **Hooks read their stdin JSON** (`tool_name`, `tool_input`, `cwd`, the transcript
   path). Never an environment variable the hook documentation does not list: an
   inline hook reading `$CLAUDE_FILE_PATHS` depends on something no release promises
@@ -148,18 +154,25 @@ call it; never maintain the same sequence in three skill files.
   `git config` write of `core.hooksPath` (setting it to the project's `[B]`
   `HOOKS_DIR`, to `<top>/<HOOKS_DIR>` or to
   `"$(git rev-parse --show-toplevel)/<HOOKS_DIR>"` stays allowed), a force-push or delete of the mainline,
-  (`landing-override`) a line that sets `HARNESS_LANDING` in any form, or a git
-  line that names it other than to read it,
+  (`landing-override`) a line that sets `HARNESS_LANDING` in any form but the owner
+  key, or a git line that names it other than to read it, its refusal naming the
+  one-line form,
   (`host-override`) a git line that names a host variable other than to read it
   (`$NAME`), or clears it (`env -u`, `env -i`, `exec -c`)
   (`HARNESS_HOST`, `CLAUDECODE`, `CODEX_THREAD_ID`, `CODEX_SANDBOX`, `ZCODE_*`),
   (`merge-ff-mainline`) a `git merge` onto the mainline without `--no-ff` or a
   `git pull .` there, which the guard's ref check would refuse less cleanly, and
   (`codex-background`) a Codex or run-wrapper launch sent to the background
-  with a shell `&`; `EXTRA_RULES` is `[B]`, and each rule gets the command's `env` and
-  `background`. A commit message that *mentions* `--no-verify` passes. It
-  exits 2 to block and 0 on any error. It stops an agent's own mistakes and the
-  obvious retry, not a determined adversary — its header lists what it cannot see.
+  with a shell `&`, (`unbounded-wait`) a background `while` or `until` loop, `tail -f`
+  or `watch` that no `timeout` encloses, and (`full-verify-executor`) a `run-gates.sh`
+  run without `--since` or `--list` inside a subagent (`agent_id` set); `EXTRA_RULES`
+  is `[B]`, and each rule gets the command's `env` and `background`. A commit message
+  that *mentions* `--no-verify` passes. It exits 2 to block and 0 on any error. **The
+  owner key** (`commit-guard.md`; and a mainline push under `Push deploys: yes`,
+  `push-deploys`) exits 0 with an `ask` that shows the landing verdict where the mode
+  asks (`default`, `acceptEdits`, `auto`, `plan`); elsewhere, and on Codex, ZCode and
+  Kimi, it refuses, ending `` The owner runs it: `! <the command>` ``. It stops an
+  agent's own mistakes and the obvious retry, not a determined adversary — its header lists what it cannot see.
   It replaces a plugin's keyword hook: the harness depends on no plugin hook, since a
   machine may have them all disabled.
 
@@ -282,8 +295,8 @@ call it; never maintain the same sequence in three skill files.
 
   Hook stdout is JSON: `hookSpecificOutput.additionalContext` reaches the model on
   `UserPromptSubmit`; a top-level `systemMessage` is used only when a `Stop` hook
-  blocks. So the leftover-processes hook is wired on `UserPromptSubmit` only (its
-  `Stop` notice is dropped there). The context-budget hook stays Claude Code's: the
+  blocks. So the leftover-processes hook is wired on `UserPromptSubmit` only, with
+  `"timeout": 30`. The context-budget hook stays Claude Code's: the
   transcript file ZCode hands a hook holds at most the last message (none on
   `PreToolUse`), so it cannot measure there.
 - **When ZCode is the main runtime,** "pass `model` and `effort` on every

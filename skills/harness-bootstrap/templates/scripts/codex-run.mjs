@@ -27,7 +27,7 @@
  *   --network              workspace-write kinds: allow network (local services for tests)
  *   --image <files...>     attach screenshots (ui-review; any exec kind)
  *   --threshold <pct>      budget guard (default CODEX_RUN_THRESHOLD, else 85)
- *   --timeout-min <n>      kill the run after n minutes (default 45)
+ *   --timeout-min <n>      kill the run after n minutes (default 45; under 20 is raised to 20)
  *   --dry-run              print the resolved route and the codex argv, run nothing
  *
  *   node scripts/codex-run.mjs --status [--out <file>] [--cwd <dir>] [--sample-ms <n>]
@@ -54,6 +54,10 @@
  * Write kinds report what they left: `commits=<a>..<b>`, `uncommitted=<n>` and
  * `dirty-before=<k>` (of those, paths that already held uncommitted work; ledger
  * `leftovers`) -- a run that died mid-slice leaves partial work in the worktree.
+ *
+ * The model runs in a process group of its own (POSIX) with HARNESS_ROLE=executor in its env. A timeout
+ * sends SIGTERM, then SIGKILL, to the whole group, so no shell or test runner it started outlives the
+ * run; this wrapper's own SIGINT or SIGTERM passes SIGTERM to the group first.
  *
  * Every run appends a row to <main checkout>/<LEDGER_DIR>/ledger.jsonl. A run whose sandbox is not
  * workspace-write (a read or review run) also records `tree` (the git tree id of the tracked files
@@ -255,23 +259,46 @@ function rulesText(files, cwd) {
   return `\n\n## Area rules that apply to this change (from the project's rule files; you do not load these yourself)\n\n${body}`;
 }
 
+/** POSIX: the model leads a process group of its own, so a signal reaches whatever it started. */
+const GROUP = process.platform !== 'win32';
+
 /** SIGTERM alone can be ignored; escalation and settlement must not depend on `close`. */
 export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawnProcess = spawn, onSpawn }) {
   return new Promise((resolve) => {
     const log = fs.openSync(logFile, 'w');
     const err = fs.openSync(errFile, 'w');
-    const child = spawnProcess(CODEX, argv, { cwd, stdio: ['pipe', log, err] });
+    const child = spawnProcess(CODEX, argv, {
+      cwd,
+      stdio: ['pipe', log, err],
+      env: { ...process.env, HARNESS_ROLE: 'executor' },
+      detached: GROUP,
+    });
     if (onSpawn && child.pid) onSpawn(child.pid);
     let timedOut = false;
     let settled = false;
     let killTimer;
     let settleTimer;
+    // The whole group, so a shell or test runner the model started stops with it; the child alone
+    // when the group kill throws (no pid, already gone) and on Windows.
+    const killTree = (sig) => {
+      try {
+        if (!GROUP || !child.pid) throw new Error('no process group');
+        process.kill(-child.pid, sig);
+      } catch {
+        child.kill(sig);
+      }
+    };
+    // A detached child no longer gets the terminal's signal: pass this wrapper's own stop on, then
+    // let the close or the timeout settle the run as usual.
+    const forward = () => killTree('SIGTERM');
     const finish = (code, spawnError) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
       clearTimeout(settleTimer);
+      process.off('SIGINT', forward);
+      process.off('SIGTERM', forward);
       fs.closeSync(log);
       fs.closeSync(err);
       resolve({ code, timedOut, spawnError });
@@ -280,10 +307,12 @@ export function runCodex(argv, { cwd, stdin, logFile, errFile, timeoutMin, spawn
       timedOut = true;
       killTimer = setTimeout(() => {
         settleTimer = setTimeout(() => finish(1), 1_000);
-        child.kill('SIGKILL');
+        killTree('SIGKILL');
       }, 20_000);
-      child.kill('SIGTERM');
+      killTree('SIGTERM');
     }, timeoutMin * 60_000);
+    process.on('SIGINT', forward);
+    process.on('SIGTERM', forward);
     child.on('error', (e) => {
       if (settled) return;
       fs.appendFileSync(errFile, `ERROR: spawn ${CODEX}: ${e.message}\n`);
@@ -368,6 +397,8 @@ async function main() {
     usage(e.message);
   }
   if (a.status) return showStatus(a);
+  if (a.timeoutRaisedFrom !== undefined)
+    process.stderr.write(`codex-run: --timeout-min ${a.timeoutRaisedFrom} raised to ${a.timeoutMin}: a run keeps its time; launch it with the host's own background option (Claude Code: the Bash tool's run_in_background) instead of shortening it\n`);
   if (!a.kind || !ROUTES[a.kind] || a.kind === 'route')
     usage(
       `kind must be one of: ${Object.keys(ROUTES)

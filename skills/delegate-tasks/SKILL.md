@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 10
+  version: 11
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -153,11 +153,21 @@ Templates for every kind are in `reference/spec-templates.md`.
    > acceptance command in the spec and fix your work until they pass — never report
    > a check you did not run. Edit only the files in the spec's Files list. Never
    > modify a test to make it pass. Do not commit. No host-level operations (global
-   > installs, image pulls, restarting shared services) and no repository-wide
-   > suite. If the spec contradicts the code or is missing something you need, stop
-   > and report it as blocked instead of guessing. End with: `STATUS: done |
-   > blocked`, `FILES:`, `COMMANDS:` each acceptance command with its last line of
-   > output, `BLOCKERS:` or `none`.
+   > installs, image pulls, restarting shared services). Run the scoped tier only:
+   > `bash scripts/run-gates.sh --since <the slice's base>` where the project has
+   > it, never the FULL verify or a repository-wide suite. A script you write that
+   > starts a shell or a server gives it its own process group (`detached: true`)
+   > and kills the group (`process.kill(-pid)`) on timeout or when done. If the
+   > spec contradicts the code or is missing something you need, stop and report it
+   > as blocked instead of guessing. End with: `STATUS: done | blocked`, `FILES:`,
+   > `COMMANDS:` each acceptance command with its last line of output, `BLOCKERS:`
+   > or `none`.
+
+   FULL is the session's, once at landing; the command guard refuses it in a
+   subagent.
+   > Origin: one review's probe scripts killed only their direct child on timeout;
+   > about 96 shells were orphaned and spun for 9.5 hours. 128 of 324 FULL verifies
+   > in 3 days ran inside subagents.
 
 2. **Assert the exact number of specs selected** before dispatching a wave. A
    filter that selects zero — or one fewer than the index — is an error, not an
@@ -173,8 +183,9 @@ Templates for every kind are in `reference/spec-templates.md`.
    chain. Errors-only output: a 382 KB green log once broke a gate that had passed.
 5. **Per-slice review, by the other family.** After a serial slice passes its gate,
    one reviewer reads that slice's diff before the next slice builds on it — the
-   **second family's review** over a Claude-written slice (with the host's own background option, never a shell `&`, while
-   the next independent slice starts). A cold second-family slice waits for the
+   **second family's review** over a Claude-written slice (with the host's own
+   background option and its default time limit, never a shell `&`, while the next
+   independent slice starts). A cold second-family slice waits for the
    unit review (a harness's `review-gate.mjs` says `defer`; standalone, a Sonnet
    reviewer reads it). **Never an Opus reviewer per Claude-written slice** — in one
    measured milestone 63 of them found no P0 or P1; Opus reads a slice only when
@@ -211,6 +222,15 @@ Templates for every kind are in `reference/spec-templates.md`.
    installed. A live run is never relaunched; an executor with no report is checked
    in its task output before a re-dispatch, never two writers on one slice; a dead
    one's partial writes are looked at first.
+   **Budgets end stuck runs.** Each dispatch gets a wall-clock budget, twice the
+   slice's estimate and at most 45 minutes, matching the wrappers. Past it, an
+   executor whose task output has not grown for 15 minutes is stopped (`TaskStop`),
+   re-dispatched once with a note in its spec, then cut. A generated agent sets
+   `maxTurns`. The run's state line shows what runs: `running: <slice> <model>
+   <age> · … (quiet <m>)`, so the owner never has to ask. Wait on the host's
+   completion notice or a bounded `timeout`; never a background `until`/`while`
+   loop or `tail -f` (the command guard refuses them).
+   > Origin: 21 "is it still running?" prompts in 3 days, 4 of them real hangs.
 10. **The full suite stays with the session.** List it as not yet covered until it
     has run once.
 

@@ -6,17 +6,20 @@
  * The runner runs it at step 0, before the claim, and at step 9, after the merge (harness-bootstrap's
  * reference/runner.md › Due-checks):
  *
- *   node scripts/harness-due.mjs [--claim <row id>] [--json] [--now <ISO>] [--home <dir>]
+ *   node scripts/harness-due.mjs [--claim <row id>] [--owner] [--json] [--now <ISO>] [--home <dir>]
  *   node scripts/harness-due.mjs --digest-read [--now <ISO>] [--home <dir>]
  *   node scripts/harness-due.mjs --seen <YYYY-Www> [--home <dir>]
  *
  * options:
- *   --claim <id>   also check the row about to be claimed: the preflight of the phase it opens, and
- *                  the valve (a HOLD line stops the claim)
+ *   --claim <id>   check the row about to be claimed and print only what blocks it: the preflight of the
+ *                  phase it opens (`DUE preflight`) and, for a harness unit, `WAIT` while a product unit
+ *                  is held or parked; `harness-due: nothing due` when nothing does. The rest of the
+ *                  report waits for the end of the run (no --claim)
+ *   --owner        the owner's word for a harness claim: skip the WAIT check, nothing else
  *   --json         { due: [{ kind, subject, why, command, blocking }], blocking, held, inbox: [{ unit, gate,
  *                  parked, branch, worktree, cards, command }], owed: [{ id, since, what }], split: [{ unit,
- *                  branch, lines, cap }], ask: { ask, demoted, promoted, ignored }, digest: { unread, lines,
- *                  holdCount }, hold: { count, why, command, blocking } | null } instead of lines
+ *                  branch, lines, cap }], ask: { ask, demoted, promoted, ignored }, digest: { unread, lines } }
+ *                  instead of lines; with --claim it still carries every part
  *   --now <ISO>    the time to check against (default now)
  *   --home <dir>   the directory holding .agents/harness (default the home directory): the machine
  *                  sweep's approvals and log, the weekly job's registry, seen.json and digest-read.json
@@ -26,25 +29,24 @@
  *                  <home>/.agents/harness/retro/seen.json; it checks nothing else (the proposals print
  *                  in the weekly report only)
  *
- * The lines, in this order: `OWED <row> since <date> — <what>` for each open follow-up waiting on the
+ * The lines of a run without --claim (the end of a run), in this order: `OWED <row> since <date> — <what>` for each open follow-up waiting on the
  * owner past OWED_DAYS; the owner's inbox, one `INBOX <unit> <gate> since <parked> · <cards>` line for
- * each row of the parked table of the commit guard's registry (REGISTRY, in the main checkout); `HOLD
- * claims — …` when the owner has left the digest unread (the valve); `SPLIT <unit> — …` for each held
- * row whose local branch is past SPLIT_LINES production lines against MAIN; `DUE preflight <phase> — …`;
+ * each row of the parked table of the commit guard's registry (REGISTRY, in the main checkout); `SPLIT
+ * <unit> — …` for each held row whose local branch is past SPLIT_LINES production lines against MAIN;
  * `REPORT <kind> — <why> — <what to run>` for a sweep, retro or hygiene report due, written in the
- * background, never a unit; `harness-due: nothing due` when there is no HOLD, SPLIT, DUE or REPORT
- * line; while the manifest (MANIFEST) says `"stage": "foundation"`, one `HELD <kinds> — …` line; the
+ * background once the product queue is empty, never a unit; `harness-due: nothing due` when there is no
+ * SPLIT or REPORT line; while the manifest (MANIFEST) says `"stage": "foundation"`, one `HELD <kinds> — …` line; the
  * `ASK <kinds> — <why>` line, from every STATE_DIR/*.state.md at MAIN; and the digest block, `DIGEST
- * <n> unread since <last read>`, the unread grant and default decisions and merged log rows, and the
- * disk and worktrees checks. An inbox line never changes the exit code, and a registry that is missing
+ * <n> unread since <last read>`, the newest DIGEST_LINES unread grant and default decisions and merged
+ * log rows, and the disk and worktrees checks; nothing blocks on it, and --digest-read marks it read. An inbox line never changes the exit code, and a registry that is missing
  * or unreadable prints none; a missing or unreadable manifest holds nothing. A worktree a registry row
  * names, held or parked, is never listed. It reads files and git (`log`, `blame`, `worktree list`,
  * `merge-base`, `rev-list`, `reflog`, `status`, `ls-tree`, `cat-file`, `rev-parse`, `diff`) and writes
  * nothing but --seen's and --digest-read's files: it starts no sweep itself, the runner does what each
  * line says.
  *
- * exit: 0 nothing blocks | 1 the claimed row opens a phase with no preflight report, or --claim and the
- * valve holds | 2 usage.
+ * exit: 0 nothing blocks | 1 the claimed row opens a phase with no preflight report, or a harness unit is
+ * claimed while a product unit is held or parked (and no --owner) | 2 usage.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -57,6 +59,7 @@ import {
   REPORTS,
   STATE_DIR,
   dueParts,
+  formatClaim,
   formatDue,
   heldBranches,
   inboxLines,
@@ -78,7 +81,7 @@ import { gitRead } from './lib/run-sources.mjs';
 const MANIFEST = '.agents/harness-manifest.json';
 
 const USAGE =
-  'usage: node scripts/harness-due.mjs [--claim <row id>] [--json] [--now <ISO>] [--home <dir>] | --digest-read [--now <ISO>] [--home <dir>] | --seen <YYYY-Www> [--home <dir>]';
+  'usage: node scripts/harness-due.mjs [--claim <row id>] [--owner] [--json] [--now <ISO>] [--home <dir>] | --digest-read [--now <ISO>] [--home <dir>] | --seen <YYYY-Www> [--home <dir>]';
 
 function usage(msg) {
   process.stderr.write(`harness-due: ${msg}\n${USAGE}\n`);
@@ -388,6 +391,7 @@ function main() {
     const facts = {
       now,
       claim: args.claim,
+      owner: args.owner,
       top,
       log: withDates(top, LOG),
       followUps: readFollowUps(top, FOLLOW_UPS),
@@ -405,13 +409,10 @@ function main() {
   } catch (e) {
     return usage(e.message);
   }
-  const { items, owed, split, ask, digest, hold, held } = parts;
-  const blocking = items.filter((i) => i.blocking).length + (hold?.blocking ? 1 : 0);
-  process.stdout.write(
-    args.json
-      ? `${JSON.stringify({ due: items, blocking, held, inbox: parkedUnits(registryText), owed, split, ask, digest, hold }, null, 2)}\n`
-      : formatDue({ ...parts, inbox: inboxLines(registryText) }),
-  );
+  const { items, owed, split, ask, digest, held } = parts;
+  const blocking = items.filter((i) => i.blocking).length;
+  const text = args.claim === null ? formatDue({ ...parts, inbox: inboxLines(registryText) }) : formatClaim(parts);
+  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, held, inbox: parkedUnits(registryText), owed, split, ask, digest }, null, 2)}\n` : text);
   if (blocking) process.exitCode = 1;
 }
 

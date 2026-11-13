@@ -4,7 +4,7 @@
 // state files, and pipes a real SessionStart payload into the hook. Hermetic: no GIT_* variable,
 // global git config or CLAUDE_PROJECT_DIR reaches git or the hook, and git looks no higher than the
 // case's own directory.
-// [B] binding: the EXPECTED line, bound with the hook's [B] REGISTRY, STATE_DIR and MAX_BYTES lines
+// [B] binding: the EXPECTED line, bound with the hook's [B] REGISTRY, STATE_DIR, MAX_BYTES and MAIN lines
 // and equal to them. The cases lay their files out at these paths, never at the hook's: a rebound hook
 // fails here.
 import assert from 'node:assert/strict';
@@ -15,19 +15,21 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// [B] The hook's bindings: its REGISTRY, STATE_DIR and MAX_BYTES.
-const EXPECTED = { REGISTRY: '.claude/registry.md', STATE_DIR: 'docs/plans', MAX_BYTES: 4000 };
+// [B] The hook's bindings: its REGISTRY, STATE_DIR, MAX_BYTES and MAIN.
+const EXPECTED = { REGISTRY: '.claude/registry.md', STATE_DIR: 'docs/plans', MAX_BYTES: 4000, MAIN: 'main' };
 
 const HOOK = fileURLToPath(new URL('../../.claude/hooks/session-resume.mjs', import.meta.url));
 const bound = await import(pathToFileURL(HOOK).href);
-const { REGISTRY, STATE_DIR, MAX_BYTES } = EXPECTED;
+const { REGISTRY, STATE_DIR, MAX_BYTES, MAIN } = EXPECTED;
 
 const ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && k !== 'CLAUDE_PROJECT_DIR'));
 Object.assign(ENV, { GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' });
 
 const dirs = [];
+const sessions = ['test-session'];
 after(() => {
   for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  for (const id of sessions) fs.rmSync(seenPath(id), { force: true });
 });
 const tmp = (prefix) => {
   const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -37,6 +39,7 @@ const tmp = (prefix) => {
 const git = (cwd, ...args) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: ENV });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
 };
 const put = (dir, rel, text) => {
   fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
@@ -87,12 +90,35 @@ function run(dir, source = 'compact', env = {}) {
   assert.doesNotMatch(text, /initialUserMessage|\/compact|\/clear|new session/i, 'the text starts work or offers a hand-off');
   return text;
 }
+const seenPath = (id) => path.join(os.tmpdir(), `harness-seen-${id}.json`);
+let sessionCount = 0;
+/** A session id no other run uses, its seen-state file removed at the end. */
+const newSession = () => {
+  sessionCount += 1;
+  const id = `since-${process.pid}-${sessionCount}`;
+  sessions.push(id);
+  return id;
+};
+/** Runs the installed hook for one UserPromptSubmit of session `id`; its additionalContext, or null when it prints nothing. */
+function prompt(dir, id, env = {}, extra = {}) {
+  const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: dir, session_id: id, prompt: 'go on', ...extra });
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...ENV, GIT_CEILING_DIRECTORIES: path.dirname(dir), ...env } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  if (r.stdout === '') return null;
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(out), ['hookSpecificOutput']);
+  assert.deepEqual(Object.keys(out.hookSpecificOutput), ['hookEventName', 'additionalContext']);
+  assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  return out.hookSpecificOutput.additionalContext;
+}
+const LEAD = '[other sessions] since your last turn: ';
 const lastLine = (text) => text.split('\n').at(-1);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('the hook runs at the bound registry, state directory and cap', () => {
-  const { REGISTRY: registryPath, STATE_DIR: stateDir, MAX_BYTES: cap } = bound;
-  assert.deepEqual({ REGISTRY: registryPath, STATE_DIR: stateDir, MAX_BYTES: cap }, EXPECTED, "the hook's REGISTRY, STATE_DIR or MAX_BYTES is not the EXPECTED binding");
+  const { REGISTRY: registryPath, STATE_DIR: stateDir, MAX_BYTES: cap, MAIN: mainBranch } = bound;
+  assert.deepEqual({ REGISTRY: registryPath, STATE_DIR: stateDir, MAX_BYTES: cap, MAIN: mainBranch }, EXPECTED, "the hook's REGISTRY, STATE_DIR, MAX_BYTES or MAIN is not the EXPECTED binding");
 });
 
 test("a held row in a linked worktree: the main checkout's registry, and its state file's next, open Q rows and grant", () => {
@@ -256,4 +282,111 @@ test('not a git checkout: silent, even with a registry holding a row', () => {
   const dir = path.join(tmp('session-resume-plain-'), 'plain');
   put(dir, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
   assert.equal(run(dir), null);
+});
+
+test('since your last turn: the first prompt of a session prints nothing and leaves its seen file; a prompt with nothing changed prints nothing', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
+  const id = newSession();
+  assert.equal(prompt(main, id), null);
+  const seen = JSON.parse(fs.readFileSync(seenPath(id), 'utf8'));
+  assert.equal(seen.head, git(main, 'rev-parse', `refs/heads/${MAIN}`));
+  assert.deepEqual(seen.rows, [{ kind: 'held', unit: 'CR-021' }]);
+  assert.equal(prompt(main, id), null, 'nothing changed');
+  assert.equal(prompt(main, id), null, 'still nothing');
+});
+
+test('since your last turn: a commit on the mainline is main +<n> with the newest subject, clipped to 60 characters', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry());
+  const id = newSession();
+  assert.equal(prompt(main, id), null);
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'fix the export header');
+  assert.equal(prompt(main, id), `${LEAD}${MAIN} +1 (fix the export header)`);
+  assert.equal(prompt(main, id), null, 'told once');
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'one');
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', `a long subject ${'x'.repeat(100)}`);
+  const line = prompt(main, id);
+  assert.match(line, new RegExp(`^${esc(LEAD)}${MAIN} \\+2 \\(a long subject x+…\\)$`));
+  assert.equal(/\((.*)\)$/.exec(line)[1].length, 60);
+});
+
+test('since your last turn: a unit newly held is claimed, one gone from both tables released, one moved from held to parked parked', () => {
+  const { main } = checkout();
+  const held = (n, unit) => `| ${n} | ${unit} | 5 implement | change/${unit.toLowerCase()} | main | | |`;
+  put(main, REGISTRY, registry({ held: [held(1, 'CR-021')] }));
+  const id = newSession();
+  assert.equal(prompt(main, id), null);
+  put(main, REGISTRY, registry({ held: [held(1, 'CR-021'), held(2, 'CR-022')] }));
+  assert.equal(prompt(main, id), `${LEAD}CR-022 claimed`);
+  put(main, REGISTRY, registry({ held: [held(1, 'CR-022')] }));
+  assert.equal(prompt(main, id), `${LEAD}CR-021 released`);
+  put(main, REGISTRY, registry({ parked: ['| CR-022 | Gate 2 | 2026-11-06T04:10Z | change/cr-022 | main | Q-1 x |'] }));
+  assert.equal(prompt(main, id), `${LEAD}CR-022 parked`);
+  assert.equal(prompt(main, id), null, 'told once');
+  // several parts at once: the head, then claimed, released, parked
+  put(main, REGISTRY, registry({ held: [held(1, '`CR-030`')], parked: ['| CR-022 | Gate 2 | t | b | main | Q-1 x |'] }));
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'land it');
+  assert.equal(prompt(main, id), `${LEAD}${MAIN} +1 (land it) · CR-030 claimed`);
+});
+
+test('since your last turn: the mainline rewound or replaced by an unrelated commit is main moved', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry());
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'second');
+  const id = newSession();
+  assert.equal(prompt(main, id), null);
+  git(main, 'reset', '-q', '--hard', 'HEAD~1');
+  assert.equal(prompt(main, id), `${LEAD}${MAIN} moved`, 'rewound');
+  git(main, 'checkout', '-q', '--orphan', 'other');
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'unrelated');
+  git(main, 'branch', '-q', '-f', MAIN, 'other');
+  git(main, 'checkout', '-q', MAIN);
+  assert.equal(prompt(main, id), `${LEAD}${MAIN} moved`, 'unrelated');
+});
+
+test('since your last turn: at most 300 characters with 20 units claimed at once, the rest counted', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry());
+  const id = newSession();
+  assert.equal(prompt(main, id), null);
+  const held = Array.from({ length: 20 }, (_, i) => `| ${i + 1} | CR-${1000 + i}-a-long-unit-name | 5 implement | change/c${i} | main | | |`);
+  put(main, REGISTRY, registry({ held }));
+  const line = prompt(main, id);
+  assert.ok(line.length <= 300, `${line.length} characters`);
+  assert.ok(line.startsWith(`${LEAD}CR-1000-a-long-unit-name claimed · `), line);
+  assert.match(line, / · \+\d+ more$/);
+});
+
+test('since your last turn: SessionStart writes the seen file, so the first prompt after a start says nothing; other sessions are told apart', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-021 | 5 implement | change/cr-021 | main | | |'] }));
+  const id = newSession();
+  const start = JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', cwd: main, session_id: id });
+  const r = spawnSync(process.execPath, [HOOK], { input: start, encoding: 'utf8', env: { ...ENV, GIT_CEILING_DIRECTORIES: path.dirname(main) } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /^HELD CR-021 /m, 'the start prints as before');
+  assert.ok(fs.existsSync(seenPath(id)));
+  assert.equal(prompt(main, id), null, 'the start already showed it');
+  const other = newSession();
+  assert.equal(prompt(main, other), null);
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'next');
+  assert.equal(prompt(main, id), `${LEAD}${MAIN} +1 (next)`);
+  assert.equal(prompt(main, other), `${LEAD}${MAIN} +1 (next)`, 'each session has its own file');
+});
+
+test('since your last turn: no session id, a session id with only odd characters, not a checkout, or a broken seen file: nothing, exit 0', () => {
+  const { main } = checkout();
+  put(main, REGISTRY, registry());
+  assert.equal(prompt(main, undefined), null);
+  assert.equal(prompt(main, '../..'), null, 'sanitised to nothing');
+  const plain = path.join(tmp('session-resume-plain-'), 'plain');
+  put(plain, REGISTRY, registry());
+  assert.equal(prompt(plain, newSession()), null);
+  const id = newSession();
+  fs.writeFileSync(seenPath(id), '{ not json');
+  git(main, 'commit', '-q', '--allow-empty', '--no-verify', '-m', 'next');
+  assert.equal(prompt(main, id), null, 'a seen file that cannot be read is a first run');
+  assert.ok(JSON.parse(fs.readFileSync(seenPath(id), 'utf8')).head, 'and is rewritten');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), 'harness-seen-.json')), false, 'no file for an empty id');
 });

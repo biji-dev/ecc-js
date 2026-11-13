@@ -10,12 +10,13 @@ use took the rest back (› What is in use).
 
 **`[M]` mechanism · `[B]` binding**
 
-## Two parts
+## Three parts: act, don't warn
 
 | Part | What it covers | Where it runs | Whose |
 |---|---|---|---|
 | the machine sweep | caches, build output, residue worktrees, orphaned MCP servers, recorded processes | `scripts/machine-sweep.mjs`, this skill's own; never generated | the owner approves categories once; then `DIGEST disk` starts them |
-| the leftover-processes hook | what this checkout left listening, and tight memory | `.claude/hooks/leftover-processes.mjs`, from `templates/leftover-processes.mjs` | optional, per project (`SKILL.md` › Phase C) |
+| the leftover-processes hook | orphans and runaway shells, stuck tool shells, what this checkout left listening, a full disk | `.claude/hooks/leftover-processes.mjs`, from `templates/leftover-processes.mjs` | every Claude Code install (`SKILL.md` › Phase C) |
+| admission | memory, disk and load before a FULL verify | `scripts/lib/admission.mjs`, run by `run-gates.sh` | every install with `run-gates.sh` |
 
 That project's `dev:ps` and `dev:clean` stay its own: the hook and the report's orphan
 list name what runs, and `harness-due` and the sweep remove worktrees on
@@ -33,9 +34,10 @@ ports, and never stops one.
 `~/.agents/harness/machine-sweep/`, which a plugin update cannot move. `--unapprove
 <ids>` withdraws. Read the first report before approving anything.
 
-`[M]` **Then it runs on its own.** Under 25 GB free `[B]`, `harness-due` prints `DIGEST
+`[M]` **Then it runs on its own.** Under 10 GB free (`DISK_MIN_GB`, `[B]`), `harness-due` prints `DIGEST
 disk` — housekeeping, in the digest, never an owner line — and the runner starts `node ~/.agents/harness/machine-sweep/machine-sweep.mjs
---apply-approved` in the background (`runner.md` › Due-checks). It frees the
+--apply-approved` with the host's own background option (Claude Code: the Bash tool's
+`run_in_background`, never a shell `&`; `runner.md` › Due-checks). It frees the
 approved categories alone and takes a lock so two runs never overlap: each run
 writes its own entry in `~/.agents/harness/machine-sweep.locks/` and removes only
 the entries of runs that are gone, so two runs that start together both stop. It
@@ -99,20 +101,39 @@ category's directory; any other process.
 
 ## The leftover-processes hook
 
-`[M]` On Stop it tells the owner, and on UserPromptSubmit it tells the model, which
-TCP listeners run with a working directory inside this checkout. A main checkout
-leaves out its worktrees: they belong to other sessions. It also names every
-executable `MACHINE_WIDE` matches, whoever started it, and says when memory is
-tight, at most every 30 minutes unless it gets worse. **It never stops anything,
-never blocks, and never fails the turn.** Wire it as a Stop and a UserPromptSubmit
-command hook, `node .claude/hooks/leftover-processes.mjs`.
+`[M]` **It acts; it does not warn.** On SessionStart, Stop and UserPromptSubmit
+(`harness-targets.md`) it reads `ps` and `lsof` once, then:
 
-> Origin: one project's version (2026-10-17) matched machine-wide processes on their
-> whole command line. This skill's first test then named the test session's own
-> shell, whose command line held an emulator's name. It now matches the
-> executable's name alone.
+- **reaps** (`SIGTERM`, `SIGKILL` a second later) a process of its own uid, parent
+  process 1, no TTY, `REAP_MINUTES` (10) old, with nothing in its subtree listening
+  and no match for `KEEP` (`[B]`, empty by default), whose group leader is gone and
+  that no service manager runs, when it runs in this checkout or its `WORKTREES`, or
+  is a `sh -c` on 30% of a CPU anywhere. A package runner never listens itself:
+  `npm run dev &` stays because its server, npm's child, listens, but in this
+  checkout only until `LISTEN_HOURS` (6) old or until its directory is gone, so a
+  finished unit's server never keeps its worktree from the sweep. A failed reading
+  reaps nothing; each pid is re-read before each signal; the model hears
+  `reaped <n>: …` with how to keep a job running, and a Stop with nothing stuck
+  keeps that line for the next prompt;
+- **reports** on Stop, once, a tool shell of this session `STUCK_MINUTES` (30) old
+  with no CPU and no listener, so the session stops it (`TaskStop`) or keeps it;
+- **lists** this checkout's listeners and the `MACHINE_WIDE` executables to the
+  model, at most once an hour;
+- **notifies** once a day, on the desktop, under `DISK_NOTICE_GB` (5) free. Nothing
+  reaches the owner on Stop; the turn never fails; the header lists its limits.
 
-`[B]` The hook: `WORKTREES`, `MACHINE_WIDE`, `NOTICE_MINUTES`. The sweep: the
+> Origin: one install's probe scripts killed only their direct child on timeout:
+> about 96 `zsh -c` shells went to process 1 and spun for about 9.5 hours on 5–8
+> cores, while the hook's memory notice fired 354 times and prevented neither real
+> out-of-memory kill. Its `MACHINE_WIDE` list matches the executable's name alone:
+> matched on the whole command line, it named a test session's own shell.
+
+`[M]` **Admission holds a FULL verify** until the machine has `MEM_RESERVE_GB`
+available, `DISK_FLOOR_GB` free and a load under `LOAD_PER_CPU` per CPU, for up to
+`WAIT_S`; past it `run-gates.sh` exits 97, `NOT ADMITTED`, no gate run (`context.md`).
+
+`[B]` The hook: `WORKTREES`, `MACHINE_WIDE`, `REAP_MINUTES`, `STUCK_MINUTES`,
+`DISK_NOTICE_GB`. Admission: the floors in `scripts/lib/admission-core.mjs`. The sweep: the
 settings block in `scripts/lib/machine-sweep-core.mjs` (the idle times, the
 releases kept, `REBUILDABLE`), and `harness-due`'s `DISK_MIN_GB`. Its tests,
 `scripts/lib/machine-sweep-core.test.mjs`, run with `node --test` against a temp

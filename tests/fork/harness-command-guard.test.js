@@ -359,6 +359,32 @@ async function main() {
     ['for GIT_CONFIG_COUNT in 1; do git commit -m x; done', 'hooks-path-override'],
     ['read HUSKY <<< 0; git commit -m x', 'no-verify'],
     ['export PATH=./x:$PATH; export PATH=/usr/bin:$PATH; git commit -m x', 'hooks-path-override'],
+    // js.14: every other line that sets HARNESS_LANDING, a guarded name set (not only named) on a
+    // git line, and a background wait with no bound
+    ['HARNESS_LANDING=owner git merge x && git push', 'landing-override'],
+    ['HARNESS_LANDING=owner git -c core.hooksPath=/dev/null merge x', 'landing-override'],
+    ["HARNESS_LANDING=owner bash -c 'git merge x'", 'landing-override'],
+    ['HARNESS_LANDING=yes git merge x', 'landing-override'],
+    ['for PATH in /tmp; do git commit -m x; done', 'hooks-path-override'],
+    ['let HUSKY=0; git commit -m x', 'no-verify'],
+    ['tail -f log &', 'unbounded-wait'],
+    ['while :; do sleep 5; done &', 'unbounded-wait'],
+    ["nohup bash -c 'until grep -q x f; do sleep 3; done' &", 'unbounded-wait'],
+    // js.14 fix round: a guarded name a command other than a terminal search names on a git line
+    // can become the name of a set; a `&` after a loop's done backgrounds the whole loop
+    ['name=HARNESS_HOST; export "$name=human"; git commit --allow-empty -m x', 'host-override'],
+    ["n=GIT_CONFIG_PARAMETERS; export \"$n='core.hooksPath'='/dev/null'\"; git commit --allow-empty -m x", 'hooks-path-override'],
+    ['source HARNESS_LANDING; git commit -m x', 'landing-override'],
+    ['BASH_ENV=HARNESS_LANDING bash -c "git commit -m x"', 'landing-override'],
+    ['zsh -c "vared HARNESS_LANDING; git commit -m x"', 'landing-override'],
+    ['zsh -c "sysread -o HARNESS_LANDING; git commit -m x"', 'landing-override'],
+    ["rg -o HARNESS_LANDING f | xargs -I{} sh -c 'git commit -m x'", 'landing-override'],
+    ['n=$(grep -o HUSKY f); export "$n=0"; git commit -m x', 'no-verify'],
+    ['grep HUSKY f > x.sh; git commit -m x', 'no-verify'],
+    ['grep HUSKY f | sh; git status', 'no-verify'],
+    ['grep -rn HUSKY docs | head -5 > out; git commit -m x', 'no-verify'],
+    ['grep ${HARNESS_LANDING:=owner} f; git commit -m x', 'landing-override'],
+    ['while true; do sleep 1; done & echo done', 'unbounded-wait'],
   ];
   for (const [command, rule] of blocked) {
     test(`blocks: ${command.replace(/\n/g, '\\n')}`, () => {
@@ -640,6 +666,24 @@ async function main() {
     'read CLAUDECODE </dev/null; claude -p x',
     'grep -rn HARNESS_LANDING docs',
     'export FOO; FOO=1; git status',
+    // js.14: a name only mentioned on a git line, a foreground wait, a bounded background one
+    'grep -rn HARNESS_LANDING docs && git status',
+    'git diff && rg -n HARNESS_LANDING scripts',
+    'echo "$PATH" && git commit -m x',
+    'tail -f log',
+    'until grep -q x f; do sleep 1; done',
+    'gtimeout 60 tail -f log &',
+    "timeout 600 bash -c 'until grep -q x f; do sleep 3; done' &",
+    'bash scripts/run-gates.sh',
+    // js.14 fix round: a search that prints to the terminal may name a guarded name; a `&` on the
+    // last command backgrounds only its own list
+    'git diff && rg -n HARNESS_LANDING scripts',
+    'git log --oneline && grep -n "CLAUDECODE" README.md',
+    'git status; cat docs/x.md | grep -n GIT_CONFIG_COUNT',
+    'git diff --stat && tail -20 log.txt | grep HUSKY',
+    'git status; grep -rn HUSKY docs 2>&1 | head -5',
+    'git status; rg HUSKY | wc -l',
+    'tail -f log; echo done &',
   ];
   for (const command of allowed) {
     test(`allows: ${command.replace(/\n/g, '\\n') || '(empty)'}`, () => {
@@ -651,6 +695,98 @@ async function main() {
   });
   test('allows: a force push when not on the mainline', () => {
     assert.strictEqual(check('git push --force origin', { currentBranch: 'develop' }), null);
+  });
+
+  console.log('\ncommand-guard: the owner key, background waits and FULL in a subagent');
+  test('owner-class: the single-line landing override; decide asks on Claude Code and refuses elsewhere', () => {
+    const hit = check('HARNESS_LANDING=owner git merge --no-ff feature/x', { currentBranch: 'feature/x' });
+    assert.deepStrictEqual({ ...hit }, { rule: 'landing-override', reason: hit.reason, owner: true });
+    const input = { tool_name: 'Bash', tool_input: { command: 'HARNESS_LANDING=owner git merge --no-ff feature/x' }, permission_mode: 'acceptEdits' };
+    const asked = guard.decide(hit, { input, env: { CLAUDE_PROJECT_DIR: dir } });
+    assert.strictEqual(asked.exit, 0);
+    assert.strictEqual(JSON.parse(asked.stdout).hookSpecificOutput.permissionDecision, 'ask');
+    const refused = guard.decide(hit, { input: { ...input, permission_mode: 'bypassPermissions' }, env: { CLAUDE_PROJECT_DIR: dir } });
+    assert.strictEqual(refused.exit, 2);
+    assert.ok(refused.stderr.endsWith(' The owner runs it: `! HARNESS_LANDING=owner git merge --no-ff feature/x`.\n'), refused.stderr);
+    assert.deepStrictEqual(guard.decide(null, { input, env: {} }), { exit: 0 });
+  });
+  test('owner-class: a push to the mainline when AGENTS.md says Push deploys: yes; not with no, nor with no AGENTS.md', () => {
+    const repo = tmp('command-guard-deploy-');
+    assert.strictEqual(spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8', env: gitEnv() }).status, 0);
+    const opts = { cwd: repo, currentBranch: 'feature/x' };
+    assert.strictEqual(guard.check('git push origin main', opts), null, 'no AGENTS.md');
+    const block = (v) => `<!-- harness:begin merge -->\nPush deploys: ${v}\n<!-- harness:end merge -->\n`;
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), block('no'));
+    assert.strictEqual(guard.check('git push origin main', opts), null, 'Push deploys: no');
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), block('yes'));
+    assert.strictEqual(guard.check('git push origin main', opts).rule, 'push-deploys');
+    assert.strictEqual(guard.check('git push origin main', opts).owner, true);
+    assert.strictEqual(guard.check('git push', { cwd: repo, currentBranch: 'main' }).owner, true);
+    assert.strictEqual(guard.check('git push origin feature/x', opts), null);
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), `Push deploys: yes\n${block('no')}`);
+    assert.strictEqual(guard.check('git push origin main', opts), null, 'a line outside the block is not read');
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+  test('push-deploys: a push with no refspec goes where the config sends it; a dry run is never asked', () => {
+    const repo = tmp('command-guard-config-');
+    const remote = tmp('command-guard-remote-');
+    const git = (...args) => {
+      const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: gitEnv() });
+      assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('init', '-q', '--bare', remote);
+    git('remote', 'add', 'origin', remote);
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), '<!-- harness:begin merge -->\nPush deploys: yes\n<!-- harness:end merge -->\n');
+    const at = (command, currentBranch) => guard.check(command, { cwd: repo, currentBranch });
+    git('config', 'remote.origin.push', 'refs/heads/x:refs/heads/main');
+    assert.strictEqual(at('git push', 'x')?.rule, 'push-deploys', 'remote.origin.push');
+    git('config', 'remote.origin.push', 'HEAD:refs/heads/feature');
+    assert.strictEqual(at('git push', 'main'), null, 'main whose push config targets a feature branch');
+    git('config', '--unset-all', 'remote.origin.push');
+    git('config', 'push.default', 'upstream');
+    git('config', 'branch.feature.merge', 'refs/heads/main');
+    assert.strictEqual(at('git push', 'feature')?.rule, 'push-deploys', 'push.default upstream');
+    assert.strictEqual(at('git push --dry-run origin main:main', 'feature'), null, 'a dry run');
+    assert.strictEqual(at('git push -n origin main', 'feature'), null, 'a dry run, -n');
+    assert.strictEqual(at('git push origin main:main', 'feature')?.rule, 'push-deploys');
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+  });
+  test('unbounded-wait: a loop whose condition only sets state, and setsid, are read', () => {
+    for (const command of ['while X=1; do sleep 1; done', 'while cd .; do sleep 1; done', 'while export X=1; do sleep 1; done', 'setsid tail -f log']) {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x', background: true })?.rule, 'unbounded-wait', command);
+    }
+  });
+  test('full-verify-executor: setsid, bash --rcfile / --init-file and a quoted path are read', () => {
+    for (const command of ['setsid bash scripts/run-gates.sh', 'bash --rcfile foo scripts/run-gates.sh', 'bash --init-file foo scripts/run-gates.sh', "bash 'some dir/run-gates.sh'", "'some dir/run-gates.sh'"]) {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x', agentId: 'a1' })?.rule, 'full-verify-executor', command);
+    }
+  });
+  test('unbounded-wait: run_in_background makes a loop, a tail -f or a watch a background wait', () => {
+    for (const command of ['until grep -q x f; do sleep 3; done', 'watch -n 5 ls', 'tail -qF log']) {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x', background: true }).rule, 'unbounded-wait', command);
+      assert.strictEqual(check(command, { currentBranch: 'feature/x' }), null, `${command} in the foreground`);
+    }
+    assert.strictEqual(check("timeout 600 bash -c 'until grep -q x f; do sleep 3; done'", { currentBranch: 'feature/x', background: true }), null);
+  });
+  test('full-verify-executor: a FULL run-gates.sh inside a host subagent', () => {
+    for (const command of ['bash scripts/run-gates.sh', 'bash ./scripts/run-gates.sh --no-cache', 'sh -x scripts/run-gates.sh']) {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x', agentId: 'a1' }).rule, 'full-verify-executor', command);
+    }
+    for (const command of ['bash scripts/run-gates.sh --since main', 'bash scripts/run-gates.sh --list']) {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x', agentId: 'a1' }), null, command);
+    }
+  });
+  test('spawn: the hook asks with JSON on stdout, exit 0, for an owner hit on Claude Code', () => {
+    const env = gitEnv();
+    delete env.CODEX_THREAD_ID;
+    for (const k of Object.keys(env)) if (k.startsWith('ZCODE_')) delete env[k];
+    env.CLAUDE_PROJECT_DIR = dir;
+    const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'HARNESS_LANDING=owner git commit -m x' }, cwd: dir, permission_mode: 'plan' });
+    const r = spawnSync(process.execPath, [GUARD], { input, encoding: 'utf8', timeout: 20000, env });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'ask');
   });
 
   console.log('\ncommand-guard: parser');
@@ -680,6 +816,7 @@ async function main() {
     assert.strictEqual(guard.check(`cd ${repo} && git push -f`, { cwd: dir }).rule, 'force-push-mainline');
     assert.strictEqual(git('checkout', '-q', '-b', 'topic').status, 0);
     assert.strictEqual(guard.check(`cd ${repo} && git push -f`, { cwd: dir }), null);
+    assert.strictEqual(guard.check(`cd ${repo} && git push -f origin topic`, { cwd: dir }), null);
     fs.rmSync(repo, { recursive: true, force: true });
   });
   test('parseCommands: wrappers and an absolute git path are stripped, env assignments are kept aside', () => {
@@ -956,9 +1093,13 @@ async function main() {
     ['install-absolute', "if (!v.startsWith('/') || /[$`]/.test(v)) return false;", 'return false;'],
     // C8.6 R13: += read as an assignment, the guarded-name collection, the composed PATH, exec -c
     ['plus-assign', 'const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\\[[^\\]]*\\])?\\+?=/;', 'const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\\[[^\\]]*\\])?=/;'],
-    ['forms', 'collectForms(wrapped ? [...shellWords, ...env, ...words] : shellWords, new Set([...env, ...operands]), quoted);', ''],
+    ['forms', "if (basename(words[0] ?? '') !== 'git') collectForms(words, env, quoted, named, mention.names);", ''],
     ['path-compose', 'plantedEntry(composedPath(pathValues(cmd)), parts.cwd, opts.homeSet)', '(pathValues(cmd).map((v) => plantedEntry(v, parts.cwd, opts.homeSet)).find((e) => e !== null) ?? null)'],
     ['exec-c', "if (name === 'exec' && w[k] === 'c') cleared.push(ALL_VARS);", ''],
+    // js.14: askable's permission-mode check, the owner form's single-command check, the timeout exemption
+    ['ask-mode', 'return ASK_MODES.has(input?.permission_mode);', 'return true;'],
+    ['owner-single', 'commands.length !== 1 || /[;&|()', 'false && /[;&|()'],
+    ['wait-timeout', 'if (bounded) return null;', ''],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
@@ -1119,6 +1260,24 @@ async function main() {
     assert.ok(guard.check(command, opts).reason.includes('puts (the current directory) first'), 'shipped guard names the current directory');
     const hit = mutants['path-empty'].check(command, opts);
     assert.ok(!hit || !hit.reason.includes('(the current directory)'), 'mutant path-empty still names the current directory');
+  });
+  test('mutation (ask-mode): an owner hit under bypassPermissions is refused, not asked', () => {
+    const command = 'HARNESS_LANDING=owner git commit -m x';
+    const input = { tool_name: 'Bash', tool_input: { command }, permission_mode: 'bypassPermissions' };
+    const env = { CLAUDE_PROJECT_DIR: dir };
+    assert.strictEqual(guard.decide(guard.check(command, opts), { input, env }).exit, 2);
+    assert.strictEqual(mutants['ask-mode'].decide(mutants['ask-mode'].check(command, opts), { input, env }).exit, 0, 'mutant ask-mode asks');
+  });
+  test('mutation (owner-single): an override chained to another command is not owner-class', () => {
+    const command = 'HARNESS_LANDING=owner git merge x && git push';
+    assert.strictEqual(guard.check(command, opts).owner, undefined);
+    assert.strictEqual(mutants['owner-single'].check(command, opts)?.owner, true, 'mutant owner-single makes it owner-class');
+  });
+  test('mutation (wait-timeout): a loop a timeout encloses is a bounded background wait', () => {
+    const command = "timeout 600 bash -c 'until grep -q x f; do sleep 3; done'";
+    const o = { ...opts, background: true };
+    assert.strictEqual(guard.check(command, o), null);
+    assert.strictEqual(mutants['wait-timeout'].check(command, o)?.rule, 'unbounded-wait', 'mutant wait-timeout refuses it');
   });
   test('mutation: the short-cluster mutant still catches the long form', () => {
     assert.strictEqual(mutants['short-n'].check('git commit --no-verify -m x', opts).rule, 'no-verify');

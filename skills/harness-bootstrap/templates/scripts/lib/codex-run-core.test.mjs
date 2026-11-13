@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -76,6 +76,8 @@ function cleanEnv(extra = {}) {
   env.HOME = tmpDir('codex-run-home-');
   env.CODEX_HOME = tmpDir('codex-run-codexhome-');
   env.PATH = [GUARD_DIR, env.PATH].filter(Boolean).join(path.delimiter);
+  // the timeout cases run in seconds; the floor has its own case
+  env.CODEX_RUN_TIMEOUT_FLOOR = '0';
   return { ...env, ...extra };
 }
 
@@ -526,8 +528,26 @@ test('F9: invalid threshold and timeout flags are usage errors', () => {
     assert.equal(res.status, EXIT.usage);
     assert.ok(res.stderr.includes(flag));
   }
-  assert.equal(parseArgs(['docs', '--threshold', '100', '--timeout-min', '0.5']).timeoutMin, 0.5);
+  assert.equal(parseArgs(['docs', '--threshold', '100', '--timeout-min', '0.5'], { CODEX_RUN_TIMEOUT_FLOOR: '0' }).timeoutMin, 0.5);
   assert.equal(parseArgs(['docs', '--threshold', '1']).threshold, 1);
+});
+
+test('a --timeout-min under 20 is raised to 20 and named on stderr; 20 and over, and the default 45, stay', () => {
+  const a = parseArgs(['docs', '--timeout-min', '9']);
+  assert.equal(a.timeoutMin, 20);
+  assert.equal(a.timeoutRaisedFrom, 9);
+  assert.equal(parseArgs(['docs', '--timeout-min', '20']).timeoutRaisedFrom, undefined);
+  assert.equal(parseArgs(['docs', '--timeout-min', '30']).timeoutMin, 30);
+  assert.equal(parseArgs(['docs']).timeoutMin, 45);
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: '' }).timeoutMin, 20, 'empty is unset');
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: 'x' }).timeoutMin, 20, 'a bad value is unset');
+  assert.equal(parseArgs(['docs', '--timeout-min', '9'], { CODEX_RUN_TIMEOUT_FLOOR: '1e9' }).timeoutMin, 20, 'a floor past a Node timer is unset');
+  const dir = tmpDir('codex-run-floor-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const res = runWrapper(dir, ['adversarial', '--prompt', 'p.md', '--out', 'v.md', '--timeout-min', '9', '--dry-run'], { CODEX_RUN_TIMEOUT_FLOOR: '' });
+  assert.equal(res.status, EXIT.ok, res.stderr);
+  assert.match(res.stderr, /^codex-run: --timeout-min 9 raised to 20: .*run_in_background/m);
+  assert.equal(runWrapper(dir, ['adversarial', '--prompt', 'p.md', '--out', 'v.md', '--dry-run'], { CODEX_RUN_TIMEOUT_FLOOR: '' }).stderr.includes('raised'), false);
 });
 
 test('F10: reserved auto and routed kinds never call the router', async () => {
@@ -1104,6 +1124,102 @@ test('a run that outlives --timeout-min is failed, with a ledger row that says i
   const row = JSON.parse(fs.readFileSync(path.join(dir, '.codex-runs/ledger.jsonl'), 'utf8'));
   assert.equal(row.outcome, 'failed');
   assert.match(row.reason, /timed out after 0\.01 min/);
+});
+
+// A fake model that starts a grandchild (`sleep 62`) and never exits by itself. Its pid goes to $PIDFILE.
+const GRANDCHILD = '#!/bin/sh\nsleep 62 &\necho $! > "$PIDFILE"\nwait\n';
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms = 8_000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleepMs(50)) if (fn()) return true;
+  return fn();
+}
+const readPid = (file) => (fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) || 0 : 0);
+
+test('a timed-out run takes the model\'s whole process group with it: no grandchild survives', async () => {
+  const dir = tmpDir('codex-run-group-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const fake = fakeCodex(GRANDCHILD);
+  try {
+    const res = runWrapper(
+      dir,
+      ['investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', '0.02'],
+      { CODEX_BIN: fake, PIDFILE: pidFile },
+    );
+    assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
+    assert.match(res.stdout, /timed out after 0\.02 min/);
+    const pid = readPid(pidFile);
+    assert.ok(pid > 0, 'the fake model never started its grandchild');
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
+  } finally {
+    const pid = readPid(pidFile);
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+test('SIGTERM to the wrapper itself reaches the model\'s process group first', async () => {
+  const dir = tmpDir('codex-run-group-term-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const fake = fakeCodex(GRANDCHILD);
+  const wrapper = spawn(
+    process.execPath,
+    [RUNNER, 'investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', '5'],
+    { cwd: dir, env: cleanEnv({ CODEX_BIN: fake, PIDFILE: pidFile }), stdio: 'ignore', detached: true },
+  );
+  const exited = new Promise((resolve) => wrapper.on('exit', resolve));
+  try {
+    assert.equal(await until(() => readPid(pidFile) > 0), true, 'the fake model never started its grandchild');
+    const pid = readPid(pidFile);
+    process.kill(wrapper.pid, 'SIGTERM');
+    await Promise.race([exited, sleepMs(10_000)]);
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the wrapper's SIGTERM`);
+  } finally {
+    try {
+      process.kill(-wrapper.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    const pid = readPid(pidFile);
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+test('every run carries HARNESS_ROLE=executor in the model\'s env, whatever the caller had', () => {
+  const dir = tmpDir('codex-run-role-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const fake = fakeCodex(
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\necho "role=$HARNESS_ROLE" > "$out"\nexit 0\n',
+  );
+  const verdict = path.join(dir, 'v.md');
+  const res = runWrapper(
+    dir,
+    ['investigate', '--prompt', 'p.md', '--out', verdict, '--cwd', dir],
+    { CODEX_BIN: fake, HARNESS_ROLE: 'session' },
+  );
+  assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(verdict, 'utf8'), 'role=executor\n');
 });
 
 test('the ledger of a linked worktree run lands in the main checkout, not the worktree', () => {

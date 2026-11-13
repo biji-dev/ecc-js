@@ -13,27 +13,54 @@
 //   bun with either script in any later word, sent to the background with a shell `&`),
 //   landing-override (a line that sets HARNESS_LANDING, the owner's override of the commit guard's
 //   landing check, in any form: an assignment, inline or on its own, export, declare, typeset,
-//   readonly, local or env, on any command), host-override (a git command whose environment sets
+//   readonly, local or env, on any command; the one owner form, `HARNESS_LANDING=owner git merge …`
+//   or `… git commit …` alone as one simple command with no git option before the subcommand, asks
+//   the owner on Claude Code once every other rule passes it, and is refused elsewhere, the refusal
+//   ending with the `! <command>` the owner types), push-deploys (a push that updates a MAINLINE
+//   branch when AGENTS.md's merge block says `Push deploys: yes`: a push that ships is the owner's,
+//   so it asks the owner on Claude Code and is refused elsewhere, as the owner form is; a push with
+//   no refspec goes where the local git config sends it: remote.<remote>.push, else push.default
+//   upstream or tracking's branch.<current>.merge, else the current branch, read in the directory a
+//   cd, pushd or -C moves it to, when the line sets no variable, runs no set -a and no move the
+//   guard cannot follow (cd -, a `$` path, popd, pushd without a path, a missing directory; pushd -n
+//   does not move) and git takes no -c,
+//   --config-env, --git-dir, --work-tree or --exec-path, and to a mainline otherwise; Push deploys
+//   is read in the repository the push runs in, or the hook's (its input cwd, else
+//   CLAUDE_PROJECT_DIR) when the guard cannot name that directory; a dry run, the last of --dry-run, -n
+//   and --no-dry-run, is never asked),
+//   unbounded-wait (in a command that runs in the background, by the host's run_in_background or
+//   its own `&`, a while or until loop, a condition that only sets state included, a tail -f / -F
+//   / --follow or a watch that no timeout or gtimeout encloses: it runs until someone kills it), full-verify-executor (inside a
+//   host subagent, the hook input's agent_id set, a run of run-gates.sh with neither --since nor
+//   --list: FULL is the session's, once at landing), host-override (a git command whose environment sets
 //   or drops a variable the landing check reads the host from: HARNESS_HOST, CLAUDECODE,
 //   CODEX_THREAD_ID, CODEX_SANDBOX or a ZCODE_* name, by an assignment, env -u, env -i or exec -c;
 //   or a declaration, assignment, `unset` or `export -n` of one on a line that runs a git command)
 //   and merge-ff-mainline (a `git merge` onto a MAINLINE
 //   branch without --no-ff, which may fast-forward and so run no hook, or a `git pull .` there).
-//   On a line that runs git (at any depth), a guarded name in any form the guard does not read is
-//   refused: a whole word of a command that is not git names it (read, printf -v, for, mapfile, a
-//   nameref, a subscripted NAME[i]=), or a double-quoted string holds ${NAME= or ${NAME:=. A read
-//   ($NAME, ${NAME:-x}), git's own arguments and the forms the guard reads by value (an assignment
-//   or a declaration, unset or export -n of PATH, HUSKY or a GIT_CONFIG_* name) do not count.
-//   HARNESS_LANDING is landing-override, a host variable host-override, PATH and GIT_CONFIG_*
-//   hooks-path-override, HUSKY no-verify; the reason says to run a search or a print of the name
-//   apart from git. [B]
+//   On a line that runs git (at any depth), a guarded name set or cleared in any form the guard
+//   does not read is refused: by a command that can set a variable (read, printf -v, for, select,
+//   mapfile, readarray, getopts, let, wait -p, coproc, a declaration with a nameref or another
+//   operand, unset, export -n), an assignment word or a subscripted NAME[i]=, a {NAME}> redirection,
+//   or a ${NAME= or ${NAME:= expansion (a double-quoted string's too). So is a guarded name any
+//   word of a command other than git names (a name can become the name of a set: export "$n=…",
+//   source NAME), except in a terminal search: grep, egrep, fgrep, rg, ag, cat, head, tail, wc or
+//   ls, with no --pre or --filter option and no word holding $( $[ ${ or a backtick, at depth 0,
+//   not captured by $( ), backticks, <( ) or >( ), no output redirection but 2>&1 and 2>/dev/null
+//   on it or an enclosing group, and piped, if at all, only into such searches (a set form still
+//   counts there). A
+//   read ($NAME, ${NAME:-x}), git's own arguments and the forms the guard reads by value (an
+//   assignment or a declaration, unset or export -n of PATH, HUSKY or a GIT_CONFIG_* name) do not
+//   count. HARNESS_LANDING is landing-override, a host variable host-override, PATH and
+//   GIT_CONFIG_* hooks-path-override, HUSKY no-verify; the reason says a terminal search may name
+//   it and to run anything else apart from git. [B]
 //   binding (re-derived per project): the MAINLINE, HOOKS_DIR and EXTRA_RULES lines below.
 // The command is PARSED, never pattern-matched: heredoc bodies are removed and quoted strings are
 // held aside first (a commit message that mentions --no-verify is text, not a bypass), then each
 // simple command is read with the directory `cd` / `git -C` moved it to (a `cd` reaches the later
 // commands of its own shell, as an export does). The program is compared by basename
-// (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, env, nice, timeout, sudo
-// and xargs are stripped with their options (`command -p`, `exec -a name`, `time -p`,
+// (/usr/bin/git), and the wrappers command, builtin, exec, time, nohup, setsid, env, nice, timeout,
+// gtimeout, sudo and xargs are stripped with their options (`command -p`, `exec -a name`, `time -p`,
 // `time -o file`, `time -f fmt`, `env -P dir`; a long option also by an unambiguous prefix, as GNU
 // tools take it: `env --u`), as are a shell's `-c "<script>"` (bash, sh, dash, zsh, ksh, csh,
 // fish and their kin; options may come before or after the -c: `bash -c -x "<script>"`) and
@@ -54,11 +81,14 @@
 // and-or list
 // (back over &&, || and | to the previous ;, newline, & or `(`; a newline after &&, || or |
 // continues the list) ends in a single `&` (`a && b &` backgrounds both), when it sits in a
-// `( ... ) &` or `{ ...; } &` group, or in a `bash -c` / `eval` script that is backgrounded;
+// `( ... ) &` or `{ ...; } &` group or a loop's `done &` (its condition too), or in a `bash -c` /
+// `eval` script that is backgrounded;
 // `&>file`, `&>>file` and `|&` do not background.
 // A quoted word without whitespace is unquoted before options are read ("--no-verify" is seen);
 // a quoted string with whitespace stays one opaque word. A block exits 2 with
-// `BLOCKED (<rule>): <reason>` on stderr; any parse failure or exception exits 0.
+// `BLOCKED (<rule>): <reason>` on stderr; an owner-class hit (the owner form of landing-override,
+// push-deploys) where the host can ask (askable: Claude Code, a permission mode that asks) exits 0
+// with a PreToolUse `ask` decision on stdout instead; any parse failure or exception exits 0.
 // This stops an agent's own mistakes; it is not a sandbox. Known limits: command substitution
 // inside double quotes is not parsed (a nested `$(...)` with its own quotes is skipped as one
 // string; quotes nested inside backticks are not); a program named by a variable or substitution
@@ -75,18 +105,23 @@
 // commit is allowed; the quoted "$(...)" is refused); GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
 // GIT_DIR or a config include that points at a file setting core.hooksPath is not read; rebase and
 // am --no-verify are allowed (they skip pre-rebase and applypatch, not the commit guard); a
-// background form other than those above is not detected (`if ...; fi &`, a loop's `done &`,
-// coproc, setsid, a launch through a script of its own); git's abbreviations of long options are
-// expanded only for --no-verify, --force-with-lease, --delete and --tags; a push counts as forced
-// when any of its refspecs is `+`-prefixed (so `+a main` is refused); glob refspecs
-// (`+refs/heads/*:refs/heads/*`) are not read; a force push whose only selection is --tags (no
+// background form other than those above is not detected (`if ...; fi &`, coproc, `setsid -f`, a
+// launch through a script of its own); git's abbreviations of long options are
+// expanded only for --no-verify, --force-with-lease, --delete, --tags and --dry-run; a push counts
+// as forced when any of its refspecs is `+`-prefixed (so `+a main` is refused); a `:` or glob
+// refspec (`+refs/heads/*:refs/heads/*`) is read as pushing every mainline; with --repo every
+// positional is read as a refspec; a force push whose only selection is --tags (no
 // refspec) is allowed; a delete is refused only when its target is literally the mainline (an
 // unresolved `$VAR` target is allowed, a force push's is not); a node planted in a directory outside
-// the repository and the temporary directories, put first on PATH, is not refused.
+// the repository and the temporary directories, put first on PATH, is not refused;
+// a configured glob push destination is read as every mainline, so one that matches none is still asked;
+// a verdict script that starts a detached grandchild of its own can outlive the landing check's kill;
+// scripts nested deeper than the parser's depth cap (three `bash -c` / `eval` levels) are not read;
+// `'HARNESS_LANDING'=owner git …` is asked although bash runs it as a command name (it then fails).
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // [B] Branches that must never be force-pushed.
@@ -133,9 +168,11 @@ const WRAPPER_SHORT_VALUE = new Map([
   ['exec', 'a'],
   ['time', 'of'],
   ['nohup', ''],
+  ['setsid', ''],
   ['env', 'uCSaP'],
   ['nice', 'n'],
   ['timeout', 'sk'],
+  ['gtimeout', 'sk'],
   ['sudo', 'ughpCDRrtTU'],
   ['xargs', 'InLPsdEa'],
 ]);
@@ -146,9 +183,11 @@ const WRAPPER_LONG_VALUE = new Map([
   ['exec', []],
   ['time', ['--output', '--format']],
   ['nohup', []],
+  ['setsid', []],
   ['env', ['--unset', '--chdir', '--split-string', '--argv0']],
   ['nice', ['--adjustment']],
   ['timeout', ['--signal', '--kill-after']],
+  ['gtimeout', ['--signal', '--kill-after']],
   ['sudo', ['--user', '--group', '--host', '--prompt', '--close-from', '--chdir', '--chroot', '--role', '--type', '--command-timeout', '--other-user']],
   ['xargs', ['--max-args', '--max-lines', '--max-procs', '--max-chars', '--delimiter', '--arg-file']],
 ]);
@@ -186,6 +225,24 @@ const PUSH_VALUE_LONG = new Set(['--repo', '--receive-pack', '--exec', '--push-o
 // Launches a shell `&` must not detach: the Codex CLI and the harness's run wrappers.
 const RUNNERS = new Set(['codex', 'codex-run.mjs', 'claude-run.mjs']);
 const SCRIPT_RUNNERS = new Set(['codex-run.mjs', 'claude-run.mjs']);
+// Commands that set every name among their words (read -a NAME, mapfile NAME, getopts opts NAME, let NAME=1).
+const SETTERS = new Set(['read', 'mapfile', 'readarray', 'getopts', 'let']);
+// Commands whose word after the program is the name they set (for NAME in, select NAME in, coproc NAME).
+const LOOP_SETTERS = new Set(['for', 'select', 'coproc']);
+// The permission modes in which Claude Code asks the owner on a PreToolUse `ask`.
+const ASK_MODES = new Set(['default', 'acceptEdits', 'auto', 'plan']);
+// The longest ask text the hook hands the host.
+const ASK_MAX = 300;
+// Programs whose output a guarded name may reach the terminal in beside git (a terminal search, isSearch).
+const SEARCHES = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'cat', 'head', 'tail', 'wc', 'ls']);
+// Marks an output redirection the shell model drops before it splits on `&` (`&>f`, `>&f`, `1>&2`; not `2>&1`).
+const OUT = `${SEP}R${SEP}`;
+const OUTPUT_REDIRECT = /(?<!\d)(\d*)>>?\s*([^\s<>]*)/g;
+// A segment whose output may go elsewhere than the terminal: an OUT mark, or an output redirection
+// other than 2>/dev/null (>, >>, >|, 1>, 2>file, 3>file …). Input (<) is not one.
+const redirectsOutput = (t) => t.includes(OUT) || [...t.matchAll(OUTPUT_REDIRECT)].some(([, fd, target]) => !(fd === '2' && target === '/dev/null'));
+// The keywords that open a loop a `done` closes (splitLists reads it as a group).
+const LOOP_WORDS = new Set(['while', 'until', 'for', 'select']);
 
 const expand = (p) => (p.startsWith('~') ? homedir() + p.slice(1) : p);
 
@@ -428,7 +485,7 @@ function unwrap(words, assignments, unq, hold, cleared) {
     words.length = 0;
     return true;
   }
-  if (name === 'timeout') i++; // the duration
+  if (name === 'timeout' || name === 'gtimeout') i++; // the duration
   if (name === 'env' || name === 'sudo') {
     for (; i < words.length && ASSIGNMENT.test(words[i]); i++) assignments.push(words[i]);
   }
@@ -437,11 +494,15 @@ function unwrap(words, assignments, unq, hold, cleared) {
 }
 
 /**
- * Split masked text on the shell operators into segments, each { text, background, node }:
- * background when its and-or list ends in `&`, or it sits in a ( ), { } or backtick group whose
- * list does. `node` is the pipeline element the segment sits in, in a tree of { parent, subshell }
- * (groups, and-or lists, pipeline elements); `subshell` marks the ones bash runs in a child shell:
- * a ( ) or backtick group, a list that ends in `&`, each element of a pipeline of two or more.
+ * Split masked text on the shell operators into segments, each { text, background, node, toFile }:
+ * background when its and-or list ends in `&`, or it sits in a ( ), { }, backtick or loop group
+ * (while, until, for or select … done) whose list does. `node` is the pipeline element the segment
+ * sits in, in a tree of { parent, subshell } (groups, and-or lists, pipeline elements); `subshell`
+ * marks the ones bash runs in a child shell: a ( ) or backtick group, a list that ends in `&`, each
+ * element of a pipeline of two or more. A pipeline element also holds `pipeline` (the elements of
+ * its pipeline, in order); a group node is marked `captured` (a $( ), <( ), >( ) or backtick group:
+ * its output is a value, not the terminal's) or `toFile` (a group whose closing `)`, `}` or `done` sends stdout to a file);
+ * `toFile` on a segment is its own output redirection (redirectsOutput).
  */
 function splitLists(text) {
   const tokens = text.split(/(&&|\|\||[;&|()`\n])/);
@@ -455,7 +516,10 @@ function splitLists(text) {
   const element = () => {
     const f = top();
     f.andOr ??= node(f.node);
-    if (!f.elem) f.pipe.push((f.elem = node(f.andOr)));
+    if (!f.elem) {
+      f.elem = Object.assign(node(f.andOr), { pipeline: f.pipe });
+      f.pipe.push(f.elem);
+    }
     return f.elem;
   };
   const endPipe = () => {
@@ -471,20 +535,26 @@ function splitLists(text) {
     if (background && top().andOr) top().andOr.subshell = true;
     top().andOr = null;
   };
-  const open = (close) => stack.push(frame(close, node(element(), close !== '}')));
+  const open = (close, captured = false) => {
+    const group = node(element(), close !== '}' && close !== 'done');
+    group.captured = captured;
+    stack.push(frame(close, group));
+  };
+  let closed = null; // the node of the group just closed: a redirection after it is the group's
   // A closed group is one item of the enclosing and-or list: `( a; b ) &` backgrounds both.
   const shut = () => {
     endList(false);
     const group = stack.pop();
     top().list.push(...group.all);
     top().all.push(...group.all);
+    closed = group.node;
   };
-  const operator = (t) => {
+  const operator = (t, before) => {
     if (t === '&') endList(true);
     else if (t === ';' || t === '\n') endList(false);
-    else if (t === '(') open(')');
+    else if (t === '(') open(')', /[$<>]$/.test(before));
     else if (t === ')') top().close === ')' ? shut() : endList(false);
-    else if (t === '`') top().close === '`' ? shut() : open('`');
+    else if (t === '`') top().close === '`' ? shut() : open('`', true);
     else if (t === '|') top().elem = null;
     else endPipe(); // && and || end a pipeline, not the and-or list
   };
@@ -494,14 +564,20 @@ function splitLists(text) {
     if (i % 2 === 1) {
       if (t === '\n' && continued) continue; // a newline after && || or | continues the list
       continued = t === '&&' || t === '||' || t === '|';
-      operator(t);
+      operator(t, tokens[i - 1]);
       continue; // && || and | continue the and-or list
     }
     if (t.trim()) continued = false;
-    const first = t.trim().split(/\s+/)[0];
+    const lead = t.trim().split(/\s+/);
+    const first = lead[0];
     if (first === '}' && top().close === '}') shut();
+    else if (first === 'done' && top().close === 'done') shut();
     else if (first === '{') open('}');
-    const seg = { text: t, background: false, node: element() };
+    // A loop may follow the keywords a command can follow: `do while …`, `{ for …`.
+    if (LOOP_WORDS.has(lead.find((w) => !WRAPPERS.has(w) || LOOP_WORDS.has(w)))) open('done');
+    const seg = { text: t, background: false, node: element(), toFile: redirectsOutput(t) };
+    if (seg.toFile && closed) closed.toFile = true;
+    closed = null;
     segments.push(seg);
     top().list.push(seg);
     top().all.push(seg);
@@ -576,17 +652,97 @@ function guardedNames(word, found, skip, assignOnly) {
 }
 
 /**
- * The guarded names the words of a command that is not git name (guardedNames), into line.forms.
- * `exempt` holds the words the guard reads by value: its assignment words, and the operands of a
- * declaration or unset; a placeholder for an expanding double-quoted string is read for ${NAME=.
+ * The guarded names a command that is not git sets or clears in a form the guard does not read,
+ * into line.forms, and those it names, into `mentioned` (line.named unless a terminal search,
+ * nameMentions). `argv` is the command with wrappers stripped, `env` its assignment words and
+ * `named` the words read for names.
+ * Counted: an assignment word's own name, unless PATH, HUSKY or a GIT_CONFIG_* name (read by value);
+ * every name among the words of a SETTERS command; the name after for, select or coproc; the
+ * value of printf -v and wait -p; a declaration's or unset's operands (guardedNames, a READ_SHAPE
+ * operand of a name read by value skipped: a nameref's target counts); a {NAME} word (a {NAME}>
+ * redirection); and in every word, and in each expanding double-quoted string, a ${NAME= or
+ * ${NAME:=. Named: every guarded name a word of `named` holds (guardedNames), a READ_SHAPE
+ * assignment word or declaration or unset operand of a name read by value skipped, and those of
+ * the expanding double-quoted strings set by ${NAME= or ${NAME:=. A read ($NAME) is neither.
  */
-function collectForms(words, exempt, quoted) {
+function collectForms(argv, env, quoted, named, mentioned) {
+  const operands = DECLARATIONS.has(argv[0]) || argv[0] === 'unset' ? argv.slice(1) : [];
+  const exempt = new Set([...env, ...operands]);
+  for (const w of named) {
+    guardedNames(w, mentioned, exempt.has(w) && READ_SHAPE.test(w), false);
+    for (const [, n] of w.matchAll(PH)) {
+      if (quoted.expands?.has(Number(n))) guardedNames(quoted[Number(n)], mentioned, false, true);
+    }
+  }
   const found = quoted.line.forms;
-  for (const w of words) {
-    guardedNames(w, found, exempt.has(w) && READ_SHAPE.test(w), false);
+  for (const a of env) {
+    const name = nameOf(a);
+    if (isGuarded(name) && !isValueVar(name)) found.add(name);
+  }
+  const program = argv[0] ?? '';
+  // The value of a short option `letter` in a cluster: the rest of the cluster, or the next word.
+  const valueOf = (letter) => argv.slice(1).flatMap((w, k) => {
+    const at = /^-[A-Za-z]+/.test(w) ? w.indexOf(letter) : -1;
+    if (at === -1) return [];
+    return [at === w.length - 1 ? argv[k + 2] ?? '' : w.slice(at + 1)];
+  });
+  let setWords = [];
+  if (SETTERS.has(program)) setWords = argv.slice(1);
+  else if (LOOP_SETTERS.has(program)) setWords = argv.slice(1, 2);
+  else if (program === 'printf') setWords = valueOf('v');
+  else if (program === 'wait') setWords = valueOf('p');
+  for (const w of setWords) guardedNames(w, found, false, false);
+  if (DECLARATIONS.has(program) || program === 'unset') {
+    for (const w of argv.slice(1)) guardedNames(w, found, READ_SHAPE.test(w), false);
+  }
+  for (const w of [...env, ...argv]) {
+    const brace = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(w);
+    if (brace && isGuarded(brace[1])) found.add(brace[1]);
+    guardedNames(w, found, false, true);
     for (const [, n] of w.matchAll(PH)) {
       if (quoted.expands?.has(Number(n))) guardedNames(quoted[Number(n)], found, false, true);
     }
+  }
+}
+
+/**
+ * True when the command (`words`: wrappers stripped, then its assignment words and the words as
+ * the shell hands them over, wrapper arguments included) is a search: a
+ * SEARCHES program at depth 0, with no --pre or --filter option (they run a command), no word that
+ * holds $( $[ ${ or a backtick, no output redirection but 2>&1 and 2>/dev/null on its segment or an
+ * enclosing group, and not inside $( ), backticks, <( ) or >( ).
+ */
+function isSearch(words, segment, depth, unq) {
+  if (depth !== 0 || !SEARCHES.has(basename(unq(words[0] ?? ''))) || segment.toFile) return false;
+  if (words.some((w) => /^--(?:pre|filter)/.test(unq(w)))) return false;
+  // A word that can assign: ${n:=X}, $((X=0)), $[X=0], $(…) or a backtick ($NAME is a read).
+  if (words.some((w) => /\$[({[]|`/.test(unq(w)))) return false;
+  for (let n = segment.node; n; n = n.parent) if (n.captured || n.toFile) return false;
+  return true;
+}
+
+/**
+ * Add to `named` (line.named) the names each of parse's `mentions` ({ names, node, search, close })
+ * holds, except a terminal search's: a search whose output reaches the terminal through searches
+ * only, every element after its own, in each pipeline it sits in, holding nothing but searches (a
+ * group's closing `}` or `done` aside).
+ */
+function nameMentions(mentions, named) {
+  const inside = new Map(); // a pipeline element: the mentions within it
+  for (const m of mentions) {
+    for (let n = m.node; n; n = n.parent) if (n.pipeline) inside.set(n, [...(inside.get(n) ?? []), m]);
+  }
+  const reachesTerminal = (m) => {
+    for (let n = m.node; n; n = n.parent) {
+      if (!n.pipeline) continue;
+      const after = n.pipeline.slice(n.pipeline.indexOf(n) + 1);
+      if (!after.every((e) => (inside.get(e) ?? []).every((o) => o.search || o.close))) return false;
+    }
+    return true;
+  };
+  for (const m of mentions) {
+    if (m.search && reachesTerminal(m)) continue;
+    for (const name of m.names) named.add(name);
   }
 }
 
@@ -642,9 +798,10 @@ function declare(argv, state, line, inherited) {
 
 /**
  * The simple commands of `command`. `quoted` is the line's shared parse state: the quoted strings,
- * `expands` (the double-quoted ones the shell expands), `line` ({ sets, unsets, forms }: every
- * variable name the line sets or drops, and every guarded name a form the guard does not read
- * names, at any depth) and `inherited[depth]` (the names the shell at this
+ * `expands` (the double-quoted ones the shell expands), `line` ({ sets, unsets, forms, named,
+ * waits }: every variable name the line sets or drops, every guarded name a form the guard does
+ * not read sets (forms) or names (named), at any depth, and the loops no command below carries)
+ * and `inherited[depth]` (the names the shell at this
  * depth inherits as exported: the hook's own environment, and in a script the shell's or eval's
  * environment too).
  */
@@ -652,24 +809,29 @@ function parse(command, cwd, quoted, depth, background) {
   const commands = [];
   const { line } = quoted;
   const inherited = quoted.inherited[depth];
-  // A `cd`, an assignment or an `export` changes the shell it runs in: { dir, exported, vars, bare }
-  // per subshell node of splitLists' tree, made on first use as a copy of the nearest enclosing
-  // subshell's state.
+  // A script run by a command a timeout encloses is bounded by it (unbounded-wait).
+  const bound = quoted.bound[depth] === true;
+  // A `cd`, an assignment or an `export` changes the shell it runs in: { dir, lost, exported, vars,
+  // bare } per subshell node of splitLists' tree, made on first use as a copy of the nearest
+  // enclosing subshell's state. `lost`: a move the guard cannot follow left `dir` unknown.
   const states = new Map();
   const stateOf = (n) => {
     while (!n.subshell) n = n.parent;
     if (!states.has(n)) {
-      const outer = n.parent ? stateOf(n.parent) : { dir: cwd, exported: [], vars: new Map(), bare: new Set() };
-      states.set(n, { dir: outer.dir, exported: [...outer.exported], vars: new Map(outer.vars), bare: new Set(outer.bare) });
+      const outer = n.parent ? stateOf(n.parent) : { dir: cwd, lost: quoted.lost[depth] === true, exported: [], vars: new Map(), bare: new Set() };
+      states.set(n, { dir: outer.dir, lost: outer.lost, exported: [...outer.exported], vars: new Map(outer.vars), bare: new Set(outer.bare) });
     }
     return states.get(n);
   };
   // `2>&1`, `>&2` and `>&file` are dropped before the split on `&` would cut them in two; so are
-  // `&>file` and `&>>file` (redirections), and `|&` (a pipe of both streams) becomes `|`.
+  // `&>file` and `&>>file` (redirections), and `|&` (a pipe of both streams) becomes `|`. Each of
+  // them but `2>&1` leaves an OUT mark first (`1>&2`, `>&3`, `&>f`: output a search may not print).
   const text = maskQuotes(stripHeredocs(command), quoted)
+    .replace(/(?<!&)&>|(?<!\d)\d*>&\s*[^\s;&|()<>]*/g, (m) => (m === '2>&1' ? m : `${OUT}${m}`))
     .replace(/(?<!\d)\d*[<>]&\s*[^\s;&|()<>]*/g, ' ')
     .replace(/(?<!&)&>>?\s*[^\s;&|()<>]*/g, ' ')
     .replace(/\|&/g, '|');
+  if (depth === 0) line.text = text; // the owner form must be one simple command (landingOwner)
   const unq = (w) => w.replace(PH, (_, n) => quoted[Number(n)]);
   const hold = (content) => `${SEP}Q${quoted.push(content) - 1}${SEP}`;
   // A quoted string without whitespace becomes plain text, so a quoted flag is still a flag. In an
@@ -680,27 +842,36 @@ function parse(command, cwd, quoted, depth, background) {
     if (ASSIGNMENT.test(w) && /[~$]/.test(c ?? '')) return m;
     return c && !/\s/.test(c) && !c.includes(SEP) ? c : m;
   });
+  const mentions = []; // per command: the guarded names it names, and whether it is a search
   for (const segment of splitLists(text)) {
     // Redirections (with an optional space before the target) are not words. (?<!\d) keeps the
     // scan linear on a long run of digits.
-    const words = segment.text.replace(/(?<!\d)\d*(?:>>?|<{1,3})\s*\S*/g, ' ').trim().split(/\s+/).filter(Boolean).map(open);
+    const words = segment.text.replaceAll(OUT, ' ').replace(/(?<!\d)\d*(?:>>?|<{1,3})\s*\S*/g, ' ').trim().split(/\s+/).filter(Boolean).map(open);
     const shellWords = [...words]; // as the shell hands them over, wrappers and assignments included
     const env = [];
     const cleared = [];
     let wrapped = false;
+    let loop = false; // a while or until keyword starts this command
+    let timed = false; // a timeout or gtimeout wrapper runs it
     for (;;) {
       if (!words.length) break;
+      const program = basename(words[0]);
       if (ASSIGNMENT.test(words[0])) env.push(words.shift());
-      else if (WRAPPERS.has(words[0])) words.shift();
-      else if (unwrap(words, env, unq, hold, cleared)) wrapped = true;
-      else break;
+      else if (WRAPPERS.has(words[0])) {
+        if (words[0] === 'while' || words[0] === 'until') loop = true;
+        words.shift();
+      } else if (unwrap(words, env, unq, hold, cleared)) {
+        wrapped = true;
+        if (program === 'timeout' || program === 'gtimeout') timed = true;
+      } else break;
     }
-    // A guarded name a command that is not git names, in a form the guard does not read; the words
-    // env -S made are read too. git's own arguments never set a shell variable.
-    if (basename(words[0] ?? '') !== 'git') {
-      const operands = DECLARATIONS.has(words[0]) || words[0] === 'unset' ? words.slice(1) : [];
-      collectForms(wrapped ? [...shellWords, ...env, ...words] : shellWords, new Set([...env, ...operands]), quoted);
-    }
+    // A guarded name a command that is not git sets, or names (every word it was handed, and those
+    // a wrapper made: env -S), in a form the guard does not read; a terminal search's names are
+    // dropped once the line is read (nameMentions). git's own arguments never set a shell variable.
+    const mention = { names: new Set(), node: segment.node, search: isSearch([...words, ...env, ...shellWords], segment, depth, unq), close: words.length === 1 && (words[0] === '}' || words[0] === 'done') };
+    mentions.push(mention);
+    const named = wrapped ? [...shellWords, ...env, ...words] : shellWords;
+    if (basename(words[0] ?? '') !== 'git') collectForms(words, env, quoted, named, mention.names);
     const state = stateOf(segment.node);
     const given = new Map(); // the values the command's earlier assignment words gave
     for (let k = 0; k < env.length; k++) {
@@ -708,16 +879,33 @@ function parse(command, cwd, quoted, depth, background) {
       given.set(nameOf(env[k]), env[k].slice(nameOf(env[k]).length + 1));
     }
     for (const a of env) line.sets.add(nameOf(a));
+    const bg = background || segment.background;
+    // A loop whose condition only changes the shell (an assignment, a cd, an export) is no command
+    // below: unbounded-wait reads it here.
+    if (loop && (!words.length || words[0] === 'cd' || words[0] === 'export')) line.waits.push({ argv: [], wait: { loop, timed, bound }, background: bg });
     if (!words.length) {
       // `NAME=value` alone sets the shell's variable; `env NAME=value` alone only prints.
       if (env.length && !wrapped) assign(state, env, inherited);
       continue;
     }
-    if (words[0] === 'cd') {
-      const target = words.slice(1).find((w) => w !== '--' && w !== '-L' && w !== '-P');
-      if (!target) state.dir = homedir();
-      else if (target !== '-') state.dir = resolve(state.dir, expand(unq(target)));
-      continue;
+    // set -a, and a move the guard cannot follow (cd -, a $ in the path, popd, pushd without a
+    // literal path, a directory that does not exist), change what a later git reads past the
+    // guard's view (pushConfigRead); the directory is then unknown (`lost`, pushDeployDir).
+    if (words[0] === 'set' && words.slice(1).some((w) => /^-[A-Za-z]*a/.test(w) || w === 'allexport')) line.moved = true;
+    if (words[0] === 'cd' || words[0] === 'pushd' || words[0] === 'popd') {
+      const target = words.slice(1).find((w) => w !== '--' && w !== '-L' && w !== '-P' && w !== '-n');
+      const path = target === undefined ? undefined : unq(target);
+      const into = path === undefined ? homedir() : resolve(state.dir, expand(path));
+      // pushd -n changes the directory stack only; a move to a directory that does not exist fails.
+      if (words[0] === 'pushd' && words.slice(1).includes('-n')) {
+        // the shell stays where it is
+      } else if (words[0] === 'popd' || (words[0] === 'pushd' && !path) || /^[-+]|\$/.test(path ?? '')) line.moved = state.lost = true;
+      else {
+        state.dir = into; // the later commands of a failed move are still read there, as before
+        if (!existsSync(into)) line.moved = state.lost = true;
+        else if (path === undefined || isAbsolute(expand(path))) state.lost = false;
+      }
+      if (words[0] === 'cd') continue;
     }
     if (DECLARATIONS.has(words[0])) {
       declare(words, state, line, inherited);
@@ -734,12 +922,16 @@ function parse(command, cwd, quoted, depth, background) {
     }
     // The inline assignments come after those exported earlier in this shell, so a later one wins.
     env.unshift(...state.exported);
-    const bg = background || segment.background;
     const dir = state.dir;
     const cmd = { argv: words, cwd: dir };
     Object.defineProperty(cmd, 'env', { value: env, enumerable: false });
     Object.defineProperty(cmd, 'background', { value: bg, enumerable: false });
     Object.defineProperty(cmd, 'cleared', { value: cleared, enumerable: false });
+    Object.defineProperty(cmd, 'lost', { value: state.lost, enumerable: false });
+    // What unbounded-wait reads: the loop keyword, its own timeout wrapper, an enclosing one; and
+    // what the owner form reads: the words before the program (null when a wrapper rewrote them).
+    Object.defineProperty(cmd, 'wait', { value: { loop, timed, bound }, enumerable: false });
+    Object.defineProperty(cmd, 'prefix', { value: wrapped ? null : shellWords.slice(0, shellWords.length - words.length), enumerable: false });
     commands.push(cmd);
     if (depth >= 3) continue;
     // `bash -c "<script>"` and `eval "<script>"` run their quoted text as commands.
@@ -753,19 +945,22 @@ function parse(command, cwd, quoted, depth, background) {
     // The script's commands inherit the environment the shell or eval was given (and what it
     // dropped), and its background.
     quoted.inherited[depth + 1] = new Set([...(cleared.includes(ALL_VARS) ? [] : inherited), ...env.map(nameOf)]);
+    quoted.bound[depth + 1] = bound || timed;
+    quoted.lost[depth + 1] = state.lost;
     for (const inner of parse(script, dir, quoted, depth + 1, bg)) {
       inner.env.unshift(...env);
       inner.cleared.unshift(...cleared);
       commands.push(inner);
     }
   }
+  nameMentions(mentions, line.named);
   return commands;
 }
 
 /** Simple commands of a shell command line: [{ argv, cwd }] (env, background and quoted not enumerable). Quoted text is an opaque word. */
 export function parseCommands(command, cwd = process.cwd()) {
   const quoted = [];
-  Object.assign(quoted, { expands: new Set(), line: { sets: new Set(), unsets: new Set(), forms: new Set() }, inherited: [new Set(Object.keys(process.env))] });
+  Object.assign(quoted, { expands: new Set(), line: { sets: new Set(), unsets: new Set(), forms: new Set(), named: new Set(), waits: [], moved: false }, inherited: [new Set(Object.keys(process.env))], bound: [false], lost: [false] });
   const commands = parse(String(command ?? ''), cwd, quoted, 0, false);
   // check() needs the quoted values for git options like `-c "core.hooksPath=..."`.
   for (const c of commands) Object.defineProperty(c, 'quoted', { value: quoted, enumerable: false });
@@ -1055,12 +1250,92 @@ function configChangesHooksPath(rest, unq, cwd, quoted) {
   return !(plain && positionals.length === 2 && HOOKS_DIR && (dirKey(positionals[1]) === dirKey(HOOKS_DIR) || installPath(positionals[1], last, cwd, quoted, dirKey(HOOKS_DIR))));
 }
 
-/** { rule, reason } when a `git push` rewrites or deletes a mainline branch, else null. */
-function pushHit(parts, currentBranch) {
+/** The values of git config `key` in `dir` (git config --get-all, 2000 ms): [] when it is unset, null on any other failure. */
+function configValues(dir, key) {
+  const r = spawnSync('git', ['-C', dir, 'config', '--get-all', key], { encoding: 'utf8', timeout: 2000 });
+  if (r.error || r.signal || (r.status !== 0 && r.status !== 1)) return null;
+  return r.status === 1 ? [] : r.stdout.split('\n').map((v) => v.trim()).filter(Boolean);
+}
+
+/**
+ * The refspecs a `git push` with none given pushes, from the local config of `dir`: the remote
+ * (`remote`, else branch.<current>.remote, else origin); its remote.<remote>.push refspecs; else,
+ * under push.default upstream or tracking, branch.<current>.merge; else the current branch. null
+ * when a config read fails.
+ */
+function configuredRefs(dir, remote, current) {
+  const named = remote ? [remote] : current ? configValues(dir, `branch.${current}.remote`) : [];
+  if (!named) return null;
+  const push = configValues(dir, `remote.${named.at(-1) ?? 'origin'}.push`);
+  if (!push || push.length) return push;
+  const mode = configValues(dir, 'push.default');
+  if (!mode) return null;
+  if (current && (mode.at(-1) === 'upstream' || mode.at(-1) === 'tracking')) {
+    const merge = configValues(dir, `branch.${current}.merge`);
+    if (!merge) return null;
+    if (merge.length) return [merge.at(-1)];
+  }
+  return current ? [current] : null;
+}
+
+/**
+ * True when the local config of the directory the guard follows the push to is what a `git push`
+ * (`cmd`) reads: the line sets no variable, runs no set -a and no cd, pushd or popd the guard
+ * cannot follow (line.moved), the command has no environment of its own and clears nothing, and
+ * git takes none of -c, --config-env, --git-dir, --work-tree or --exec-path, nor a -C whose path
+ * holds a `$`.
+ */
+function pushConfigRead(cmd) {
+  const { line } = cmd.quoted;
+  if (line.sets.size || line.moved || cmd.env.length || cmd.cleared.length) return false;
+  for (const [w, value] of gitGlobals(cmd)) {
+    if (/^(?:-c|--config-env|--git-dir|--work-tree|--exec-path)(?:=|$)/.test(w)) return false;
+    if (w === '-C' && (value === null || value.includes('$'))) return false;
+  }
+  return true;
+}
+
+/**
+ * git's global options before the subcommand, read as gitParts reads them: [option, value], the
+ * value (unquoted; null when missing) of -C, -c, --config-env and GIT_VALUE_OPTIONS, else null.
+ */
+function gitGlobals(cmd) {
+  const unq = (w) => w.replace(PH, (_, n) => cmd.quoted[Number(n)] ?? '');
+  const { argv } = cmd;
+  const options = [];
+  for (let j = 1; j < argv.length && argv[j].startsWith('-'); j++) {
+    const option = argv[j];
+    const takes = ['-C', '-c', '--config-env'].includes(option) || GIT_VALUE_OPTIONS.has(option);
+    options.push([option, takes && j + 1 < argv.length ? unq(argv[++j]) : null]);
+  }
+  return options;
+}
+
+/**
+ * The directory whose AGENTS.md says whether a `git push` (`cmd`, `parts`) deploys: the one it
+ * runs in, unless the guard cannot name it (a move it cannot follow, a -C path that holds a `$`,
+ * or a path that does not exist), then the hook's own (`hookDir`).
+ */
+function pushDeployDir(cmd, parts, hookDir) {
+  const unknown = cmd.lost || !existsSync(parts.cwd) || gitGlobals(cmd).some(([w, value]) => w === '-C' && (value === null || value.includes('$')));
+  return unknown && hookDir ? hookDir : parts.cwd;
+}
+
+/**
+ * { rule, reason } when a `git push` rewrites or deletes a mainline branch; the push-deploys owner
+ * hit when a push that is neither updates one in a repository whose pushes deploy (deployHit), and
+ * is no dry run (the last of --dry-run, -n and --no-dry-run wins); else null. A push that names no
+ * refspec goes where the config sends it (configuredRefs) when `configRead` (pushConfigRead), else
+ * to a mainline. With --repo, every positional is a refspec. `deployDir` is where Push deploys is
+ * read (pushDeployDir).
+ */
+function pushHit(parts, currentBranch, configRead = true, deployDir = parts.cwd) {
   let force = false;
   let everything = false;
   let del = false;
   let tags = false;
+  let dry = false;
+  let repo = null;
   const positionals = [];
   const { rest, unq } = parts;
   for (let j = 0; j < rest.length; j++) {
@@ -1076,12 +1351,16 @@ function pushHit(parts, currentBranch) {
       else if (name === '--all') everything = true;
       else if (name.length >= 5 && '--delete'.startsWith(name)) del = true;
       else if (name.length >= 5 && '--tags'.startsWith(name)) tags = true;
+      else if (name.length >= 4 && '--dry-run'.startsWith(name)) dry = true;
+      else if (name.length >= 7 && '--no-dry-run'.startsWith(name)) dry = false;
+      else if (name === '--repo') repo = t.includes('=') ? t.slice(t.indexOf('=') + 1) : rest[++j] ?? '';
       else if (PUSH_VALUE_LONG.has(name) && !t.includes('=')) j++;
     } else if (/^-[^-]/.test(t)) {
       const cluster = t.slice(1);
       for (let k = 0; k < cluster.length; k++) {
         if (cluster[k] === 'f') force = true;
         if (cluster[k] === 'd') del = true;
+        if (cluster[k] === 'n') dry = true;
         if (cluster[k] === 'o') {
           if (k === cluster.length - 1) j++;
           break;
@@ -1091,9 +1370,14 @@ function pushHit(parts, currentBranch) {
       positionals.push(t);
     }
   }
-  const refs = positionals.slice(1).map(unq); // positionals[0] is the remote
-  if (refs.some((r) => r.startsWith('+'))) force = true;
+  const refs = (repo === null ? positionals.slice(1) : positionals).map(unq); // else positionals[0] is the remote
   const branch = () => currentBranch ?? branchOf(parts.cwd);
+  if (!refs.length && !everything && !tags && !del) {
+    const remote = repo === null ? positionals[0] : repo;
+    if (!configRead) refs.push(...MAINLINE);
+    else refs.push(...(configuredRefs(parts.cwd, remote === undefined ? null : unq(remote), branch()) ?? []));
+  }
+  if (refs.some((r) => r.startsWith('+'))) force = true;
   const nameOf = (r) => r.replace(/^\+/, '').replace(/^.*:/, '').replace(/^refs\/heads\//, '');
   // The branch a refspec updates; an unresolvable one ($VAR, $(...)) or HEAD / @ is the current branch.
   const target = (r) => {
@@ -1111,9 +1395,12 @@ function pushHit(parts, currentBranch) {
       };
     }
   }
-  if (!force || del) return null;
+  if (del) return null;
   if (tags && !everything && !refs.length) return null; // -f --tags alone pushes only tags
-  const rewritten = everything ? [MAINLINE[0] ?? 'mainline'] : (refs.length ? refs.map(target) : [branch()]);
+  // `:` and a pattern (`refs/heads/*:refs/heads/*`) push the matching branches, a mainline among them.
+  const matching = (r) => r.replace(/^\+/, '') === ':' || nameOf(r).includes('*');
+  const rewritten = everything ? [MAINLINE[0] ?? 'mainline'] : (refs.length ? refs.flatMap((r) => (matching(r) ? MAINLINE : [target(r)])) : [branch()]);
+  if (!force) return dry ? null : deployHit(deployDir, rewritten);
   const hit = rewritten.find((name) => name && (everything || MAINLINE.includes(name)));
   if (!hit) return null;
   return {
@@ -1128,8 +1415,218 @@ function backgroundHit(cmd) {
   return {
     rule: 'codex-background',
     reason:
-      "a `&` launch detaches the run from the session, so the host never reports its exit and a run that died with its shell leaves no verdict. Use the host's own background option (Claude Code: the Bash tool's run_in_background), then count the run only once its ledger row or output file exists.",
+      "launch it in the background with the host's own option instead (Claude Code: the Bash tool's run_in_background) and the default --timeout-min; only a shell `&` is refused. A `&` launch detaches the run from the session, so the host never reports its exit and a run that died with its shell leaves no verdict. Count the run only once its ledger row or output file exists.",
   };
+}
+
+/** `hit` made owner-class: `owner: true`, and `ask` (not enumerable) giving its ask text once, on first use. */
+function ownerHit(hit, text) {
+  let memo = null;
+  return Object.defineProperty({ ...hit, owner: true }, 'ask', { value: () => (memo ??= text()), enumerable: false });
+}
+
+/**
+ * True when the repository `dir` is in has an AGENTS.md at its top whose merge block
+ * (`<!-- harness:begin merge -->` … `<!-- harness:end merge -->`, each marker alone on its line)
+ * holds `Push deploys: yes` as its first Push deploys: line. No file, no block, no end marker or
+ * `Push deploys: no` is false.
+ */
+function pushDeploys(dir) {
+  const top = repoTop(dir);
+  if (!top) return false;
+  let text;
+  try {
+    text = readFileSync(join(top, 'AGENTS.md'), 'utf8');
+  } catch {
+    return false;
+  }
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const begin = lines.findIndex((l) => l.trim() === '<!-- harness:begin merge -->');
+  const end = lines.findIndex((l, i) => i > begin && l.trim() === '<!-- harness:end merge -->');
+  if (begin < 0 || end < 0) return false;
+  const push = lines.slice(begin + 1, end).map((l) => /^\s*Push deploys:\s*(yes|no)\b/i.exec(l)).find(Boolean);
+  return push?.[1].toLowerCase() === 'yes';
+}
+
+/** The push-deploys owner hit when one of the branches a push updates (`names`) is a MAINLINE one and the repository's pushes deploy, else null. */
+function deployHit(dir, names) {
+  const ref = names.find((name) => name && MAINLINE.includes(name));
+  if (!ref || !pushDeploys(dir)) return null;
+  return ownerHit(
+    { rule: 'push-deploys', reason: `this push updates \`${ref}\`, and AGENTS.md says a push deploys (Push deploys: yes): a push that ships is the owner's to approve.` },
+    () => `Owner key: this push to ${ref} deploys (AGENTS.md: Push deploys: yes). Approve to push.`,
+  );
+}
+
+/** True when a `tail` argument list follows the file: -f or -F in a cluster, or --follow[=...]. */
+function tailFollows(rest) {
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j];
+    if (t === '--') break;
+    if (t === '--follow' || t.startsWith('--follow=')) return true;
+    if (!/^-[^-]/.test(t)) continue;
+    for (let k = 1; k < t.length; k++) {
+      if (t[k] === 'f' || t[k] === 'F') return true;
+      if ('ncsb'.includes(t[k])) {
+        if (k === t.length - 1) j++; // -n 20: the value is the next word; -n20: the rest of the cluster
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+const WAIT_HIT = {
+  rule: 'unbounded-wait',
+  reason: "a background wait with no bound runs until someone kills it. Bound it with timeout <seconds> (timeout 1800 bash -c '…'), or wait for the background task's completion notice.",
+};
+
+/**
+ * The unbounded-wait hit when a command that runs in the background (`background`) is a while or
+ * until loop, a tail that follows its file or a watch, with no timeout or gtimeout around it: the
+ * loop's own command never carries one, so only an enclosing one (`timeout 1800 bash -c '…'`)
+ * bounds a loop; a tail or watch is bounded by its own as well. Else null.
+ */
+function waitHit(cmd, background) {
+  if (!background) return null;
+  const { loop, timed, bound } = cmd.wait ?? {};
+  const argv = cmd.argv.map((w) => w.replace(PH, (_, n) => cmd.quoted?.[Number(n)] ?? ''));
+  const name = basename(argv[0] ?? '');
+  const waits = loop || name === 'watch' || (name === 'tail' && tailFollows(argv.slice(1)));
+  if (!waits) return null;
+  const bounded = bound || (!loop && timed);
+  if (bounded) return null;
+  return WAIT_HIT;
+}
+
+const FULL_VERIFY_HIT = {
+  rule: 'full-verify-executor',
+  reason: "FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since <the slice's base>",
+};
+
+/**
+ * The full-verify-executor hit when the hook runs in a host subagent (`agentId`) and the command
+ * runs a file named run-gates.sh (itself, or through a shell, source or `.`) with neither --since
+ * nor --list among its arguments, else null. The program and the script operand are unquoted
+ * before their basename is taken; a shell's -c runs its script text, which parse reads apart.
+ */
+function fullVerifyHit(cmd, agentId) {
+  if (!agentId) return null;
+  const unq = (w) => w.replace(PH, (_, n) => cmd.quoted?.[Number(n)] ?? '');
+  const argv = cmd.argv.map(unq);
+  const name = basename(argv[0] ?? '');
+  let at = name === 'run-gates.sh' ? 0 : -1;
+  if (at === -1 && (SHELLS.has(name) || name === 'source' || name === '.')) {
+    // the script a shell runs: its first word that is not an option (-o, -O, --rcfile and
+    // --init-file take the next word)
+    for (let j = 1; j < argv.length; j++) {
+      if (SHELLS.has(name) && (/^-[A-Za-z]*c[A-Za-z]*$/.test(argv[j]) || argv[j] === '--command')) return null;
+      if (/^[-+][A-Za-z]*[oO]$/.test(argv[j]) || argv[j] === '--rcfile' || argv[j] === '--init-file') j++;
+      else if (!/^[-+]/.test(argv[j])) {
+        at = basename(argv[j]) === 'run-gates.sh' ? j : -1;
+        break;
+      }
+    }
+  }
+  if (at === -1) return null;
+  const args = argv.slice(at + 1);
+  if (args.some((a) => a === '--list' || a === '--since' || a.startsWith('--since='))) return null;
+  return FULL_VERIFY_HIT;
+}
+
+/**
+ * The command of the owner form of landing-override, else null: the whole line is ONE simple command
+ * (no `;`, `&&`, `||`, `|`, `&`, newline, group, subshell, `$(…)` or backtick, a quoted one
+ * included), the only word before its program is `HARNESS_LANDING=owner` (quoted or not), and its
+ * program is git with `merge` or `commit` as the word after it (no git option before the subcommand).
+ */
+function landingOwner(command, commands) {
+  const [cmd] = commands;
+  const { line } = commands;
+  if (commands.length !== 1 || /[;&|()`\n]/.test(line.text ?? '\n') || String(command).trim().includes('\n')) return null;
+  if (cmd.quoted.some((q) => /\$\(|`/.test(q))) return null;
+  if (cmd.prefix?.length !== 1 || cmd.prefix[0] !== 'HARNESS_LANDING=owner' || cmd.cleared.length) return null;
+  if (basename(cmd.argv[0] ?? '') !== 'git' || (cmd.argv[1] !== 'merge' && cmd.argv[1] !== 'commit')) return null;
+  if (line.sets.size !== 1 || line.unsets.size || line.forms.size || line.named.size) return null;
+  return cmd;
+}
+
+/**
+ * One line of at most ASK_MAX characters: each run of control, format (bidi, zero-width), line and
+ * paragraph separator characters becomes one space, the middle `part` is clipped to fit.
+ */
+function askLine(head, part, tail) {
+  const room = Math.max(0, ASK_MAX - head.length - tail.length);
+  const clean = (s) => s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ');
+  let middle = clean(part);
+  if (middle.length > room) middle = `${middle.slice(0, Math.max(0, room - 1))}…`;
+  return clean(`${head}${middle}${tail}`).slice(0, ASK_MAX);
+}
+
+/**
+ * The first line `node scripts/review-gate.mjs --landing <branch> --base <current branch>` prints,
+ * run at the repository top with a 5000 ms timeout (SIGKILL) and no NODE_* variable, its stdout
+ * read up to 64 KiB (past that, the first line of what was read), for a `git merge` whose single
+ * non-option argument is <branch>; `(landing check not run)` when any of that is missing or fails.
+ */
+function landingVerdict(cmd, currentBranch) {
+  const none = '(landing check not run)';
+  const parts = gitParts(cmd);
+  const { positionals } = mergeWords(parts.rest.map(parts.unq), MERGE_VALUE_LONG, MERGE_VALUE_SHORT);
+  if (positionals.length !== 1 || !positionals[0]) return none;
+  const top = repoTop(parts.cwd);
+  const base = currentBranch ?? branchOf(parts.cwd);
+  if (!top || !base || !existsSync(join(top, 'scripts', 'review-gate.mjs'))) return none;
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('NODE_')));
+  const r = spawnSync(process.execPath, ['scripts/review-gate.mjs', '--landing', positionals[0], '--base', base], {
+    cwd: top, env, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024,
+  });
+  // Past maxBuffer the run is killed with what it printed kept; a timeout's partial line is not used.
+  if (r.error ? r.error.code !== 'ENOBUFS' : r.signal) return none;
+  return String(r.stdout ?? '').split('\n')[0].trim() || none;
+}
+
+/** The owner hit of the owner form (landingOwner's `cmd`); a merge's ask text runs the landing check, lazily. */
+function landingHit(cmd, currentBranch) {
+  const merge = cmd.argv[1] === 'merge';
+  return ownerHit(
+    {
+      rule: 'landing-override',
+      reason: "HARNESS_LANDING=owner on its own line is the owner's key past the landing check: the owner turns it, never an agent.",
+    },
+    () => (merge
+      ? askLine('Owner key: merge past the landing check. ', landingVerdict(cmd, currentBranch), ' Approve to run it as the owner.')
+      : askLine("Owner key: commit past the commit guard's landing check. Approve to run it as the owner.", '', '')),
+  );
+}
+
+/**
+ * True when the host can put an owner-class hit to the owner: Claude Code (CLAUDE_PROJECT_DIR set,
+ * neither CODEX_THREAD_ID nor a ZCODE_* name in `env`) in a permission mode that asks (ASK_MODES).
+ * bypassPermissions, dontAsk, a missing mode or another host is not askable.
+ */
+export function askable(input, env) {
+  const e = env ?? {};
+  if (typeof e.CLAUDE_PROJECT_DIR !== 'string' || e.CLAUDE_PROJECT_DIR === '') return false;
+  if ('CODEX_THREAD_ID' in e || Object.keys(e).some((name) => name.startsWith('ZCODE_'))) return false;
+  return ASK_MODES.has(input?.permission_mode);
+}
+
+/**
+ * The hook's answer to `hit` ({ exit, stdout?, stderr? }), pure but for an owner hit's own ask
+ * text (one landing check for a merge): null exits 0 with no output; an owner-class hit the host
+ * can ask (askable) exits 0 with a PreToolUse `ask` on stdout; any other exits 2 with
+ * `BLOCKED (<rule>): <reason>`, an owner-class one ending with the command for the owner to run.
+ */
+export function decide(hit, { input = {}, env = {} } = {}) {
+  if (!hit) return { exit: 0 };
+  if (hit.owner && askable(input, env)) {
+    const text = typeof hit.ask === 'function' ? askLine('', hit.ask(), '') : askLine('Owner key: ', hit.reason, ' Approve to run it as the owner.');
+    const answer = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: text } };
+    return { exit: 0, stdout: JSON.stringify(answer) };
+  }
+  const owner = hit.owner ? ` The owner runs it: \`! ${String(input?.tool_input?.command ?? '').trim()}\`.` : '';
+  return { exit: 2, stderr: `BLOCKED (${hit.rule}): ${hit.reason}${owner}\n` };
 }
 
 function builtinRule(cmd, opts) {
@@ -1198,7 +1695,7 @@ function builtinRule(cmd, opts) {
   }
   const ff = fastForwardHit(parts, opts.currentBranch);
   if (ff) return ff;
-  if (parts.sub === 'push') return pushHit(parts, opts.currentBranch);
+  if (parts.sub === 'push') return pushHit(parts, opts.currentBranch, pushConfigRead(cmd), pushDeployDir(cmd, parts, opts.hookDir));
   return null;
 }
 
@@ -1209,33 +1706,36 @@ const HOST_HIT = {
 
 const LANDING_HIT = {
   rule: 'landing-override',
-  reason: "HARNESS_LANDING is the owner's override of the landing check; an agent never sets it. Ask the owner to merge.",
+  reason: "HARNESS_LANDING is the owner's override of the landing check; set anywhere but in its one owner form it is refused. Run it alone, as one line: HARNESS_LANDING=owner git merge --no-ff <branch>.",
 };
 
 /**
- * The hit of what the whole line sets or names, at any depth, else null: HARNESS_LANDING set in any
- * form, on any command (landing-override); and on a line that runs a git command, `runsGit`, a
- * guarded name in a form the guard does not read (line.forms; a declaration, assignment, `unset`
- * or `export -n` naming a host variable is one): HARNESS_LANDING (landing-override), a host
- * variable (host-override), PATH or a GIT_CONFIG_* name (hooks-path-override), HUSKY (no-verify).
- * A host variable the line declares, assigns or unsets keeps host-override's reason; a name only
- * named is most often a search pattern or a printed value, so its reason says how to run that.
- * Alone, or before `claude -p`, such a form reaches no landing check.
+ * The hit of what the whole line sets, at any depth, else null: HARNESS_LANDING set in any form, on
+ * any command (landing-override), unless the line is the owner form (`ownerForm`, landingOwner);
+ * and on a line that runs a git command, `runsGit`, a guarded name set in a form the guard does not
+ * read (line.forms; a declaration, assignment, `unset` or `export -n` naming a host variable is
+ * one) or named by a command other than git and a terminal search (line.named): HARNESS_LANDING
+ * (landing-override), a host variable (host-override), PATH or a GIT_CONFIG_* name
+ * (hooks-path-override), HUSKY (no-verify). HARNESS_LANDING set in such a form keeps
+ * landing-override's reason, a host variable the line declares, assigns or unsets host-override's;
+ * any other says a terminal search may name it and to run anything else apart from git. Alone, or
+ * before `claude -p`, such a form reaches no landing check.
  */
-function lineHit(line, runsGit) {
+function lineHit(line, runsGit, ownerForm) {
   // The owner's override of the landing check (harness-guard.sh): an agent that sets it merges
   // past the review it owes, so it is refused on any command, whatever the value.
-  if (line?.sets.has('HARNESS_LANDING')) return LANDING_HIT;
+  if (line?.sets.has('HARNESS_LANDING') && !ownerForm) return LANDING_HIT;
   const forms = runsGit ? [...(line?.forms ?? [])] : [];
-  const name = forms.find((n) => n === 'HARNESS_LANDING') ?? forms.find(isHostVar) ?? forms.find(isValueVar);
+  const names = [...forms, ...(runsGit ? line?.named ?? [] : [])];
+  const name = names.find((n) => n === 'HARNESS_LANDING') ?? names.find(isHostVar) ?? names.find(isValueVar);
   if (!name) return null;
+  if (name === 'HARNESS_LANDING' && forms.includes(name)) return LANDING_HIT;
   if (isHostVar(name) && (line.sets.has(name) || line.unsets.has(name))) return HOST_HIT;
-  const rule = name === 'HARNESS_LANDING' ? 'landing-override'
-    : isHostVar(name) ? 'host-override'
+  const rule = name === 'HARNESS_LANDING' ? 'landing-override' : isHostVar(name) ? 'host-override'
     : name === 'HUSKY' ? 'no-verify' : 'hooks-path-override';
   return {
     rule,
-    reason: `\`${name}\` is named by another command on a line that runs git, and the guard cannot tell a search or a printed value from a change to it. Run that command and git as separate commands; an agent never changes \`${name}\`.`,
+    reason: `\`${name}\` is named by another command on a line that runs git, in a form the guard does not read. A search (grep, rg, cat, head, tail) that prints to the terminal, alone or piped only into other searches, may name it; run anything else apart from git. An agent never changes \`${name}\`.`,
   };
 }
 
@@ -1313,28 +1813,48 @@ function envObject(cmd) {
   return env;
 }
 
-/** null when the command is allowed, else { rule, reason }. */
-export function check(command, { cwd = process.cwd(), currentBranch } = {}) {
+/**
+ * null when the command is allowed, else { rule, reason }, or { rule, reason, owner: true } for an
+ * owner-class hit (the owner form of landing-override, push-deploys), which is returned only when
+ * no other rule refuses any command of the line. `background` is the host's run_in_background,
+ * `agentId` the hook input's agent_id (set inside a host subagent).
+ */
+export function check(command, { cwd = process.cwd(), currentBranch, background = false, agentId = null } = {}) {
   branchCache.clear();
   pathTops.clear();
   const commands = parseCommands(command, cwd);
   const runsGit = commands.some((c) => basename(c.argv[0]) === 'git');
-  const settings = lineHit(commands.line, runsGit);
+  const ownerCmd = landingOwner(command, commands);
+  const settings = lineHit(commands.line, runsGit, Boolean(ownerCmd));
   if (settings) return settings;
   // A line that changes HOME leaves `$HOME` and `~` in a PATH entry unresolvable.
   const homeSet = commands.line.sets.has('HOME') || commands.line.unsets.has('HOME');
+  let owner = ownerCmd ? landingHit(ownerCmd, currentBranch) : null;
   for (const cmd of commands) {
-    const hit = backgroundHit(cmd) ?? builtinRule(cmd, { currentBranch, homeSet });
+    const hit = backgroundHit(cmd) ?? waitHit(cmd, background || cmd.background) ?? fullVerifyHit(cmd, agentId) ?? builtinRule(cmd, { currentBranch, homeSet, hookDir: cwd });
+    if (hit?.owner) owner ??= hit;
+    else if (hit) return hit;
+    const extra = extraHit(cmd);
+    if (extra) return extra;
+  }
+  // The loops whose condition only changes the shell (parse's line.waits).
+  for (const w of commands.line.waits) {
+    const hit = waitHit(w, background || w.background);
     if (hit) return hit;
-    for (const extra of EXTRA_RULES) {
-      let matched = false;
-      try {
-        matched = Boolean(extra.test({ argv: cmd.argv, cwd: cmd.cwd, env: envObject(cmd), background: cmd.background }));
-      } catch {
-        // A broken project rule must not block the session.
-      }
-      if (matched) return { rule: extra.name, reason: extra.reason };
+  }
+  return owner;
+}
+
+/** The first project rule (EXTRA_RULES) that matches `cmd`, as { rule, reason }, else null. */
+function extraHit(cmd) {
+  for (const extra of EXTRA_RULES) {
+    let matched = false;
+    try {
+      matched = Boolean(extra.test({ argv: cmd.argv, cwd: cmd.cwd, env: envObject(cmd), background: cmd.background }));
+    } catch {
+      // A broken project rule must not block the session.
     }
+    if (matched) return { rule: extra.name, reason: extra.reason };
   }
   return null;
 }
@@ -1345,11 +1865,15 @@ async function main() {
     for await (const chunk of process.stdin) raw += chunk;
     const input = JSON.parse(raw || '{}');
     if (input?.tool_name !== 'Bash') return 0;
-    const hit = check(String(input?.tool_input?.command ?? ''), { cwd: input.cwd || process.cwd() });
-    if (hit) {
-      process.stderr.write(`BLOCKED (${hit.rule}): ${hit.reason}\n`);
-      return 2;
-    }
+    const hit = check(String(input?.tool_input?.command ?? ''), {
+      cwd: input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+      background: input?.tool_input?.run_in_background === true,
+      agentId: typeof input?.agent_id === 'string' && input.agent_id ? input.agent_id : null,
+    });
+    const answer = decide(hit, { input, env: process.env });
+    if (answer.stdout) process.stdout.write(`${answer.stdout}\n`);
+    if (answer.stderr) process.stderr.write(answer.stderr);
+    return answer.exit;
   } catch {
     // Never block on a parse failure.
   }
@@ -1370,6 +1894,7 @@ function isEntry() {
   return Boolean(process.argv[1]) && real(process.argv[1]) === real(fileURLToPath(import.meta.url));
 }
 
+// exitCode, not exit(): a pipe on macOS is written asynchronously, and the ask JSON must reach the host whole.
 if (isEntry()) {
-  process.exit(await main());
+  process.exitCode = await main();
 }

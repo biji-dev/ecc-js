@@ -84,13 +84,16 @@ function makeRepo(runnerText) {
 /**
  * Runs the runner in `repo`. By default the result cache is off and instant-failure notes are
  * off, so one test's earlier run never answers another's and FAIL lines keep the plain shape;
- * pass `cache: true` to use the real cache, and `env` to override anything.
+ * admission is off (the fixture repos have no admission script) and an inherited HARNESS_ROLE is
+ * dropped (an executor's FULL run is refused); pass `cache: true` to use the real cache, and `env`
+ * to override anything.
  */
 function runnerEnv(repo, args, { logDir, env: extraEnv, cache } = {}) {
-  const base = { RUN_GATES_INSTANT_SECS: '0' };
+  const base = { RUN_GATES_INSTANT_SECS: '0', RUN_GATES_ADMIT: '' };
   if (!cache) base.RUN_GATES_NO_CACHE = '1';
   const env = gitEnv({ ...base, ...extraEnv });
   delete env.RUN_GATES_LOG_DIR;
+  if (!(extraEnv && 'HARNESS_ROLE' in extraEnv)) delete env.HARNESS_ROLE;
   if (cache && !(extraEnv && 'RUN_GATES_NO_CACHE' in extraEnv)) delete env.RUN_GATES_NO_CACHE;
   if (logDir) env.RUN_GATES_LOG_DIR = logDir;
   return { cmd: ['bash', [path.join(repo, 'scripts', 'run-gates.sh'), ...args]], env };
@@ -1454,6 +1457,36 @@ test('mutant that ignores the count regex lets a zero-test runner PASS', () => {
   assert.strictEqual(shipped.status, 1, 'shipped runner FAILs the zero-test gate');
   const r = run(makeRepo(withGates(mutant, gates)), []);
   assert.strictEqual(r.status, 0, 'mutant passes a gate that checked nothing');
+});
+
+test('mutant that sends the timeout to the gate\'s pid alone leaves the gate\'s children running', () => {
+  // `sleep 63` is this test's own marker: no other test starts it.
+  const sleepers = () => spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).stdout
+    .split('\n')
+    .map(l => (/^\s*(\d+)\s+sleep 63$/.exec(l) || [])[1])
+    .filter(Boolean)
+    .map(Number);
+  const gates = ["gate hang always 'sh -c \"sleep 63 & sleep 63\"'"];
+  const env = { RUN_GATES_GATE_TIMEOUT: '1' };
+  try {
+    const shipped = run(makeRepo(withGates(SOURCE, gates)), [], { env });
+    assert.strictEqual(shipped.status, 1, shipped.stdout + shipped.stderr);
+    assert.ok(/^FAIL hang \d+s \S+hang\.log \(timeout after 1s\)$/.test(shipped.lines[1]), shipped.lines[1]);
+    assert.deepStrictEqual(sleepers(), [], 'the shipped runner left a child of the timed-out gate running');
+    const from = 'kill -"$1" -- -"$GATE_PID" 2>/dev/null || ';
+    assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
+    const m = run(makeRepo(withGates(SOURCE.replace(from, ''), gates)), [], { env });
+    assert.strictEqual(m.status, 1, m.stdout + m.stderr);
+    assert.ok(sleepers().length > 0, 'the mutant stopped the whole group: ' + m.stdout);
+  } finally {
+    for (const pid of sleepers()) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
 });
 
 console.log(`\nPassed: ${passed}`);

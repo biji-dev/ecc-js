@@ -17,12 +17,12 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 
 // The number of tests in each shipped suite. Adding or removing a test changes this on purpose.
 const SUITES = {
-  'command-guard': 31,
+  'command-guard': 52,
   'edit-guard': 9,
   'harness-guard': 57,
   'context-budget': 8,
-  'session-resume': 12,
-  'run-gates': 10,
+  'session-resume': 19,
+  'run-gates': 16,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).

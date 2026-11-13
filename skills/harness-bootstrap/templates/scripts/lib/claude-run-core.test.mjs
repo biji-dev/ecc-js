@@ -3,7 +3,7 @@
 // BUDGET_USD rather than their values, and a stub `claude` first on PATH answers, so they never
 // spend anything.
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,6 +44,15 @@ test('parseArgs: the kind as a word or --kind; review needs --base, the others a
   assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--budget-usd', '0']), /--budget-usd must be a positive number/);
   assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', 'NaN']), /--timeout-min must be positive/);
   assert.throws(() => parseArgs(['lane-a', '--prompt', 'p', '--write']), /unknown option --write/);
+});
+
+test('parseArgs: a --timeout-min under 20 is raised to 20 and remembered; 20 and over stay', () => {
+  const a = parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '9']);
+  assert.equal(a.timeoutMin, 20);
+  assert.equal(a.timeoutRaisedFrom, 9);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '25']).timeoutRaisedFrom, undefined);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '0.5'], { CLAUDE_RUN_TIMEOUT_FLOOR: '0' }).timeoutMin, 0.5);
+  assert.equal(parseArgs(['lane-a', '--prompt', 'p', '--timeout-min', '9'], { CLAUDE_RUN_TIMEOUT_FLOOR: '1e9' }).timeoutMin, 20, 'a floor past a Node timer is unset');
 });
 
 test('parseArgs --status: no kind, only --out, --cwd and --sample-ms (default 5000), and the env is not read', () => {
@@ -316,6 +325,89 @@ test('the wrapper: a tracked file edited while the model runs gives treeMoved: t
     assert.equal(row.treeMoved, true);
     assert.equal(git('cat-file', '-p', `${row.tree}:pay.js`), 'export const fee = 3;');
     assert.equal(git('cat-file', '-p', `${row.treeAfter}:pay.js`), 'export const fee = 3;\n// during');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A scratch dir with a stub `claude` (the given shell body) first on PATH, and a prompt file. */
+function stubDir(body) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claude-run-stub-')));
+  fs.mkdirSync(path.join(dir, 'bin'));
+  fs.writeFileSync(path.join(dir, 'bin', 'claude'), `#!/bin/sh\n${body}`, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'p.md'), 'the task');
+  // the timeout cases run in seconds: no floor
+  const env = (extra = {}) => ({ PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, HOME: dir, CODEX_THREAD_ID: 't', CLAUDE_RUN_TIMEOUT_FLOOR: '0', ...extra });
+  const args = ['lane-a', '--prompt', path.join(dir, 'p.md'), '--out', path.join(dir, 'v.md'), '--cwd', dir];
+  return { dir, env, args };
+}
+
+// A fake model that starts a grandchild (`sleep 62`) and never exits by itself. Its pid goes to $PIDFILE.
+const GRANDCHILD = 'sleep 62 &\necho $! > "$PIDFILE"\nwait\n';
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms = 8_000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleepMs(50)) if (fn()) return true;
+  return fn();
+}
+const readPid = (file) => (fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) || 0 : 0);
+const killQuietly = (pid, sig = 'SIGKILL') => {
+  try {
+    process.kill(pid, sig);
+  } catch {
+    /* already gone */
+  }
+};
+
+test('the wrapper: a timed-out run takes the model\'s whole process group with it: no grandchild survives', async () => {
+  const { dir, env, args } = stubDir(GRANDCHILD);
+  const pidFile = path.join(dir, 'grandchild.pid');
+  try {
+    const res = spawnSync(process.execPath, [RUNNER, ...args, '--timeout-min', '0.02'], { encoding: 'utf8', env: env({ PIDFILE: pidFile }) });
+    assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
+    assert.match(res.stdout, /timed out after 0\.02 min/);
+    const pid = readPid(pidFile);
+    assert.ok(pid > 0, 'the fake model never started its grandchild');
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
+  } finally {
+    const pid = readPid(pidFile);
+    if (pid) killQuietly(pid);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the wrapper: SIGTERM to the wrapper itself reaches the model\'s process group first', async () => {
+  const { dir, env, args } = stubDir(GRANDCHILD);
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const wrapper = spawn(process.execPath, [RUNNER, ...args, '--timeout-min', '5'], { env: env({ PIDFILE: pidFile }), stdio: 'ignore', detached: true });
+  const exited = new Promise((resolve) => wrapper.on('exit', resolve));
+  try {
+    assert.equal(await until(() => readPid(pidFile) > 0), true, 'the fake model never started its grandchild');
+    const pid = readPid(pidFile);
+    process.kill(wrapper.pid, 'SIGTERM');
+    await Promise.race([exited, sleepMs(10_000)]);
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the wrapper's SIGTERM`);
+  } finally {
+    killQuietly(-wrapper.pid);
+    const pid = readPid(pidFile);
+    if (pid) killQuietly(pid);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the wrapper: every run carries HARNESS_ROLE=executor in the model\'s env, whatever the caller had', () => {
+  const { dir, env, args } = stubDir('cat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.1,"result":"role=%s"}\' "$HARNESS_ROLE"\n');
+  try {
+    const res = spawnSync(process.execPath, [RUNNER, ...args], { encoding: 'utf8', env: env({ HARNESS_ROLE: 'session' }) });
+    assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+    assert.equal(fs.readFileSync(path.join(dir, 'v.md'), 'utf8'), 'role=executor\n');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

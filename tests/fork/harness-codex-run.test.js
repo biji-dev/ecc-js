@@ -18,7 +18,7 @@ const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
 const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 59;
+const EXPECTED_TESTS = 63;
 // The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
 const EXPECTED_SNAPSHOT_TESTS = 16;
 
@@ -166,6 +166,32 @@ test('mutant: the rule resolver run on the PATH node instead of the wrapper\'s o
   const before = fs.readFileSync(wrapperPath, 'utf8');
   const needle = 'execFileSync(process.execPath, [RULES_RESOLVER';
   const mutated = before.replace(needle, "execFileSync('node', [RULES_RESOLVER");
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(wrapperPath, mutated);
+  const res = runSuite(copy, cleanup);
+  assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('mutant: spawning the model without its own process group makes the suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const wrapperPath = path.join(copy, WRAPPER_REL);
+  const before = fs.readFileSync(wrapperPath, 'utf8');
+  const mutated = before.replace('detached: GROUP,', 'detached: false,');
+  assert.notStrictEqual(mutated, before, 'the mutation did not apply');
+  fs.writeFileSync(wrapperPath, mutated);
+  const res = runSuite(copy, cleanup);
+  assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+});
+
+test('mutant: dropping HARNESS_ROLE=executor from the model env makes the suite fail', () => {
+  const copy = tmp('codex-run-mutant-');
+  cleanup.push(copy);
+  fs.cpSync(SCRIPTS, copy, { recursive: true });
+  const wrapperPath = path.join(copy, WRAPPER_REL);
+  const before = fs.readFileSync(wrapperPath, 'utf8');
+  const mutated = before.replace("HARNESS_ROLE: 'executor'", "HARNESS_ROLE: 'session'");
   assert.notStrictEqual(mutated, before, 'the mutation did not apply');
   fs.writeFileSync(wrapperPath, mutated);
   const res = runSuite(copy, cleanup);

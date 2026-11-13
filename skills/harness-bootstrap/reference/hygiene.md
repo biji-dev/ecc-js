@@ -11,17 +11,17 @@ unit with a P3 batch, and a due hygiene unit ran ahead of the next product row.
 
 `[M]` **`harness-due.mjs` prints `REPORT hygiene` 14 days or 5 product landings
 (`sweep.md` › When it runs) after the newest hygiene report** `[B]`, never in the
-foundation stage. The runner starts it in the background on a Sonnet runner
-(`runner.md` › Due-checks) and goes on with the next unit. It edits no code: what
-it finds in code is a candidate in the report, and only the owner's request makes
-it work.
+foundation stage. The runner starts it in the background on a Sonnet runner only
+once the product queue is empty, or on the owner's word (`runner.md` › Due-checks):
+never mid-unit. It edits no code: what it finds in code is a candidate in the
+report, and only the owner's word makes it work (› Cleanup on the owner's word).
 
 ## Four jobs, in this order
 
 `[M]` **1 · Dead code and unused dependencies.** Run `knip`, or the project's own tool,
 in report mode. A finding is a candidate, never an order: an export a script, a
 config or a dynamic import uses looks dead to it. List the groups with their
-evidence. At the next upgrade, propose the tool as a `full`-level gate.
+evidence, and count the tests whose subject is gone and those skipped over 30 days. At the next upgrade, propose the tool as a `full`-level gate.
 
 `[M]` **2 · Docs drift over the whole tree.** `docs-drift.mjs --since <the previous
 hygiene report's commit>`. Step 8a checks one unit's diff; this catches what slipped
@@ -56,6 +56,15 @@ is the machine sweep's (`machine.md`).
 4 KB `[B]`, with no branch, review or gate of its own. For each job: what it found,
 what it moved or removed, and the follow-ups doc's counts by status. The committed
 report restarts the `REPORT hygiene` count.
+
+## Cleanup on the owner's word
+
+`[M]` **With the product queue dry, the end message offers one line** from the newest
+report: `cleanup available: <n> unused exports, <n> files, <n> tests of deleted code
+(knip, <date>)`. On "do it", an ordinary Small unit with ECC's `refactor-cleaner` and
+knip, landed by the grant, removes dead code, tests whose subject is gone and tests
+skipped over 30 days, and flags the 10 slowest; a test that covers a live path goes
+only when the reviewer agrees. No new cadence.
 
 `[B]` In `scripts/lib/harness-due-core.mjs`: `CADENCE.hygiene`, `REPORTS.hygiene`
 (`null` for a project that runs none), `WORKTREE_IDLE_HOURS`, `REBUILDABLE`.

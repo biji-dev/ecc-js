@@ -127,6 +127,11 @@ What it does that a bare call does not:
   if its row exists. No row means the run did not finish, not that it did nothing:
   a write kind may have edited or committed first. Before a relaunch, check that it
   stopped, read its log and look at the worktree (`git status`, its new commits).
+- **A run keeps its time limit.** Launch a write kind or an adversarial pass in
+  the background and leave `--timeout-min` at its default (45); never shorten it to
+  fit a foreground call. One install's 9-minute limit cut off 5 of its 22 builds;
+  the wrappers raise a limit under 20 to 20 and say so on stderr. A foreground call
+  that outlives the Bash tool's own timeout is moved to the background, not killed.
 - **`--status [--out <file>]` says whether a run is alive.** While it runs, the
   wrapper keeps a sidecar with its pids under `<ledger dir>/running/`. `--status`
   prints `running` (a pid alive, and its CPU time or log grew across two samples),

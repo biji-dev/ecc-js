@@ -97,6 +97,17 @@ function parseStatusArgs(argv) {
   return a;
 }
 
+/**
+ * The shortest --timeout-min a run keeps: a shorter one is raised to it, so no run is cut off to fit
+ * a foreground call (one install's 9-minute limit failed 5 of its 22 builds). `value` is the
+ * wrapper's env (a test seam): a number from 0 that fits a Node timer replaces it, empty means unset.
+ */
+export const TIMEOUT_FLOOR_MIN = 20;
+function timeoutFloor(value) {
+  const n = value === undefined || value === '' ? NaN : Number(value);
+  return Number.isFinite(n) && n >= 0 && n * 60_000 <= 2_147_483_647 ? n : TIMEOUT_FLOOR_MIN;
+}
+
 export function parseArgs(argv, env = {}) {
   if (argv.includes('--status')) return parseStatusArgs(argv);
   const a = {
@@ -126,6 +137,8 @@ export function parseArgs(argv, env = {}) {
     else a.kind = t;
   }
   checkValues(a);
+  const floor = timeoutFloor(env.CLAUDE_RUN_TIMEOUT_FLOOR);
+  if (a.timeoutMin < floor) [a.timeoutRaisedFrom, a.timeoutMin] = [a.timeoutMin, floor];
   return a;
 }
 

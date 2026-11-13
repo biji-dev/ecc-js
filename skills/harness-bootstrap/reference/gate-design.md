@@ -33,7 +33,8 @@ meets gets exactly one class, written in its decision row (`scope-guard.md`):
 `[M]` **The test is recoverability and product-neutrality, not "is it technical".**
 A technical choice whose reversal is a migration, a re-issued credential or a
 customer-visible change is **C**, and its card says so. Unsure between T and C →
-**C**.
+**C**; a reversible C card is the grant's (recommendation taken, `By: grant`, reversal
+cost written), and only a one-way door, a never-auto item or an `owner-fact` asks.
 
 `[M]` **A decision card** — one per P or C decision, never a bare question:
 
@@ -89,8 +90,10 @@ again with a never-auto way forward:
 4. start the next ready unit whose write set overlaps no held or parked unit's
    (`runner.md` › Shape). With none, end the turn on `WAITING ON YOU:` and the inbox.
 
-A push the grant does not cover has no row left to park: it waits in the state line
-(`WAITING ON YOU: push <mainline>, <n> commits`), and the run goes on.
+A landing the check sends to the owner parks with its merge line ready, and its
+`owner-fact` cards go out with the run's others in one message (`runner.md` › Shape:
+asks are the run's last action). A push the grant does not cover waits in the state
+line (`WAITING ON YOU: push <mainline>, <n> commits`); a deploying push runs last.
 
 ```markdown
 <!-- harness:parked -->
@@ -347,22 +350,23 @@ one line what it covers; new findings re-arm the stop.
 generated default is one rule for every tier, **merge when green**: a unit merges
 locally on its own when
 
-- this round's FULL verify shows every gate PASS, every step the tier requires is
-  `ran` in the ledger, and the run re-verified if the mainline moved since;
+- this round's FULL verify shows every gate PASS or `KNOWN` (`runner.md` › Step 8a),
+  every step the tier requires is `ran` in the ledger, and the run re-verified if the
+  mainline moved since;
 - no P0 or P1 is open, conformance has no blocking gap, and every behaviour claim
   the audit failed is fixed or deleted, its re-run pasted (`claim-auditor.md`);
 - **the landing check passed** (`review-gate.mjs --landing`, `runner.md` › Step 9):
   on `RE-REVIEW` the delta it names gets the second family's adversarial pass, with
   the `--base <from>` the line names so its row records what it read from, and the
-  check runs again; on `NONE` the owner merges. The merge hook re-runs it on the
-  merge's result (`commit-guard.md`);
+  check runs again; on `NONE` the owner merges, with the owner key. The merge hook
+  re-runs it on the merge's result (`commit-guard.md`);
 - at `production: live`, nothing is `degraded` and the diff touches no path the
   coverage map leaves uncovered.
 
 **The owner merges** a never-auto category and any diff to a guard, a gate, a
 reviewed block or the rules block: `GUARDS` in `review-gate-core.mjs` names their
 paths, and the landing check says `NONE` on them, so no agent judges its own edit.
-**Push** follows the grant; where a push deploys, it is an Ops step.
+**Push** follows the grant; a deploying push is an Ops step, one owner key.
 
 > Origin, the v10 study: the one real gap the harness reported in itself was an edit
 > to critical code after its last review reaching the mainline unread; guards had
@@ -385,7 +389,7 @@ the grant survives a compaction.
 
 - **merge when green** — › The merge policy.
 - **push after merge** — behind the pre-push gates; with `Push deploys: yes`, the
-  push is the owner's Ops step.
+  push is the owner's Ops step, one owner key.
 - **recommendation on reversible cards** — a P or C card whose reversal is a revert
   or a forward fix takes its recommendation, logged `By: grant`, unless its kind
   asks (below).
@@ -412,8 +416,8 @@ every `By: grant` and `By: default` decision, with its reversal cost, and every
 merge since the owner last read it. A sheet, a brief, a demo or a T row reaches it
 as a `By: grant` decision row that names the file. The owner answers "ok"
 (`harness-due.mjs --digest-read`) or with a reversal row, stating the fact it adds
-("servers are Ubuntu"); the next card of that kind cites it. **The valve:** more
-than 10 unread items older than 3 days hold new claims, never merges.
+("servers are Ubuntu"); the next card of that kind cites it. `--digest-read` only
+marks the digest read: an unread digest holds nothing.
 
 `[M]` **Silence is never consent.** The standing grant is the consent, given in
 writing; outside it, an unanswered question parks.
@@ -436,8 +440,8 @@ writing; outside it, an unanswered question parks.
 4. an Ops step, a push that deploys included — the runbook is approved once, for
    the SHA and the rollback it names.
 
-Each stop parks its unit (› Parking a unit), a push waits in the state line, and
-the run goes on with what else is ready.
+Each stop parks its unit (› Parking a unit), a deploying push runs last, and the
+run goes on with what else is ready.
 
 `[M]` **Not a stop:** finishing a step, a full context (persist and keep working;
 auto-compaction is the reset, `context.md`), the second family being unavailable (degraded, recorded),

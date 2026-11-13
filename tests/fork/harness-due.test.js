@@ -18,7 +18,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 51;
+const EXPECTED_TESTS = 55;
 
 let passed = 0;
 let failed = 0;
@@ -155,11 +155,9 @@ const INSTALL = [
   [DUE_CORE, '  hygiene: { days: 14, landings: 5 },', '  hygiene: { days: 21, landings: null },'],
   [DUE_CORE, "export const STATE_DIR = 'docs/plans';", "export const STATE_DIR = '.claude/plans';"],
   [DUE_CORE, 'export const OWED_DAYS = 3;', 'export const OWED_DAYS = 5;'],
-  [DUE_CORE, 'export const DIGEST_LINES = 20;', 'export const DIGEST_LINES = 12;'],
-  [DUE_CORE, 'export const VALVE_ITEMS = 10;', 'export const VALVE_ITEMS = 6;'],
-  [DUE_CORE, 'export const VALVE_DAYS = 3;', 'export const VALVE_DAYS = 2;'],
+  [DUE_CORE, 'export const DIGEST_LINES = 5;', 'export const DIGEST_LINES = 12;'],
   [DUE_CORE, 'export const SPLIT_LINES = 10000;', 'export const SPLIT_LINES = 4000;'],
-  [DUE_CORE, 'export const DISK_MIN_GB = 25;', 'export const DISK_MIN_GB = 40;'],
+  [DUE_CORE, 'export const DISK_MIN_GB = 10;', 'export const DISK_MIN_GB = 40;'],
   [DUE_CORE, 'export const WORKTREE_IDLE_HOURS = 6;', 'export const WORKTREE_IDLE_HOURS = 72;'],
   [
     DUE_CORE,
@@ -167,9 +165,9 @@ const INSTALL = [
     'export const REBUILDABLE = /(^|\\/)(node_modules|dist|\\.turbo|\\.output)\\/?$|\\.DS_Store$/;',
   ],
   [DUE_CORE, String.raw`  preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',`, "  preflight: 'run /phase-check <phase>; its escalations are Gate 1 cards',"],
-  [DUE_CORE, String.raw`  sweep: 'write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',`, "  sweep: 'run /sweep-check in the background; the report rides in the next land commit',"],
-  [DUE_CORE, String.raw`  retro: 'node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',`, "  retro: 'run /weekly-retro in the background; the report rides in the next land commit',"],
-  [DUE_CORE, String.raw`  hygiene: 'write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',`, "  hygiene: 'run /hygiene-pass in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  sweep: 'once the product queue is empty: write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',`, "  sweep: 'run /sweep-check in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  retro: 'once the product queue is empty: node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',`, "  retro: 'run /weekly-retro in the background; the report rides in the next land commit',"],
+  [DUE_CORE, String.raw`  hygiene: 'once the product queue is empty: write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',`, "  hygiene: 'run /hygiene-pass in the background; the report rides in the next land commit',"],
   [DUE_CORE, "  disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',", "  disk: 'run /free-disk, in the background',"],
   [DUE_CORE, "  worktrees: 'git worktree remove <paths>, each once no registry row names it',", "  worktrees: 'run /prune-worktrees <paths>, each once no registry row names it',"],
   [DUE_CORE, String.raw`  inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',`, "  inbox: 'carry on; /resume-parked <unit> once the owner has answered',"],
@@ -218,7 +216,7 @@ console.log(JSON.stringify({
   stateDir: c.STATE_DIR,
   owed: c.OWED_DAYS,
   digestLines: c.DIGEST_LINES,
-  valve: [c.VALVE_ITEMS, c.VALVE_DAYS],
+  gone: ['VALVE_ITEMS', 'VALVE_DAYS', 'valve', 'HOLD_COMMAND'].filter((k) => k in c),
   split: c.SPLIT_LINES,
   commands: { sweep: c.COMMANDS.sweep, retro: c.COMMANDS.retro, hygiene: c.COMMANDS.hygiene, p3: c.COMMANDS.p3 ?? null, proposals: c.COMMANDS.proposals ?? null },
   disk: c.DISK_MIN_GB,
@@ -247,21 +245,21 @@ console.log(JSON.stringify({
   assert.deepStrictEqual(got.kinds, ['preflight', 'sweep', 'retro', 'hygiene', 'disk', 'worktrees'], 'the template KINDS');
   assert.strictEqual(got.stateDir, 'docs/plans', 'the template STATE_DIR');
   assert.strictEqual(got.owed, 3, 'the template OWED_DAYS');
-  assert.strictEqual(got.digestLines, 20, 'the template DIGEST_LINES');
-  assert.deepStrictEqual(got.valve, [10, 3], 'the template VALVE_ITEMS and VALVE_DAYS');
+  assert.strictEqual(got.digestLines, 5, 'the template DIGEST_LINES');
+  assert.deepStrictEqual(got.gone, [], 'the valve is gone: no VALVE_ITEMS, VALVE_DAYS, valve or HOLD_COMMAND');
   assert.strictEqual(got.split, 10000, 'the template SPLIT_LINES');
   assert.deepStrictEqual(
     got.commands,
     {
-      sweep: "write the sweep report in the background (a Sonnet runner, harness-bootstrap's reference/sweep.md); it rides in the next unit's land commit",
-      retro: "node scripts/retro.mjs in the background; the report rides in the next unit's land commit",
-      hygiene: "write the hygiene report in the background (harness-bootstrap's reference/hygiene.md); it rides in the next unit's land commit",
+      sweep: "once the product queue is empty: write the sweep report in the background (a Sonnet runner, harness-bootstrap's reference/sweep.md); it rides in the next unit's land commit",
+      retro: "once the product queue is empty: node scripts/retro.mjs in the background; the report rides in the next unit's land commit",
+      hygiene: "once the product queue is empty: write the hygiene report in the background (harness-bootstrap's reference/hygiene.md); it rides in the next unit's land commit",
       p3: null,
       proposals: null,
     },
     'the template COMMANDS for the reports',
   );
-  assert.strictEqual(got.disk, 25, 'the template DISK_MIN_GB');
+  assert.strictEqual(got.disk, 10, 'the template DISK_MIN_GB');
   assert.strictEqual(got.idle, 6, 'the template WORKTREE_IDLE_HOURS');
   assert.deepStrictEqual(got.rebuildable, [true, true, true, true, true, true, true, false, false], 'the template REBUILDABLE');
 }
@@ -346,15 +344,19 @@ mutantFails('printing the inbox after the due lines', LINES_BLOCK(DUE_CORE_TEXT)
 mutantFails('printing the inbox before the owed lines', '    ...owed.map((o) => `OWED ${o.id} since ${o.since} — ${o.what}`),\n    ...inbox,\n', '    ...inbox,\n    ...owed.map((o) => `OWED ${o.id} since ${o.since} — ${o.what}`),\n');
 mutantFails('owing a row at OWED_DAYS, not past it', 'now - r.at > days * DAY', 'now - r.at >= days * DAY');
 mutantFails('counting a housekeeping line as unread', 'const n = items.length;', 'const n = items.length + housekeeping.length;');
-mutantFails('holding on a digest item of unknown time', 'items.filter((i) => i.time !== null && now - i.time > olderDays * DAY).length', 'items.filter((i) => i.time === null || now - i.time > olderDays * DAY).length');
-mutantFails('holding at VALVE_ITEMS unread items, not past them', 'if (!d || d.holdCount <= items) return null;', 'if (!d || d.holdCount < items) return null;');
-mutantFails('holding claims without --claim', 'blocking: Boolean(claim),', 'blocking: true,');
+mutantFails('making a product claim wait for the product units', 'if (claim === null || owner || !isHarnessUnit(claim)) return null;', 'if (claim === null || owner) return null;');
+mutantFails('making a harness claim wait past the owner\'s word', 'if (claim === null || owner || !isHarnessUnit(claim)) return null;', 'if (claim === null || !isHarnessUnit(claim)) return null;');
+mutantFails('waiting for a product unit that is only parked', 'const parked = parkedUnits(registryText).map((p) => p.unit);', 'const parked = [];');
+mutantFails('waiting for the mainline row of the active table', "      .filter((row) => /^[1-9]\\d*$/.test(String(row[0] ?? '').replace(/\\s/g, '')))\n      .map((row) => row[unit] ?? '');", "      .map((row) => row[unit] ?? '');");
+mutantFails('waiting for a harness unit', " && !isHarnessUnit(id)", '');
+mutantFails('printing a line that does not block with a claim', 'items.filter((i) => i.blocking).map(dueLine)', 'items.map(dueLine)');
+mutantFails('printing the whole report with a claim', 'args.claim === null ? formatDue(', 'true ? formatDue(', CLI_REL);
+mutantFails('dropping the owner\'s word from the facts', 'owner: args.owner,', 'owner: false,', CLI_REL);
 mutantFails('printing the disk check as a DUE line', 'const due = items.filter((i) => !REPORT_KINDS.includes(i.kind) && !HOUSEKEEPING.includes(i.kind));', 'const due = items.filter((i) => !REPORT_KINDS.includes(i.kind));');
 mutantFails('counting docs and tests as production lines', '.filter((f) => production(f.path))', '.filter(() => true)');
 mutantFails('splitting at the cap, not past it', 'return n > cap ? [', 'return n >= cap ? [');
 mutantFails('dating a decision row by its Date cell alone', 'if (Number.isFinite(t)) rowTimes.set(key, t);', '', CLI_REL);
 mutantFails('reading no last read of the digest', 'lastRead: lastReadOf(readJson(readFile), project),', 'lastRead: null,', CLI_REL);
-mutantFails('exiting 0 when the valve holds a claim', ' + (hold?.blocking ? 1 : 0)', '', CLI_REL);
 mutantFails('reading the active table as the parked one', "registryTable(registryText, 'parked');", "registryTable(registryText, 'active');");
 mutantFails('reading the rows outside the markers', 'else if (on && row) rows.push(line);', 'else if (row) rows.push(line);');
 mutantFails('naming a worktree that a parked row names', "['parked', () => true]", "['parked', () => false]");
@@ -437,6 +439,12 @@ function cliRepo(files, date) {
 }
 
 const SMOKE_LOG = '| Unit · Mode · Type · Tier | Elapsed (work) | Cost |\n|---|---|---|\n| P1-01 · plan · Code · Small | 60m | $1 |\n';
+
+test('CLI: a due sweep, retro or hygiene report names its command after `once the product queue is empty: `', () => {
+  const { run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-10-20T10:00:00Z');
+  const out = run('--now', '2026-11-05T10:00:00Z').stdout;
+  for (const kind of ['sweep', 'hygiene']) assert.match(out, new RegExp(`^REPORT ${kind} — .* — once the product queue is empty: `, 'm'), kind);
+});
 
 test('CLI: --digest-read records the read, and the next run shows DIGEST 0 unread', () => {
   const { repo, home, run } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-10-20T10:00:00Z');

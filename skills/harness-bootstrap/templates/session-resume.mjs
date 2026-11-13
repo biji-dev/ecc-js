@@ -1,32 +1,41 @@
 #!/usr/bin/env node
-// harness-bootstrap session-resume hook (generated YYYY-MM-DD). Claude Code, SessionStart.
-// [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding: REGISTRY, STATE_DIR
-// and MAX_BYTES below, re-derived per project: the commit guard's REGISTRY, the directory its state
-// files sit in (unit-step-core.mjs's STEPS_DIR) and the cap on what this puts into the context.
+// harness-bootstrap session-resume hook (generated YYYY-MM-DD). Claude Code, SessionStart + UserPromptSubmit.
+// [M] mechanism (ships as-is): everything except the lines marked [B]. [B] binding: REGISTRY, STATE_DIR,
+// MAX_BYTES and MAIN below, re-derived per project: the commit guard's REGISTRY, the directory its state
+// files sit in (unit-step-core.mjs's STEPS_DIR), the cap on what this puts into the context and the
+// mainline branch's name.
 // Auto-compaction is the reset; this restores the unit. On a compaction, a clear, a resume or a
 // startup it reads the registry's held and parked rows and each unit's state file, and hands the
 // model the resume point the owner used to paste by hand:
 //   compact                 -> continue the held unit's next step, re-reading process.md (Step 0a)
 //   startup, resume, clear  -> context only: nothing starts until the owner asks
 // The registry and the state files are the record; a compaction summary is not (harness-bootstrap's
-// reference/context.md). Reads files and runs `git rev-parse` and `git show` only: never writes, never
-// blocks, never starts work, and says nothing when anything fails, or when no row is held or parked
-// but on a compaction, which points a queue run at its next unit.
+// reference/context.md). Reads files and runs `git rev-parse`, `git show`, `git rev-list`, `git log` and
+// `git merge-base` only: writes only its own tmp state file (harness-seen-<session>.json), never blocks,
+// never starts work, and says nothing when anything fails, or when no row is held or parked but on a
+// compaction, which points a queue run at its next unit.
+// On UserPromptSubmit it tells the session what other sessions did since its last turn: the mainline's
+// head and the registry's held and parked units, compared with the tmp file the last run (this hook's
+// SessionStart included) left; the first run of a session prints nothing.
 // The standing grant comes from AGENTS.md's merge block, read here from the main checkout: it is written
 // once, so it survives a compaction and needs no kickoff; a unit's state-file Grant: line only narrows it.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const REGISTRY = '.claude/registry.md'; // [B] the lock file, relative to the main checkout (the guard's REGISTRY)
 export const STATE_DIR = 'docs/plans'; // [B] where <unit>.state.md sits in the unit's checkout (unit-step-core.mjs's STEPS_DIR)
 export const MAX_BYTES = 4000; // [B] the cap on the text put into the context
+export const MAIN = 'main'; // [B] the mainline branch, whose head the since-last-turn line follows
 
 const SOURCES = ['startup', 'resume', 'clear', 'compact'];
 const NEXT_LINES = 3; // the first non-empty lines of `## Next` that are quoted
 const CLIP = 160; // characters of any one quoted cell or line
 const GIT_TIMEOUT_MS = 2000;
+const SINCE_MAX = 300; // characters of the since-last-turn line
+const SUBJECT_MAX = 60; // characters of the newest commit's subject in it
 // A unit id names a file (unit-step-core.mjs's UNIT_ID_SOURCE): one `/` at most, each segment starting
 // with a letter or digit, so an absolute id never matches; `..` inside a segment is refused on its own.
 const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
@@ -276,16 +285,135 @@ function readGrant(root) {
   }
 }
 
+/** `git <args>` in `cwd`: its trimmed stdout; throws on a non-zero exit. */
+function gitOut(cwd, args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+}
+
+/** The registry's units as { kind, unit } (backticks stripped, rows with no unit cell left out); no registry file is none. */
+function seenRows(root) {
+  let text;
+  try {
+    text = readFileSync(join(root, REGISTRY), 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  return registryRows(text).map((row) => ({ kind: row.kind, unit: String(row.unit ?? '').replace(/`/g, '').trim() })).filter((row) => row.unit);
+}
+
+/** What is seen of the other sessions' work now: { head: the mainline's commit or null, rows: [{ kind, unit }] }. */
+export function seenNow(root) {
+  let head;
+  try {
+    head = gitOut(root, ['rev-parse', '--verify', '-q', `refs/heads/${MAIN}`]) || null;
+  } catch {
+    head = null;
+  }
+  return { head, rows: seenRows(root) };
+}
+
+/** Is `old` an ancestor of `now`? Any git failure (an object gone) reads as no. */
+function isAncestor(root, old, now) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', old, now], { cwd: root, timeout: GIT_TIMEOUT_MS, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The one-line note on what changed between two sightings, or null when nothing did: `MAIN +<n> (<newest
+ * subject>)` or `MAIN moved`, then `<unit> claimed`, `<unit> released` and `<unit> parked`, at most
+ * SINCE_MAX characters (units cut from the end are counted as `+<k> more`).
+ */
+export function sinceLine(before, after, root) {
+  const parts = [];
+  if (before.head && after.head && before.head !== after.head) {
+    let moved = `${MAIN} moved`;
+    if (isAncestor(root, before.head, after.head)) {
+      try {
+        const n = gitOut(root, ['rev-list', '--count', `${before.head}..${after.head}`]);
+        const subject = gitOut(root, ['log', '-1', '--format=%s', after.head]).replace(/\s+/g, ' ');
+        const cut = subject.length > SUBJECT_MAX ? `${subject.slice(0, SUBJECT_MAX - 1)}…` : subject;
+        moved = `${MAIN} +${n}${cut ? ` (${cut})` : ''}`;
+      } catch {
+        // keep "moved"
+      }
+    }
+    parts.push(moved);
+  }
+  const kindOf = (rows) => new Map(rows.map((row) => [row.unit, row.kind]));
+  const was = kindOf(before.rows);
+  const is = kindOf(after.rows);
+  const claimed = [...is].filter(([unit, kind]) => kind === 'held' && was.get(unit) !== 'held').map(([unit]) => `${unit} claimed`);
+  const released = [...was].filter(([unit]) => !is.has(unit)).map(([unit]) => `${unit} released`);
+  const parked = [...is].filter(([unit, kind]) => kind === 'parked' && was.get(unit) === 'held').map(([unit]) => `${unit} parked`);
+  parts.push(...claimed, ...released, ...parked);
+  if (!parts.length) return null;
+  const lead = '[other sessions] since your last turn: ';
+  const fits = (list, more) => `${lead}${[...list, ...(more ? [`+${more} more`] : [])].join(' · ')}`.length <= SINCE_MAX;
+  let kept = parts.length;
+  while (kept > 1 && !fits(parts.slice(0, kept), parts.length - kept)) kept -= 1;
+  const line = `${lead}${[...parts.slice(0, kept), ...(kept < parts.length ? [`+${parts.length - kept} more`] : [])].join(' · ')}`;
+  return line.length > SINCE_MAX ? `${line.slice(0, SINCE_MAX - 1)}…` : line;
+}
+
+/** This session's seen-state file in the tmp dir; null without a usable session id. */
+function seenFile(input) {
+  const id = String(input.session_id ?? '').replace(/[^\w-]/g, '');
+  return id ? join(tmpdir(), `harness-seen-${id}.json`) : null;
+}
+
+/** The previous sighting from the tmp file, or null (none, or unreadable). */
+function readSeen(file) {
+  try {
+    const seen = JSON.parse(readFileSync(file, 'utf8'));
+    return Array.isArray(seen?.rows) ? { head: typeof seen.head === 'string' ? seen.head : null, rows: seen.rows } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Records the sighting for the session's next run; a failed write is ignored. */
+function writeSeen(file, seen) {
+  try {
+    writeFileSync(file, JSON.stringify(seen));
+  } catch {
+    // the next turn then counts as a first one
+  }
+}
+
 async function main() {
   try {
     let raw = '';
     for await (const chunk of process.stdin) raw += chunk;
     const input = JSON.parse(raw || '{}');
-    if (input.hook_event_name !== 'SessionStart') return;
+    const event = input.hook_event_name;
+    if (event !== 'SessionStart' && event !== 'UserPromptSubmit') return;
     const dir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
     if (!dir) return;
     // the registry lives in the main checkout, so every linked worktree reads the same lock
     const root = mainCheckout(dir);
+    const file = seenFile(input);
+    if (event === 'UserPromptSubmit') {
+      if (!file) return;
+      const before = readSeen(file);
+      const after = seenNow(root);
+      writeSeen(file, after);
+      const line = before ? sinceLine(before, after, root) : null;
+      if (line) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: line } }));
+      return;
+    }
+    // what this start shows is seen: the first prompt after it says nothing about it
+    if (file) {
+      try {
+        writeSeen(file, seenNow(root));
+      } catch {
+        // a resume note comes first
+      }
+    }
     const rows = registryRows(readFileSync(join(root, REGISTRY), 'utf8'));
     const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root, readGrant(root));
     if (text) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }));

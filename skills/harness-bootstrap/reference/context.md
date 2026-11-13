@@ -213,17 +213,21 @@ hook surface yet — the switch line and the compaction rule still apply there.
 
 ## The session-resume hook — opt-in
 
-`templates/session-resume.mjs` — a Claude Code `SessionStart` hook. After a
+`templates/session-resume.mjs` — a Claude Code `SessionStart` and `UserPromptSubmit` hook. After a
 compaction, a `/clear`, a resume or a startup it reads the registry's held and parked
 rows and each one's state file, and puts the resume point into the new context: per
 unit its step, branch and worktree, the state file's `## Next`, its open `Q-n` cards,
 its `Grant:` and `Stop:` lines, then the inbox (`gate-design.md` › Parking a unit).
 After a compaction it says to continue the held unit's next step through step 0a,
 or with none held, to start the next ready unit if a queue run is on; on the other
-sources it is context only, so opening a session never starts work.
+sources it is context only, so opening a session never starts work. On
+`UserPromptSubmit` it says what other sessions did since this one's last turn, in one
+line, `[other sessions] since your last turn: <MAIN> +<n> (<subject>) · <unit> claimed
+· … released · … parked`; a session's first run prints nothing.
 
 - reads files only, plus `git rev-parse` for the main checkout and `git show` for a
-  state file on a branch the shared checkout has left; never writes, never blocks,
+  state file on a branch the shared checkout has left; writes only its own tmp file,
+  `harness-seen-<session>.json`; never blocks,
   exits 0 on any error, and says nothing when no row is held or parked, except after
   a compaction;
 - caps its text at `MAX_BYTES`, held rows first;
@@ -241,13 +245,14 @@ test `templates/scripts/lib/session-resume.test.mjs` to `scripts/lib/`, and add 
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-resume.mjs\"", "timeout": 10 }] }]
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-resume.mjs\"", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-resume.mjs\"", "timeout": 10 }] }]
   }
 }
 ```
 
-`[B]` `REGISTRY` (the guard's), `STATE_DIR` (`unit-step-core.mjs`'s `STEPS_DIR`) and
-`MAX_BYTES`.
+`[B]` `REGISTRY` (the guard's), `STATE_DIR` (`unit-step-core.mjs`'s `STEPS_DIR`),
+`MAX_BYTES` and `MAIN` (default `main`).
 
 `[M]` **No per-turn model-calling hooks.** A plugin that ran a model review on
 every stop was 5–8% of spend in the measured project.
@@ -327,7 +332,11 @@ flag (2026-10-26).
 > (86ede40); a third grepped its bun output for skips. run-counted is the first one's wrapper
 > with the other runners' summaries, each read from real output.
 
-- `bash scripts/run-gates.sh` — the FULL run.
+- `bash scripts/run-gates.sh` — the FULL run, the session's alone: under
+  `HARNESS_ROLE=executor` (the wrappers set it) one without `--since`, or with
+  `--snapshot`, exits 99, and the command guard refuses FULL in a subagent. Admission
+  (`ADMIT`, `machine.md`) holds it, else `NOT ADMITTED (exit <n>)` and exit 97. A gate
+  in its own process group past `GATE_TIMEOUT` (3600 s) is `FAIL <name> <secs>s <log> (timeout after <n>s)`.
 - `bash scripts/run-gates.sh --since <ref>` — the SCOPED run: it computes the
   changed files itself, **untracked files included** (package-manager "changed
   since" filters ignore uncommitted edits), skips `full` gates, and promotes itself

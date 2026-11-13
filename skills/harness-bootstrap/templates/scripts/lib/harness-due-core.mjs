@@ -22,9 +22,13 @@
  * proposals printed at every claim and land. Now they are reports written in the background
  * (`REPORT`), and the run's next unit is a product unit. The owner's inputs that block the critical
  * path print first (`OWED`), housekeeping (disk, worktrees) goes to the digest, and the digest is how
- * the owner reads what the standing grant decided; the valve (`HOLD`) stops new claims, never
- * merges, when the owner stops reading. A held unit past SPLIT_LINES production lines is a review
- * nobody can do well (`SPLIT`), and `ASK` names the card kinds the owner still answers.
+ * the owner reads what the standing grant decided. A held unit past SPLIT_LINES production lines is a
+ * review nobody can do well (`SPLIT`), and `ASK` names the card kinds the owner still answers.
+ *
+ * WHY V11. The valve is gone: it turned the digest into an owner stop. A claim hears only what blocks
+ * it (`DUE preflight`, `WAIT`), the reports wait for an empty product queue, and a harness unit waits
+ * for the product units held or parked (`WAIT`) unless the owner says go (`--owner`). The end-of-run
+ * report prints every line, the digest capped at DIGEST_LINES.
  *
  * THE INBOX. A unit that reaches an owner gate does not hold the run: the runner parks it, its cards
  * go to its state file and its row moves from the registry's active table to the parked one. A held
@@ -70,15 +74,12 @@ export const STATE_DIR = 'docs/plans';
 // [B] An open follow-up whose cells say `Owner supplies:` or `Owner decides:` is OWED past this many days.
 export const OWED_DAYS = 3;
 // [B] The digest lists at most this many unread items, newest first.
-export const DIGEST_LINES = 20;
-// [B] The valve: more than VALVE_ITEMS unread digest items older than VALVE_DAYS hold new claims.
-export const VALVE_ITEMS = 10;
-export const VALVE_DAYS = 3;
+export const DIGEST_LINES = 5;
 // [B] A held unit's branch past this many production lines (added + deleted against MAIN, docs and
 // tests aside, as review-gate-core's isProduction reads a path) is split.
 export const SPLIT_LINES = 10000;
 // [B] Below this much free disk (GB), the approved machine-sweep categories run.
-export const DISK_MIN_GB = 25;
+export const DISK_MIN_GB = 10;
 // [B] A worktree merged into MAIN, with commits of its own, clean, and untouched this many hours
 // is residue.
 export const WORKTREE_IDLE_HOURS = 6;
@@ -92,12 +93,13 @@ export const REBUILDABLE = /(^|\/)(node_modules|dist|build|out|coverage|test-res
 // procedures; bind each one to the project's own skill where the project generated one.
 export const COMMANDS = {
   preflight: 'run the phase preflight for <phase> (harness-bootstrap\'s reference/preflight.md); its escalations are Gate 1 cards',
-  sweep: 'write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',
-  retro: 'node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',
-  hygiene: 'write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',
+  sweep: 'once the product queue is empty: write the sweep report in the background (a Sonnet runner, harness-bootstrap\'s reference/sweep.md); it rides in the next unit\'s land commit',
+  retro: 'once the product queue is empty: node scripts/retro.mjs in the background; the report rides in the next unit\'s land commit',
+  hygiene: 'once the product queue is empty: write the hygiene report in the background (harness-bootstrap\'s reference/hygiene.md); it rides in the next unit\'s land commit',
   disk: 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --apply-approved, in the background',
   worktrees: 'git worktree remove <paths>, each once no registry row names it',
   inbox: 'nothing to run, the run moves on to the next ready unit; the owner\'s answers resume <unit> through the runner (harness-bootstrap\'s reference/runner.md)',
+  wait: 'product units come first; a harness unit starts when none is, or on the owner\'s word (--owner)',
 };
 // ---- end [B]
 
@@ -105,7 +107,6 @@ export const KINDS = ['preflight', 'sweep', 'retro', 'hygiene', 'disk', 'worktre
 // The cadence kinds print as REPORT lines, written in the background; the machine kinds go to the digest.
 const REPORT_KINDS = ['sweep', 'retro', 'hygiene'];
 const HOUSEKEEPING = ['disk', 'worktrees'];
-const HOLD_COMMAND = 'read the digest, then node scripts/harness-due.mjs --digest-read';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const GB = 1e9;
@@ -128,13 +129,14 @@ const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** Reject unknown flags, a bad id or week, and `--seen` or `--digest-read` with another mode, before anything is read. */
+/** Reject unknown flags, a bad id or week, and `--seen` or `--digest-read` with another mode, before anything is read. `--owner` takes no value. */
 export function parseArgs(argv) {
-  const a = { claim: null, seen: null, json: false, now: null, home: null, digestRead: false };
+  const a = { claim: null, seen: null, json: false, now: null, home: null, digestRead: false, owner: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
     else if (t === '--digest-read') a.digestRead = true;
+    else if (t === '--owner') a.owner = true;
     else if (t in VALUE_FLAGS) {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
@@ -442,11 +444,44 @@ export function heldBranches(registryText) {
 }
 
 /**
+ * The product units the registry holds or parks, in table order and without repeats: the Unit of each
+ * held row of the active table (first cell 1 or more; row 0 is the mainline) and of each parked row,
+ * leaving out harness units (isHarnessUnit), a row with no unit and `except` (the claimed id itself).
+ */
+export function productUnits(registryText, except = null) {
+  const table = registryTable(registryText, 'active');
+  const unit = table ? table.head.indexOf('unit') : -1;
+  const held = unit === -1
+    ? []
+    : table.lines
+      .map(cellsOf)
+      .filter((row) => /^[1-9]\d*$/.test(String(row[0] ?? '').replace(/\s/g, '')))
+      .map((row) => row[unit] ?? '');
+  const parked = parkedUnits(registryText).map((p) => p.unit);
+  return [...new Set([...held, ...parked].filter((id) => id !== '' && id !== except && !isHarnessUnit(id)))];
+}
+
+/**
+ * A harness unit waits for the product units: a claim `isHarnessUnit` accepts, while the registry's
+ * active or parked table holds a row it does not accept -> a blocking `wait` item naming up to five of
+ * them. A product claim, no registry and `owner` (the owner's word, `--owner`) leave it null.
+ */
+export function waitDue({ claim = null, registryText = null, owner = false, command = COMMANDS.wait } = {}) {
+  if (claim === null || owner || !isHarnessUnit(claim)) return null;
+  const ids = productUnits(registryText, claim);
+  if (!ids.length) return null;
+  const shown = ids.length > 5 ? `${ids.slice(0, 5).join(', ')}, +${ids.length - 5} more` : ids.join(', ');
+  return { kind: 'wait', subject: claim, why: `${plural(ids.length, 'product unit')} held or parked: ${shown}`, command, blocking: true };
+}
+
+/**
  * Every check, in KINDS order, from what the CLI read: `log` and `followUps` as { text, dates }
  * (line -> commit ms) or null; `reports` by kind as [{ rel, time }]; `merges` the mainline's
  * merges as [{ t, subject }]; `disk` { free, approved, last }; `worktrees` measured; `registry`
  * { text, root, real } (the registry's text, the main checkout and a path's real path, the identity
- * when absent) or null; `stage`, the manifest's (heldKinds). Nothing here reads a file.
+ * when absent) or null; `owner`, the owner's word for a harness claim (waitDue); `stage`, the
+ * manifest's (heldKinds). The `wait` item, for a harness claim, comes first and is no KINDS entry.
+ * Nothing here reads a file.
  */
 export function checkAll(f) {
   const now = f.now;
@@ -457,6 +492,7 @@ export function checkAll(f) {
   const reports = (kind) => f.reports?.[kind] ?? [];
   const held = new Set(heldKinds(f.stage ?? null));
   const items = [
+    waitDue({ claim: f.claim ?? null, registryText: f.registry?.text ?? null, owner: Boolean(f.owner) }),
     preflightDue({ claim: f.claim ?? null, reports: reports('preflight'), logIds: records.map((r) => r.id), merges: (f.merges ?? []).map((m) => m.subject) }),
     ...REPORT_KINDS.map((kind) => (REPORTS[kind] === null || held.has(kind) ? null : cadenceDue(kind, { reports: reports(kind), landed, merged, logBorn, now }))),
     f.disk ? diskDue(f.disk) : null,
@@ -491,12 +527,11 @@ const rowTime = (r, rowTimes) => {
  * The digest: what the standing grant decided and what merged since the owner last read it. Unread
  * items are the `By: grant` and `By: default` decision rows (retro-core's decisionRows) and the log
  * records landed after `lastRead` (ms, or null: never read, so every one is unread); a row whose time
- * is unknown is unread. -> { unread, lines, holdCount }: `lines` is the block, a header, the newest
+ * is unknown is unread. -> { unread, lines }: `lines` is the block, a header, the newest
  * `max` items (unknown times last) and `… <k> more`, then one line per housekeeping item (the disk and
- * worktrees checks), which is never unread; `holdCount` is how many unread items are older than
- * `olderDays`, an unknown time never among them (the valve).
+ * worktrees checks), which is never unread. Nothing in it blocks.
  */
-export function digest({ rows = [], rowTimes = new Map(), records = [], lastRead = null, now, housekeeping = [], max = DIGEST_LINES, olderDays = VALVE_DAYS }) {
+export function digest({ rows = [], rowTimes = new Map(), records = [], lastRead = null, housekeeping = [], max = DIGEST_LINES }) {
   const after = (t) => lastRead === null || t === null || t > lastRead;
   const decided = rows
     .filter((r) => r.by === 'grant' || r.by === 'default')
@@ -515,23 +550,7 @@ export function digest({ rows = [], rowTimes = new Map(), records = [], lastRead
     ...(n > max ? [`… ${n - max} more`] : []),
     ...housekeeping.map((h) => `DIGEST ${h.kind} — ${h.why} — ${h.command}`),
   ];
-  return { unread: n, lines, holdCount: items.filter((i) => i.time !== null && now - i.time > olderDays * DAY).length };
-}
-
-/**
- * The valve: more than `items` unread digest items older than VALVE_DAYS hold new claims -- a HOLD
- * line, blocking only for a run given `--claim` (`claim`, its row id). It never stops a merge or a
- * run already under way: the owner who stopped reading is asked to read, not the work to stop.
- */
-export function valve(d, { claim = null, items = VALVE_ITEMS, days = VALVE_DAYS } = {}) {
-  if (!d || d.holdCount <= items) return null;
-  return {
-    kind: 'hold',
-    count: d.holdCount,
-    why: `${d.holdCount} digest items unread for over ${days} days`,
-    command: HOLD_COMMAND,
-    blocking: Boolean(claim),
-  };
+  return { unread: n, lines };
 }
 
 /**
@@ -559,7 +578,7 @@ export function askLine(r) {
  * Every part of the report from what the CLI read: checkAll's facts and `decisions` (every state
  * file's decision rows at MAIN), `rowTimes` (`<unit>/<id>` -> the row's commit ms), `lastRead` (ms or
  * null), `splits` ([{ unit, branch, numstat }], the held rows' branches). -> { items, owed, split,
- * ask, digest, hold, held }, as formatDue takes them (the inbox aside: the CLI reads it).
+ * ask, digest, held }, as formatDue takes them (the inbox aside: the CLI reads it).
  */
 export function dueParts(f) {
   const items = checkAll(f);
@@ -569,7 +588,6 @@ export function dueParts(f) {
     rowTimes: f.rowTimes ?? new Map(),
     records: f.log ? logRecords(f.log.text, f.log.dates) : [],
     lastRead: f.lastRead ?? null,
-    now: f.now,
     housekeeping: items.filter((i) => HOUSEKEEPING.includes(i.kind)),
   });
   return {
@@ -578,32 +596,44 @@ export function dueParts(f) {
     split: splitItems(f.splits ?? []),
     ask: askKinds(rows),
     digest: d,
-    hold: valve(d, { claim: f.claim ?? null }),
     held: heldKinds(f.stage ?? null),
   };
 }
 
+/** One blocking or due item as its line: `WAIT <id> — …` for the wait item, else `DUE <kind> <subject> — …`. */
+const dueLine = (i) => (i.kind === 'wait'
+  ? `WAIT ${i.subject} — ${i.why} — ${i.command}`
+  : `DUE ${i.kind}${i.subject ? ` ${i.subject}` : ''} — ${i.why} — ${i.command}`);
+
 /**
- * The report, in C7's order: `OWED` lines, the inbox lines (inboxLines), `HOLD`, `SPLIT` lines, `DUE`
- * lines (the preflight), `REPORT` lines (the cadences), then the all-clear when there is no HOLD,
- * SPLIT, DUE or REPORT line, the `HELD` line of the foundation stage (heldKinds), the `ASK` line and
- * the digest block. The disk and worktrees items print in the digest only. A part not given prints
- * nothing.
+ * The report, in C7's order: `OWED` lines, the inbox lines (inboxLines), `SPLIT` lines, `DUE` lines (the
+ * wait, then the preflight), `REPORT` lines (the cadences), then the all-clear when there is no SPLIT,
+ * DUE or REPORT line, the `HELD` line of the foundation stage (heldKinds), the `ASK` line and the digest
+ * block. The disk and worktrees items print in the digest only. A part not given prints nothing.
  */
-export function formatDue({ items = [], owed = [], inbox = [], hold = null, split = [], ask = null, digest: d = null, held = [] } = {}) {
+export function formatDue({ items = [], owed = [], inbox = [], split = [], ask = null, digest: d = null, held = [] } = {}) {
   const due = items.filter((i) => !REPORT_KINDS.includes(i.kind) && !HOUSEKEEPING.includes(i.kind));
   const reports = items.filter((i) => REPORT_KINDS.includes(i.kind));
   const lines = [
     ...owed.map((o) => `OWED ${o.id} since ${o.since} — ${o.what}`),
     ...inbox,
-    ...(hold ? [`HOLD claims — ${hold.why} — ${hold.command}`] : []),
     ...split.map((s) => `SPLIT ${s.unit} — ${s.lines} production lines past the ${s.cap}-line cap — land the green slices (flag-off where unfinished); the rest is the next unit`),
-    ...due.map((i) => `DUE ${i.kind}${i.subject ? ` ${i.subject}` : ''} — ${i.why} — ${i.command}`),
+    ...due.map(dueLine),
     ...reports.map((i) => `REPORT ${i.kind} — ${i.why} — ${i.command}`),
   ];
-  if (!hold && !split.length && !due.length && !reports.length) lines.push('harness-due: nothing due');
+  if (!split.length && !due.length && !reports.length) lines.push('harness-due: nothing due');
   if (held.length) lines.push(`HELD ${held.join(', ')} — foundation stage — they wait for the flip`);
   if (ask) lines.push(askLine(ask));
   if (d) lines.push(...d.lines);
   return lines.map((l) => `${l}\n`).join('');
+}
+
+/**
+ * The report of a `--claim`: only what blocks that claim, the `WAIT` line and the `DUE preflight` line of
+ * the claimed row's phase; `harness-due: nothing due` when nothing blocks. Everything else waits for the
+ * end-of-run report (formatDue).
+ */
+export function formatClaim({ items = [] } = {}) {
+  const lines = items.filter((i) => i.blocking).map(dueLine);
+  return `${(lines.length ? lines : ['harness-due: nothing due']).join('\n')}\n`;
 }

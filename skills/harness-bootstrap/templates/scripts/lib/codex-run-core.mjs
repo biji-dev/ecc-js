@@ -184,6 +184,17 @@ function parseStatusArgs(argv) {
   return a;
 }
 
+/**
+ * The shortest --timeout-min a run keeps: a shorter one is raised to it, so no run is cut off to fit
+ * a foreground call (one install's 9-minute limit failed 5 of its 22 builds). `value` is the
+ * wrapper's env (a test seam): a number from 0 that fits a Node timer replaces it, empty means unset.
+ */
+export const TIMEOUT_FLOOR_MIN = 20;
+function timeoutFloor(value) {
+  const n = value === undefined || value === '' ? NaN : Number(value);
+  return Number.isFinite(n) && n >= 0 && n * 60_000 <= 2_147_483_647 ? n : TIMEOUT_FLOOR_MIN;
+}
+
 /** Reject bad numeric flags before NaN can silently reserve every task or disable the timeout. */
 export function parseArgs(argv, env = {}) {
   if (argv.includes('--status')) return parseStatusArgs(argv);
@@ -235,6 +246,8 @@ export function parseArgs(argv, env = {}) {
     throw new Error('--threshold / CODEX_RUN_THRESHOLD must be a number from 1 to 100');
   if (!Number.isFinite(a.timeoutMin) || a.timeoutMin <= 0 || a.timeoutMin * 60_000 > 2_147_483_647)
     throw new Error('--timeout-min must be positive and fit a Node timer');
+  const floor = timeoutFloor(env.CODEX_RUN_TIMEOUT_FLOOR);
+  if (a.timeoutMin < floor) [a.timeoutRaisedFrom, a.timeoutMin] = [a.timeoutMin, floor];
   return a;
 }
 

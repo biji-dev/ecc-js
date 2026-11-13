@@ -18,7 +18,7 @@ const CORE_REL = path.join('lib', 'claude-run-core.mjs');
 const CLI_REL = 'claude-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 13;
+const EXPECTED_TESTS = 16;
 
 let passed = 0;
 let failed = 0;
@@ -106,6 +106,8 @@ mutantFails('reserving the review under CLAUDE_RUN=essential', "if (m === 'essen
 mutantFails('taking max effort from a flag', "if (a.effort === 'max') throw", 'if (false) throw');
 mutantFails('a dry run that goes on to run', '    console.log(JSON.stringify(shown, null, 2));\n    return EXIT.ok;', '    console.log(JSON.stringify(shown, null, 2));', CLI_REL);
 mutantFails('a review with no diff file', '    const problem = writeDiff(a, run.diffFile);', '    const problem = null;', CLI_REL);
+mutantFails('spawning the model without its own process group', 'detached: GROUP,', 'detached: false,', CLI_REL);
+mutantFails('dropping HARNESS_ROLE=executor from the model env', "HARNESS_ROLE: 'executor'", "HARNESS_ROLE: 'session'", CLI_REL);
 
 test('demo: a dry run from a Codex host prints the read-only command and writes nothing', () => {
   const repo = tmp('claude-run-demo-');

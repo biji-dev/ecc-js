@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -1104,6 +1104,102 @@ test('a run that outlives --timeout-min is failed, with a ledger row that says i
   const row = JSON.parse(fs.readFileSync(path.join(dir, '.codex-runs/ledger.jsonl'), 'utf8'));
   assert.equal(row.outcome, 'failed');
   assert.match(row.reason, /timed out after 0\.01 min/);
+});
+
+// A fake model that starts a grandchild (`sleep 62`) and never exits by itself. Its pid goes to $PIDFILE.
+const GRANDCHILD = '#!/bin/sh\nsleep 62 &\necho $! > "$PIDFILE"\nwait\n';
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms = 8_000) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleepMs(50)) if (fn()) return true;
+  return fn();
+}
+const readPid = (file) => (fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) || 0 : 0);
+
+test('a timed-out run takes the model\'s whole process group with it: no grandchild survives', async () => {
+  const dir = tmpDir('codex-run-group-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const fake = fakeCodex(GRANDCHILD);
+  try {
+    const res = runWrapper(
+      dir,
+      ['investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', '0.02'],
+      { CODEX_BIN: fake, PIDFILE: pidFile },
+    );
+    assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
+    assert.match(res.stdout, /timed out after 0\.02 min/);
+    const pid = readPid(pidFile);
+    assert.ok(pid > 0, 'the fake model never started its grandchild');
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
+  } finally {
+    const pid = readPid(pidFile);
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+test('SIGTERM to the wrapper itself reaches the model\'s process group first', async () => {
+  const dir = tmpDir('codex-run-group-term-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const fake = fakeCodex(GRANDCHILD);
+  const wrapper = spawn(
+    process.execPath,
+    [RUNNER, 'investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', '5'],
+    { cwd: dir, env: cleanEnv({ CODEX_BIN: fake, PIDFILE: pidFile }), stdio: 'ignore', detached: true },
+  );
+  const exited = new Promise((resolve) => wrapper.on('exit', resolve));
+  try {
+    assert.equal(await until(() => readPid(pidFile) > 0), true, 'the fake model never started its grandchild');
+    const pid = readPid(pidFile);
+    process.kill(wrapper.pid, 'SIGTERM');
+    await Promise.race([exited, sleepMs(10_000)]);
+    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the wrapper's SIGTERM`);
+  } finally {
+    try {
+      process.kill(-wrapper.pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    const pid = readPid(pidFile);
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+test('every run carries HARNESS_ROLE=executor in the model\'s env, whatever the caller had', () => {
+  const dir = tmpDir('codex-run-role-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const fake = fakeCodex(
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\necho "role=$HARNESS_ROLE" > "$out"\nexit 0\n',
+  );
+  const verdict = path.join(dir, 'v.md');
+  const res = runWrapper(
+    dir,
+    ['investigate', '--prompt', 'p.md', '--out', verdict, '--cwd', dir],
+    { CODEX_BIN: fake, HARNESS_ROLE: 'session' },
+  );
+  assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+  assert.equal(fs.readFileSync(verdict, 'utf8'), 'role=executor\n');
 });
 
 test('the ledger of a linked worktree run lands in the main checkout, not the worktree', () => {

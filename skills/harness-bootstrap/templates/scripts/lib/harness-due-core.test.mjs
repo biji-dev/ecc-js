@@ -1,7 +1,7 @@
 // harness-bootstrap harness-due tests (generated YYYY-MM-DD). Run: node --test scripts/lib/harness-due-core.test.mjs
 // [M] mechanism (ships as-is): every test but the [B] one. [B] binding: the ids of the fixtures' rows (ROW and
 // PHASE_EXAMPLE, below); the rest reads the bindings of this core (MAIN, LOG, REGISTRY, REPORTS, CADENCE, WORKTREE_IDLE_HOURS,
-// STATE_DIR, OWED_DAYS, DIGEST_LINES, VALVE_ITEMS, VALVE_DAYS, SPLIT_LINES ...)
+// STATE_DIR, OWED_DAYS, DIGEST_LINES, DISK_MIN_GB, SPLIT_LINES ...)
 // and of estimate-core (the log's columns, a tier word), never their values. A wrapper test a binding cannot
 // express asserts that binding's own behaviour, never skips.
 // Hermetic: the wrapper tests run in a temp git repo with every GIT_* variable stripped,
@@ -21,6 +21,7 @@ import {
   CADENCE,
   COMMANDS,
   DIGEST_LINES,
+  DISK_MIN_GB,
   FOLLOW_UPS,
   KINDS,
   LOG,
@@ -32,8 +33,6 @@ import {
   REPORTS,
   SPLIT_LINES,
   STATE_DIR,
-  VALVE_DAYS,
-  VALVE_ITEMS,
   WORKTREE_IDLE_HOURS,
   askLine,
   cadenceDue,
@@ -41,6 +40,7 @@ import {
   digest,
   diskDue,
   dueParts,
+  formatClaim,
   formatDue,
   heldBranches,
   heldKinds,
@@ -57,11 +57,12 @@ import {
   parseWorktrees,
   phaseOf,
   preflightDue,
+  productUnits,
   projectName,
   registryWorktrees,
   reportShape,
   splitItems,
-  valve,
+  waitDue,
   worktreesDue,
 } from './harness-due-core.mjs';
 
@@ -110,8 +111,8 @@ const PHASE_EXAMPLE = [ROW(2, 16), 'P2'];
 const PH1 = phaseOf(ROW(1, 1));
 const PH2 = phaseOf(ROW(2, 1));
 
-test('parseArgs takes a claim, --seen, --digest-read, --json, --now and --home, and rejects the rest', () => {
-  assert.deepEqual(parseArgs([]), { claim: null, seen: null, json: false, now: null, home: null, digestRead: false });
+test('parseArgs takes a claim, --owner, --seen, --digest-read, --json, --now and --home, and rejects the rest', () => {
+  assert.deepEqual(parseArgs([]), { claim: null, seen: null, json: false, now: null, home: null, digestRead: false, owner: false });
   assert.deepEqual(parseArgs(['--claim', 'P2-01', '--json', '--now', '2026-10-26T00:00:00Z', '--home', 'h']), {
     claim: 'P2-01',
     seen: null,
@@ -119,7 +120,10 @@ test('parseArgs takes a claim, --seen, --digest-read, --json, --now and --home, 
     now: '2026-10-26T00:00:00Z',
     home: 'h',
     digestRead: false,
+    owner: false,
   });
+  assert.equal(parseArgs(['--claim', 'harness/x', '--owner']).owner, true);
+  assert.equal(parseArgs(['--owner', '--claim', 'harness/x']).claim, 'harness/x', '--owner takes no value');
   assert.equal(parseArgs(['--digest-read', '--now', '2026-10-26T00:00:00Z']).digestRead, true);
   assert.throws(() => parseArgs(['--digest-read', '--claim', 'P2-01']), /--digest-read records the read and checks nothing/);
   assert.throws(() => parseArgs(['--digest-read', '--seen', '2026-W44']), /pick one of --seen and --digest-read/);
@@ -409,16 +413,15 @@ test('the digest lists at most DIGEST_LINES unread items, newest first, then `�
 });
 
 test('housekeeping lines are in the digest, never unread, and never hold a claim', () => {
-  const housekeeping = Array.from({ length: VALVE_ITEMS + 5 }, (_, i) => ({ kind: i % 2 ? 'disk' : 'worktrees', why: `w${i}`, command: 'c' }));
+  const housekeeping = Array.from({ length: DIGEST_LINES + 10 }, (_, i) => ({ kind: i % 2 ? 'disk' : 'worktrees', why: `w${i}`, command: 'c' }));
   const d = digest({ rows: [], records: [], lastRead: null, now: NOW, housekeeping });
   assert.equal(d.unread, 0);
-  assert.equal(d.holdCount, 0);
   assert.equal(d.lines[0], 'DIGEST 0 unread since never');
   assert.equal(d.lines.length, 1 + housekeeping.length);
-  assert.equal(valve(d, { claim: 'P2-01' }), null);
   // checkAll's disk and worktrees items reach the digest, not a DUE line
   const parts = dueParts({ now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [], disk: { free: 1e9, approved: ['caches'], last: null }, stage: 'foundation' });
   assert.ok(parts.items.some((i) => i.kind === 'disk'));
+  assert.ok(parts.items.every((i) => !i.blocking), 'housekeeping blocks nothing');
   assert.equal(parts.digest.unread, 0);
   const text = formatDue(parts);
   assert.match(text, /^DIGEST disk — .* — /m);
@@ -426,36 +429,22 @@ test('housekeeping lines are in the digest, never unread, and never hold a claim
   assert.match(text, /^harness-due: nothing due$/m, 'housekeeping leaves the all-clear in place');
 });
 
-test('the valve holds at VALVE_ITEMS + 1 unread items older than VALVE_DAYS, not at VALVE_ITEMS, and blocks only with --claim', () => {
-  const old = NOW - (VALVE_DAYS * DAY + HOUR);
-  const rows = (n, prefix = 'DEC') => Array.from({ length: n }, (_, i) => dec('P2-16', `${prefix}-${i + 1}`, 'grant'));
-  const times = (list, t) => new Map(list.map((r) => [`${r.unit}/${r.id}`, t]));
-  const over = rows(VALVE_ITEMS + 1);
-  const held = digest({ rows: over, rowTimes: times(over, old), lastRead: null, now: NOW });
-  assert.equal(held.holdCount, VALVE_ITEMS + 1);
-  const free = valve(held, { claim: null });
-  assert.equal(free.blocking, false, 'without --claim it is a line, not a stop');
-  const stop = valve(held, { claim: 'P2-01' });
-  assert.equal(stop.blocking, true);
-  assert.equal(formatDue({ hold: stop }), `HOLD claims — ${VALVE_ITEMS + 1} digest items unread for over ${VALVE_DAYS} days — read the digest, then node scripts/harness-due.mjs --digest-read\n`);
-  const at = rows(VALVE_ITEMS);
-  assert.equal(valve(digest({ rows: at, rowTimes: times(at, old), lastRead: null, now: NOW }), { claim: 'P2-01' }), null);
-  // the young, the unknown and the read never count
-  const young = rows(VALVE_ITEMS + 1, 'NEW');
-  const youngTimes = times(young, NOW - (VALVE_DAYS * DAY - HOUR));
-  assert.equal(valve(digest({ rows: [...at, ...young], rowTimes: new Map([...times(at, old), ...youngTimes]), lastRead: null, now: NOW }), { claim: 'P2-01' }), null);
-  const unknown = rows(VALVE_ITEMS + 1, 'UNK');
-  const mixed = digest({ rows: [...at, ...unknown], rowTimes: times(at, old), lastRead: null, now: NOW });
-  assert.equal(mixed.unread, 2 * VALVE_ITEMS + 1);
-  assert.equal(valve(mixed, { claim: 'P2-01' }), null, 'an item of unknown time is unread but never holds');
-  assert.equal(valve(digest({ rows: over, rowTimes: times(over, old), lastRead: old + HOUR, now: NOW }), { claim: 'P2-01' }), null, 'read items never hold');
-  // merged records count like decisions
-  const merged = Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => ({ id: `P1-${i + 1}`, landed: old }));
-  assert.equal(valve(digest({ records: merged, lastRead: null, now: NOW }), { claim: 'x' }).count, VALVE_ITEMS + 1);
-  // through dueParts: the claim decides whether the hold blocks
-  const facts = { now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [], stage: 'foundation', decisions: over, rowTimes: times(over, old) };
-  assert.equal(dueParts(facts).hold.blocking, false);
-  assert.equal(dueParts({ ...facts, claim: 'P1-03' }).hold.blocking, true);
+test('there is no HOLD: 30 unread digest items over 4 days block nothing, with a claim or without, and print at most DIGEST_LINES', () => {
+  const old = NOW - 4 * DAY;
+  const rows = Array.from({ length: 30 }, (_, i) => dec('P2-16', `DEC-${i + 1}`, 'grant'));
+  const rowTimes = new Map(rows.map((r) => [`${r.unit}/${r.id}`, old]));
+  const facts = { now: NOW, log: null, followUps: null, reports: {}, merges: [], worktrees: [], stage: 'foundation', decisions: rows, rowTimes };
+  for (const claim of [null, 'T-1', 'harness/x']) {
+    const parts = dueParts({ ...facts, claim });
+    assert.equal(parts.digest.unread, 30);
+    assert.ok(!('hold' in parts) && !('holdCount' in parts.digest), 'the valve is gone');
+    assert.ok(parts.items.every((i) => !i.blocking), `claim ${claim}`);
+    const text = formatDue(parts);
+    assert.doesNotMatch(text, /HOLD/);
+    assert.equal(text.split('\n').filter((l) => /^DIGEST P2-16\//.test(l)).length, DIGEST_LINES);
+    assert.ok(text.split('\n').includes(`… ${30 - DIGEST_LINES} more`));
+    assert.equal(formatClaim(parts), 'harness-due: nothing due\n', 'the digest never reaches a claim');
+  }
 });
 
 test('the ASK line names the asked kinds: the default, and a granted kind demoted by its reversals', () => {
@@ -482,6 +471,9 @@ test('diskDue: under the minimum it runs the approved categories, or says none i
   assert.match(none.why, /no sweep category is approved$/);
   assert.match(none.command, /approves categories once$/);
   assert.equal(diskDue({ free: null }), null);
+  // the bound minimum: 2 GB over it nothing is due, 1 GB under it the check is
+  assert.equal(diskDue({ free: (DISK_MIN_GB + 2) * 1e9, approved: ['pnpm'] }), null);
+  assert.match(diskDue({ free: (DISK_MIN_GB - 1) * 1e9, approved: ['pnpm'] }).why, new RegExp(`^${DISK_MIN_GB - 1}\\.0 GB free, under ${DISK_MIN_GB}; approved: pnpm$`));
 });
 
 test('worktrees: the porcelain list parses, and only a merged linked worktree with commits of its own, clean, rebuildable ignored files alone and idle is residue', () => {
@@ -826,40 +818,104 @@ test('SPLIT: a held unit past SPLIT_LINES production lines against the mainline,
   assert.deepEqual(heldBranches(null), []);
 });
 
-test('formatDue prints the parts in C7\'s order: OWED, INBOX, HOLD, SPLIT, DUE, REPORT, ASK, then the digest', () => {
+test('formatDue prints the parts in C7\'s order: OWED, INBOX, SPLIT, DUE (WAIT first), REPORT, ASK, then the digest', () => {
+  const wait = { kind: 'wait', subject: 'harness/x', why: '1 product unit held or parked: T-7', command: 'product units come first', blocking: true };
   const preflight = { kind: 'preflight', subject: 'P2', why: 'no report', command: 'run the preflight', blocking: true };
   const sweep = { kind: 'sweep', subject: null, why: '8 d', command: 'write the sweep', blocking: false };
   const disk = { kind: 'disk', subject: null, why: '20.0 GB free', command: 'free disk', blocking: false };
-  const old = NOW - (VALVE_DAYS + 1) * DAY;
-  const rows = Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => dec('P2-16', `DEC-${i + 1}`, 'grant', { date: '2026-10-20' }));
-  const d = digest({ rows, rowTimes: new Map(rows.map((r) => [`${r.unit}/${r.id}`, old])), lastRead: null, now: NOW, housekeeping: [disk], max: 1 });
+  const rows = Array.from({ length: 3 }, (_, i) => dec('P2-16', `DEC-${i + 1}`, 'grant', { date: '2026-10-20' }));
+  const d = digest({ rows, rowTimes: new Map(rows.map((r) => [`${r.unit}/${r.id}`, NOW - DAY])), lastRead: null, now: NOW, housekeeping: [disk], max: 1 });
   const text = formatDue({
-    items: [preflight, sweep, disk],
+    items: [wait, preflight, sweep, disk],
     owed: [{ id: 'FU-1', since: '2026-10-20', what: 'the key name' }],
     inbox: [CR_LINE],
-    hold: valve(d, { claim: 'P2-01' }),
     split: [{ unit: 'P2-16', branch: 'b', lines: SPLIT_LINES + 1, cap: SPLIT_LINES }],
     ask: askKinds([]),
     digest: d,
     held: [],
   });
   const lines = text.trimEnd().split('\n');
-  assert.deepEqual(lines.map((l) => l.split(' ')[0]), ['OWED', 'INBOX', 'HOLD', 'SPLIT', 'DUE', 'REPORT', 'ASK', 'DIGEST', 'DIGEST', '…', 'DIGEST']);
+  assert.deepEqual(lines.map((l) => l.split(' ')[0]), ['OWED', 'INBOX', 'SPLIT', 'WAIT', 'DUE', 'REPORT', 'ASK', 'DIGEST', 'DIGEST', '…', 'DIGEST']);
   assert.equal(lines[0], 'OWED FU-1 since 2026-10-20 — the key name');
   assert.equal(lines[1], CR_LINE);
+  assert.equal(lines[3], 'WAIT harness/x — 1 product unit held or parked: T-7 — product units come first');
   assert.equal(lines[4], 'DUE preflight P2 — no report — run the preflight');
   assert.equal(lines[5], 'REPORT sweep — 8 d — write the sweep');
   assert.equal(lines[6], `ASK ${ASK_DEFAULT.join(', ')} — default`);
   assert.equal(lines.at(-1), 'DIGEST disk — 20.0 GB free — free disk');
   assert.ok(!lines.includes('harness-due: nothing due'));
-  // the all-clear: nothing that holds, splits, is due or is a report; OWED and INBOX lines leave it in place, before ASK
+  // the all-clear: nothing that splits, is due or is a report; OWED and INBOX lines leave it in place, before ASK
   assert.deepEqual(
     formatDue({ owed: [{ id: 'FU-1', since: '2026-10-20', what: 'x' }], inbox: [CR_LINE], ask: askKinds([]), digest: digest({ now: NOW }) }).trimEnd().split('\n'),
     ['OWED FU-1 since 2026-10-20 — x', CR_LINE, 'harness-due: nothing due', `ASK ${ASK_DEFAULT.join(', ')} — default`, 'DIGEST 0 unread since never'],
   );
-  for (const part of [{ hold: valve(d, {}) }, { split: [{ unit: 'u', lines: 2, cap: 1 }] }, { items: [preflight] }, { items: [sweep] }]) {
+  for (const part of [{ split: [{ unit: 'u', lines: 2, cap: 1 }] }, { items: [wait] }, { items: [preflight] }, { items: [sweep] }]) {
     assert.doesNotMatch(formatDue(part), /nothing due/, Object.keys(part)[0]);
   }
+});
+
+test('waitDue: a harness claim waits while the active or parked table holds a product unit; a product claim, --owner and harness rows do not', () => {
+  const held = (unit) => `| 1 | ${unit} | 2 implement | task/${unit} | main | | 2026-11-06T03:00:00Z |`;
+  const registry = (...rows) => registryFile(activeSection(rows));
+  const wait = (claim, text, owner = false) => waitDue({ claim, registryText: text, owner, command: 'product first' });
+  const one = wait('harness/x', registry(held('T-7')));
+  assert.deepEqual(one, { kind: 'wait', subject: 'harness/x', why: '1 product unit held or parked: T-7', command: 'product first', blocking: true });
+  assert.equal(formatDue({ items: [one] }), 'WAIT harness/x — 1 product unit held or parked: T-7 — product first\n');
+  assert.equal(formatClaim({ items: [one] }), 'WAIT harness/x — 1 product unit held or parked: T-7 — product first\n');
+  // a parked row counts as well; both tables, in table order, without repeats
+  const both = registryFile(activeSection([held('T-7'), held('T-8')]), parkedSection([CR_ROW, '| T-7 | Gate 1 | 2026-11-06T05:30Z | b | main | Q-1 |']));
+  assert.equal(wait('harness/x', both).why, '3 product units held or parked: T-7, T-8, CR-021');
+  assert.equal(wait('harness/x', registryFile(parkedSection([CR_ROW]))).why, '1 product unit held or parked: CR-021');
+  // at most five are named
+  const many = registry(...[1, 2, 3, 4, 5, 6, 7].map((n) => held(`T-${n}`)));
+  assert.equal(wait('harness/x', many).why, '7 product units held or parked: T-1, T-2, T-3, T-4, T-5, +2 more');
+  // nothing waits: row 0 (the mainline), harness rows, a row with no unit, the claim itself, no registry
+  assert.equal(wait('harness/x', registry(held('harness/y'), '| 2 | | 2 | task/z | main | | |')), null);
+  assert.equal(wait('harness/x', registryFile(activeSection([]))), null);
+  assert.equal(wait('harness/x', registry(held('harness/x'))), null);
+  assert.equal(wait('harness/x', null), null);
+  assert.equal(wait('harness/x', 'not a registry'), null);
+  assert.equal(wait('harness/x', registry(held('T-7')), true), null, '--owner skips the wait');
+  assert.equal(wait('T-9', registry(held('T-7'))), null, 'a product claim never waits');
+  assert.equal(wait(null, registry(held('T-7'))), null);
+  assert.equal(wait('`harness/x`', registry(held('T-7'))).blocking, true);
+  assert.deepEqual(productUnits(both, 'T-8'), ['T-7', 'CR-021']);
+  assert.ok(typeof COMMANDS.wait === 'string' && COMMANDS.wait !== '');
+  // through checkAll and dueParts: first among the items, blocking; the owner's word and a product claim leave it out
+  const facts = { now: NOW, claim: 'harness/x', log: null, followUps: null, reports: {}, merges: [], worktrees: [], registry: { text: registry(held('T-7')), root: '/r' } };
+  assert.equal(checkAll(facts)[0].kind, 'wait');
+  assert.equal(dueParts(facts).items[0].blocking, true);
+  assert.ok(!checkAll({ ...facts, owner: true }).some((i) => i.kind === 'wait'));
+  assert.ok(!checkAll({ ...facts, claim: 'P1-03' }).some((i) => i.kind === 'wait'));
+  assert.ok(!checkAll({ ...facts, claim: null }).some((i) => i.kind === 'wait'));
+});
+
+test('formatClaim prints only what blocks the claim: the wait and the opening preflight; a phase under way, a report, an owed row are left out', () => {
+  const wait = { kind: 'wait', subject: 'harness/x', why: 'w', command: 'c', blocking: true };
+  const opens = { kind: 'preflight', subject: 'P2', why: 'no report', command: 'run it', blocking: true };
+  const underWay = { kind: 'preflight', subject: 'P1', why: 'under way', command: 'run it', blocking: false };
+  const sweep = { kind: 'sweep', subject: null, why: '8 d', command: 'write the sweep', blocking: false };
+  const disk = { kind: 'disk', subject: null, why: '5 GB free', command: 'free it', blocking: false };
+  assert.equal(formatClaim({ items: [wait, opens, underWay, sweep, disk] }), 'WAIT harness/x — w — c\nDUE preflight P2 — no report — run it\n');
+  assert.equal(formatClaim({ items: [underWay, sweep, disk] }), 'harness-due: nothing due\n');
+  assert.equal(formatClaim({}), 'harness-due: nothing due\n');
+  assert.equal(formatClaim(), 'harness-due: nothing due\n');
+  // a sweep due, an owed row, a parked unit and an unread digest: a product claim hears none of them
+  const facts = {
+    now: NOW,
+    claim: 'T-1',
+    log: null,
+    followUps: { text: `${table(['#', SEV, 'What', ST], [['FU-1', 'P2', 'Owner supplies: the key name', OPEN]])}\n`, dates: new Map([[3, NOW - 9 * DAY]]) },
+    reports: {},
+    merges: [],
+    worktrees: [],
+    registry: { text: registryFile(activeSection([]), parkedSection([CR_ROW])), root: '/r' },
+    decisions: [dec('P2-16', 'DEC-1', 'grant')],
+    rowTimes: new Map([['P2-16/DEC-1', NOW - DAY]]),
+  };
+  const parts = dueParts(facts);
+  assert.ok(parts.items.some((i) => i.kind === 'sweep') && parts.owed.length === 1 && parts.digest.unread === 1, 'they are all there to print');
+  assert.equal(formatClaim(parts), 'harness-due: nothing due\n');
 });
 
 // ---- the wrapper, in a temp repo with dated commits and a temp --home
@@ -919,7 +975,7 @@ function run(f, args, cwd = f.repo) {
   return spawnSync(process.execPath, [RUNNER, '--now', RUN_NOW, '--home', f.home, ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
 }
 
-test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is named, never stopped', () => {
+test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is no line of a claim', () => {
   const f = fixture();
   const opens = run(f, ['--claim', ROW(2, 1)]);
   if (REPORTS.preflight === null || PH2 === null) {
@@ -930,9 +986,13 @@ test('the wrapper: claiming the row that opens a phase with no preflight stops w
   }
   assert.equal(opens.status, 1, opens.stderr);
   assert.match(opens.stdout, new RegExp(`^DUE preflight ${PH2} — no report at ${fill(REPORTS.preflight, PH2).replace(/[.]/g, '\\.')}, and ${ROW(2, 1).replace(/[.]/g, '\\.')} opens the phase: the claim waits for it — `, 'm'));
+  // only the line that blocks: a claim of a phase under way prints nothing but the all-clear (the item is in --json)
+  assert.equal(opens.stdout.trimEnd().split('\n').length, 1, opens.stdout);
   const underWay = run(f, ['--claim', ROW(1, 8)]);
   assert.equal(underWay.status, 0, underWay.stderr);
-  assert.match(underWay.stdout, new RegExp(`^DUE preflight ${PH1} — no report at .*, and the phase is under way \\(7 log rows, 0 merges\\) — `, 'm'));
+  assert.equal(underWay.stdout, 'harness-due: nothing due\n');
+  const underWayJson = JSON.parse(run(f, ['--claim', ROW(1, 8), '--json']).stdout);
+  assert.match(underWayJson.due.find((d) => d.kind === 'preflight').why, /, and the phase is under way \(7 log rows, 0 merges\)$/);
   // a report on disk that no commit holds clears nothing: the unit stays due until its report is committed
   f.write(fill(REPORTS.preflight, PH2), `# Preflight ${PH2}\n`);
   const unsaved = run(f, ['--claim', ROW(2, 1)]);
@@ -996,11 +1056,12 @@ test('the wrapper: a landed branch that merged the mainline into itself is one l
   f.git(['merge', '-q', '--no-ff', '-m', `Merge ${MAIN} into ${branch}`, MAIN], '2026-10-24T11:00:00Z');
   f.git(['checkout', '-q', MAIN]);
   f.git(['merge', '-q', '--no-ff', '-m', `Merge ${branch}`, branch], '2026-10-24T12:00:00Z');
-  const res = run(f, ['--claim', ROW(1, 9)]);
+  const res = run(f, ['--claim', ROW(1, 9), '--json']);
   assert.equal(res.status, 0, res.stderr);
+  const preflight = JSON.parse(res.stdout).due.find((d) => d.kind === 'preflight');
   if (REPORTS.preflight !== null && PH1 !== null) {
-    assert.match(res.stdout, new RegExp(`^DUE preflight ${PH1} — no report at .*, and the phase is under way \\(7 log rows, 1 merge\\) — `, 'm'));
-  } else assert.doesNotMatch(res.stdout, /^DUE preflight/m);
+    assert.match(preflight.why, /, and the phase is under way \(7 log rows, 1 merge\)$/);
+  } else assert.equal(preflight, undefined);
 });
 
 test('blameDates dates a committed line by its commit and a line not committed yet by nothing', () => {
@@ -1073,7 +1134,7 @@ test('the wrapper: a merged worktree is residue only with commits of its own, no
   assert.deepEqual(named, residue, res.stdout);
 });
 
-test('the wrapper: the parked units come before the due lines, with a claim or without, and never change the exit code', () => {
+test('the wrapper: the parked units come before the due lines, and never change the exit code', () => {
   const f = fixture();
   const second = 'INBOX P2-17 Gate 1 since 2026-11-06T05:30Z · Q-1 scope';
   f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW, '| P2-17 | Gate 1 | 2026-11-06T05:30Z | task/p2-17 | main | Q-1 scope |'])));
@@ -1083,11 +1144,12 @@ test('the wrapper: the parked units come before the due lines, with a claim or w
   assert.deepEqual(inbox(plain), [CR_LINE, second]);
   assert.deepEqual(plain.stdout.split('\n').slice(0, 2), [CR_LINE, second], 'the inbox is first, with nothing owed');
   if (REPORTS.sweep !== null) assert.match(plain.stdout, DUE_SWEEP);
-  // a claim that stops (exit 1) still prints the inbox; one that does not stop exits 0
+  // a claim prints only what blocks it, so not the inbox; it never changes the exit code
   const stops = REPORTS.preflight !== null && PH2 !== null;
   const claimed = run(f, ['--claim', ROW(2, 1)]);
   assert.equal(claimed.status, stops ? 1 : 0, claimed.stdout + claimed.stderr);
-  assert.deepEqual(claimed.stdout.split('\n').slice(0, 2), [CR_LINE, second]);
+  assert.doesNotMatch(claimed.stdout, /INBOX/);
+  if (!stops) assert.equal(claimed.stdout, 'harness-due: nothing due\n');
   const json = JSON.parse(run(f, ['--json']).stdout);
   assert.deepEqual(json.inbox.map((p) => [p.unit, p.gate, p.parked, p.branch, p.worktree, p.cards]), [
     ['CR-021', 'Gate 2', '2026-11-06T04:10Z', 'change/cr-021', '../wt-cr-021', 'Q-1 merge or hold · Q-2 button copy'],
@@ -1212,26 +1274,76 @@ test('the wrapper: the state files at the mainline feed ASK and the digest, each
   ]);
   assert.ok(res.stdout.split('\n').includes(askLine(askKinds([]))), res.stdout);
   assert.ok(res.stdout.indexOf('\nASK ') < res.stdout.indexOf('\nDIGEST '), 'the ASK line comes before the digest');
-  // past the valve: more than VALVE_ITEMS unread rows older than VALVE_DAYS
-  f.write(`${STATE_DIR}/unit-d.state.md`, stateFile(Array.from({ length: VALVE_ITEMS + 1 }, (_, i) => [`DEC-${i + 1}`, '2026-10-25', `step ${i + 1}`, 'grant', 'x'])));
+  // 30 unread rows, four days old: no HOLD, no stop, and the digest prints DIGEST_LINES of them then `… k more`
+  f.write(`${STATE_DIR}/unit-d.state.md`, stateFile(Array.from({ length: 28 }, (_, i) => [`DEC-${i + 1}`, '2026-10-25', `step ${i + 1}`, 'grant', 'x'])));
   f.git(['add', `${STATE_DIR}/unit-d.state.md`]);
   f.git(['commit', '-q', '-m', 'unit-d landed'], '2026-10-25T11:00:00Z');
-  const later = new Date(Date.parse('2026-10-25T11:00:00Z') + VALVE_DAYS * DAY + HOUR).toISOString();
-  const hold = new RegExp(`^HOLD claims — ${VALVE_ITEMS + 3} digest items unread for over ${VALVE_DAYS} days — read the digest, then node scripts/harness-due\\.mjs --digest-read$`, 'm');
+  const later = new Date(Date.parse('2026-10-25T11:00:00Z') + 4 * DAY).toISOString();
   const plain = run(f, ['--now', later]);
-  assert.equal(plain.status, 0, 'without --claim the valve is a line, not a stop');
-  assert.match(plain.stdout, hold);
+  assert.equal(plain.status, 0);
+  assert.doesNotMatch(plain.stdout, /HOLD/);
+  assert.match(plain.stdout, /^DIGEST 30 unread since /m);
+  assert.equal(plain.stdout.split('\n').filter((l) => /^DIGEST unit-[a-d]\//.test(l)).length, DIGEST_LINES);
+  assert.ok(plain.stdout.split('\n').includes(`… ${30 - DIGEST_LINES} more`), plain.stdout);
   const claimed = run(f, ['--now', later, '--claim', ROW(1, 8)]);
-  assert.equal(claimed.status, 1, claimed.stdout + claimed.stderr);
-  assert.match(claimed.stdout, hold);
+  assert.equal(claimed.status, 0, claimed.stdout + claimed.stderr);
+  assert.equal(claimed.stdout, 'harness-due: nothing due\n', 'a claim hears nothing of the digest');
   const json = JSON.parse(run(f, ['--now', later, '--claim', ROW(1, 8), '--json']).stdout);
-  assert.equal(json.hold.blocking, true);
-  assert.ok(json.blocking >= 1);
+  assert.ok(!('hold' in json) && !('holdCount' in json.digest), 'the valve is gone');
+  assert.equal(json.blocking, 0);
   assert.deepEqual(json.ask.ask, askKinds([]).ask);
   assert.equal(run(f, ['--now', later, '--digest-read']).status, 0);
-  const cleared = run(f, ['--now', later, '--claim', ROW(1, 8)]);
-  assert.equal(cleared.status, 0, cleared.stdout + cleared.stderr);
-  assert.doesNotMatch(cleared.stdout, /^HOLD/m);
+  assert.match(run(f, ['--now', later]).stdout, /^DIGEST 0 unread since /m);
+});
+
+test('the wrapper: --claim prints only what blocks it: with a sweep due, an owed row and a parked unit a product claim hears nothing; an opening phase prints its DUE line alone', () => {
+  const f = fixture();
+  f.write(FU_FILE, `${table(['#', SEV, 'What', ST], [['FU-1', 'P2', 'Owner supplies: the key name', OPEN]])}\n`);
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-m', 'owed'], '2026-10-17T11:00:00Z');
+  f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW])));
+  const plain = run(f, []);
+  if (REPORTS.sweep !== null) assert.match(plain.stdout, DUE_SWEEP);
+  assert.match(plain.stdout, /^OWED FU-1 since 2026-10-17 — the key name$/m);
+  assert.ok(plain.stdout.split('\n').includes(CR_LINE));
+  const quiet = run(f, ['--claim', 'T-1']);
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal(quiet.stdout, 'harness-due: nothing due\n');
+  const opens = run(f, ['--claim', ROW(2, 1)]);
+  if (REPORTS.preflight === null || PH2 === null) {
+    assert.equal(opens.status, 0, opens.stderr);
+    assert.equal(opens.stdout, 'harness-due: nothing due\n');
+    return;
+  }
+  assert.equal(opens.status, 1, opens.stderr);
+  const lines = opens.stdout.trimEnd().split('\n');
+  assert.equal(lines.length, 1, opens.stdout);
+  assert.match(lines[0], new RegExp(`^DUE preflight ${PH2} — no report at `));
+});
+
+test('the wrapper: a harness claim waits for a held or parked product unit (WAIT, exit 1); --owner skips it, and held harness units do not make it wait', () => {
+  const f = fixture();
+  const held = (unit) => `| 1 | ${unit} | 2 implement | task/x | main | | 2026-11-06T03:00:00Z |`;
+  f.write(REGISTRY, registryFile(activeSection([held('T-7')])));
+  const wait = run(f, ['--claim', 'harness/x']);
+  assert.equal(wait.status, 1, wait.stdout + wait.stderr);
+  assert.match(wait.stdout, /^WAIT harness\/x — 1 product unit held or parked: T-7 — product units come first; a harness unit starts when none is, or on the owner's word \(--owner\)\n$/);
+  assert.equal(wait.stdout.trimEnd().split('\n').length, 1, 'nothing else prints with --claim');
+  const owner = run(f, ['--claim', 'harness/x', '--owner']);
+  assert.equal(owner.status, 0, owner.stdout + owner.stderr);
+  assert.equal(owner.stdout, 'harness-due: nothing due\n');
+  assert.equal(JSON.parse(run(f, ['--claim', 'harness/x', '--json']).stdout).due[0].kind, 'wait');
+  assert.equal(run(f, ['--claim', 'T-9']).stdout, 'harness-due: nothing due\n', 'a product claim does not wait');
+  // a parked product unit holds it as well; a row 0 mainline and harness units do not
+  f.write(REGISTRY, registryFile(activeSection([]), parkedSection([CR_ROW])));
+  assert.match(run(f, ['--claim', 'harness/x']).stdout, /^WAIT harness\/x — 1 product unit held or parked: CR-021 — /);
+  f.write(REGISTRY, registryFile(activeSection([held('harness/y')]), parkedSection(['| harness/z | Gate 1 | 2026-11-06T04:10Z | b | main | Q-1 |'])));
+  const free = run(f, ['--claim', 'harness/x']);
+  assert.equal(free.status, 0, free.stdout + free.stderr);
+  assert.equal(free.stdout, 'harness-due: nothing due\n');
+  // no registry: nothing to wait for
+  fs.rmSync(path.join(f.repo, REGISTRY));
+  assert.equal(run(f, ['--claim', 'harness/x']).status, 0);
 });
 
 test('the wrapper: a held row whose local branch is past SPLIT_LINES production lines against the mainline is a SPLIT line', () => {

@@ -802,7 +802,7 @@ test("the step markers name the done command, tell review-gate's rounds from a s
   assert.ok(runner.includes("review-gate counts fix rounds, not step rounds, so its `--round 1` runs inside step 8's round 2"), 'runner.md does not tell review-gate rounds from step rounds');
   assert.ok(runner.includes('keep their numbers, and those numbers are their step ids: in the markers, the dispatch tags and the ledger'), "an eleven-step install's numbers are not its step ids");
   assert.ok(runner.includes('Such an install reads this file\'s step numbers through the correspondence: "step 9" is its ship step.'), 'runner.md does not say how an eleven-step install reads its step numbers');
-  assert.ok(runner.includes('the land step (9) ends with `node scripts/harness-due.mjs`'), 'the due-check names step 9 by its number alone');
+  assert.ok(runner.includes('**The plain `node scripts/harness-due.mjs` runs once, at the end of the run**, never after each land'), 'the plain due-check does not run once, at the end of the run');
 });
 
 test('a Missed by harness that comes after the land gets a commit of its own, and the row is undated until then', () => {
@@ -914,13 +914,14 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 10 for 2.2.3-js.13, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 11 for 2.2.3-js.14, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
   assert.match(text, /^\| 8 \| 2\.2\.3-js\.11 \| /m, 'the version table has no row 8 for 2.2.3-js.11');
   assert.match(text, /^\| 9 \| 2\.2\.3-js\.12 \| /m, 'the version table has no row 9 for 2.2.3-js.12');
   assert.match(text, /^\| 10 \| 2\.2\.3-js\.13 \| /m, 'the version table has no row 10 for 2.2.3-js.13');
+  assert.match(text, /^\| 11 \| 2\.2\.3-js\.14 \| /m, 'the version table has no row 11 for 2.2.3-js.14');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -929,7 +930,31 @@ test("upgrade.md has a version row 10 for 2.2.3-js.13, and both skills, the mani
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v9 install the v10 row, a v8 install the v9 and v10 rows, a v3 install the v4 to v10 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v9, v8 or v3 install to v10');
+  assert.ok(flat.includes('a v10 install the v11 row, a v9 install the v10 and v11 rows, a v3 install the v4 to v11 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v10, v9 or v3 install to v11');
+});
+
+test('v11: the owner key asks on Claude Code, a claim hears only what blocks it, and FULL is the session\'s, its known reds no fix round', () => {
+  const guard = squashed('reference/commit-guard.md');
+  for (const part of [
+    '`[M]` **The owner key.**',
+    'On Claude Code the agent runs `HARNESS_LANDING=owner git merge --no-ff <branch>` itself, alone, as one line; the command guard turns it into a permission prompt (`ask`) that shows the landing verdict, and the owner approves with one key.',
+    'and on Codex, ZCode and Kimi, the guard refuses both, and the owner types `! <the command>`.',
+  ]) assert.ok(guard.includes(part), `commit-guard.md lacks: ${part}`);
+  assert.ok(squashed('reference/harness-targets.md').includes('it refuses, ending `` The owner runs it: `! <the command>` ``'), "harness-targets.md does not give the owner key's refusal");
+  const runner = squashed('reference/runner.md');
+  for (const part of [
+    'prints only what blocks the claim: `DUE preflight` and `WAIT`.',
+    '`WAIT <unit> — …`, exit 1 with `--claim`: a harness unit while a product unit is held or parked',
+    '**Never a unit, never mid-unit, never the reason to pause one.**',
+    '**Asks are the run\'s last action.**',
+    'Executors and reviewers run `bash scripts/run-gates.sh --since <slice base>`, never FULL',
+    '**Known reds.**',
+    'a failure the mainline shows too is `KNOWN` in the state file, both log lines quoted. It is never a fix round and never a reason to re-run FULL',
+  ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);
+  assert.ok(!runner.includes('HOLD claims') && !runner.includes('VALVE_'), 'runner.md still holds claims on the digest');
+  for (const rel of ['reference/sweep.md', 'reference/hygiene.md']) {
+    assert.ok(squashed(rel).includes("only once the product queue is empty, or on the owner's word"), `${rel} does not wait for an empty product queue`);
+  }
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {

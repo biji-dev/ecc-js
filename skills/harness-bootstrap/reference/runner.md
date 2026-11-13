@@ -29,6 +29,12 @@ a second family out of quota is `degraded`, never a stop.
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
 
+`[M]` **Asks are the run's last action.** A unit whose landing needs the owner key
+(`commit-guard.md`) parks with its merge line ready and the run goes on; at its end
+the owner-key merges run one after another, and its owner-fact cards go out in one
+message. The end message adds one `Later (harness): …` line, the digest and, with
+the product queue dry, the `cleanup available:` line (`hygiene.md`).
+
 `[M]` **The relevance test.** Anything that is not a plan row or the owner's own
 request — a unit, a fix round, a review lane, a card option, a follow-up — passes
 one test, written in one line with its evidence, or it does not start. **Related:**
@@ -105,7 +111,7 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 8b record      written last, from the diff, as fields
 8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
                                                           ══ GATE 2 ══  merge when green
-9  land        guard → landing check → land commit → release the lock → merge → push by the grant → due-checks
+9  land        guard → landing check → land commit → release the lock → merge → push by the grant
 10 teardown    stop what was started; close the state file; start the next ready unit
 ```
 
@@ -153,21 +159,25 @@ work time and the dollars per step (`log-format.md`).
 
 ## Due-checks
 
-`[M]` **Step 0 starts with `node scripts/harness-due.mjs --claim <row id>`; the land
-step (9) ends with `node scripts/harness-due.mjs`.** It reads the log, the follow-ups doc,
-the reports, git and the free disk, prints one line for each thing the harness owes,
-and never asks a question. What each line makes the runner do:
+`[M]` **Step 0 starts with `node scripts/harness-due.mjs --claim <row id>`**, which
+prints only what blocks the claim: `DUE preflight` and `WAIT`. **The plain `node
+scripts/harness-due.mjs` runs once, at the end of the run**, never after each land
+(› Shape). It reads the log, the follow-ups doc, the reports, git and the free disk,
+prints one line for each thing the harness owes, the digest capped at `DIGEST_LINES`
+(5), and never asks a question. What each line makes the runner do:
+> Origin: due items printed 190 times, 77 of them while a product unit was held; the
+> valve was 31 owner stops and 6 owner-typed commands.
 
 | Line | The runner |
 |---|---|
 | `OWED <id> since <date> — <what>`: an owner input older than 3 days (`Owner supplies:`, `Owner decides:`) | leads every `WAITING ON YOU:` and `DONE` line |
 | `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; once answered (its Cards cell), it is the next unit claimed |
-| `HOLD claims — …`, exit 1 with `--claim`: the digest unread past the valve | **stops the claim**; landing and merging go on. Cleared by the owner's `--digest-read` |
+| `WAIT <unit> — …`, exit 1 with `--claim`: a harness unit while a product unit is held or parked | **stops the claim**; the product units go first (› The harness freeze). `--owner` skips it, on the owner's word only |
 | `SPLIT <unit> — …`: a held branch past the deliverable's line cap | lands the green slices, flag-off where unfinished; the rest is the next unit. No question |
 | `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
-| `REPORT sweep\|retro\|hygiene — <why> — <command>` | runs the command in the background; the report rides in the next unit's land commit. **Never a unit.** Cadences count product landings only; before the flip they print `HELD …` |
+| `REPORT sweep\|retro\|hygiene — <why> — <command>` | runs the command in the background only once the product queue is empty, or on the owner's word; the report rides in the next land commit. **Never a unit, never mid-unit, never the reason to pause one.** Cadences count product landings only; before the flip they print `HELD …` |
 | `ASK <kinds> — <why>` | the card kinds that ask the owner (`gate-design.md` › The standing grant) |
-| `DIGEST …` | goes to the owner with the next state line. `DIGEST disk` starts the approved machine-sweep categories (`machine.md`); `DIGEST worktrees` removes each one no row names and no process runs in (`git worktree remove`, never `--force`) |
+| `DIGEST …` | goes to the owner in the end message; `--digest-read` only marks it read. `DIGEST disk` starts the approved machine-sweep categories (`machine.md`); `DIGEST worktrees` removes each one no row names and no process runs in (`git worktree remove`, never `--force`) |
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a report
 that is due stays due until it is committed. Reports are committed at
@@ -180,7 +190,7 @@ next check.
 
 `[B]` In `scripts/lib/harness-due-core.mjs`: `MAIN`, `LOG`, `FOLLOW_UPS`, `REPORTS`
 (`null` for a kind the project does not run), `STATE_DIR`, `PHASE_OF`, `CADENCE`,
-`OWED_DAYS`, `DIGEST_LINES`, `VALVE_ITEMS`, `VALVE_DAYS`, `SPLIT_LINES`,
+`OWED_DAYS`, `DIGEST_LINES`, `SPLIT_LINES`,
 `DISK_MIN_GB`, `WORKTREE_IDLE_HOURS`, `COMMANDS`.
 
 ## Which steps each tier runs
@@ -223,13 +233,14 @@ landing check says `NONE` on those paths (`GUARDS`). A diff Trivial fits stays T
 > Origin: seven of one install's first eight units were its own harness, each Full.
 
 `[M]` **The harness freeze: no harness unit inside a project**, except an upgrade
-(one unit, owner-merged: it rewrites the rules block and a reviewed block; the
-owner sees only its new C cards and reviewed blocks, `upgrade.md`), the flip
+(one unit between product units, merged with the owner key; a version whose rows
+are all a replace, a keep or a clean merge has no owner card, else the owner sees
+only its new C cards and reviewed blocks, `upgrade.md`), the flip
 (`foundation.md`), a vendor-trap skill (`vendor-skill.md`) and a guard or gate
 broken now, which passes the relevance test as critical. Any other harness finding
 is one line in `docs/harness/upstream-notes.md`, read at the next skill round;
 that file is not a queue. An owner's request runs when asked, its claim line
-saying what it displaces.
+saying what it displaces. `harness-due --claim`'s `WAIT` checks the freeze.
 
 ## Batched rows
 
@@ -256,7 +267,7 @@ as its own commit. Never reclaim a row you do not own.
 
 **Step 0 — claim.**
 - `[M]` **The due-checks first** (› Due-checks): a missing preflight for the phase
-  this row opens, or a `HOLD claims` line, stops the claim before anything is held.
+  this row opens, or a `WAIT` line, stops the claim before anything is held.
 - `[M]` **The host, once a session:** `node scripts/harness-host.mjs`. Its first line
   gives each role's model on this host for the claim line and the switch line, and
   each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
@@ -274,8 +285,9 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **The registry is also a resource lock** where units share machines —
   ports, isolated stacks, migration slots in the same row; `scripts/unit-stack.sh`
   holds live stacks side by side (`commit-guard.md` › The registry).
-- `[M]` Compare this unit's write set against every other held or parked row.
-  Overlap means sequence, not parallelise: take the next ready unit instead.
+- `[M]` **The write set is the paths the Scope block names**; compare them against
+  every other held or parked row's. Overlap means sequence, not parallelise: the
+  claim waits or narrows its paths, or takes the next ready unit instead.
 - `[M]` **One unit in flight**, plus hotfixes; a parked unit is not in flight.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
   worktree convention. **Every kind of unit has a branch form:** plan items carry
@@ -391,7 +403,10 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
   control (`delegate-tasks` control specs): break the protection, paste the red line,
   restore, paste the green line.
 - `[M]` A slice runs its targeted tests only — **once per batch of edits**, the
-  related tests of every file it touched in one command, not one run per file. The
+  related tests of every file it touched in one command, not one run per file.
+  Executors and reviewers run `bash scripts/run-gates.sh --since <slice base>`, never
+  FULL: the command guard refuses it in a subagent (`full-verify-executor`) and
+  `run-gates.sh` under `HARNESS_ROLE=executor`, which the wrappers set. The
   session runs a scoped verify after a slice that crossed packages, and the FULL
   verify once, at the end of step 8a — **never once per slice**. Tests a later step
   adds (a doc-sweep test, a parity test) land **before** that FULL run, not after it.
@@ -408,7 +423,9 @@ touches a plan item. Tell it which columns are written at land.
 **Steps 5–7.** `[M]` Every validation line follows `rules.md` §1. Live pass: drive
 the real surface, including refusal and empty states, and follow one figure across
 every surface that states it. Visual: assert against the accessibility tree or a
-DOM snapshot; send screenshots to a model that reads images.
+DOM snapshot; send screenshots to a model that reads images. **The local dev stack
+is the agent's** — the project's own `docker compose`, local migrations and seeds,
+package installs in the project — and the rest of the host the owner's (the rules block).
 
 **Step 8 — review.**
 - `[M]` Run `node scripts/review-gate.mjs --base <merge base> --kind unit --tier
@@ -454,7 +471,10 @@ DOM snapshot; send screenshots to a model that reads images.
   document that repeats the rule (`rules.md` §1).
 - `[M]` Then the **FULL verify** (`context.md`), after the sweep's edits and every
   test a step added, so the one run reads what lands: every gate, one line each, each red
-  attributed against the merge base, working tree included. Where the project bound
+  attributed against the merge base, working tree included. Only the session runs it,
+  here and in step 9's re-verify. Admission holds it until the machine has room
+  (`machine.md`), else `NOT ADMITTED` and exit 97; a gate past `GATE_TIMEOUT` (3600 s)
+  is `FAIL <name> … (timeout after <n>s)`. Where the project bound
   `SNAPSHOT_COPY`, it is `bash scripts/run-gates.sh --snapshot` once the unit's work
   is committed: the gates read what lands, and no scratch file or note reaches them.
   `run-gates.sh` reuses an
@@ -465,6 +485,12 @@ DOM snapshot; send screenshots to a model that reads images.
   one. The key is the working tree's tracked and untracked files plus what
   `RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`; ignored inputs (`node_modules`, `.env`) and refs are
   not in it unless named, and worktrees of one repository share the cache.
+- `[M]` **Known reds.** A failing FULL gate is compared with that gate's last
+  mainline FULL log; a failure the mainline shows too is `KNOWN` in the state file,
+  both log lines quoted. It is never a fix round and never a reason to re-run FULL,
+  nor blocks merge when green while the diff touches neither the test nor its
+  subject; each gets one follow-up row.
+  > Origin: 324 FULL runs, 37 hours, for 102 merges; known reds re-run each time.
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
@@ -524,8 +550,8 @@ brief goes to the digest; one that waits on the owner parks the unit.
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file, its subject `Merge <branch>: <title>`;
   `git merge` does not read stdin.
-- `[M]` **Then the due-checks** (› Due-checks): their `REPORT` lines start in the
-  background, and the close announces the next unit in the runner's order (› Shape).
+- `[M]` **A `NONE` landing parks the unit**, its merge line ready for the end of the
+  run (› Shape); the close announces the next unit in the runner's order.
 
 **Step 10 — teardown.** `[M]` Long commands ran in the background, awaited by
 their completion notice, never a sleep loop, each recorded at its start — also with

@@ -257,6 +257,13 @@ owns, one that names its branch or task id and locks it, never refuses: the owni
 may pull its own branch back, diverged, and merge a branch that carries its task id.
 Logged three times in one project and twice in another before it was written down.
 
+`[M]` **Record docs merge by union.** Phase C writes `.gitattributes` lines
+`<LOG> merge=union` for the harness log (`LOG`, default `docs/harness/log.md`) and
+each other append-only log the project keeps (`[B]` the paths), never for the
+follow-ups doc or a plan, whose rows get edited. Write sets stay text: the Scope
+block's paths (`runner.md` › Step 0).
+> Origin: 26 of 29 conflicting files in 3 days were record docs.
+
 `[M]` **The landing refusal.** Every commit and merge onto `MAINLINE`, and every
 other move of the mainline ref, runs the landing check on its result: the guard
 takes `git write-tree` of the index being committed (or the tree the ref moves to)
@@ -274,17 +281,25 @@ a rewind to a commit the mainline held passes. The hook reads git's objects with
 replacements and grafts off, so `git replace` cannot dress an edit as a rewind. Only
 the other family's rows count: the host comes from its own variables, and
 `HARNESS_HOST` only where none is set. Where neither names a host, no row counts,
-so an environment stripped of them fails closed; from a plain terminal the owner
-lands a critical change with `HARNESS_LANDING=owner`. A
+so an environment stripped of them fails closed. A
 machine without `node` is refused. An install without the committed script is not
-checked. `HARNESS_LANDING=owner` is the owner's override; the refusal never names
-it. The command guard refuses a line that sets it (`landing-override`), a git line
-that names a host variable other than to read it (`host-override`), and a fast-forward merge
-onto the mainline (`merge-ff-mainline`), which the hook would refuse later and less
-cleanly.
+checked. The command guard also refuses a git line that names a host variable other
+than to read it (`host-override`), and a fast-forward merge onto the mainline
+(`merge-ff-mainline`), which the hook would refuse later and less cleanly.
 > Origin, the v10 study: an edit to critical code after its last review reached the
 > mainline unread, and guards had been bypassed in five installs where the rule
 > lived only in prose.
+
+`[M]` **The owner key.** `HARNESS_LANDING=owner` is the owner's override of the
+refusal, which never names it. On Claude Code the agent runs
+`HARNESS_LANDING=owner git merge --no-ff <branch>` itself, alone, as one line; the
+command guard turns it into a permission prompt (`ask`) that shows the landing
+verdict, and the owner approves with one key. A deploying push (`Push deploys:
+yes`) asks the same way. In `bypassPermissions` or `dontAsk` mode, and on Codex,
+ZCode and Kimi, the guard refuses both, and the owner types `! <the command>`. Any
+other line that sets `HARNESS_LANDING` is refused (`landing-override`), naming the
+one-line form: the agent never sets it another way.
+> Origin: 30 owner-typed landing merges in 3 days, 96% approved as proposed, none changed.
 
 `[M]` **Its limits.** A remote-tracking mainline ref moved by hand is trusted, and
 so is a `HARNESS_LANDING` or a host variable set in an earlier call of a shell that

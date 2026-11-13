@@ -14,8 +14,8 @@ mode the register is the follow-ups doc (› Change mode).
 
 `[M]` **`harness-due.mjs` prints `REPORT sweep` seven days or five landings after
 the newest report** `[B]`; the runner writes it in the background on a Sonnet runner
-and goes on with the next unit (`runner.md` › Due-checks), before a phase preflight
-too. **A report, never a unit:** it rides in the next unit's land commit, with its
+only once the product queue is empty, or on the owner's word (`runner.md` ›
+Due-checks): never mid-unit, never the reason to pause one. **A report, never a unit:** it rides in the next unit's land commit, with its
 status advances, and no branch, review or gate of its own. A landing is a product landing — a log
 row or a mainline merge of no `harness/` unit, whichever counts more — and nothing is
 due while the manifest's stage is `foundation`.

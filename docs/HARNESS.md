@@ -132,7 +132,7 @@ press ([§8](#the-standing-grant)).
 
 **The design says the owner no longer does:** approve steps or merges, manage the context, restart
 sessions, ask what is next, or answer technical questions. These are the aims of v8 to v12, and
-no install runs all of them yet: five run v9, none v10 or later ([§16](#install-state-2026-11-10)).
+no install runs all of them yet: thirteen run v11, none v12 ([§16](#install-state-2026-11-14)).
 
 **v11 in one line:** the owner is asked last and once, and the machine cleans up after itself
 instead of warning ([§3](#the-arc-of-the-versions)).
@@ -1494,21 +1494,21 @@ known reds. A local rule that sends what the second family wrote to a Sonnet rev
 refused Codex pass on Codex, goes. `coordinate-sessions` is plugin-only: it reaches a host with the
 plugin and installs nothing into a project.
 
-### Install state, 2026-11-10
+### Install state, 2026-11-14
 
-Each install's `skillVersion` in `.agents/harness-manifest.json` (*measured*, 12 installs):
+Each install's `skillVersion` in `.agents/harness-manifest.json` on its mainline (*measured*, 14 installs; the
+remote machine's install read from its local mirror). None has taken v12 yet; each takes row 12 alone when the
+owner names it.
 
 | Skills version | Installs |
 |---|---|
-| v10 | 0 |
-| v9 | 5 |
-| v8 | 0 |
-| v7 | 4 |
-| v6 | 2 |
-| v5 | 1 |
+| v12 | 0 |
+| v11 | 13 |
+| v7 to v10 | 0 |
+| v6 | 1 |
 
 Claude Code's plugin, Codex's plugin and the ZCode copies have been at `2.2.3-js.15`, equal to main, since
-2026-11-14. One remote machine's plugin was last noted at js.9. The weekly job ran for weeks W44 to W46 with
+2026-11-14. One remote machine's plugin was last noted at js.12 (2026-11-13). The weekly job ran for weeks W44 to W46 with
 no failed exports (W46 exported all 12 installs), and next runs on 2026-11-16.
 
 **The v8 pilot's checks, none run yet:** auto-compaction is followed by the right next step; zero typed
@@ -1772,7 +1772,7 @@ Since v9, Phase A's fit check offers the last two the no-harness route: hard rul
 1. **Add the outcome metric first.** Count reverts, hotfixes and production defects per unit per week. Without it,
    every other number describes activity.
 2. **Hold the next version until v8 to v11 have a measured pilot.** Run the checks in
-   [§16](#install-state-2026-11-10), and re-run the session study over the pilot window. v9, v10 and v11
+   [§16](#install-state-2026-11-14), and re-run the session study over the pilot window. v9, v10 and v11
    broke this rule, v9 because a documents-only install showed the foundation stage stalling and v11
    because a review of v10's first three days found it asking the owner more than it had to. The owner
    chose no freeze (2026-11-13), so the rule now stands only as this assessment.

@@ -146,6 +146,7 @@ export const ROUTES = {
 
 const WRITE_KINDS = new Set(['implement-cold', 'fix-cold', 'docs']);
 
+/** At most this many changed paths are listed in a landing kind's range block. */
 /** Exit codes the callers branch on (the CLI's own exit code lies both ways). */
 export const EXIT = { ok: 0, failed: 1, usage: 2, unavailable: 3, reserved: 4, refused: 5 };
 
@@ -474,13 +475,15 @@ export function classify({
       reason: `interrupted review: "${firstLine(verdict.trim())}"`,
     };
   }
+  // A refusal in an error event or on stderr is never a verdict, even in a turn that completed:
+  // what the model wrote after the filter turned it down is not the review it was asked for.
+  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
   if (events.turns > 0 && !events.failed && verdict?.trim()) {
     const warnings = [...events.warnings, ...events.errors];
     const reasons = exitCode === 0 ? [] : [`codex exit ${exitCode} but verdict present`];
     if (warnings.length) reasons.push(`warnings: ${warnings.join('; ')}`);
     return { outcome: 'ok', exit: EXIT.ok, reason: reasons.join('; ') };
   }
-  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
   if (UNAVAILABLE.test(errorText))
     return { outcome: 'unavailable', exit: EXIT.unavailable, reason: firstLine(errorText) };
   if (events.failed || events.errors.length > 0)

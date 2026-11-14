@@ -18,9 +18,9 @@ const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
 const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 66;
+const EXPECTED_TESTS = 68;
 // The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
-const EXPECTED_SNAPSHOT_TESTS = 16;
+const EXPECTED_SNAPSHOT_TESTS = 18;
 
 let passed = 0;
 let failed = 0;
@@ -222,14 +222,19 @@ codexMutant(
   '',
 );
 codexMutant(
-  'not checking a failed turn for a refusal',
+  'not checking a failed or completed turn for a refusal',
   CORE_REL,
   "\n  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
   '\n',
 );
+// The landing check counts an adversarial pass with a base as a read of its whole range: the prompt lists it.
+codexMutant('sending an adversarial pass with a base no range', WRAPPER_REL, "const stdin = fullPrompt + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');", 'const stdin = fullPrompt;');
+codexMutant('a range block that names no file', SNAPSHOT_REL, "const shown = list.slice(0, max).map((f) => `- ${f}`);", 'const shown = [];');
 // An ok run's verdict is copied next to the ledger, where the retro's yield by step reads it.
 codexMutant('keeping no verdict copy for an ok run', WRAPPER_REL, "const kept = result.outcome === 'ok' ? keepVerdict(", 'const kept = false ? keepVerdict(');
 codexMutant('keeping a verdict copy for a run that did not end ok', WRAPPER_REL, "const kept = result.outcome === 'ok' ? keepVerdict(", 'const kept = true ? keepVerdict(');
+codexMutant('copying a verdict through a symlinked verdicts dir', WRAPPER_REL, '    if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir)', '    if (false && fs.realpathSync(dir)');
+codexMutant('letting the cleanup of a failed verdict copy throw', WRAPPER_REL, '    try {\n      fs.rmSync(tmp, { force: true });\n    } catch {\n', '    fs.rmSync(tmp, { force: true });\n    if (0) {\n');
 
 test('the shipped snapshot-tree suite passes with the pinned test count', () => {
   const res = runSuite(SCRIPTS, cleanup, {}, SNAPSHOT_TEST_REL);

@@ -130,6 +130,11 @@ What it does that a bare call does not:
   in the row's `verdictCopy`: `--out` usually sits in a worktree that landing
   removes, and the retro's *Yield by step* counts the P0/P1 lines in these copies.
   `.codex-runs/` is ignored, so the copies stay on the machine.
+- **A landing pass reads its range.** An `adversarial` or `adversarial-frontier`
+  run with `--base` gets the files of its whole `baseTree → tree` range (up to
+  200) after its prompt, so a pass meant for the range does not stop at the last
+  diff; that it read them is asked, not checked. `claude-run.mjs` does the same
+  for its adversarial kind.
 - **The prompt goes on stdin.** A quoted-argument prompt hung.
 - **A background run uses the host's own background option** (Claude Code: the
   Bash tool's `run_in_background`), never a shell `&` or a `( … ) &` subshell: one

@@ -454,9 +454,13 @@ test('lock: a run promoted to FULL after a lock wait takes the FULL lock, so a l
 });
 
 test('known reds: a red the mainline FULL run named, in a file the branch did not touch, is KNOWN -- no exit count, never cached; anything else FAILs', () => {
-  const said = path.join(tmp('run-gates-said-'), 'said');
-  // gate t ends as run-counted ends a failing run, with the ids `say` wrote, and passes when none are written
-  const lines = [`gate t always 'if [ -s ${said} ]; then cat ${said}; exit 1; fi'`, "gate ok always 'true'"];
+  const dir = tmp('run-gates-said-');
+  const said = path.join(dir, 'said');
+  // gate t, one call of a stand-in run-counted.mjs, ends as run-counted ends a failing run, with the
+  // ids `say` wrote, and passes when none are written
+  const fake = path.join(dir, 'run-counted.mjs');
+  fs.writeFileSync(fake, `if [ -s ${said} ]; then cat ${said}; exit 1; fi\n`);
+  const lines = [`gate t always 'bash ${fake}'`, "gate ok always 'true'"];
   const say = (...ids) =>
     fs.writeFileSync(said, ids.length ? ['run-counted: FAIL the command exited 1', `run-counted: FAIL ${ids.length} failed (must be 0)`, ...ids.map((id) => `run-counted: FAILED ${id}`), ''].join('\n') : '');
   const git = (repo, ...a) => {
@@ -470,12 +474,15 @@ test('known reds: a red the mainline FULL run named, in a file the branch did no
   };
   const prepare = (repo) => {
     fs.mkdirSync(path.join(repo, 'tests'));
-    commit(repo, 'tests/a.test.mjs', 'a\n');
-    fs.writeFileSync(path.join(repo, 'tests', 'new.test.mjs'), 'untracked\n');
+    commit(repo, 'tests/a.test.mjs', "test('one')\ntest('two')\ntest('three')\n");
+    commit(repo, '.gitignore', 'tests/ignored.test.mjs\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'new.test.mjs'), "test('fresh')\n");
+    fs.writeFileSync(path.join(repo, 'tests', 'ignored.test.mjs'), "test('hidden')\n");
   };
   const A1 = 'tests/a.test.mjs :: one';
   const A2 = 'tests/a.test.mjs :: group > two';
-  say(A1, A2, 'tests/new.test.mjs :: fresh', 'tests/gone.test.mjs :: gone', '/abs/x.test.mjs :: abs');
+  const IGNORED = 'tests/ignored.test.mjs :: hidden';
+  say(A1, A2, IGNORED, 'tests/new.test.mjs :: fresh', 'tests/gone.test.mjs :: gone', '/abs/x.test.mjs :: abs');
   const main = runCopy(lines, [], { prepare });
   const shared = { repo: main.repo, cache: main.cache };
   // the mainline's own reds are FAIL: its run records them
@@ -515,6 +522,8 @@ test('known reds: a red the mainline FULL run named, in a file the branch did no
   fails('a file outside the tree');
   say('tests/new.test.mjs :: fresh');
   fails('an untracked test file');
+  say(IGNORED);
+  fails('an ignored test file the merge base lacks');
   say(A1);
   fs.appendFileSync(path.join(main.repo, 'tests', 'a.test.mjs'), 'edit\n');
   fails('an uncommitted edit to the test file');
@@ -529,4 +538,83 @@ test('known reds: a red the mainline FULL run named, in a file the branch did no
   commit(main.repo, 'c.txt', 'c\n');
   say(A2);
   fails('the mainline passed since');
+});
+
+test('known reds: only a gate of one run-counted call, a file that spells the title, an id with one ` :: `; the record is made at the tip, detached too, never when the tree moved, and holds only from its commit on', () => {
+  const dir = tmp('run-gates-said-');
+  const said = path.join(dir, 'said');
+  const fake = path.join(dir, 'run-counted.mjs');
+  fs.writeFileSync(fake, `if [ -s ${said} ]; then cat ${said}; exit 1; fi\n`);
+  const editFlag = path.join(dir, 'edit');
+  const lines = [
+    `gate t always 'bash ${fake}'`,
+    `gate pair always 'true && bash ${fake}'`,
+    `gate e always 'if [ -e ${editFlag} ]; then echo during >> a.txt; fi'`,
+  ];
+  const say = (...ids) =>
+    fs.writeFileSync(said, ['run-counted: FAIL the command exited 1', ...ids.map((id) => `run-counted: FAILED ${id}`), ''].join('\n'));
+  const git = (repo, ...a) => {
+    const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: repo, encoding: 'utf8', env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  const commit = (repo, file, text) => {
+    fs.writeFileSync(path.join(repo, file), text);
+    git(repo, 'add', file);
+    git(repo, 'commit', '-q', '-m', file);
+  };
+  const prepare = (repo) => {
+    fs.mkdirSync(path.join(repo, 'tests'));
+    commit(repo, 'tests/a.test.mjs', "test('one', () => {})\n");
+  };
+  const T1 = 'tests/a.test.mjs :: one';
+  const LACKS = 'tests/a.test.mjs :: a title the file lacks';
+  // a mainline run whose tree moved before its last gate records nothing
+  say(T1, LACKS);
+  fs.writeFileSync(editFlag, '');
+  const moved = runCopy(lines, [], { prepare });
+  assert.match(moved.stderr, /^run-gates: the tree changed during the run: the known-red record is not updated$/m);
+  fs.rmSync(editFlag);
+  const { repo } = moved;
+  const shared = { repo, cache: moved.cache };
+  git(repo, 'checkout', '--', 'a.txt');
+  // so does a --snapshot run whose gate wrote a tracked file of the snapshot
+  fs.writeFileSync(editFlag, '');
+  const snapMoved = runCopy(lines, ['--snapshot', '--no-cache'], shared);
+  assert.match(snapMoved.stderr, /^run-gates: the tree changed during the run: the known-red record is not updated$/m, snapMoved.stdout + snapMoved.stderr);
+  fs.rmSync(editFlag);
+  git(repo, 'checkout', '-q', '-b', 'unit');
+  commit(repo, 'b.txt', 'b\n');
+  say(T1);
+  assert.match(runCopy(lines, [], shared).stdout, /^FAIL t /m, 'a record from the run whose tree moved');
+  // made detached at the mainline's tip (a worktree cannot check the branch out a second time)
+  git(repo, 'checkout', '-q', '--detach', 'main');
+  say(T1, LACKS);
+  assert.doesNotMatch(runCopy(lines, [], shared).stderr, /tree changed/);
+  git(repo, 'checkout', '-q', 'unit');
+  say(T1);
+  const r = runCopy(lines, [], shared);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^KNOWN t /m);
+  assert.match(r.stdout, /^FAIL pair \d+s \S+ \(exit 1\)/m, 'a gate of two commands is never KNOWN');
+  say(LACKS);
+  assert.match(runCopy(lines, [], shared).stdout, /^FAIL t /m, 'a title its file does not spell');
+  // an id with a second ` :: ` has no sure split: the run records none for its gate
+  git(repo, 'checkout', '-q', '--detach', 'main');
+  say(T1, 'tests/a.test.mjs :: x :: y');
+  runCopy(lines, [], shared);
+  git(repo, 'checkout', '-q', 'unit');
+  say(T1);
+  assert.match(runCopy(lines, [], shared).stdout, /^FAIL t /m, 'the record outlived a run with an ambiguous id');
+  // a record made before the branch's merge base is stale: the mainline may have fixed the test since
+  git(repo, 'checkout', '-q', '--detach', 'main');
+  say(T1);
+  runCopy(lines, [], shared);
+  git(repo, 'checkout', '-q', 'main');
+  commit(repo, 'm.txt', 'm\n');
+  git(repo, 'checkout', '-q', '-b', 'unit3');
+  commit(repo, 'd.txt', 'd\n');
+  say(T1);
+  assert.match(runCopy(lines, [], shared).stdout, /^FAIL t /m, 'a record older than the merge base');
+  git(repo, 'checkout', '-q', 'unit');
+  assert.match(runCopy(lines, [], shared).stdout, /^KNOWN t /m, 'a branch from the commit the record was made at');
 });

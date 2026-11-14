@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { baseTreeOf, currentBranch, snapshotTree } from './snapshot-tree.mjs';
+import { baseTreeOf, currentBranch, RANGE_MAX, rangeBlock, rangeText, snapshotTree } from './snapshot-tree.mjs';
 
 const tempDirs = [];
 function tmpDir(prefix) {
@@ -268,4 +268,30 @@ test('a same-size edit made in the second of the last index write is in the tree
   // A copy of the index with a fresh mtime would make that entry look clean to git.
   const tree = snapshotTree(dir);
   assert.equal(inTree(dir, tree, 'pay.txt'), 'fee = 2;\n');
+});
+
+test('rangeText lists every file between two trees for the pass to read; a bad tree or no change gives nothing', () => {
+  const dir = repo();
+  const from = baseTreeOf(dir, 'HEAD');
+  write(dir, 'tracked.txt', 'changed\n');
+  write(dir, 'src/caf\u00e9.js', 'new\n');
+  git(dir, 'add', '.');
+  const to = snapshotTree(dir);
+  const block = rangeText(dir, from, to);
+  assert.match(block, /^\n\n## The range this pass is recorded as reading\n/);
+  assert.ok(block.includes(`from tree ${from} to the working tree`), block);
+  assert.ok(block.includes('\n- tracked.txt\n'), block);
+  assert.ok(block.includes('\n- src/caf\u00e9.js\n'), 'core.quotePath=false keeps the name readable');
+  assert.equal(rangeText(dir, from, from), '');
+  assert.equal(rangeText(dir, 'HEAD', to), '', 'only tree ids, never a rev or an option');
+  assert.equal(rangeText(dir, `${'0'.repeat(40)}`, to), '');
+  assert.equal(rangeText(tmpDir('snapshot-none-'), from, to), '');
+});
+
+test('rangeBlock caps the list and says how to see the rest', () => {
+  const files = Array.from({ length: RANGE_MAX + 3 }, (_, i) => `f${i}.js`);
+  const block = rangeBlock([...files, ''], 'abc');
+  assert.equal(block.split('\n').filter((l) => l.startsWith('- f')).length, RANGE_MAX);
+  assert.ok(block.includes('- and 3 more: `git diff --name-only abc`'), block);
+  assert.equal(rangeBlock(['', ''], 'abc'), '');
 });

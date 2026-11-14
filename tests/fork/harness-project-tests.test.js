@@ -22,7 +22,7 @@ const SUITES = {
   'harness-guard': 58,
   'context-budget': 8,
   'session-resume': 20,
-  'run-gates': 18,
+  'run-gates': 19,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).
@@ -415,7 +415,7 @@ mutantFails(
 mutantFails(
   'a runner that prints KNOWN for a failing test the mainline record lacks',
   'scripts/run-gates.sh',
-  String.raw`[ -z "$(printf '%s\n' "$ids" | LC_ALL=C comm -23 - "$base")" ] || return 1`,
+  String.raw`printf '%s\n' "$rec_ids" | grep -Fxq -- "$id" || return 1`,
   ':',
   KNOWN_REDS,
 );
@@ -441,10 +441,60 @@ mutantFails(
   KNOWN_REDS,
 );
 mutantFails(
-  'a runner that prints KNOWN for a test file not in the tree',
+  'a runner that prints KNOWN for a test file the merge base lacks (an ignored one is in no diff)',
   'scripts/run-gates.sh',
-  '[ -f "$GATE_DIR/$f" ] || return 1',
+  'git cat-file -e "$KNOWN_MB:$f" 2>/dev/null || return 1',
   ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that reads a record made before the merge base',
+  'scripts/run-gates.sh',
+  '[ -n "$rec_head" ] && git merge-base --is-ancestor "$KNOWN_MB" "$rec_head" 2>/dev/null || return 1',
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  "a runner that checks the checkout, not the snapshot, for a tree that moved during a --snapshot run",
+  'scripts/run-gates.sh',
+  'st=$(git -C "$GATE_DIR" status',
+  'st=$(git status',
+  KNOWN_REDS,
+);
+
+mutantFails(
+  'a runner that prints KNOWN for a gate of more than one command',
+  'scripts/run-gates.sh',
+  '[ "${2#exit }" != "$2" ] && single_counted "$4" || return 1',
+  '[ "${2#exit }" != "$2" ] || return 1',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a title its file does not spell',
+  'scripts/run-gates.sh',
+  '[ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1',
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records the reds of a mainline run whose tree moved',
+  'scripts/run-gates.sh',
+  'if [ "$(git rev-parse -q --verify HEAD 2>/dev/null)" = "$BASE_HEAD" ] && tree_clean; then ok=1; fi',
+  'ok=1',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records only with the mainline checked out, never detached at its tip',
+  'scripts/run-gates.sh',
+  'BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&',
+  '[ "$(git symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$MAINLINE_B" ] && BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records an id with a second " :: "',
+  'scripts/run-gates.sh',
+  String.raw`  if printf '%s\n' "$ids" | grep -q ' :: .* :: '; then return 1; fi` + '\n',
+  '',
   KNOWN_REDS,
 );
 

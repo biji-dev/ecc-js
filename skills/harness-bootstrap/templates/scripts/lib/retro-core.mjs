@@ -950,22 +950,32 @@ export function claudeRunKpis(entries, { since, until }) {
 }
 
 // A finding line: a severity tag first on the line, after a list or table marker, an id (`F-12 ·`,
-// `| F3 |`), an opening `**`, `[`, `(` or backtick and a `severity:` label -- `F-12 · P1 · a.js:3 ...`,
-// `- **P1** ...`, `| P2 | ...`, `[P0] ...`, `- severity: P1` -- unless what follows is none or 0
-// (`P1: none.`). A heading names a section, not a finding.
+// `| F3 |`), up to two openers (`**`, `[`, `(`, backtick: `**[P1]**`) and a `severity:` label --
+// `F-12 · P1 · a.js:3 ...`, `- **P1** ...`, `| P2 | ...`, `[P0] ...`, `- severity: P1` -- unless
+// what follows says there is none: `P1: none.`, `P1: None found`, `P1: 0 findings`, `P1: none (after
+// review)`, `P1: no issues`, `| P1 | — |`, after more tags or a noun too (`P0/P1: none`, `P0, P1:
+// none`, `P1 findings: none`), but `P1: none of the callers ...` and `P1: 0.5s slower` are findings.
+// A none line's `;` parts are read again (`P0: none; P1: a.js:3 race`). A heading names a section.
 const FINDING_LEAD = String.raw`^\s*(?:[-*+]\s+|\d+[.)]\s+|\|\s*)?`;
 const FINDING_ID = String.raw`(?:[A-Z][A-Z0-9]{0,5}-?\d+[a-z]?\s*[·:|.)\-–—]\s*)?`;
-const FINDING_OPEN = String.raw`(?:\*\*|__|\[|\(|\x60)?\s*`;
+const FINDING_OPEN = String.raw`(?:(?:\*\*|__|\[|\(|\x60)\s*){0,2}`;
 const FINDING_LABEL = String.raw`(?:(?:severity|sev)\s*(?:\*\*|__)?\s*[:=]\s*(?:\*\*|__)?\s*)?`;
-const FINDING_NOT_NONE = String.raw`(?![^A-Za-z0-9]*(?:none|n\/a|0)\s*(?:[.)*_|\x60]|$))`;
+const NONE_WORD = String.raw`(?:none|nothing|n\/a|nil|0(?![.,]\d)|no\s+(?:findings?|issues?|p[0-3]s?)|[\-–—]+(?=\s*(?:\||$)))`;
+const NONE_AFTER = String.raw`(?:\s*(?:$|[.,;:()*_|\x60\-–—])|\s+(?:found|reported|identified|remaining|open|left|seen|in|at|this|so|yet|after|for|to\s+report|findings?|issues?)\b)`;
+const NONE_MORE = String.raw`(?:(?:[^A-Za-z0-9]*|\s+(?:and|or)\s+)P[0-3]\b)*(?:\s+(?:findings?|issues?)\b)?`;
+const FINDING_NOT_NONE = String.raw`(?!${NONE_MORE}[^A-Za-z0-9]*${NONE_WORD}${NONE_AFTER})`;
 const FINDING_LINE = new RegExp(`${FINDING_LEAD}${FINDING_ID}${FINDING_OPEN}${FINDING_LABEL}(P[0-3])\\b${FINDING_NOT_NONE}`, 'i');
+const FINDING_TAG = new RegExp(`${FINDING_LEAD}${FINDING_ID}${FINDING_OPEN}${FINDING_LABEL}P[0-3]\\b`, 'i');
 
 /** The findings a verdict lists, by severity: the lines FINDING_LINE takes. */
 export function countFindings(text) {
   const out = { P0: 0, P1: 0, P2: 0, P3: 0 };
   for (const line of String(text ?? '').split(/\r?\n/)) {
-    const m = FINDING_LINE.exec(line);
-    if (m) out[m[1].toUpperCase()] += 1;
+    const parts = FINDING_LINE.test(line) || !FINDING_TAG.test(line) ? [line] : line.split(';');
+    for (const part of parts) {
+      const m = FINDING_LINE.exec(part);
+      if (m) out[m[1].toUpperCase()] += 1;
+    }
   }
   return out;
 }

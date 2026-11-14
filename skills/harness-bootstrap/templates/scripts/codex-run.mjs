@@ -100,7 +100,7 @@ import {
   validateRouterAnswer,
   worktreeLeftovers,
 } from './lib/codex-run-core.mjs';
-import { baseTreeOf, currentBranch, snapshotTree } from './lib/snapshot-tree.mjs';
+import { baseTreeOf, currentBranch, rangeText, snapshotTree } from './lib/snapshot-tree.mjs';
 
 // The kinds the landing check reads (LANDING_KINDS in scripts/lib/review-gate-core.mjs).
 const LANDING_KINDS = ['review', 'adversarial', 'adversarial-frontier'];
@@ -191,17 +191,29 @@ function appendLedger(file, row) {
 
 /**
  * A copy of a verdict beside the ledger, <ledger dir>/verdicts/<stem>-<kind>.md. Returns its path
- * relative to the ledger dir, or null: an empty or missing verdict, or a copy that failed (the run's
- * result never depends on it).
+ * relative to the ledger dir, or null: an empty or missing verdict, a verdicts dir that is a symlink
+ * or resolves anywhere else, or a copy that failed (the run's result never depends on it). The copy
+ * is written to a temp file in that dir and renamed over the name, so a symlink planted at the name
+ * is replaced, never followed.
  */
 function keepVerdict(ledgerFile, stem, kind, outFile) {
+  const base = path.dirname(ledgerFile);
+  const dir = path.join(base, VERDICTS_DIR);
+  const tmp = path.join(dir, `.${stem}-${kind}.${process.pid}.tmp`);
   try {
     if (!fs.statSync(outFile).size) return null;
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir) !== path.join(fs.realpathSync(base), VERDICTS_DIR)) return null;
     const rel = `${VERDICTS_DIR}/${stem}-${kind}.md`;
-    fs.mkdirSync(path.join(path.dirname(ledgerFile), VERDICTS_DIR), { recursive: true });
-    fs.copyFileSync(outFile, path.join(path.dirname(ledgerFile), rel));
+    fs.copyFileSync(outFile, tmp, fs.constants.COPYFILE_EXCL);
+    fs.renameSync(tmp, path.join(base, rel));
     return rel;
   } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // the verdicts path is not a dir (ENOTDIR): no temp file was made there
+    }
     return null;
   }
 }
@@ -535,6 +547,10 @@ async function main() {
       return EXIT.reserved;
     }
 
+    // An adversarial kind with a range reads all of it: the landing check certifies the whole range
+    // (a review diffs against its own --base and takes no prompt).
+    const ranged = landing && route.mode !== 'review' && snapshot.baseTree && snapshot.tree;
+    const stdin = fullPrompt + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');
     fs.rmSync(outFile, { force: true });
     const writes = route.sandbox === 'workspace-write';
     const before = writes ? worktreeState(a.cwd) : null;
@@ -542,7 +558,7 @@ async function main() {
     const errFile = `${outFile}.stderr.log`;
     const res = await runCodex(argv, {
       cwd: a.cwd,
-      stdin: fullPrompt,
+      stdin,
       logFile,
       errFile,
       timeoutMin: a.timeoutMin,

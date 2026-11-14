@@ -656,12 +656,13 @@ the owner's: `! HARNESS_LANDING=owner git merge --no-ff <branch>`, one owner key
 Claude Code (`commit-guard.md`).
 
 `[M]` **What regenerates.** `run-gates.sh`, `run-counted.mjs` and its core,
-`codex-run.mjs` and its core, the review-gate core, `retro-core.mjs` and
+`codex-run.mjs` and its core, `claude-run.mjs`, `lib/snapshot-tree.mjs`, the review-gate core, `retro-core.mjs` and
 `retro-gather.mjs`, `session-resume.mjs` and the guard's hook copies, each with its
 test. **New binding:** `MAINLINE` in `run-gates.sh`, the branch whose clean FULL runs
 record the known reds (default `main`; `RUN_GATES_MAINLINE` overrides it, and empty
-turns the record off). A gate that runs tests through `run-counted.mjs` gets known
-reds as it is; one that does not prints no `FAILED` lines and stays `FAIL`.
+turns the record off). A gate whose command is one `run-counted.mjs` call gets known
+reds as it is. A gate that runs tests another way prints no `FAILED` lines, and one
+that wraps the call (`cd <dir> && …`, a scoped/full `if`) gets none either: both stay `FAIL`.
 
 `[M]` **Local rules v12 removes.** A session rule or runbook line that sends a diff
 the second family wrote to a Sonnet reviewer goes: `review-gate.mjs` names the Opus

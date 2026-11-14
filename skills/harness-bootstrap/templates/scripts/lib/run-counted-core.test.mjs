@@ -536,6 +536,58 @@ test('failingTests, node: each failing test with its parents and the file of its
   assert.deepEqual(failingTests('node', 'not ok 1 - later # TODO\n  ---\n  type: \'test\'\n  ...\n'), []);
 });
 
+// node's own output for a suite whose after hook threw beside a failing test of another file: the
+// hook counts in no `# fail` (node 22 and 26 print the same fields)
+const TAP_HOOK_FAILED = [
+  'TAP version 13',
+  '# Subtest: grp3',
+  '    # Subtest: fine',
+  '    ok 1 - fine',
+  '      ---',
+  '      duration_ms: 0.218208',
+  "      type: 'test'",
+  '      ...',
+  '    1..1',
+  'not ok 1 - grp3',
+  '  ---',
+  '  duration_ms: 0.665791',
+  "  type: 'suite'",
+  "  location: '/repo/tests/c.test.mjs:2:1'",
+  "  failureType: 'hookFailed'",
+  "  error: 'after only'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+  '# Subtest: two',
+  'not ok 2 - two',
+  '  ---',
+  '  duration_ms: 0.269458',
+  "  type: 'test'",
+  "  location: '/repo/tests/e.test.mjs:2:1'",
+  "  failureType: 'testCodeFailure'",
+  "  error: 'x'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+  '1..2',
+  '# tests 2',
+  '# suites 1',
+  '# pass 1',
+  '# fail 1',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 34.934',
+].join('\n');
+
+test('failingTests, node: a suite that failed for itself (its hook, its describe body) is a `?`, so the run is never its tests alone', () => {
+  const ids = failingTests('node', TAP_HOOK_FAILED, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(ids, ['? :: grp3', 'tests/e.test.mjs :: two']);
+  const summary = parseSummary('node', TAP_HOOK_FAILED);
+  assert.equal(summary.failed, 1, 'node counts the hook in no # fail');
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary, ids }).at(-1), 'run-counted: FAILED ?');
+  const describeThrew = TAP_HOOK_FAILED.replace("failureType: 'hookFailed'", "failureType: 'testCodeFailure'");
+  assert.deepEqual(failingTests('node', describeThrew, { cwd: '/repo', top: '/repo' })[0], '? :: grp3');
+});
+
 test('failingTests, vitest: the FAIL lines of Failed Tests; a Failed Suites section is a `?` (its files are not in the Tests count)', () => {
   const ids = failingTests('vitest', VITEST_FAILING, { cwd: '/repo', top: '/repo' });
   assert.deepEqual(ids, ['src/a.test.js :: top fails', 'src/a.test.js :: group > inner fails', 'src/b.test.js :: b fails']);
@@ -563,7 +615,7 @@ test('failingTests, bun: each (fail) line under the file line before it; the clo
   assert.equal(failedLines({ ok: false, min: 1, summary: parseSummary('bun', load), ids: loadIds }).at(-1), 'run-counted: FAILED ?');
 });
 
-test("failingTests, pytest and playwright: pytest's short summary; the tests under playwright's `failed` line, a project kept in the title", () => {
+test("failingTests, pytest and playwright: pytest's short summary, a parameter's ` - ` kept; the tests under playwright's `failed` line, a project kept in the title", () => {
   const py = [
     '=========================== short test summary info ============================',
     'FAILED tests/test_a.py::test_b - assert 1 == 2',
@@ -573,6 +625,21 @@ test("failingTests, pytest and playwright: pytest's short summary; the tests und
   const pyIds = failingTests('pytest', py, { cwd: '/repo', top: '/repo' });
   assert.deepEqual(pyIds, ['tests/test_a.py :: test_b', 'tests/test_a.py :: TestX::test_y']);
   assert.equal(failedLines({ ok: false, min: 3, summary: parseSummary('pytest', py), ids: pyIds }).length, 2);
+  // a parameter that holds ` - ` stays in the id, so two such cases never share one
+  const params = [
+    'FAILED tests/test_a.py::test_p[a - b] - assert 1 == 2',
+    'FAILED tests/test_a.py::test_p[a - c]',
+    'FAILED tests/test_a.py::test_p[x[1] - y] - ValueError: no',
+    'FAILED tests/test_a.py::test_q[open - x',
+    'FAILED tests/test_a.py::test_r extra words',
+  ].join('\n');
+  assert.deepEqual(failingTests('pytest', params, { cwd: '/repo', top: '/repo' }), [
+    'tests/test_a.py :: test_p[a - b]',
+    'tests/test_a.py :: test_p[a - c]',
+    'tests/test_a.py :: test_p[x[1] - y]',
+    '? :: tests/test_a.py::test_q[open - x',
+    '? :: tests/test_a.py::test_r extra words',
+  ]);
   const pw = [
     '  1 failed',
     '    t/a.spec.mjs:5:1 › broken ──────────────────────',

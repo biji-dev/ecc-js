@@ -499,14 +499,23 @@ listening one at 6 hours or once its directory is gone.
   `RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`; ignored inputs (`node_modules`, `.env`) and refs are
   not in it unless named, and worktrees of one repository share the cache.
 - `[M]` **Known reds.** `run-gates.sh` keeps, per gate, the failing tests of the
-  last FULL run on the mainline (`MAINLINE`, `[B]`) from a clean tree — the
+  last FULL run at the mainline's tip (`MAINLINE`, `[B]`) from a clean tree — the
   `run-counted: FAILED <file> :: <test>` lines run-counted prints after its verdict
-  — and a mainline pass clears them. On a branch, a gate that exits non-zero naming
-  only tests in that record, each in a file of the tree the diff and the untracked
-  files leave alone, prints `KNOWN` instead of `FAIL`: it counts as no failure, is
-  never a fix round, never a reason to re-run FULL and never cached. Quote the
-  `KNOWN` line in the state file; each gets one follow-up row. A failure it cannot
-  name (`FAILED ?`, a timeout, a missing count line) stays `FAIL`.
+  — with the commit it ran on; a mainline pass clears them, and a run whose tree
+  moved before its last gate records nothing. On a branch whose merge base is that
+  commit or older (a record from before the branch point could hide a fix made
+  since), a gate whose command is one run-counted call and that exits non-zero
+  naming only tests in that record, each in a file the merge base has, the diff and
+  the untracked files leave alone and that spells the test's title, prints `KNOWN`
+  instead of `FAIL`: it counts as no failure, is never a fix round,
+  never a reason to re-run FULL and never cached. Quote the `KNOWN` line in the
+  state file; each gets one follow-up row. A failure it cannot name (`FAILED ?`, a
+  timeout, a missing count line) stays `FAIL`. **No record yet:** when a FULL gate
+  fails only on tests in files the diff left alone and nothing printed `KNOWN`, run
+  `bash scripts/run-gates.sh --snapshot` once in a checkout at the mainline's tip
+  (detached is fine), then the branch's FULL again; branches cut at or before that
+  commit reuse the record, and after the next merge a red that persists needs one
+  more such run.
   > Origin: 324 FULL runs, 37 hours, for 102 merges; known reds re-run each time.
   > The v12 study: 28 of 179 FULL reds were pre-existing or flaky, and v11's rule,
   > text the session applied by hand, caught few of them.

@@ -384,7 +384,11 @@ export function verdict({ kind, min, exitCode, signal = null, spawnError = null,
 
 const unescapeTap = (t) => t.replace(/\\(.)/g, '$1');
 
-/** node TAP: each `not ok` at any indent that is not a suite's and has no directive; its `# Subtest:` parents joined with ` > `. */
+/**
+ * node TAP: each `not ok` at any indent that is not a suite's and has no directive; its `# Subtest:`
+ * parents joined with ` > `. A suite that failed for itself (a hook or its describe body threw, any
+ * failureType but subtestsFailed) is a `?`: node counts it in no `# fail`, and no test id names it.
+ */
 function nodeFailing(text) {
   const ls = rawLines(text);
   const out = [];
@@ -402,15 +406,21 @@ function nodeFailing(text) {
     const pad = `${m[1]}  `;
     let type = null;
     let loc = null;
+    let failure = null;
     if (ls[i + 1] === `${pad}---`)
       for (let j = i + 2; j < ls.length && ls[j] !== `${pad}...` && ls[j].startsWith(pad); j++) {
         const kv = ls[j].slice(pad.length);
         if (kv.startsWith('type: ')) type = kv.slice(6).replace(/^'|'$/g, '');
         else if (kv.startsWith('location: ')) loc = kv.slice(10).replace(/^'|'$/g, '');
+        else if (kv.startsWith('failureType: ')) failure = kv.slice(13).replace(/^'|'$/g, '');
       }
-    if (type === 'suite') continue;
     const d = Math.floor(m[1].length / 4);
-    out.push({ file: loc ? loc.replace(/:\d+:\d+$/, '') : '?', title: [...stack.slice(0, d), unescapeTap(m[2].replace(/^ - /, ''))].join(' > ') });
+    const title = [...stack.slice(0, d), unescapeTap(m[2].replace(/^ - /, ''))].join(' > ');
+    if (type === 'suite') {
+      if (failure !== 'subtestsFailed') out.push({ file: '?', title });
+      continue;
+    }
+    out.push({ file: loc ? loc.replace(/:\d+:\d+$/, '') : '?', title });
   }
   return out;
 }
@@ -421,8 +431,32 @@ function nodeFailing(text) {
 const VITEST_FAIL = /^\s*FAIL\s+(?:\|[^|]*\|\s+)?(\S+) > (.+?)\s*$/;
 const VITEST_FAIL_ANY = /^\s*FAIL\s/;
 const VITEST_SECTION = /^\s*⎯*\s*Failed (Suites|Tests) \d+\s*⎯*\s*$/;
-// pytest's short summary (its default -rfE): `FAILED tests/test_a.py::test_b - AssertionError: …`
-const PYTEST_FAILED = /^FAILED (.+?)::(.+?)(?: - .*)?$/;
+// pytest's short summary (its default -rfE): `FAILED tests/test_a.py::test_b[p] - AssertionError: …`
+const PYTEST_FAILED = /^FAILED \S.*::/;
+
+/**
+ * A pytest short-summary line as `{ file, title }`: the node id ends at the first space outside
+ * brackets, since a parameter may hold ` - ` itself, and what follows it is ` - <message>` or
+ * nothing. A line whose brackets do not balance, or that does not end that way, names no file.
+ */
+function pytestFailed(line) {
+  const rest = line.slice('FAILED '.length);
+  let depth = 0;
+  let end = rest.length;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '[') depth++;
+    else if (rest[i] === ']' && --depth < 0) break;
+    else if (rest[i] === ' ' && depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  const id = rest.slice(0, end);
+  const sep = id.indexOf('::');
+  const tail = rest.slice(end);
+  if (depth !== 0 || sep <= 0 || sep + 2 >= id.length || (tail && !tail.startsWith(' - '))) return { file: '?', title: rest };
+  return { file: id.slice(0, sep), title: id.slice(sep + 2) };
+}
 // bun: `test/a.test.ts:` before a file's results, `(fail) group > title [0.24ms]`, and a closing list without files
 const BUN_FILE = /^(\S+\.[cm]?[jt]sx?):$/;
 const BUN_FAIL = /^\(fail\) (.+?)(?: \[[^\]]*\])?$/;
@@ -449,10 +483,7 @@ function textFailing(kind, text) {
       out.push(m ? { file: m[1], title: m[2] } : { file: '?', title: l.trim() });
     }
   } else if (kind === 'pytest') {
-    for (const l of ls) {
-      const m = PYTEST_FAILED.exec(l.trim());
-      if (m) out.push({ file: m[1], title: m[2] });
-    }
+    for (const l of ls) if (PYTEST_FAILED.test(l.trim())) out.push(pytestFailed(l.trim()));
   } else if (kind === 'bun') {
     let file = '?';
     for (const raw of ls) {
@@ -488,10 +519,12 @@ function idFile(file, cwd, top) {
  * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`; a
  * file the output does not name is `?`.
  * - node: each `not ok` result line, at any indent, whose YAML block is not a suite's and that has
- *   no directive; its `# Subtest:` parents joined with ` > `, the file its `location:`.
+ *   no directive; its `# Subtest:` parents joined with ` > `, the file its `location:`. A suite that
+ *   failed for itself (a hook, its describe body: failureType not subtestsFailed) is a `?`.
  * - vitest: each ` FAIL  <file> > <title>` line (a `|project|` before the file is dropped) outside
  *   the `Failed Suites` section; that section itself, or a FAIL line naming no test, is a `?`.
- * - pytest: each `FAILED <file>::<title>` line of the short summary (pytest's default -rfE).
+ * - pytest: each `FAILED <file>::<title>` line of the short summary (pytest's default -rfE); the
+ *   node id ends at the first space outside brackets, and a line it cannot split names no file.
  * - bun: each `(fail) <title> [<time>]` line, under the last `<file>:` line before it; reading stops
  *   at bun's closing `<n> tests failed:` list, which repeats them without their files.
  * - playwright: each line four spaces in under `  <n> failed`, `[<project>] › <file>:<l>:<c> › <title>`.

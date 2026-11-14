@@ -258,6 +258,12 @@ mutantFails("reading a unit branch's own commits as the mainline's", "['log', '-
 mutantFails('counting a "P1: none" line as a finding', '(P[0-3])\\\\b${FINDING_NOT_NONE}', '(P[0-3])\\\\b');
 mutantFails('counting a heading as a finding', '(?:[-*+]\\s+|', '(?:#{1,6}\\s+|[-*+]\\s+|');
 mutantFails('missing a finding line that starts with its id', '${FINDING_LEAD}${FINDING_ID}', '${FINDING_LEAD}');
+mutantFails('missing a finding behind two openers', "const FINDING_OPEN = String.raw`(?:(?:\\*\\*|__|\\[|\\(|\\x60)\\s*){0,2}`;", "const FINDING_OPEN = String.raw`(?:(?:\\*\\*|__|\\[|\\(|\\x60)\\s*)?`;");
+mutantFails('counting "P1: None found" as a finding', 'found|reported|', 'reported|');
+mutantFails('reading "P2: 0.5s slower" as a none', '0(?![.,]\\d)', '0');
+mutantFails('counting "P0/P1: none" as a P0', '(?:(?:[^A-Za-z0-9]*|\\s+(?:and|or)\\s+)P[0-3]\\b)*', '');
+mutantFails('counting a dash table cell as a finding', '|[\\-–—]+(?=\\s*(?:\\||$))', '');
+mutantFails("missing a finding after a none line's semicolon", ": line.split(';');", ': [line];');
 mutantFails('counting a run that did not end ok', "if (e.outcome !== 'ok' || !inWindow(Date.parse(e.at), since, until)) continue;", 'if (!inWindow(Date.parse(e.at), since, until)) continue;');
 mutantFails('taking the rate over runs, lost copies included', 'Math.round((s.hits / s.kept) * 100)', 'Math.round((s.hits / s.runs) * 100)');
 mutantFails("reading a verdict copy outside the ledger's verdicts/", 'if (path.dirname(file) !== dir) continue;', '', GATHER_REL);

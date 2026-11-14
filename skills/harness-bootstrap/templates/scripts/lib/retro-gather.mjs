@@ -264,24 +264,37 @@ const MAX_VERDICT_BYTES = 1024 * 1024;
 
 /**
  * The verdict copies codex-run kept (`verdictCopy`, relative to the ledger's directory) for the
- * ledger's rows since `sinceMs`: copy path -> text. Only a file inside `<ledger dir>/verdicts/` is
- * read; a missing, unreadable or oversized copy is left out, and the digest counts it as lost.
+ * ledger's rows since `sinceMs`: copy path -> text. Only a regular file inside `<ledger dir>/verdicts/`
+ * is read, never a symlink or a verdicts folder that resolves elsewhere; a missing, unreadable or
+ * oversized copy is left out, and the digest counts it as lost.
  */
 export function readVerdicts(ledgerFile, entries, sinceMs = 0) {
   const out = new Map();
   const dir = path.resolve(path.dirname(ledgerFile), 'verdicts');
+  try {
+    // the ledger's own verdicts/, not a symlink to a folder elsewhere
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir) !== path.join(fs.realpathSync(path.dirname(dir)), 'verdicts')) return out;
+  } catch {
+    return out;
+  }
   for (const e of entries) {
     const rel = e?.verdictCopy;
     if (typeof rel !== 'string' || !rel || out.has(rel)) continue;
     if (!(Date.parse(e.at) >= sinceMs)) continue;
     const file = path.resolve(path.dirname(ledgerFile), rel);
     if (path.dirname(file) !== dir) continue;
+    let fd = null;
     try {
-      const st = fs.statSync(file);
+      // a regular file only: a symlink in the folder is no copy codex-run made
+      if (!fs.lstatSync(file).isFile()) continue;
+      fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      const st = fs.fstatSync(fd);
       if (!st.isFile() || st.size > MAX_VERDICT_BYTES) continue;
-      out.set(rel, fs.readFileSync(file, 'utf8'));
+      out.set(rel, fs.readFileSync(fd, 'utf8'));
     } catch {
       /* a copy removed or unreadable is a lost copy */
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
     }
   }
   return out;

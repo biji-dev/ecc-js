@@ -1748,7 +1748,7 @@ test('mainlineHistory: read from the mainline, not the checked-out branch; a mis
   assert.equal(gather({ top: m.repo, log: null, plansDirs: [], projectsDir: path.join(m.repo, 'none'), codexDir: path.join(m.repo, 'none'), ledger: path.join(m.repo, 'none'), claudeLedger: path.join(m.repo, 'none'), history: window }).note, fb.note, 'gather passes it on');
 });
 
-test('countFindings counts a finding line by its severity, after an id, a list or table marker or a label, and never a heading, prose or a none', () => {
+test('countFindings counts a finding line by its severity, after an id, a list or table marker or a label, and never a heading, prose or a none (after more tags, a noun, a dash cell; a finding after a none\'s `;` counts)', () => {
   const verdict = [
     '# Verdict',
     '### P1',
@@ -1772,8 +1772,25 @@ test('countFindings counts a finding line by its severity, after an id, a list o
     'The P1 above is pre-existing, see F-12.',
     'Verdict: 0 P0, 1 P1',
     'P1: None of the callers check the flag',
+    'P1: None found',
+    'P1: 0 findings',
+    'P1: none (after review)',
+    'P1: No issues found.',
+    '- **[P1]** a.js:3 null deref',
+    '- **[P1] b.js:4 the lock is dropped',
+    'P1: Nothing validates the input at api.ts:9',
+    'P2: 0.5s slower on a cold start',
+    'P0/P1: none',
+    'P0–P1: none.',
+    'P0, P1: none',
+    'P0 and P1 findings: none',
+    'P1 findings: none',
+    '| P1 | — |',
+    '| P2 | - |',
+    'P0: none; P1: c.js:5 the retry never stops',
+    'P1 - d.js:2 off by one',
   ].join('\n');
-  assert.deepEqual(countFindings(verdict), { P0: 2, P1: 4, P2: 3, P3: 3 });
+  assert.deepEqual(countFindings(verdict), { P0: 2, P1: 9, P2: 4, P3: 3 });
   assert.deepEqual(countFindings(''), { P0: 0, P1: 0, P2: 0, P3: 0 });
   assert.deepEqual(countFindings(null), { P0: 0, P1: 0, P2: 0, P3: 0 });
   assert.deepEqual(countFindings('p1 · a.js:3 · lower case\r\nP4 · a.js:4 · not a severity'), { P0: 0, P1: 1, P2: 0, P3: 0 });
@@ -1829,7 +1846,7 @@ test('buildRetro and formatDigest: the yield by step table after the money secti
   assert.deepEqual(fixtureData().stepYield, [], 'buildRetro computes it from the gathered ledger');
 });
 
-test('readVerdicts and gather: the copies of the ledger rows since sinceMs, only inside the ledger\'s verdicts/, a missing or oversized one left out', () => {
+test('readVerdicts and gather: the copies of the ledger rows since sinceMs, only regular files inside the ledger\'s own verdicts/, a missing or oversized one left out', () => {
   const top = tmpDir('retro-verdicts-');
   const dir = path.join(top, 'ledger');
   fs.mkdirSync(path.join(dir, 'verdicts'), { recursive: true });
@@ -1861,6 +1878,14 @@ test('readVerdicts and gather: the copies of the ledger rows since sinceMs, only
   assert.deepEqual([...read.keys()], ['verdicts/a-review.md']);
   assert.equal(read.get('verdicts/a-review.md'), `F-1 ${DOT} P1 ${DOT} a.js:1 ${DOT} x\n`);
   assert.equal(readVerdicts(ledgerFile, rows, 0).has('verdicts/old-review.md'), true, 'sinceMs bounds which rows are read');
+  // a symlink in verdicts/, or a verdicts/ that is itself a symlink, is no copy codex-run made
+  fs.symlinkSync(path.join(top, 'secret.md'), path.join(dir, 'verdicts', 'link-review.md'));
+  const linkRow = { at: iso('20T19:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/link-review.md' };
+  assert.equal(readVerdicts(ledgerFile, [linkRow], since).size, 0);
+  const other = path.join(top, 'other');
+  fs.mkdirSync(other);
+  fs.symlinkSync(path.join(dir, 'verdicts'), path.join(other, 'verdicts'));
+  assert.equal(readVerdicts(path.join(other, 'codex-runs.jsonl'), rows, since).size, 0);
   const g = gather({ top, log: null, projectsDir: path.join(top, 'no-projects'), codexDir: path.join(top, 'no-codex'), ledger: ledgerFile, sinceMs: since });
   assert.equal(g.ledger.length, rows.length);
   assert.deepEqual([...g.verdicts.keys()], ['verdicts/a-review.md']);

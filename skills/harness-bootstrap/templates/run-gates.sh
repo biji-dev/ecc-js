@@ -54,18 +54,22 @@
 #   genuine fast failure gets the note too, so read the log first).
 #   A --snapshot run prints "input: commit <short sha>" (and the untracked count) after the
 #   "logs:" line.
-# Known reds: a FULL run with HEAD on refs/heads/<MAINLINE> ([B], default main; env RUN_GATES_MAINLINE
-#   overrides, empty = off) and no tracked change (or a --snapshot run there) records, per gate, the
-#   failing test ids its log names (`run-counted: FAILED <file> :: <title>`, the trailing block
-#   run-counted prints) under the cache dir, and clears a gate's record when it passes, times out,
-#   misses its count line or names a failure it cannot (`run-counted: FAILED ?`). Any other run,
-#   FULL or scoped, prints a gate that exited non-zero as KNOWN instead of FAIL when every failing
-#   test it names is in that gate's record and each of their files is a file of the tree (the path
-#   relative to the top) that did not change since the merge base with the mainline (committed,
-#   uncommitted or untracked). A KNOWN gate does not count in the
-#   exit status and starts no fix round; a run with one is never cached. The mainline's own run
-#   prints its reds as FAIL. No record, no merge base, a timeout, a missed count line, output after
-#   the FAILED block or a `FAILED ?` line: FAIL.
+# Known reds: a FULL run with HEAD at the tip of refs/heads/<MAINLINE> ([B], default main; env
+#   RUN_GATES_MAINLINE overrides, empty = off), on the branch or detached, and no tracked change (or
+#   a --snapshot run there) records, per gate, its commit and the failing test ids its log names
+#   (`run-counted: FAILED <file> :: <title>`, the trailing block run-counted prints) under the
+#   cache dir, and clears a gate's record when it passes, times out, misses its count line or names
+#   a failure it cannot (`run-counted: FAILED ?`). The records are written after the last gate, and
+#   only when HEAD and the tracked tree (the snapshot's, for --snapshot) are still those the run
+#   started on. Any other run, FULL or scoped, prints a gate that exited non-zero as KNOWN instead
+#   of FAIL when its command is one run-counted call (no `;`, `&`, `|` or newline), its record was
+#   made at the merge base with the mainline or after it (an older one would hide a fix made since),
+#   every failing test it names is in that record, and each of their files is a file of the tree
+#   (the path relative to the top) that the merge base has, that did not change since it
+#   (committed, uncommitted or untracked) and that holds the test's title. A KNOWN gate does not
+#   count in the exit status and starts no fix round; a run with one is never cached. The
+#   mainline's own run prints its reds as FAIL. No record, no merge base, a timeout, a missed count
+#   line, output after the FAILED block or a `FAILED ?` line: FAIL.
 # Timeout: each gate runs in a process group of its own (set -m around its launch; the group id is
 #   its pid). Past GATE_TIMEOUT seconds ([B], default 3600; env RUN_GATES_GATE_TIMEOUT overrides,
 #   0 = no limit) the group gets TERM, then KILL 10 s later, and the gate is a FAIL ending
@@ -827,58 +831,111 @@ fi
 strip_csi() { LC_ALL=C sed $'s#\033\\[[0-?]*[ -/]*[@-~]##g'; }
 
 # -- the known-red baseline (see Known reds above) --------------------------------------------
-BASE_REC=0 # 1 = this run records the baseline: FULL, HEAD on the mainline, no tracked change
+BASE_REC=0 # 1 = this run records the baseline: FULL, HEAD at the mainline's tip, no tracked change
+BASE_HEAD="" # the commit a recording run started on: a run that ends on another records nothing
+BASE_PENDING="" # what a recording run will write once its gates are done: <record> then <tmp file or ->, a line each
 KNOWN_ON=0 # 1 = this run may print KNOWN: KNOWN_CHANGED lists every file changed since the merge base
 KNOWN_CHANGED=""
+KNOWN_MB="" # the merge base with the mainline: a record made before it is stale
+# No tracked change in the gates' tree: the checkout, or the snapshot's worktree (a gate can write there).
+tree_clean() { st=$(git -C "$GATE_DIR" status --porcelain --untracked-files=no 2>/dev/null) && [ -z "$st" ]; }
 if [ "$CACHE_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && git check-ref-format --branch "$MAINLINE_B" >/dev/null 2>&1 &&
   mkdir -p "$CACHE_DIR/baseline" 2>/dev/null; then
-  if [ "$MODE" = full ] && [ "$(git symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$MAINLINE_B" ] &&
-    { [ "$SNAPSHOT" -eq 1 ] || { st=$(git status --porcelain --untracked-files=no 2>/dev/null) && [ -z "$st" ]; }; }; then
+  # HEAD at the mainline's tip, on the branch or detached at it (a worktree cannot check the branch out twice)
+  if [ "$MODE" = full ] && BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&
+    [ "$BASE_HEAD" = "$(git rev-parse -q --verify "refs/heads/$MAINLINE_B" 2>/dev/null)" ] && tree_clean; then
     BASE_REC=1
-  elif mb=$(git merge-base "refs/heads/$MAINLINE_B" HEAD 2>/dev/null) &&
-    d1=$(git -c core.quotePath=false diff --name-only --no-renames "$mb" -- 2>/dev/null) &&
-    d2=$(git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null); then
+  elif KNOWN_MB=$(git merge-base "refs/heads/$MAINLINE_B" HEAD 2>/dev/null) &&
+    d1=$(git diff --name-only -z --no-renames "$KNOWN_MB" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") &&
+    d2=$(git ls-files -z --others --exclude-standard 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}"); then
     KNOWN_CHANGED=$(printf '%s\n%s\n' "$d1" "$d2" | filter_changed | LC_ALL=C sort -u)
     KNOWN_ON=1
   fi
 fi
 base_file() { printf '%s/%s' "$CACHE_DIR/baseline" "$(hash_str "$MAINLINE_B|$1")"; }
 # The failing test ids a gate's log ends with (run-counted's trailing FAILED block), sorted, each
-# once; returns 1 when it names none, or "?" (a failure it could not name).
+# once; returns 1 when it names none, "?" (a failure it could not name), or an id whose file or
+# title holds a second " :: " (no split of it is sure).
 failed_ids() {
   local ids
   ids=$(strip_csi <"$1" | awk '/^run-counted: FAILED /{b = b substr($0, 21) "\n"; next} /^[ \t\r]*$/{next} {b = ""} END{printf "%s", b}' | LC_ALL=C sort -u)
   [ -n "$ids" ] || return 1
   if printf '%s\n' "$ids" | grep -Fxq '?'; then return 1; fi
+  if printf '%s\n' "$ids" | grep -q ' :: .* :: '; then return 1; fi
   printf '%s\n' "$ids"
 }
-# $1 = gate, $2 = why it failed ("" = passed), $3 = log: the mainline run's record for the gate,
-# kept only for a gate that exited non-zero naming each failing test (not a timeout or a missed count line).
+# $1 = gate, $2 = why it failed ("" = passed), $3 = log: the mainline run's record for the gate
+# (`head <commit>`, then the ids), kept only for a gate that exited non-zero naming each failing
+# test (not a timeout or a missed count line), else cleared. Held in BASE_PENDING until
+# commit_base: a run whose tree moved writes none.
 record_base() {
-  local base ids
+  local base ids tmp=-
   base=$(base_file "$1")
   if [ "${2#exit }" != "$2" ] && ids=$(failed_ids "$3"); then
-    { printf '%s\n' "$ids" >"$base.tmp.$$" && mv -f "$base.tmp.$$" "$base"; } 2>/dev/null || rm -f "$base.tmp.$$"
-  else
-    rm -f "$base"
+    tmp="$base.tmp.$$"
+    printf 'head %s\n%s\n' "$BASE_HEAD" "$ids" >"$tmp" 2>/dev/null || { rm -f "$tmp"; tmp=-; }
   fi
+  BASE_PENDING="$BASE_PENDING$base
+$tmp
+"
 }
-# $1 = gate, $2 = why it failed, $3 = log: prints the number of failing tests and returns 0 when
-# the gate exited non-zero, every test it names is in the gate's record, and each of their files is
-# a file of the gate's tree (a path the runner printed against another root is no proof) that is
-# not in KNOWN_CHANGED.
+# After the gates: the pending records go in place only when HEAD is still the commit the run
+# started on and the tree is still clean (an edit during the run would record its own reds).
+commit_base() {
+  local base tmp ok=0
+  if [ "$(git rev-parse -q --verify HEAD 2>/dev/null)" = "$BASE_HEAD" ] && tree_clean; then ok=1; fi
+  [ "$ok" -eq 1 ] || echo "run-gates: the tree changed during the run: the known-red record is not updated" >&2
+  while IFS= read -r base && IFS= read -r tmp; do
+    [ -n "$base" ] || continue
+    if [ "$ok" -eq 0 ]; then
+      [ "$tmp" = - ] || rm -f "$tmp"
+    elif [ "$tmp" = - ]; then
+      rm -f "$base"
+    else
+      mv -f "$tmp" "$base" 2>/dev/null || rm -f "$tmp"
+    fi
+  done <<EOF
+$BASE_PENDING
+EOF
+}
+# 0 when a gate's command is one run-counted call and nothing else, so the gate's exit and its
+# FAILED block are that call's: a list (`;`, `&&`, `||`, `&`, a pipe, a newline) or a second call
+# can fail on a step the last block does not name.
+single_counted() {
+  case "$1" in *';'* | *'&'* | *'|'* | *$'\n'*) return 1 ;; esac
+  [ "$(printf '%s\n' "$1" | grep -o 'run-counted\.mjs' | grep -c .)" -eq 1 ]
+}
+# The words a test's title must show in its file: the last ` > ` or ` › ` part, then the last
+# `::` part (pytest), without a [project] lead or a [param] tail.
+title_needle() {
+  printf '%s' "$1" | LC_ALL=C sed -e 's/^\[[^]]*\] //' -e 's/.* > //' -e $'s/.* \xe2\x80\xba //' -e 's/.*:://' -e 's/\[.*\]$//'
+}
+# $1 = gate, $2 = why it failed, $3 = log, $4 = its command: prints the number of failing tests
+# and returns 0 when the gate is one run-counted call that exited non-zero, the gate's record was
+# made at KNOWN_MB or after it, every test it names is in that record, and each of their files is
+# a file of the gate's tree that KNOWN_MB has, that is not in KNOWN_CHANGED and that holds the
+# test's title (a path the runner printed against another root, a package's cwd, is no proof; an
+# ignored file is in no diff; a title the file does not spell, from it.each or a template, is none).
 known_red() {
-  local base ids f
-  [ "${2#exit }" != "$2" ] || return 1
+  local base ids rec_head rec_ids id f t needle
+  [ "${2#exit }" != "$2" ] && single_counted "$4" || return 1
   base=$(base_file "$1")
   [ -f "$base" ] && ids=$(failed_ids "$3") || return 1
-  [ -z "$(printf '%s\n' "$ids" | LC_ALL=C comm -23 - "$base")" ] || return 1
-  while IFS= read -r f; do
+  rec_head=$(LC_ALL=C sed -n '1s/^head \([0-9a-f]\{40,64\}\)$/\1/p' "$base")
+  [ -n "$rec_head" ] && git merge-base --is-ancestor "$KNOWN_MB" "$rec_head" 2>/dev/null || return 1
+  rec_ids=$(sed 1d "$base")
+  while IFS= read -r id; do
+    printf '%s\n' "$rec_ids" | grep -Fxq -- "$id" || return 1
+    f=${id%% :: *}
+    t=${id#* :: }
     case "$f" in '' | /* | ../* | */../*) return 1 ;; esac
-    [ -f "$GATE_DIR/$f" ] || return 1
+    [ "$f" != "$id" ] && [ -f "$GATE_DIR/$f" ] || return 1
+    git cat-file -e "$KNOWN_MB:$f" 2>/dev/null || return 1
     if printf '%s\n' "$KNOWN_CHANGED" | grep -Fxq -- "$f"; then return 1; fi
+    needle=$(title_needle "$t")
+    [ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1
   done <<EOF
-$(printf '%s\n' "$ids" | sed 's/ :: .*//' | LC_ALL=C sort -u)
+$ids
 EOF
   printf '%s\n' "$ids" | grep -c .
 }
@@ -930,7 +987,7 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   if [ -z "$why" ]; then
     emit "PASS $name ${secs}s $logfile"
     passed=$((passed + 1))
-  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$why" "$logfile"); then
+  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$why" "$logfile" "$cmd"); then
     emit "KNOWN $name ${secs}s $logfile ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
     known=$((known + 1))
   else
@@ -942,6 +999,7 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   fi
 done
 
+[ "$BASE_REC" -eq 1 ] && commit_base
 known_part=""
 [ "$known" -eq 0 ] || known_part=", $known known"
 emit "SUMMARY $passed passed, $failed failed, $skipped skipped$known_part ($MODE)"

@@ -108,6 +108,7 @@ mutantFails('a dry run that goes on to run', '    console.log(JSON.stringify(sho
 mutantFails('a review with no diff file', '    const problem = writeDiff(a, run.diffFile);', '    const problem = null;', CLI_REL);
 mutantFails('spawning the model without its own process group', 'detached: GROUP,', 'detached: false,', CLI_REL);
 mutantFails('dropping HARNESS_ROLE=executor from the model env', "HARNESS_ROLE: 'executor'", "HARNESS_ROLE: 'session'", CLI_REL);
+mutantFails('sending an adversarial pass with a base no range', "const stdin = run.brief + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');", 'const stdin = run.brief;', CLI_REL);
 
 test('demo: a dry run from a Codex host prints the read-only command and writes nothing', () => {
   const repo = tmp('claude-run-demo-');

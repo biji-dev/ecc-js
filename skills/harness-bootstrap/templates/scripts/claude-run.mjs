@@ -74,7 +74,7 @@ import {
   resolveRoute,
   reviewPrompt,
 } from './lib/claude-run-core.mjs';
-import { baseTreeOf, currentBranch, snapshotTree } from './lib/snapshot-tree.mjs';
+import { baseTreeOf, currentBranch, rangeText, snapshotTree } from './lib/snapshot-tree.mjs';
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.claude-runs';
@@ -304,7 +304,10 @@ async function main() {
   const sidecar = openSidecar(ledger, { at: base.at, kind: a.kind, cwd: a.cwd, out: run.outFile, log: null, wrapperPid: process.pid, wrapperStart: new Date(performance.timeOrigin).toISOString(), childPid: null, childStart: null });
   try {
     const onSpawn = (pid) => sidecar.update({ childPid: pid, childStart: new Date().toISOString() });
-    const res = await runClaude(run.argv, { cwd: a.cwd, stdin: run.brief, timeoutMin: a.timeoutMin, onSpawn });
+    // An adversarial pass with a base reads all of its range: the landing check certifies the whole of it.
+    const ranged = a.kind === 'adversarial' && snapshot.baseTree && snapshot.tree;
+    const stdin = run.brief + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');
+    const res = await runClaude(run.argv, { cwd: a.cwd, stdin, timeoutMin: a.timeoutMin, onSpawn });
     // The reviewer read the live working tree: an edit during the run detaches the row from `tree`.
     const treeAfter = reviewed ? snapshotTree(a.cwd) : undefined;
     const moved = reviewed ? { treeAfter, ...(treeAfter !== snapshot.tree ? { treeMoved: true } : {}) } : {};

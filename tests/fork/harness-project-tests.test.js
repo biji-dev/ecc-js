@@ -19,7 +19,7 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 const SUITES = {
   'command-guard': 52,
   'edit-guard': 9,
-  'harness-guard': 57,
+  'harness-guard': 58,
   'context-budget': 8,
   'session-resume': 19,
   'run-gates': 16,

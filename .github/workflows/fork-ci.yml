@@ -52,6 +52,12 @@ jobs:
           # stdout queued for a pipe is discarded: a failing run shows only the first
           # ~50 suites and no summary. Writing to a file keeps stdout synchronous,
           # then the failing suites and the tail are printed explicitly.
+          # Four workers (the runner's vCPUs); suites that rebuild or back up
+          # .opencode/dist, or assert a time budget, run alone after the pool (CLAUDE.md).
+          export ECC_TEST_JOBS=4
+          ECC_TEST_SERIAL=$(grep -rlE --include='*.test.js' 'build-opencode|\.backup-|dist\.backup|time budget' tests | sed 's#^tests/##' | paste -sd, -)
+          export ECC_TEST_SERIAL
+          echo "serial after the pool: $ECC_TEST_SERIAL"
           log="$RUNNER_TEMP/test-output.log"
           status=0
           npm test > "$log" 2>&1 || status=$?

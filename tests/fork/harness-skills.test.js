@@ -978,7 +978,9 @@ test('v12: P2-only fix rounds defer, Small carries the claim checklist, Opus rea
   ]) assert.ok(cross.includes(part), `cross-model.md lacks: ${part}`);
   const runner = squashed('reference/runner.md');
   for (const part of [
-    '`run-gates.sh` keeps, per gate, the failing tests of the last FULL run on the mainline (`MAINLINE`, `[B]`) from a clean tree',
+    "`run-gates.sh` keeps, per gate, the failing tests of the last FULL run at the mainline's tip (`MAINLINE`, `[B]`) from a clean tree",
+    'On a branch whose merge base is that commit or older',
+    'each in a file the merge base has,',
     'A failure it cannot name (`FAILED ?`, a timeout, a missing count line) stays `FAIL`.',
     'a pass it refused (`codex-run` exit 5) → that pass on Opus, `refused`.',
   ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);

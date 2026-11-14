@@ -1507,8 +1507,8 @@ Each install's `skillVersion` in `.agents/harness-manifest.json` (*measured*, 12
 | v6 | 2 |
 | v5 | 1 |
 
-Claude Code's plugin, Codex's plugin and the ZCode copies have been at `2.2.3-js.14`, equal to main, since
-2026-11-13. One remote machine's plugin was last noted at js.9. The weekly job ran for weeks W44 to W46 with
+Claude Code's plugin, Codex's plugin and the ZCode copies have been at `2.2.3-js.15`, equal to main, since
+2026-11-14. One remote machine's plugin was last noted at js.9. The weekly job ran for weeks W44 to W46 with
 no failed exports (W46 exported all 12 installs), and next runs on 2026-11-16.
 
 **The v8 pilot's checks, none run yet:** auto-compaction is followed by the right next step; zero typed

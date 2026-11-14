@@ -343,6 +343,31 @@ test('HARNESS_ROLE=executor: a FULL run (no arguments, --snapshot) exits 99 befo
   assert.equal(c.n(), 1, 'the scoped run did not run its gate');
 });
 
+test('HARNESS_ROLE=executor: a scoped run promoted to FULL exits 99 naming the path, before the cache or any gate; inside SCOPED_PATHS it runs', () => {
+  const c = counter();
+  const env = { HARNESS_ROLE: 'executor' };
+  const inside = runCopy([c.gate(), c.gate('f', 'full')], ['--since', 'HEAD'], {
+    env,
+    scoped: '^src/',
+    prepare: (repo) => {
+      fs.mkdirSync(path.join(repo, 'src'));
+      fs.writeFileSync(path.join(repo, 'src', 'x.js'), 'x\n');
+    },
+  });
+  assert.equal(inside.status, 0, inside.stdout + inside.stderr);
+  assert.match(inside.lines.at(-1), /^SUMMARY 1 passed, 0 failed, 1 skipped \(scoped\)$/);
+  assert.equal(c.n(), 1, 'the scoped run did not run its gate');
+  // the same tree promoted, with a FULL PASS cached for it: still refused, nothing reused
+  fs.writeFileSync(path.join(inside.repo, 'other.txt'), 'y\n');
+  const cached = runCopy([c.gate(), c.gate('f', 'full')], [], { repo: inside.repo, cache: inside.cache, scoped: '^src/' });
+  assert.equal(cached.status, 0, cached.stdout + cached.stderr);
+  const promoted = runCopy([c.gate(), c.gate('f', 'full')], ['--since', 'HEAD'], { repo: inside.repo, cache: inside.cache, scoped: '^src/', env });
+  assert.equal(promoted.status, 99, promoted.stdout + promoted.stderr);
+  assert.equal(promoted.stderr, "run-gates: PROMOTED to FULL by other.txt, outside SCOPED_PATHS: FULL is the session's, once at landing; an executor stops and reports the path\n");
+  assert.equal(promoted.stdout, '', 'something ran or was reused before the refusal');
+  assert.equal(c.n(), 3, 'a gate ran in the refused run');
+});
+
 /** An admission stand-in: appends its arguments to a calls file and exits `code`; `n()` counts the calls. */
 function admitter(code) {
   const dir = tmp('run-gates-admit-');

@@ -238,7 +238,7 @@ claude plugin marketplace remove ecc              # only when the upstream marke
 export CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS=600000   # the clone carries full upstream history
 claude plugin marketplace add https://github.com/biji-dev/ecc-js.git
 claude plugin install ecc@ecc --scope user
-claude plugin details ecc@ecc                     # Skills (209) = 143 skills + 66 commands, Agents (36)
+claude plugin details ecc@ecc                     # Skills (210) = 144 skills + 66 commands, Agents (36)
 ```
 
 Update:
@@ -266,7 +266,7 @@ Notes:
 
 In the ZCode plugin UI, add the marketplace URL
 `https://github.com/biji-dev/ecc-js.git` (not the shorthand) and install `ecc`.
-Check that about 143 skills and 36 agents are listed, the version reads
+Check that about 144 skills and 36 agents are listed, the version reads
 `2.2.3-js.N`, and a new session starts without a SessionStart hook error (hook
 scripts fall back to the `~/.claude` plugin cache when `CLAUDE_PLUGIN_ROOT` is
 unset). Refresh the marketplace in the UI to update.
@@ -338,8 +338,9 @@ Own skills shipped today:
 | `skill-advisor` | Recommends and installs library items per project |
 | `harness-bootstrap` | Assesses a repo, new or already bootstrapped, and installs or upgrades a gated harness: plan mode (task runner over a plan with stable ids) or change mode (task type, Trivial/Small/Full tiers), risk map and merge policy, commit and command guards, scope guard, three cross-check lanes, verify runner, harness log, upgrade manifest. Runs on any host — Claude Code, Codex, ZCode or Kimi — with that host's judgment and bounded models |
 | `delegate-tasks` | The architect, on the host's judgment model, writes build, fix, control, check or plan specs; executors chosen per slice from the risk (on Claude Code: Sonnet waves, Opus serial for critical code, a second model family) run them behind command gates, with a per-slice reviewer on another model. The dispatch engine for `harness-bootstrap` runs |
+| `coordinate-sessions` | For big work that splits cleanly: this session becomes the controller of worker sessions the owner starts in their own terminals. It suggests the split as one card, writes the board and the kickoffs, gives each worker its own worktree, write set and ID range, checks the board for fence breaks, overlaps and stalls (`board-check.mjs`), answers over cross-session messages, and runs the full test run and every merge itself, one at a time. Claude Code first |
 
-The harness these two build has its own guide, [docs/HARNESS.md](HARNESS.md): why it
+The harness that `harness-bootstrap` and `delegate-tasks` build has its own guide, [docs/HARNESS.md](HARNESS.md): why it
 exists, how a run flows, what it installs, and an analysis of whether it pays for itself.
 
 ## Known limitations

@@ -1,6 +1,6 @@
 /**
  * Tests for skills/harness-bootstrap and skills/delegate-tasks (biji-dev/ecc-js):
- * skill structure, the shipped commit guard, and the context-budget hook template.
+ * skill structure (coordinate-sessions' too), the shipped commit guard, and the context-budget hook template.
  */
 
 const assert = require('assert');
@@ -12,6 +12,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..');
 const BOOTSTRAP = path.join(ROOT, 'skills', 'harness-bootstrap');
 const DELEGATE = path.join(ROOT, 'skills', 'delegate-tasks');
+const COORDINATE = path.join(ROOT, 'skills', 'coordinate-sessions');
 const GUARD = path.join(BOOTSTRAP, 'templates', 'harness-guard.sh');
 const BUDGET = path.join(BOOTSTRAP, 'templates', 'context-budget.mjs');
 
@@ -101,7 +102,7 @@ function checkReferences(skillDir) {
 
 console.log('\nharness skills: structure');
 
-for (const [dir, name] of [[BOOTSTRAP, 'harness-bootstrap'], [DELEGATE, 'delegate-tasks']]) {
+for (const [dir, name] of [[BOOTSTRAP, 'harness-bootstrap'], [DELEGATE, 'delegate-tasks'], [COORDINATE, 'coordinate-sessions']]) {
   test(`${name}: frontmatter names the skill and fits the 1024-char description limit`, () => {
     const fm = frontmatter(path.join(dir, 'SKILL.md'));
     assert.strictEqual(fm.name, name);
@@ -131,9 +132,9 @@ for (const [dir, name] of [[BOOTSTRAP, 'harness-bootstrap'], [DELEGATE, 'delegat
   });
 }
 
-test('both skills are listed as own skills in fork/slim.json', () => {
+test('the three skills are listed as own skills in fork/slim.json', () => {
   const slim = JSON.parse(fs.readFileSync(path.join(ROOT, 'fork', 'slim.json'), 'utf8'));
-  for (const name of ['harness-bootstrap', 'delegate-tasks']) {
+  for (const name of ['harness-bootstrap', 'delegate-tasks', 'coordinate-sessions']) {
     assert.ok(slim.skills.own.includes(name), `${name} not in skills.own`);
   }
 });

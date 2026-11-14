@@ -220,7 +220,11 @@ unit its step, branch and worktree, the state file's `## Next`, its open `Q-n` c
 its `Grant:` and `Stop:` lines, then the inbox (`gate-design.md` › Parking a unit).
 After a compaction it says to continue the held unit's next step through step 0a,
 or with none held, to start the next ready unit if a queue run is on; on the other
-sources it is context only, so opening a session never starts work. On
+sources it is context only, so opening a session never starts work. A session started
+in a linked worktree that a held row names gets only the rows naming its checkout in
+full, and every other held row as one `HELD ELSEWHERE` line it never continues
+(`coordinate-sessions` workers); a session started in the main checkout sees every
+held row, since it may drive a unit in a linked worktree with `cd`. On
 `UserPromptSubmit` it says what other sessions did since this one's last turn, in one
 line, `[other sessions] since your last turn: <MAIN> +<n> (<subject>) · <unit> claimed
 · … released · … parked`; a session's first run prints nothing.

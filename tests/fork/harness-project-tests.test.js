@@ -21,8 +21,8 @@ const SUITES = {
   'edit-guard': 9,
   'harness-guard': 58,
   'context-budget': 8,
-  'session-resume': 19,
-  'run-gates': 16,
+  'session-resume': 20,
+  'run-gates': 17,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).

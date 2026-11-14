@@ -200,7 +200,7 @@ test('over MAX_BYTES: whole lines up to the cap, held rows before parked, then h
   assert.equal(kept.length + Number(tail[1]), 2 * 61, 'the tail counts every line it cut');
   assert.match(text, /^HELD CR-100 /m);
   assert.doesNotMatch(text, /PARKED/, 'the parked row comes last, so it is cut first');
-  assert.match(lastLine(text), /^Continue the held unit's next step/, 'the closing line is kept');
+  assert.match(lastLine(text), /^Several units are held: continue only the one this session was running/, 'the closing line is kept');
   // a cap too small for the first line, the count and the closing line: the text is cut to it, never inside a character
   for (const max of [10, 11, 12]) {
     const cut = bound.capped('€'.repeat(10), ['x'], 'z', max);
@@ -219,6 +219,49 @@ test('compact says continue the held unit; startup, resume and clear are context
     assert.match(text, new RegExp(`^\\[session-resume\\] ${source}: `));
     assert.equal(lastLine(text), 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.', source);
   }
+});
+
+test('started in a linked worktree a held row names: only the rows naming this checkout in full, the rest held elsewhere; the main checkout sees every row', () => {
+  const { base, main } = checkout();
+  const a = path.join(base, 'wt-a');
+  const b = path.join(base, 'wt-b');
+  const c = path.join(base, 'wt-c');
+  git(main, 'worktree', 'add', '-q', '-b', 'change/cr-040', a);
+  git(main, 'worktree', 'add', '-q', '-b', 'change/cr-041', b);
+  git(main, 'worktree', 'add', '-q', '-b', 'change/cr-042', c);
+  put(main, REGISTRY, registry({
+    held: ['| 1 | CR-040 | 5 implement | change/cr-040 | ../wt-a | | |', '| 2 | CR-041 | 8 review | change/cr-041 | ../wt-b | | |'],
+    parked: ['| CR-030 | Gate 2 | 2026-11-06T04:10Z | change/cr-030 | main | Q-1 merge or hold |'],
+  }));
+  put(a, `${STATE_DIR}/CR-040.state.md`, stateFile({ unit: 'CR-040', next: ['- next: 5 implement, slice 2'] }));
+  put(b, `${STATE_DIR}/CR-041.state.md`, stateFile({ unit: 'CR-041', next: ['- next: 8 review'] }));
+  const inA = run(a, 'compact', { CLAUDE_PROJECT_DIR: a });
+  assert.match(inA, /^HELD CR-040 · step 5 implement · change\/cr-040 · \.\.\/wt-a · tier Full\n {2}next: next: 5 implement, slice 2$/m);
+  assert.match(inA, /^HELD ELSEWHERE CR-041 · step 8 review · change\/cr-041 · \.\.\/wt-b$/m);
+  assert.doesNotMatch(inA, /next: 8 review|^HELD CR-041/m, "another session's state file is not read");
+  assert.match(inA, /^PARKED CR-030 /m, 'parked rows are listed for every session');
+  assert.equal(lastLine(inA), "Continue CR-040's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); units held elsewhere are other sessions', never continue one; parked units wait for the owner's answers.");
+  // a worktree no held row names (its unit landed): nothing to continue here
+  const inC = run(c, 'compact', { CLAUDE_PROJECT_DIR: c });
+  assert.doesNotMatch(inC, /^HELD (?!ELSEWHERE)/m);
+  assert.match(inC, /^HELD ELSEWHERE CR-040 [^\n]*\nHELD ELSEWHERE CR-041 /m);
+  assert.match(lastLine(inC), /^No unit is held in this checkout; units held elsewhere are other sessions', never continue one\./);
+  // startup in a worktree: the same lines, context only
+  const startup = run(a, 'startup', { CLAUDE_PROJECT_DIR: a });
+  assert.match(startup, /^HELD ELSEWHERE CR-041 /m);
+  assert.match(lastLine(startup), /^Context only: /);
+  // the main checkout may drive either unit with cd: both in full, and the closing names no unit
+  const inMain = run(main, 'compact', { CLAUDE_PROJECT_DIR: main });
+  assert.match(inMain, /^HELD CR-040 [^\n]*\n {2}next: next: 5 implement, slice 2$/m);
+  assert.match(inMain, /^HELD CR-041 [^\n]*\n {2}next: next: 8 review$/m);
+  assert.doesNotMatch(inMain, /ELSEWHERE/);
+  assert.match(lastLine(inMain), /^Several units are held: continue only the one this session was running/);
+  // a registry naming no linked worktree keeps every held row the session's, wherever it started
+  put(main, REGISTRY, registry({ held: ['| 1 | CR-040 | 5 implement | change/cr-040 | main | | |'] }));
+  put(main, `${STATE_DIR}/CR-040.state.md`, stateFile({ unit: 'CR-040', next: ['- next: from main'] }));
+  const unnamed = run(a, 'compact', { CLAUDE_PROJECT_DIR: a });
+  assert.match(unnamed, /^HELD CR-040 · step 5 implement · change\/cr-040 · main · tier Full$/m);
+  assert.equal(lastLine(unnamed), "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.");
 });
 
 const MERGE_BLOCK = (...lines) => ['# Agents', '', '<!-- harness:begin merge -->', ...lines, '<!-- harness:end merge -->', ''].join('\n');

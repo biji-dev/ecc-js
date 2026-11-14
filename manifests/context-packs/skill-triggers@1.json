@@ -1,6 +1,6 @@
 {
   "coverage": {
-    "skills": 143,
+    "skills": 144,
     "withTriggers": 25
   },
   "generatedAt": "2026-09-24T23:51:22.784Z",
@@ -10,7 +10,7 @@
     "id": "hand-seeded",
     "source": "manual-curation-pending-regeneration"
   },
-  "registryDigest": "10be01662cbb36488e431660af128d4957226081f1d0876f19b028a0dc535ff4",
+  "registryDigest": "fb40db23d41e76ac3c99071707a8697e750b487f6ec98c429fca6635915c08f8",
   "schemaVersion": 1,
   "triggers": {
     "skill:api-connector-builder": [

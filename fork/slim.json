@@ -311,6 +311,7 @@
       "continuous-learning-v2"
     ],
     "own": [
+      "coordinate-sessions",
       "delegate-tasks",
       "harness-bootstrap",
       "skill-advisor"

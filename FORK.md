@@ -226,7 +226,8 @@ List them under `own` in `fork/slim.json`. The `biji-` prefix is optional: every
 own name is fork-owned, and `verify.js` and the sync refuse an upstream item with
 the same name. Own skills are claimed by the `fork-own` install module
 automatically. Current own skills: `skill-advisor`, `harness-bootstrap`,
-`delegate-tasks`. [docs/HARNESS.md](docs/HARNESS.md) documents the last two.
+`delegate-tasks`, `coordinate-sessions`. [docs/HARNESS.md](docs/HARNESS.md)
+documents the last three.
 
 ## Releases and versions
 

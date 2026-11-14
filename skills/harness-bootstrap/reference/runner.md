@@ -288,7 +288,11 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **The write set is the paths the Scope block names**; compare them against
   every other held or parked row's. Overlap means sequence, not parallelise: the
   claim waits or narrows its paths, or takes the next ready unit instead.
-- `[M]` **One unit in flight**, plus hotfixes; a parked unit is not in flight.
+- `[M]` **One unit in flight per session**, plus hotfixes; a parked unit is not in flight.
+  Two or more units, each too big for a subagent, with disjoint write sets and ready
+  now: suggest worker sessions (`coordinate-sessions`) as one card. Under its
+  controller a worker runs its unit to the land commit and stops there; the
+  controller runs FULL and the merge.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
   worktree convention. **Every kind of unit has a branch form:** plan items carry
   their id; the code half of an approved change request carries the request's id (or runs on

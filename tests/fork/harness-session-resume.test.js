@@ -148,6 +148,10 @@ function newSession() {
 const source = (dir, s, opts = {}) => runHook(dir, { ...opts, input: { source: s, ...opts.input } });
 const lastLine = text => text.split('\n').at(-1);
 const COMPACT = "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.";
+// a compaction with several held rows, in the main checkout: no unit is named
+const SEVERAL = "Several units are held: continue only the one this session was running, from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); the others are other sessions'. A controller (coordinate-sessions) re-reads its board and runs board-check instead. Parked units wait for the owner's answers.";
+// a compaction in a linked worktree a held row names: that row's unit
+const ONE = (unit) => `Continue ${unit}'s next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); units held elsewhere are other sessions', never continue one; parked units wait for the owner's answers.`;
 const CONTEXT = 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.';
 const PARKED_ONLY = "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).";
 const NO_ROWS = "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.";
@@ -169,10 +173,10 @@ test("a held row in a linked worktree: CLAUDE_PROJECT_DIR wins over cwd, and the
     '  next: next: 5 implement, slice 2',
     '  open: Q-1 Merge or hold?',
     '  kickoff narrows: merge clean Full; stop: after CR-021',
-    COMPACT,
+    ONE('CR-021'),
   ].join('\n'));
-  // the same from the main checkout, through cwd alone
-  assert.strictEqual(runHook(co.main), text);
+  // the same rows from the main checkout, through cwd alone: it may drive the unit with cd, so the closing names none
+  assert.strictEqual(runHook(co.main), [...text.split('\n').slice(0, -1), COMPACT].join('\n'));
 });
 
 test('a parked row: gate, since and cards from the registry; its state file\'s Parked line when the cells are empty', () => {
@@ -464,7 +468,7 @@ test('the standing grant line is kept inside MAX_BYTES with the closing line, an
   const lines = text.split('\n');
   assert.strictEqual(lines[1], standingLine());
   assert.match(lines.at(-2), /^… \d+ more lines: read /);
-  assert.strictEqual(lines.at(-1), COMPACT);
+  assert.strictEqual(lines.at(-1), SEVERAL);
 });
 
 console.log('\nharness session-resume: the text');
@@ -505,7 +509,7 @@ test('over MAX_BYTES: whole lines to the cap, a tail that counts the rest, the c
   assert.ok(kept.every(l => /^HELD CR-\d+ · step 5 implement · change\/cr-\d+-a-long-branch-name · \.\.\/wt-cr-\d+$|^ {2}state file not found: \.\.\/wt-cr-\d+\/docs\/plans\/CR-\d+\.state\.md \(in this checkout or on change\/cr-\d+-a-long-branch-name\)$/.test(l)), 'a kept line was cut');
   assert.strictEqual(kept.length + Number(tail[1]), 122);
   assert.doesNotMatch(text, /PARKED/, 'parked rows come after held rows, so they are cut first');
-  assert.strictEqual(lastLine(text), COMPACT);
+  assert.strictEqual(lastLine(text), SEVERAL);
   // multi-byte text is counted in bytes, not characters
   const wide = Array.from({ length: 40 }, (_, i) => heldRow(i + 1, `CR-${i + 1}`, { step: '— · ' + '…'.repeat(40) }));
   put(main, '.claude/registry.md', registry({ held: wide }));

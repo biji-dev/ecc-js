@@ -28,7 +28,11 @@
 #   With HARNESS_ROLE=executor (codex-run and claude-run set it for every run they start) a run
 #   with neither --since nor --list exits 99 before anything runs, saying on stderr: "run-gates:
 #   FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since
-#   <the slice's base>". --snapshot is a FULL run and is refused too; --list still works.
+#   <the slice's base>". --snapshot is a FULL run and is refused too; --list still works. A --since
+#   run that a change outside SCOPED_PATHS promotes to FULL exits 99 too, before the cache, admission,
+#   the lock or a gate (and so does one promoted after a lock or machine wait), saying on stderr:
+#   "run-gates: PROMOTED to FULL by <path>, outside SCOPED_PATHS: FULL is the session's, once at
+#   landing; an executor stops and reports the path".
 # Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
 #   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
@@ -116,7 +120,7 @@
 #   after the wait limit the run goes ahead without the lock.
 # Exit status = number of FAIL lines (capped at 98); 97 = not admitted (no SUMMARY line);
 #   99 = usage error (including no gates bound, a refused --snapshot, a snapshot that could
-#   not be built and a FULL run under HARNESS_ROLE=executor).
+#   not be built and a FULL run under HARNESS_ROLE=executor, a promoted one included).
 # Known limits: a gate's child that starts its own session (setsid, a daemon) outlives the gate:
 #   the gate must stop what it starts. --snapshot does not see an edit to a file whose index entry
 #   has the skip-worktree bit (git status hides it): a sparse checkout sets that bit on every file
@@ -130,7 +134,7 @@
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
 #      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
 #      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
-#      HARNESS_ROLE=executor refuses a FULL run (see Usage).
+#      HARNESS_ROLE=executor refuses a FULL run, a promoted one included (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "run-gates: needs bash (it uses arrays); run it as: bash scripts/run-gates.sh" >&2
@@ -309,7 +313,8 @@ SCOPED_REQ=0
 [ -n "$SINCE" ] && SCOPED_REQ=1
 # Sets MODE, CHANGED and NOTE. The changed files are computed before the log dir is created,
 # minus anything under the log dirs themselves, so a run's own logs never count as a change.
-# Called again after a lock wait: the tree may have changed meanwhile.
+# Called again after a lock wait: the tree may have changed meanwhile. An executor's run promoted
+# to FULL exits 99 here, wherever it is called: FULL is the session's (see Usage).
 compute_scope() {
   local diff_out untracked_out outside
   MODE=full
@@ -329,6 +334,10 @@ compute_scope() {
     if [ -n "$outside" ]; then
       NOTE="PROMOTED to FULL: $outside"
       MODE=full
+      if [ "${HARNESS_ROLE:-}" = executor ]; then
+        echo "run-gates: PROMOTED to FULL by $outside, outside SCOPED_PATHS: FULL is the session's, once at landing; an executor stops and reports the path" >&2
+        exit 99
+      fi
     fi
   fi
 }

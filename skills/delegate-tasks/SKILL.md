@@ -54,7 +54,10 @@ Dispatch, by host; in a harness, `.agents/harness-models.json`).
 
 Handle directly instead, and say why: a single bug (diagnosis is most of the work);
 design decisions still open; tasks that must edit the same files; judgment-heavy or
-taste work.
+taste work. Units too big for a subagent (about 70 tool calls or a 200K peak, the
+owner needed mid-run, or review rounds of their own), two or more with disjoint
+write sets that can start now: suggest worker sessions (`coordinate-sessions`) as
+one card instead.
 
 ## How It Works
 

@@ -915,7 +915,7 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 11 for 2.2.3-js.14, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 12 for 2.2.3-js.15, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
@@ -923,6 +923,7 @@ test("upgrade.md has a version row 11 for 2.2.3-js.14, and both skills, the mani
   assert.match(text, /^\| 9 \| 2\.2\.3-js\.12 \| /m, 'the version table has no row 9 for 2.2.3-js.12');
   assert.match(text, /^\| 10 \| 2\.2\.3-js\.13 \| /m, 'the version table has no row 10 for 2.2.3-js.13');
   assert.match(text, /^\| 11 \| 2\.2\.3-js\.14 \| /m, 'the version table has no row 11 for 2.2.3-js.14');
+  assert.match(text, /^\| 12 \| 2\.2\.3-js\.15 \| /m, 'the version table has no row 12 for 2.2.3-js.15');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -931,7 +932,7 @@ test("upgrade.md has a version row 11 for 2.2.3-js.14, and both skills, the mani
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v10 install the v11 row, a v9 install the v10 and v11 rows, a v3 install the v4 to v11 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v10, v9 or v3 install to v11');
+  assert.ok(flat.includes('a v11 install the v12 row, a v10 install the v11 and v12 rows, a v3 install the v4 to v12 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v11, v10 or v3 install to v12');
 });
 
 test('v11: the owner key asks on Claude Code, a claim hears only what blocks it, and FULL is the session\'s, its known reds no fix round', () => {
@@ -956,6 +957,41 @@ test('v11: the owner key asks on Claude Code, a claim hears only what blocks it,
   for (const rel of ['reference/sweep.md', 'reference/hygiene.md']) {
     assert.ok(squashed(rel).includes("only once the product queue is empty, or on the owner's word"), `${rel} does not wait for an empty product queue`);
   }
+});
+
+test('v12: P2-only fix rounds defer, Small carries the claim checklist, Opus reads what the second family wrote, known reds and refused are code', () => {
+  const lineup = squashed('reference/gate-design.md');
+  for (const part of [
+    '| P2 only | **`defer`** — no re-review of its own',
+    'from round 3 **`defer`** — no ladder, the landing check re-reads what it changed (`RE-REVIEW`)',
+    '`[M]` **P2s go in one batch round,**',
+    'A Small unit the second family wrote gets the Opus `code-reviewer` instead',
+    'cold code and an Opus one on critical code, the one place a Sonnet reviewer runs;',
+    'plus the Opus `blast-radius-auditor` only when the Impact Analysis lists a reader outside the diff',
+  ]) assert.ok(lineup.includes(part), `gate-design.md lacks: ${part}`);
+  assert.ok(squashed('reference/conformance-auditor.md').includes('- **Small:** the Scope block, plus the claim checklist Small has no claim audit for:'), 'lane A on Small does not carry the claim checklist');
+  const cross = squashed('reference/cross-model.md');
+  for (const part of [
+    '5 refused (the provider\'s safety filter → rerun that one pass on Opus, never on Codex again)',
+    'that one pass reruns on Opus with the same brief, and the ledger says `refused`.',
+    '**A copy of each ok verdict** at `<ledger dir>/verdicts/<run>-<kind>.md`, named in the row\'s `verdictCopy`',
+  ]) assert.ok(cross.includes(part), `cross-model.md lacks: ${part}`);
+  const runner = squashed('reference/runner.md');
+  for (const part of [
+    '`run-gates.sh` keeps, per gate, the failing tests of the last FULL run on the mainline (`MAINLINE`, `[B]`) from a clean tree',
+    'A failure it cannot name (`FAILED ?`, a timeout, a missing count line) stays `FAIL`.',
+    'a pass it refused (`codex-run` exit 5) → that pass on Opus, `refused`.',
+  ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);
+  assert.ok(squashed('reference/context.md').includes('`skipped` / `unavailable` / `degraded` / `refused` with the reason'), 'the step ledger has no refused row');
+  const up = squashed('reference/upgrade.md');
+  for (const part of [
+    '### Upgrading to v12',
+    'so the landing check says `NONE` and the merge is the owner\'s: `! HARNESS_LANDING=owner git merge --no-ff <branch>`',
+    '**New binding:** `MAINLINE` in `run-gates.sh`',
+  ]) assert.ok(up.includes(part), `upgrade.md lacks: ${part}`);
+  const delegate = fs.readFileSync(path.join(DELEGATE, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(delegate.includes("standalone, the Opus `code-reviewer` reads it"), 'delegate-tasks still sends a second-family slice to a Sonnet reviewer');
+  assert.ok(!/sonnet-code-reviewer/.test(fs.readFileSync(path.join(BOOTSTRAP, 'templates/scripts/lib/review-gate-core.mjs'), 'utf8').replace(/never names `sonnet-code-reviewer`/, '')), 'review-gate still names a Sonnet reviewer');
 });
 
 test("Step 2's merge gives the base and the template the file's own date, and a conflict on a binding keeps the project's value", () => {

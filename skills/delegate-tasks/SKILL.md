@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 11
+  version: 12
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -189,10 +189,10 @@ Templates for every kind are in `reference/spec-templates.md`.
    **second family's review** over a Claude-written slice (with the host's own
    background option and its default time limit, never a shell `&`, while the next
    independent slice starts). A cold second-family slice waits for the
-   unit review (a harness's `review-gate.mjs` says `defer`; standalone, a Sonnet
-   reviewer reads it). **Never an Opus reviewer per Claude-written slice** — in one
-   measured milestone 63 of them found no P0 or P1; Opus reads a slice only when
-   critical code went to the second family anyway. Without a second family: a
+   unit review (a harness's `review-gate.mjs` says `defer`; standalone, the Opus
+   `code-reviewer` reads it). **Never an Opus reviewer per Claude-written slice** — in
+   one measured milestone 63 of them found no P0 or P1; Opus reads a slice only when
+   the second family wrote it. Without a second family: a
    Sonnet reviewer on cold code, Opus on critical code, recorded `degraded`. The
    session reproduces each P0–P2 before acting on it. Then integrate. In a harness
    the session commits here, and `review-gate.mjs` names the reviewer; standalone

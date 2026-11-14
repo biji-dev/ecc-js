@@ -202,6 +202,27 @@ test('--plan: units in different waves may share a file; a hub file in a write s
   assert.ok(h.stdout.includes('HUB orders src/router.ts'), h.stdout);
 });
 
+test('--plan: two globs that can match one file no tracked file shows yet conflict; globs apart by name pass', () => {
+  const dir = repo();
+  const file = board(dir, [
+    ['A', 'reports', '1', '-', '-', 'src/reports/**', '-', '-'],
+    ['B', 'exports', '1', '-', '-', 'src/reports/*.ts', '-', '-'],
+    ['C', 'orders', '1', '-', '-', 'src/orders/**', '-', '-'],
+    ['D', 'orders-new', '1', '-', '-', 'src/orders/new.ts', '-', '-'],
+  ]);
+  const r = check(file, '--plan');
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.ok(r.stdout.includes('CONFLICT src/reports/** ~ src/reports/*.ts reports exports (wave 1: the globs can match one new file)'), r.stdout);
+  assert.ok(r.stdout.includes('CONFLICT src/orders/** ~ src/orders/new.ts orders orders-new'), r.stdout);
+  assert.strictEqual(r.stdout.split('\n').filter((l) => l.startsWith('CONFLICT')).length, 2, r.stdout);
+  const apart = board(dir, [
+    ['A', 'styles', '1', '-', '-', 'src/gen/*.css', '-', '-'],
+    ['B', 'types', '1', '-', '-', 'src/gen/*.ts', '-', '-'],
+  ]);
+  const ok = check(apart, '--plan');
+  assert.strictEqual(ok.status, 0, ok.stdout + ok.stderr);
+});
+
 test('--plan: a shared append-only file in two sets is no conflict', () => {
   const dir = repo();
   const file = board(dir, [
@@ -238,6 +259,25 @@ test('events: a write outside the set prints FENCE, committed and uncommitted al
   assert.ok(!r.stdout.includes('src/orders/c.ts'), r.stdout);
   assert.ok(!r.stdout.includes('docs/log.md'), r.stdout);
   assert.match(r.stdout, /^BOARD 3 findings$/m);
+});
+
+test('events: a hub file inside a worker\'s own write set is still FENCE', () => {
+  const { dir, a } = twoWorkers();
+  const file = board(dir, [['A', 'orders', '1', 'work/orders', a, 'src/**', '-', 's1']]);
+  write(path.dirname(file), 'A.log', 'STARTED orders\n');
+  write(a, 'src/router.ts', 'hub edit\n');
+  write(a, 'src/orders/c.ts', 'mine\n');
+  const r = check(file);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.deepEqual(r.stdout.split('\n').filter((l) => l.startsWith('FENCE')), ['FENCE A src/router.ts']);
+});
+
+test('events: a path git prints with a leading space keeps it, so a write beside the set is FENCE', () => {
+  const { a, file } = twoWorkers();
+  write(a, ' src/orders/x.ts', 'not in src/\n');
+  const r = check(file);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.ok(r.stdout.split('\n').includes('FENCE A  src/orders/x.ts'), JSON.stringify(r.stdout));
 });
 
 test('events: two workers touching one file print OVERLAP', () => {

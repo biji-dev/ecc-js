@@ -61,7 +61,8 @@ session); work whose design is still open; cloud sessions as workers.
     `reference/board.md`.
   - `<w>.log`: its worker only, append-only, one typed line per event.
 - **Run `board-check --plan`** on the board before any worktree exists. A file in two
-  sets moves one unit to a later wave or becomes a hub file.
+  sets, or two globs that could both match a file one unit will create, moves one unit
+  to a later wave or becomes a hub file.
 - **Hub files** (the package manifest, the lockfile, routers, trackers) belong to the
   controller, which lands one hub commit before each wave.
 - **ID ranges:** each worker gets its own range for every "next free number":
@@ -140,7 +141,7 @@ At every event (a message, an idle notice, after a compaction) the controller ru
 
 | Line | Meaning | The controller's move |
 |---|---|---|
-| `FENCE <w> <path>` | a write outside the worker's set, uncommitted included | `REROUTE` the path to its owner, or move it into the set on the board and say so |
+| `FENCE <w> <path>` | a write outside the worker's set or to a hub file, uncommitted included | `REROUTE` the path to its owner, or move it into the set on the board and say so |
 | `OVERLAP <w1> <w2> <path>` | two workers changed one file | `HOLD` the later one; the file goes to one of them or becomes a hub file |
 | `BEHIND <w> <n>` | the branch lacks the mainline's newest `<n>` commits | `MERGE-MAIN` when the landed diff touches its set, else leave it for READY |
 | `QUIET <w> <n>m` | no log line, commit or file change for 30 minutes | usually a prompt only the owner can answer: tell the owner which terminal |

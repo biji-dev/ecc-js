@@ -4,14 +4,16 @@
 //   node board-check.mjs --plan <board.md>
 //     Before any worker starts: expands each unit's write-set globs against `git ls-files` (a glob
 //     with no wildcard also counts as itself, so a file a unit will create is checked too) and
-//     refuses a file that two units of one wave would write, or a hub file inside a write set.
+//     refuses a file that two units of one wave would write, or a hub file inside a write set. Two
+//     units of one wave whose globs could match one path no tracked file shows yet (`src/new/**`
+//     and `src/new/*.ts`) are refused too, naming both globs.
 //     Exit 0: the sets are disjoint. Exit 1: CONFLICT / HUB lines, then PLAN REFUSED.
 //
 //   node board-check.mjs <board.md> [--quiet-min <n>] [--now <ISO time>]
 //     At each event (a message, an idle notice, after a compaction): for every active worker, in its
 //     worktree, the files its branch changed since it left the mainline, uncommitted and untracked
 //     included. Prints, one per line:
-//       FENCE <worker> <path>             a write outside the worker's write set (a hub file too)
+//       FENCE <worker> <path>             a write outside the worker's write set, or to a hub file
 //       OVERLAP <worker> <worker> <path>  two workers changed one file
 //       BEHIND <worker> <n>               the branch lacks the mainline's newest <n> commits
 //       QUIET <worker> <n>m               no log line, commit or file change for <n> minutes (default
@@ -46,6 +48,8 @@ function git(cwd, args) {
 }
 
 const lines = (text) => String(text).split('\n').map((l) => l.trim()).filter(Boolean);
+// git's -z output: paths as they are, a leading or trailing space kept
+const zlist = (text) => String(text).split('\0').filter(Boolean);
 const cellsOf = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.replace(/`/g, '').trim());
 const isSep = (line) => /^\s*\|[\s:|-]*-[\s:|-]*$/.test(line);
 const list = (value) => String(value ?? '').split(',').map((s) => s.replace(/`/g, '').trim()).filter((s) => !PLACEHOLDER.test(s));
@@ -119,6 +123,53 @@ const anyOf = (globs) => {
   return (file) => tests.some((t) => t(file));
 };
 
+const hasWild = (glob) => /[*?]/.test(glob);
+
+/** A glob as path segments, `**` for any depth: a glob with no wildcard or a trailing `/` covers what is under it. */
+function segments(glob) {
+  const g = glob.trim().replace(/^\.\//, '');
+  const segs = g.replace(/\/+$/, '').split('/').filter(Boolean).map((x) => (x.includes('**') ? '**' : x));
+  return !hasWild(g) || g.endsWith('/') ? [...segs, '**'] : segs;
+}
+
+/** Whether two one-segment patterns (`*` and `?` inside it) can match one name. */
+function segmentsMeet(a, b) {
+  const memo = new Map();
+  const meet = (i, j) => {
+    const key = i * (b.length + 1) + j;
+    if (memo.has(key)) return memo.get(key);
+    let r;
+    if (i === a.length && j === b.length) r = true;
+    else if (a[i] === '*') r = meet(i + 1, j) || (j < b.length && meet(i, j + 1));
+    else if (b[j] === '*') r = meet(i, j + 1) || (i < a.length && meet(i + 1, j));
+    else if (i === a.length || j === b.length) r = false;
+    else r = (a[i] === '?' || b[j] === '?' || a[i] === b[j]) && meet(i + 1, j + 1);
+    memo.set(key, r);
+    return r;
+  };
+  return meet(0, 0);
+}
+
+/** Whether two write-set globs can match one repository path, existing or not. */
+export function globsMeet(x, y) {
+  const a = segments(x);
+  const b = segments(y);
+  const memo = new Map();
+  const meet = (i, j) => {
+    const key = i * (b.length + 1) + j;
+    if (memo.has(key)) return memo.get(key);
+    let r;
+    if (i === a.length && j === b.length) r = true;
+    else if (a[i] === '**') r = meet(i + 1, j) || (j < b.length && meet(i, j + 1));
+    else if (b[j] === '**') r = meet(i, j + 1) || (i < a.length && meet(i + 1, j));
+    else if (i === a.length || j === b.length) r = false;
+    else r = segmentsMeet(a[i], b[j]) && meet(i + 1, j + 1);
+    memo.set(key, r);
+    return r;
+  };
+  return meet(0, 0);
+}
+
 /** The main checkout: the parent of git's common dir when that is a .git, else the top level. */
 function mainCheckout(dir) {
   const top = git(dir, ['rev-parse', '--show-toplevel']).trim();
@@ -148,8 +199,26 @@ export function planFindings(board, files) {
       owners.set(f, [...(owners.get(f) ?? []), u.unit]);
     }
   }
+  const named = new Set();
   for (const [wave, owners] of byWave) {
-    for (const [f, units] of owners) if (units.length > 1) out.push(`CONFLICT ${f} ${units.join(' ')} (wave ${wave})`);
+    for (const [f, units] of owners) {
+      if (units.length < 2) continue;
+      out.push(`CONFLICT ${f} ${units.join(' ')} (wave ${wave})`);
+      for (const x of units) for (const y of units) named.add(`${wave}\0${x}\0${y}`);
+    }
+  }
+  // Globs that could meet on a path git does not show yet: a file one of the units will create.
+  const sets = board.units.filter((u) => u.writeSet.length);
+  for (let i = 0; i < sets.length; i += 1) {
+    for (let j = i + 1; j < sets.length; j += 1) {
+      const [u, v] = [sets[i], sets[j]];
+      if (u.wave !== v.wave || u.unit === v.unit || named.has(`${u.wave}\0${u.unit}\0${v.unit}`)) continue;
+      const pair = u.writeSet.flatMap((g) => v.writeSet.map((h) => [g, h])).find(([g, h]) => {
+        const literal = [g, h].filter((x) => !hasWild(x)).map((x) => x.replace(/^\.\//, '').replace(/\/+$/, ''));
+        return !literal.some((f) => shared(f) || hub(f)) && globsMeet(g, h);
+      });
+      if (pair) out.push(`CONFLICT ${pair[0]} ~ ${pair[1]} ${u.unit} ${v.unit} (wave ${u.wave}: the globs can match one new file)`);
+    }
   }
   return out;
 }
@@ -157,8 +226,8 @@ export function planFindings(board, files) {
 /** The files a worker's branch changed since it left the mainline: committed, staged, unstaged, untracked. */
 function changedFiles(wt, mainline) {
   const base = git(wt, ['merge-base', `refs/heads/${mainline}`, 'HEAD']).trim();
-  const tracked = lines(git(wt, ['diff', '--name-only', '--no-renames', base, '--']));
-  const untracked = lines(git(wt, ['ls-files', '--others', '--exclude-standard']));
+  const tracked = zlist(git(wt, ['diff', '--name-only', '-z', '--no-renames', base, '--']));
+  const untracked = zlist(git(wt, ['ls-files', '-z', '--others', '--exclude-standard']));
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith('.review-work/')).sort();
 }
 
@@ -174,6 +243,7 @@ const mtimeMs = (file) => {
 export function eventFindings(board, root, boardDir, { now = Date.now(), quietMin = QUIET_MIN } = {}) {
   const mainline = board.keys.mainline || 'main';
   const shared = anyOf(list(board.keys.shared));
+  const hub = anyOf(list(board.keys.hub));
   const out = [];
   const seen = [];
   const active = board.units.filter((u) => u.worker && u.worktree && !INACTIVE.test(u.state));
@@ -185,7 +255,8 @@ export function eventFindings(board, root, boardDir, { now = Date.now(), quietMi
     }
     const changed = changedFiles(wt, mainline);
     const inSet = anyOf(u.writeSet);
-    for (const f of changed) if (!shared(f) && !inSet(f)) out.push(`FENCE ${u.worker} ${f}`);
+    // a hub file is the controller's, even inside a worker's write set
+    for (const f of changed) if (!shared(f) && (hub(f) || !inSet(f))) out.push(`FENCE ${u.worker} ${f}`);
     const behind = Number(git(wt, ['rev-list', '--count', `HEAD..refs/heads/${mainline}`]).trim());
     if (behind > 0) out.push(`BEHIND ${u.worker} ${behind}`);
     const committed = Number(git(wt, ['log', '-1', '--format=%ct', 'HEAD']).trim()) * 1000;
@@ -231,7 +302,7 @@ function main(argv) {
     usage(error.message.split('\n')[0]);
   }
   if (plan) {
-    const files = lines(git(root, ['ls-files']));
+    const files = zlist(git(root, ['ls-files', '-z']));
     const found = planFindings(board, files);
     for (const line of found) process.stdout.write(`${line}\n`);
     const units = board.units.filter((u) => u.writeSet.length).length;

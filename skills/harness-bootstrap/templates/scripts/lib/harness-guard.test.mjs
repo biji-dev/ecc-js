@@ -715,6 +715,17 @@ test('move: a fast-forward to what the remote mainline holds passes, fetched fir
   assert.equal(tip(e), there);
 });
 
+test('move: a fetch into the mainline from a path that is no configured remote is refused, on every git', () => {
+  const d = landing();
+  const other = path.join(tmp('harness-guard-other-'), 'o.git');
+  assert.equal(git(path.dirname(other), 'clone', '-q', '--bare', d, other).status, 0, 'clone --bare');
+  assert.equal(git(other, 'update-ref', MAIN_REF, `refs/heads/${LANDS}`).status, 0, 'the other mainline at the edit');
+  setup(d, ['switch', '-q', LANDS]);
+  const before = tip(d);
+  // its FETCH_HEAD line names the mainline, but of a URL no remote holds
+  assertMoveRefused(d, run(d, ['fetch', '-q', other, `${MAINLINE}:${MAINLINE}`]), before);
+});
+
 test('move: a rewind of the mainline to content it held passes', () => {
   const d = landing();
   const back = tip(d, `${MAINLINE}~1`);

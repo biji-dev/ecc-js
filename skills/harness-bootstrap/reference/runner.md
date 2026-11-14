@@ -24,7 +24,8 @@ a command's word — all left waiting on the owner (`gate-design.md` › Parking
 unit), a `Stop:` line, the host's own usage limit — or when nothing passes the
 relevance test: then end on `DONE — waiting on you:`, the `OWED` lines first
 (› Due-checks). Never invent work. A memory refusal at a live step parks its unit;
-a second family out of quota is `degraded`, never a stop.
+a second family out of quota is `degraded`, never a stop, and a pass its safety
+filter refused reruns on Opus (`refused`).
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
@@ -202,14 +203,14 @@ next check.
 | Gate 1 | — | **auto** unless the risk map or the policy is hit | the grant (the gate table) — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
-| 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
+| 4 conform | — | against the Scope block, carrying the claim checklist | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
 | 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s ride along | the same (`gate-design.md`) |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8a verify | scoped | FULL once before merge | FULL |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
-| 8c claims | — | **skipped; the record is generated** | blocking, **behaviour claims**, one round |
+| 8c claims | — | **skipped; the record is generated**, lane A carries the checklist | blocking, **behaviour claims**, one round |
 | Gate 2 | merge when green | merge when green | merge when green, the landing check passed |
 
 `[M]` **At `production: none`** critical code runs Small's column plus the adversarial
@@ -288,7 +289,11 @@ as its own commit. Never reclaim a row you do not own.
 - `[M]` **The write set is the paths the Scope block names**; compare them against
   every other held or parked row's. Overlap means sequence, not parallelise: the
   claim waits or narrows its paths, or takes the next ready unit instead.
-- `[M]` **One unit in flight**, plus hotfixes; a parked unit is not in flight.
+- `[M]` **One unit in flight per session**, plus hotfixes; a parked unit is not in flight.
+  Two or more units, each too big for a subagent, with disjoint write sets and ready
+  now: suggest worker sessions (`coordinate-sessions`) as one card. Under its
+  controller a worker runs its unit to the land commit and stops there; the
+  controller runs FULL and the merge.
 - `[B]` Branch naming (carrying the task id, or matched by the Branch cell) ·
   worktree convention. **Every kind of unit has a branch form:** plan items carry
   their id; the code half of an approved change request carries the request's id (or runs on
@@ -440,7 +445,8 @@ listening one at 6 hours or once its directory is gone.
   and `effort` passed on each (`gate-design.md` › Review lineup; lane B's brief in
   `blast-radius-auditor.md`). On Small the adversarial pass with lane B's brief joins
   when the Impact Analysis lists a reader outside the diff. The second family
-  unavailable → the fallbacks in `gate-design.md`, `degraded`.
+  unavailable → the fallbacks in `gate-design.md`, `degraded`; a pass it refused
+  (`codex-run` exit 5) → that pass on Opus, `refused`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.
   Briefs forbid host-level operations and repository-wide suite runs. A reviewer
   that mutates code to prove a test does it in a worktree of its own, never the
@@ -460,7 +466,9 @@ listening one at 6 hours or once its directory is gone.
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
   fix diff only; `--writer` is the role that wrote the fix, as for the unit. Round 3
-  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks.
+  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks. P2s go
+  in one batch round: a round that closed only P2s is `defer`, no re-review of its
+  own, on cold code and on critical code from round 3 (the landing check reads it).
 - `[M]` **The P3 batch**, at `production: live` only, runs once per slice set after
   the fix rounds: one Sonnet fixer (or the second family's `fix-cold`) over every P3
   still IN scope, its targeted tests, no re-review (`review-gate.mjs` says
@@ -490,12 +498,27 @@ listening one at 6 hours or once its directory is gone.
   one. The key is the working tree's tracked and untracked files plus what
   `RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`; ignored inputs (`node_modules`, `.env`) and refs are
   not in it unless named, and worktrees of one repository share the cache.
-- `[M]` **Known reds.** A failing FULL gate is compared with that gate's last
-  mainline FULL log; a failure the mainline shows too is `KNOWN` in the state file,
-  both log lines quoted. It is never a fix round and never a reason to re-run FULL,
-  nor blocks merge when green while the diff touches neither the test nor its
-  subject; each gets one follow-up row.
+- `[M]` **Known reds.** `run-gates.sh` keeps, per gate, the failing tests of the
+  last FULL run at the mainline's tip (`MAINLINE`, `[B]`) from a clean tree — the
+  `run-counted: FAILED <file> :: <test>` lines run-counted prints after its verdict
+  — with the commit it ran on; a mainline pass clears them, and a run whose tree
+  moved before its last gate records nothing. On a branch whose merge base is that
+  commit or older (a record from before the branch point could hide a fix made
+  since), a gate whose command is one run-counted call and that exits non-zero
+  naming only tests in that record, each in a file the merge base has, the diff and
+  the untracked files leave alone and that spells the test's title, prints `KNOWN`
+  instead of `FAIL`: it counts as no failure, is never a fix round,
+  never a reason to re-run FULL and never cached. Quote the `KNOWN` line in the
+  state file; each gets one follow-up row. A failure it cannot name (`FAILED ?`, a
+  timeout, a missing count line) stays `FAIL`. **No record yet:** when a FULL gate
+  fails only on tests in files the diff left alone and nothing printed `KNOWN`, run
+  `bash scripts/run-gates.sh --snapshot` once in a checkout at the mainline's tip
+  (detached is fine), then the branch's FULL again; branches cut at or before that
+  commit reuse the record, and after the next merge a red that persists needs one
+  more such run.
   > Origin: 324 FULL runs, 37 hours, for 102 merges; known reds re-run each time.
+  > The v12 study: 28 of 179 FULL reds were pre-existing or flaky, and v11's rule,
+  > text the session applied by hand, caught few of them.
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state

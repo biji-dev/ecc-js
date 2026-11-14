@@ -1,6 +1,6 @@
 # The gated agent harness
 
-**Describes:** skills `version: 11`, plugin `2.2.3-js.14`, branch `slim/harness-js14`, 2026-11-13.
+**Describes:** skills `version: 12`, plugin `2.2.3-js.15`, branch `slim/harness-js15`, 2026-11-14.
 `tests/fork/harness-doc.test.js` fails when the skills' version moves on without this file. A
 plugin build that changes other things needs no edit here, so the build above can trail the
 plugin's current one.
@@ -131,11 +131,14 @@ Ops steps, a deploying push included, and a landing the check sends to the owner
 press ([§8](#the-standing-grant)).
 
 **The design says the owner no longer does:** approve steps or merges, manage the context, restart
-sessions, ask what is next, or answer technical questions. These are the aims of v8 to v11, and
-no install runs all of them yet: five run v9, none v10 or v11 ([§16](#install-state-2026-11-10)).
+sessions, ask what is next, or answer technical questions. These are the aims of v8 to v12, and
+no install runs all of them yet: five run v9, none v10 or later ([§16](#install-state-2026-11-10)).
 
 **v11 in one line:** the owner is asked last and once, and the machine cleans up after itself
 instead of warning ([§3](#the-arc-of-the-versions)).
+
+**v12 in one line:** pay only for the steps that find things, keep the evidence that says which
+ones do, and give big work a controller session instead of the owner relaying by hand.
 
 **What it is not:**
 
@@ -207,6 +210,10 @@ Each round followed measurement of the last one ([§17](#17-version-history)):
    first ([§18](#the-v10-study-2026-11-09)).
 8. **v11, asked last, cleaned up:** one key press for an owner landing, the run's asks at its end,
    product units before harness units, and orphaned shells reaped instead of reported.
+9. **v12, pay for what finds:** a 10-day study of 14 installs priced each step by what it found;
+   re-reviews of P2-only fixes, the Sonnet reviewer, the claim audit on Small and known reds stop
+   costing a step, verdicts are kept so the next cut is measured, and the own skill
+   `coordinate-sessions` runs worker sessions behind one controller.
 
 ## 4. Architecture
 
@@ -481,7 +488,7 @@ Runtime directories stay gitignored: `.review-work/`, `.codex-runs/`, `.claude-r
 | `.claude/hooks/command-guard.mjs` | Before a shell command on Claude Code, Codex and ZCode | Parses the command. Refuses `--no-verify`, hook-path overrides, mainline force-push or delete, a fast-forward merge onto mainline, a git command that changes a host variable, a backgrounded Codex run, a background `while`, `until`, `tail -f` or `watch` that no `timeout` encloses (`unbounded-wait`), and a FULL `run-gates.sh` inside a subagent (`full-verify-executor`). `HARNESS_LANDING=owner git merge --no-ff <branch>`, alone on one line, and a push to mainline under `Push deploys: yes` become a permission prompt that shows the landing verdict (the owner key, [§8](#the-standing-grant)); any other line that sets `HARNESS_LANDING` is refused (`landing-override`). Where it cannot ask (Codex, ZCode, `bypassPermissions`, `dontAsk`) it refuses and names the `! <command>` the owner types. On a line that runs git, it also refuses a command other than git that names one of those variables, unless that command is a search printing to the terminal; the reason says to run the two apart. `EXTRA_RULES` adds project rules. **Limits:** not a sandbox. A program named by a variable, an alias, a setting made in an earlier call and the files a line runs are not read |
 | `.claude/hooks/edit-guard.mjs` | Before an agent's file edit | Refuses env files (except `.example`, `.sample`, `.template`) and installed packages, case-insensitively and through symlinks |
 | `.claude/hooks/context-budget.mjs`* | `UserPromptSubmit`, `PostToolUse` | Gives the model a one-line context figure in 25K bands. Silent after a compaction until the next reply, and on `Stop`. Never blocks |
-| `.claude/hooks/session-resume.mjs`* | `SessionStart`: startup, resume, clear, compact; `UserPromptSubmit` | At `SessionStart`, for each held or parked unit, prints step, branch, worktree, the state file's `## Next`, open `Q-n` cards, the standing grant from `AGENTS.md`, a kickoff's narrowing and `Stop:` line, and the inbox, capped at 4,000 bytes. At `UserPromptSubmit`, one line of what other sessions did since this one's last turn (`[other sessions] since your last turn: main +2 (…) · <unit> claimed · …`), compared with its own tmp file; the first run of a session says nothing. Writes only that file; any failure says nothing |
+| `.claude/hooks/session-resume.mjs`* | `SessionStart`: startup, resume, clear, compact; `UserPromptSubmit` | At `SessionStart`, for each held or parked unit, prints step, branch, worktree, the state file's `## Next`, open `Q-n` cards, the standing grant from `AGENTS.md`, a kickoff's narrowing and `Stop:` line, and the inbox, capped at 4,000 bytes. A session started in a linked worktree that a held row names sees only that checkout's rows in full and each other held row as one `HELD ELSEWHERE` line it never continues; the main checkout sees every row. At `UserPromptSubmit`, one line of what other sessions did since this one's last turn (`[other sessions] since your last turn: main +2 (…) · <unit> claimed · …`), compared with its own tmp file; the first run of a session says nothing. Writes only that file; any failure says nothing |
 | `.claude/hooks/leftover-processes.mjs` | `SessionStart`, `Stop`, `UserPromptSubmit`, on every Claude Code install | **Reaps** (SIGTERM, then SIGKILL a second later) an orphan of the hook's own uid: parent 1, no TTY, 10 minutes old, nothing in its subtree listening (so `npm run dev &`, whose server is npm's child, stays, but only until 6 hours old, the `LISTEN_HOURS` binding, or until its directory is gone, so a finished unit's server never keeps its worktree from the sweep) and no match for the `KEEP` binding, its process group's leader gone, and no service manager runs it (a launchd job, a systemd service other than the hook's own). It must run in this checkout or its worktrees, or be a shell on `-c` using 30% of a CPU anywhere. A failed reading reaps nothing. **Reports**, once and on `Stop` only, a tool shell of the session 30 minutes old with no CPU and no listener, so the session stops it. The reaped line says how to keep a job running (the host's background option, not a shell `&`); a `Stop` with nothing stuck keeps it for the next prompt. Lists this checkout's listeners to the model at most once an hour, and notifies the desktop once a day under 5 GB free. No memory notice, and nothing to the owner on `Stop`. **Limits:** a process in its own live group, or one a service manager runs, is never touched; a gate's grandchild that starts its own session is the gate's to stop |
 
 ### Scripts the run calls
@@ -496,12 +503,12 @@ Runtime directories stay gitignored: `.review-work/`, `.codex-runs/`, `.claude-r
 | `scripts/intake.mjs` | Intake | `--check` holds a drafted request to the owner sheet; `--gate1` makes unit 1's Gate 1 automatic while its approval still matches |
 | `scripts/review-gate.mjs` | Each slice, step 8, each fix round, step 9 | Names the reviewers from facts about the diff ([§9](#who-reviews-what)); `--tier harness` names one cross-family reviewer over harness paths only; `--landing <result>` is the landing check ([§9](#the-landing-check)) |
 | `scripts/docs-drift.mjs` | Step 8a | Lists docs that may have gone stale against the diff |
-| `scripts/run-gates.sh`*, `scripts/run-counted.mjs`*, `scripts/lib/admission.mjs` + `admission-core.mjs` | Verification | Runs every gate and never bails; prints PASS, FAIL or SKIP and a summary; reuses a result by tree (`REUSED`); waits for another run's lock, 30 minutes by default, then goes ahead without it. A FULL run first passes admission: it waits up to an hour for 4 GB of memory, 5 GB of disk and a load under 3 per CPU, else `NOT ADMITTED` and exit 97 with no gate run. Each gate runs in its own process group and fails after `GATE_TIMEOUT` (60 minutes). Under `HARNESS_ROLE=executor` a FULL run exits 99. Counted gates pass only with no failed, skipped, todo or flaky test and at least the minimum count. **Limits:** a gate's child that starts its own session outlives it; admission is checked at the start, so a machine that turns short mid-run still runs short |
+| `scripts/run-gates.sh`*, `scripts/run-counted.mjs`*, `scripts/lib/admission.mjs` + `admission-core.mjs` | Verification | Runs every gate and never bails; prints PASS, FAIL or SKIP and a summary; reuses a result by tree (`REUSED`); waits for another run's lock, 30 minutes by default, then goes ahead without it. A FULL run first passes admission: it waits up to an hour for 4 GB of memory, 5 GB of disk and a load under 3 per CPU, else `NOT ADMITTED` and exit 97 with no gate run. Each gate runs in its own process group and fails after `GATE_TIMEOUT` (60 minutes). Under `HARNESS_ROLE=executor` a FULL run exits 99, and so does a `--since` run that a change outside `SCOPED_PATHS` promotes to FULL (`PROMOTED to FULL by <path>`). A clean FULL run on `MAINLINE` records each gate's failing tests; elsewhere a gate that fails only on those, in files the branch left alone, prints `KNOWN` and does not count ([§9](#what-counts-as-proof)). Counted gates pass only with no failed, skipped, todo or flaky test and at least the minimum count. **Limits:** a gate's child that starts its own session outlives it; admission is checked at the start, so a machine that turns short mid-run still runs short |
 | `scripts/unit-record.mjs` | Step 8b | Record fields and the log row, from git, state and steps |
 | `scripts/unit-cost.mjs` | Step 8b, retro | The log's Cost cell; `--times` and `--by-step` show where time and money went |
-| `scripts/retro.mjs` | Weekly, or as a unit | The digest ([§14](#the-learning-loop)) |
+| `scripts/retro.mjs` | Weekly, or as a unit | The digest ([§14](#the-learning-loop)), with *Yield by step* from the kept verdicts |
 | `scripts/check-agent-docs.mjs` | A `full`-level gate | Eleven checks: import, budget (warns), hard-limit, rule-paths, rule-index, links, paths, frontmatter, secrets, base (warns), citations |
-| `scripts/codex-run.mjs`*, `scripts/claude-run.mjs`* | Whenever the second family runs | Fixed model, effort and sandbox per kind; budget guard; run ledger, whose review rows carry the reviewed `tree` and `branch` from `scripts/lib/snapshot-tree.mjs` ([§10](#wrappers)). The model runs in a process group of its own with `HARNESS_ROLE=executor`, and a timeout stops the whole group. A `--timeout-min` under 20 is raised to 20: one install's 9-minute foreground limit cut off 5 of its 22 builds |
+| `scripts/codex-run.mjs`*, `scripts/claude-run.mjs`* | Whenever the second family runs | Fixed model, effort and sandbox per kind; budget guard; run ledger, whose review rows carry the reviewed `tree` and `branch` from `scripts/lib/snapshot-tree.mjs` ([§10](#wrappers)). The model runs in a process group of its own with `HARNESS_ROLE=executor`, and a timeout stops the whole group. A `--timeout-min` under 20 is raised to 20: one install's 9-minute foreground limit cut off 5 of its 22 builds. A pass the provider's safety filter turned down is `refused`, exit 5, and reruns on Opus, never on Codex. An `ok` run's verdict is copied to `.codex-runs/verdicts/`, named in the row's `verdictCopy`, so the retro can count it after the worktree is gone |
 
 ### Scripts the skill itself runs
 
@@ -663,13 +670,13 @@ gates.
 | Gate 1 | — | Automatic unless a risk-map or policy hit | The grant; the sheet goes to the digest |
 | 2 implement | The session | The session or one executor | One executor per slice |
 | Per-slice review | — | — | `review-gate --kind slice` |
-| 4 conform | — | Against the Scope block | Against plan and Scope block, once |
+| 4 conform | — | Against the Scope block, carrying the claim checklist | Against plan and Scope block, once |
 | 5–7 live | If behaviour changes | Yes, never dropped | Yes |
 | 8 review | — | `--tier small`: the other family | `--tier full`: one Opus code-reviewer, adversarial pass with lane B, specialists, test analyzer on Sonnet; at `none`, see below |
 | 8a docs | Same commit | `docs-drift`, same commit | `docs-drift`, then a separate sweep |
 | 8a verify | Scoped | FULL, once before merge | FULL |
 | 8b record | A ledger line | `unit-record` | Plus deviations |
-| 8c claims | — | Skipped; the record is generated | Blocking, behaviour claims, one round |
+| 8c claims | — | Skipped; the record is generated, and lane A checks its claims | Blocking, behaviour claims, one round |
 | Gate 2 | Merge when green | Merge when green | Merge when green, the landing check passed |
 
 A P0 or P1 from review promotes a Small unit to Full.
@@ -754,7 +761,7 @@ lines first.
 
 ### A worked example
 
-*Illustrative only: invented, and v11 has no real-session record yet.* A project `shop` runs on
+*Illustrative only: invented, and v12 has no real-session record yet.* A project `shop` runs on
 Claude Code with Codex as second family and `production: live`. Its risk map marks `src/billing/`
 as critical, and its `merge` block holds the default standing grant.
 
@@ -764,10 +771,10 @@ as critical, and its `merge` block holds the default standing grant.
    so Gate 1 is automatic.
 3. Codex builds it as a cold slice. Lane A checks it against the Scope block. The run step exports a
    real file and the integrate step asserts its columns.
-4. `review-gate --kind unit --tier small --writer second` names a Sonnet code-reviewer, because the
+4. `review-gate --kind unit --tier small --writer second` names the Opus code-reviewer, because the
    second family wrote it. The reviewer finds one P2. The session reproduces it, and Codex fixes it.
-   `--kind fix --max-fixed P2 --round 1 --writer second` names the Sonnet reviewer again, scoped to
-   the fix diff.
+   `--kind fix --max-fixed P2 --round 1 --writer second` answers `defer`: a cold fix that closed only
+   P2s gets no re-review of its own, and its regression test proves it.
 5. FULL verify passes, the session saves the record `unit-record` prints, and every ledger row reads `ran`. The
    unit merges because it is green, and the grant pushes it.
 6. The due report prints once, at the end of the run, and the retro runs then, when no product unit is ready. No unit is spent on it.
@@ -967,8 +974,8 @@ reads both. Later questions are batched to at most one owner round per working d
 
 | Lane | Question | Runs | On | Verdict |
 |---|---|---|---|---|
-| **A** plan conformance | Was the plan built, all of it, and nothing else? | Step 4, once per unit | Sonnet, read-only, or Codex `lane-a` | `CLEAN` or `GAPS — n blocking, m advisory` |
-| **B** blast radius | Who else reads what changed? | Step 8, riding in the second family's adversarial pass | Opus agent only when the second family is out | Findings |
+| **A** plan conformance | Was the plan built, all of it, and nothing else? On Small, also: does the tree back each claim of the record? | Step 4, once per unit | Sonnet, read-only, or Codex `lane-a` | `CLEAN` or `GAPS — n blocking, m advisory` |
+| **B** blast radius | Who else reads what changed? | Step 8, riding in the second family's adversarial pass | Opus agent only when the second family is out and the Impact Analysis lists a reader outside the diff | Findings |
 | **C** claims | Does each test fail when its behaviour breaks, and is every behaviour claim true? | Step 8c, Full only, one round | Opus, may sabotage in its own worktree only | `CLAIMS HOLD` or `FALSE CLAIMS (<n>)` |
 
 Sources:
@@ -988,22 +995,33 @@ model family writes, the other reviews.**
 | Slice | Main or bounded model | The second family |
 | Slice, critical | Anyone but Opus | An Opus code-reviewer, immediately |
 | Unit, Small | Opus or Sonnet | The second family, plus triggered specialists |
-| Unit, Small | Second family or mixed | A Sonnet code-reviewer, plus triggered specialists |
+| Unit, Small | Second family or mixed | The Opus code-reviewer, plus triggered specialists |
 | Unit, Small but a critical path | Any | The Full lineup; the row must be re-tiered |
 | Unit, harness lane | Any | One cross-family review over the diff; a path outside the harness's files sends it to the Full lineup |
 | Unit, Full, `production: live` | Any | One Opus code-reviewer, the second family's adversarial pass, triggered specialists, the test analyzer when tests changed |
 | Unit, critical code, `production: none` | Any | The second family's review and adversarial pass, plus specialists but no `silent-failure-hunter` |
 | Fix, P3 only | Any | None. At `live`, a P3 batch once per slice set; at `none`, no batch. On critical code not written by Opus, an Opus reader (the cross-family reviewer at `none`) |
-| Fix, cold, round 1 | Main or bounded model | The second family |
-| Fix, cold, round 1 | Second family | A Sonnet code-reviewer |
+| Fix, cold, P2 only | Any | None (`defer`): the unit review reads it when one is still to come, its regression tests otherwise |
+| Fix, cold, P1 or P0, round 1 | Main or bounded model | The second family |
+| Fix, cold, P1 or P0, round 1 | Second family | The Opus code-reviewer |
 | Fix, cold, round 2 or later | Any | None: "its regression tests prove it" |
-| Fix, critical, P2, or P1 within 40 lines | Opus | The second family |
+| Fix, critical, P2 (rounds 1 and 2), or P1 within 40 lines | Opus | The second family |
 | Fix, critical, P1 over 40 lines | Opus | The second family and Opus, at most two Opus rounds |
 | Fix, critical | Anyone but Opus | Opus |
-| Fix, critical, round 3 / 4 / 5+ | Any | `adversarial`: the second family's pass over the fix diff / `redesign`: the judgment model re-plans the area once and the adversarial pass reviews it / `cut`: the area goes behind a flag or out, the unit lands what is green, one follow-up. None is asked |
+| Fix, critical, P2 only, round 3 or later | Any | None (`defer`): no ladder; the landing check re-reads every critical path it changed beyond reviewed content |
+| Fix, critical, P1 or P0, round 3 / 4 / 5+ | Any | `adversarial`: the second family's pass over the fix diff / `redesign`: the judgment model re-plans the area once and the adversarial pass reviews it / `cut`: the area goes behind a flag or out, the unit lands what is green, one follow-up. None is asked |
 | Fix, harness lane | Any | Round 1: the other family; round 2: `adversarial`; round 3: `drop` the change, one line in `upstream-notes.md` |
 
-Specialists join where the risk map's triggers hit, including fix re-reads:
+**v12 cut what did not find.** A study of 14 installs over 10 days (*classified*) counted what each step
+found. Fix re-reviews hit in 5% of 281 runs; the Sonnet reviewer, the database reviewer and the Opus
+blast-radius auditor found 0, 0 and 2 P0 or P1 in 67 runs between them, while the Opus reviewer found
+22 in 205; the claim audit spent 23.5 hours over 170 runs for one P1. So a fix that closed only P2s is
+`defer`, P2s go in one batch round, the Opus reviewer reads what the second family wrote, a Sonnet one
+runs only as the fallback when the second family is out, and lane B's Opus auditor needs a reader
+outside the diff. The two families still rarely find the same bug, 16 of 174 P0 or P1 (9%), so
+neither family's pass was cut.
+
+Specialists join where the risk map's triggers hit, including fix re-reads and a deferred fix:
 
 | Specialist | Trigger |
 |---|---|
@@ -1044,7 +1062,9 @@ the tree it diffed from (`baseTree`), and whether the tree moved during the run.
 mainline's content through the `baseTree → tree` changes of the `ok` rows of `review`,
 `adversarial` and `adversarial-frontier` runs, and passes when it reaches the result's content. A
 row from the host's own family never counts: on Claude Code only Codex rows do, whatever `HARNESS_HOST` says. Where no host
-names itself, no row counts, so a stripped environment fails closed. One line, exit 1
+names itself, no row counts, so a stripped environment fails closed. An adversarial row counts for its
+whole `baseTree → tree` range, whatever its brief narrowed, so from v12 both wrappers append that range's
+files (up to 200) to the pass's prompt and ask it to read each. One line, exit 1
 unless `PASS`:
 
 | Verdict | Means | Then |
@@ -1064,7 +1084,8 @@ by hand is trusted; the hook runs a working-tree copy of the guard, so a branch 
 `.githooks/` can run its own copy at its own merge; a moved clone runs no hook until
 the install step runs again (`harness-status` names it); an edit undone before the reviewer exits is not seen; a sparse
 checkout earns no landing; rows written before v10 carry no `baseTree`, so a unit in flight across
-the upgrade lands on a fresh review.
+the upgrade lands on a fresh review; that an adversarial pass read every file of its range is asked in its
+prompt, not checked.
 
 ### How findings are handled
 
@@ -1095,10 +1116,15 @@ the upgrade lands on a fresh review.
   --since <the slice's base>`: the command guard refuses FULL inside a subagent and `run-gates.sh` exits 99
   under `HARNESS_ROLE=executor`, which both wrappers set. 128 of 324 FULL runs in three days ran inside
   subagents (measured). FULL waits for admission, and a gate past 60 minutes fails with `(timeout after <n>s)`.
-- **A known red is not a fix round.** A failing FULL gate is compared with that gate's last mainline FULL
-  log; one the mainline shows too is `KNOWN` in the state file, both log lines quoted, with one follow-up
-  row. It blocks nothing while the diff touches neither the test nor its subject. This is runner text; no
-  script computes it.
+- **A known red is not a fix round, and code says which reds are known.** `run-gates.sh` keeps, per gate,
+  the failing tests of the last FULL run at the mainline's tip from a clean tree, read from the `run-counted:
+  FAILED <file> :: <test>` lines, with the commit it ran on; a mainline pass clears them, and a run whose
+  tree moved records nothing. On a branch whose merge base that commit contains, a gate that is one
+  run-counted call and fails naming only tests in that record, each in a file the merge base has, the diff
+  and the untracked files leave alone and that spells the test's title, prints `KNOWN`
+  instead of `FAIL`: it blocks nothing, is never cached, and gets one follow-up row. A failure it cannot
+  name stays `FAIL`. With no record yet, one `--snapshot` run at the mainline's tip makes it. 28 of 179 FULL reds in the v12 study were pre-existing or flaky (*classified*). It
+  checks the failing test's file, not the code the test covers ([§19](#known-gaps)).
 - **Commands decide, not claims.** "The report is a claim" became a rule after the 87-of-88 figure.
 - **A "done" report ends with the step ledger.** A step missing from it did not run.
 
@@ -1110,11 +1136,11 @@ second family where it finds the most for the least.
 
 | Role | Claude Code | Codex | ZCode |
 |---|---|---|---|
-| Main session, critical implementer, Full code review, specialists, claim auditor | Opus | gpt-6.1-sol | GLM-5.3 |
+| Main session, critical implementer, Full code review, specialists, claim auditor, the reviewer of what the second family wrote | Opus | gpt-6.1-sol | GLM-5.3 |
 | First builder for cold slices, cold fixes, cold tests and doc rewrites | Codex, through `codex-run` | The bounded model, since `claude-run` has no write kind | Codex |
 | Per-slice review, Small review, re-reviews, adversarial pass | Codex | Claude, through `claude-run` | Codex, then Claude when it is out |
-| Fallback cold builder, delegated builders, P3 batch, conformance auditor, test analyzer, runners, release runbooks | Sonnet | gpt-6-luna | GLM-5.3-Flash |
-| Lane B when the second family is out | Opus | gpt-6.1-sol | GLM-5.3 |
+| Fallback cold builder, delegated builders, P3 batch, conformance auditor, test analyzer, runners, release runbooks, the code reviewer when the second family is out | Sonnet | gpt-6-luna | GLM-5.3-Flash |
+| Lane B when the second family is out and a reader sits outside the diff | Opus | gpt-6.1-sol | GLM-5.3 |
 
 The model names come from `templates/harness-models.json` and date quickly: each install re-derives
 them from its host's CLI. **Kimi** is supported in the skills' wording and has no row in that file
@@ -1136,7 +1162,9 @@ decision.
 **When the second family is out.** Quota, a login or a missing binary never stops a run. Per-slice
 review falls back to a Sonnet code-reviewer on cold code or an Opus one on critical code, and the
 adversarial pass falls back to Opus. All of these are recorded `degraded`, which itself blocks an
-automatic merge.
+automatic merge. A pass the provider's safety filter refused is different: `codex-run` exits 5, the
+ledger says `refused`, and only that pass reruns on Opus with the same brief. In the v12 study 9 of 362
+adversarial passes were refused, and the wrapper had recorded them as `failed`.
 
 ### Wrappers
 
@@ -1202,6 +1230,23 @@ Build, Fix, Control, Check and Plan. Specs are written to `.claude/tasks/<run-id
    (`running: <slice> <model> <age> · … (quiet <m>)`), so the owner never asks. A wait uses the host's
    completion notice or a bounded `timeout`, never a background `until` or `tail -f`. 21 "is it still
    running?" prompts in three days, four of them real hangs (measured).
+
+**Worker sessions, when subagents will not do.** Since v12 a separate own skill,
+[`coordinate-sessions`](../skills/coordinate-sessions/SKILL.md), covers work that is too big for a
+subagent: two or more units, each over about 70 tool calls or a 200K peak, or needing the owner mid-run
+or review rounds of its own, with disjoint write sets, ready now. This session becomes the controller.
+It writes one board and one kickoff per worker, gives each worker its own worktree, write set and ID
+range, and keeps for itself what two sessions must never do at once: FULL, every merge into the
+mainline, hub files and the next free record number. Workers are sessions the owner starts in their own
+terminals; they talk to the controller over cross-session messages, the file first and the message
+second. `board-check.mjs --plan` refuses write sets that share a file; run against a live board it prints
+`FENCE` for a write outside a worker's set and `OVERLAP` for two workers changing one file. Three
+controllers had been built by hand in three installs, and each re-learned the same traps: one owner
+relayed 16 messages by hand, and another controller's 32 sends drew 18 replies (*measured*). It is
+suggested as one card and starts nothing before the owner's yes, since N sessions cost N times the quota
+and the owner's attention. In a harness, a worker runs its unit to the land commit and stops; the
+session-resume hook shows a worker only its own row, and a worker's `--since` run that is promoted to
+FULL exits 99. Codex, ZCode and Kimi workers cannot receive messages and report through their log.
 
 ## 12. Context
 
@@ -1326,7 +1371,7 @@ plugin kept 209 MB without producing one instinct (self-reported). So measuremen
 
 | Step | Runs | Does |
 |---|---|---|
-| **Retro** | Weekly per project, `REPORT retro` | A committed digest of at most 8 KB: KPIs against the four weeks before, owner touches, **outcomes**, **decisions by card kind**, outliers, money by step, friction, Missed by harness, the queue, at most five candidates |
+| **Retro** | Weekly per project, `REPORT retro` | A committed digest of at most 8 KB: KPIs against the four weeks before, owner touches, **outcomes**, **decisions by card kind**, outliers, money by step, **yield by step** (since v12: the second family's ok runs by kind and how many kept verdicts hold a P0 or P1), friction, Missed by harness, the queue, at most five candidates |
 | **Retro review** | Weekly, machine-wide job | A fresh Opus, read-only, classes each candidate as rule, threshold, machinery fix, vendor trap or promote. It **routes, never asks and never makes a unit**: T becomes a line in `docs/harness/upstream-notes.md`, C stays in the weekly report |
 | **Rule audit** | Quarterly, in the project | Are the rules still true? |
 | **Phase F** | Monthly, or on a promote | Mechanism moves upstream into the skill; thresholds never do |
@@ -1361,8 +1406,9 @@ Listed under `skills.own` in `fork/slim.json`. There are no own agents or comman
 
 | Skill | Role | Size |
 |---|---|---|
-| [`harness-bootstrap`](../skills/harness-bootstrap/SKILL.md) | Assesses, derives, generates, upgrades | 98 files; `SKILL.md` and its references are 405,976 bytes |
+| [`harness-bootstrap`](../skills/harness-bootstrap/SKILL.md) | Assesses, derives, generates, upgrades | 98 files; `SKILL.md` and its references are 415,198 bytes |
 | [`delegate-tasks`](../skills/delegate-tasks/SKILL.md) | Dispatches behind command gates | `SKILL.md` and two references |
+| [`coordinate-sessions`](../skills/coordinate-sessions/SKILL.md) | Runs worker sessions behind one controller, since v12 ([§11](#11-delegate-tasks)) | `SKILL.md`, one reference and `scripts/board-check.mjs` |
 | `skill-advisor` | Unrelated to the harness; recommends library items per project | |
 
 ### Agents generated into each project
@@ -1438,6 +1484,16 @@ landing check say `NONE`, so the owner types `! HARNESS_LANDING=owner git merge 
 once, because the command guard that reads the line is still the mainline's older one. From v11 on such
 a merge is one owner key on Claude Code.
 
+**v12 lands the same way, by the grant with the owner key:** every row is a replace, a keep or a clean
+merge, so there is no owner card, and it replaces guard files (`run-gates.sh`, `run-counted.mjs`,
+`codex-run.mjs`, the review-gate core, the hooks), so the landing check says `NONE` and the merge is the
+owner's one key, `! HARNESS_LANDING=owner git merge --no-ff <branch>`, on an install already at v11. An
+install still on v10 or earlier takes the v11 and v12 rows on one sheet, and types that line by hand as
+for v11. One new binding, `MAINLINE` in `run-gates.sh`, names the branch whose clean FULL runs record the
+known reds. A local rule that sends what the second family wrote to a Sonnet reviewer, or retries a
+refused Codex pass on Codex, goes. `coordinate-sessions` is plugin-only: it reaches a host with the
+plugin and installs nothing into a project.
+
 ### Install state, 2026-11-10
 
 Each install's `skillVersion` in `.agents/harness-manifest.json` (*measured*, 12 installs):
@@ -1477,7 +1533,7 @@ restores the owner's Gate 2 for critical code only.
 
 ## 17. Version history
 
-Eleven versions in 35 days. To v8, 103 commits, and the skill's tree grew from 17 files to 93 (via 30,
+Twelve versions in 36 days. To v8, 103 commits, and the skill's tree grew from 17 files to 93 (via 30,
 41, 47, 89 and 91).
 
 | Skills | Plugin | Date | Merge | What forced it | What it added |
@@ -1496,6 +1552,7 @@ Eleven versions in 35 days. To v8, 103 commits, and the skill's tree grew from 1
 | v9 | 2.2.3-js.12 | 2026-11-07 | `aa04b76e` | A documents-only install landed 1 of 115 plan rows in 29 hours, 7 of its 8 units on the harness | Stakes line and forecast, short foundation, harness lane, product-only cadences, stakes-scaled severity, one-round behaviour claims, batched rows, `process.md` |
 | v10 | 2.2.3-js.13 | 2026-11-09 | `7b0d04f6`, `c6d93d7b` | Product delivery 2 to 3 times slower at v5+ (estimate), about 40% of it self-work | Standing grant and digest, `production: none \| live`, the landing check, fix rounds 3 to 5 that end themselves, relevance test and harness freeze, reports never units, new due lines, warning budgets, outcome and decision-kind retro, upgrade cadence |
 | v11 | 2.2.3-js.14 | 2026-11-13 | `fc58853a` | The owner's 11-point review of v10: 327 owner stops in 185 active hours, 58% of them merge, push or commit and 74% agreed to (*classified*); 69 owner-typed commands; 30 of 102 merges were harness work; about 96 orphaned shells; 324 FULL runs in 37 hours (*measured*) | The owner key for a landing and a deploying push, `unbounded-wait` and `full-verify-executor` in the command guard, the reaper (it spares a subtree that listens, for 6 hours and while its directory exists, and `KEEP`) and stuck watch in the leftover hook, admission and a per-gate timeout in `run-gates.sh`, `WAIT` and a claim that hears only what blocks it, asks as a run's last action, process groups, `HARNESS_ROLE=executor` and a 20-minute floor on `--timeout-min` in the wrappers and briefs, known reds, the since-last-turn line, a narrower guarded-name check. **Removed:** the `HOLD` valve, the memory notice, due lines on every claim, in-unit report dispatch |
+| v12 | 2.2.3-js.15 | 2026-11-14 | | A 10-day study of 14 installs priced each step by what it found: fix re-reviews hit in 5% of 281 runs; the Sonnet reviewer, the database reviewer and the Opus blast-radius auditor found 0, 0 and 2 P0 or P1 in 67 runs; the claim audit 1 P1 in 170 runs and 23.5 hours; 28 of 179 FULL reds were pre-existing or flaky; 9 of 362 adversarial passes ended on the provider's safety filter (*classified*); three controller sessions built by hand (*measured*) | `defer` for a fix round that closed only P2s (cold code, and critical code from round 3), the Opus code-reviewer for what the second family wrote, the claim checklist in Small's lane A, lane B's Opus auditor only with a reader outside the diff, known reds in code (`KNOWN`, the `MAINLINE` binding, run-counted's `FAILED` lines), codex-run's `refused` (exit 5) and verdict copies, the retro's yield by step, `HELD ELSEWHERE` in the session-resume hook, exit 99 for an executor's run promoted to FULL, the guard's trust of a fetch into the mainline on git before 2.50, the own skill `coordinate-sessions`. **Removed:** the Sonnet code-reviewer outside the fallback, and the re-review of a P2-only fix |
 
 Per-version detail is in [`reference/upgrade.md`](../skills/harness-bootstrap/reference/upgrade.md).
 
@@ -1730,7 +1787,7 @@ Since v9, Phase A's fit check offers the last two the no-harness route: hard rul
 ## 19. Open issues
 
 Each item below was checked against the file named, at merge `50478698`; the v10 and v11 items were checked on branch
-`slim/harness-js14`. Line numbers will drift. Nothing here is fixed by this document: it records them as input
+`slim/harness-js14`, and the v12 items on `slim/harness-js15`. Line numbers will drift. Nothing here is fixed by this document: it records them as input
 for the next round. Eight items and one stale line that v10 resolved are gone.
 
 ### Verified disagreements in the skills
@@ -1788,10 +1845,20 @@ Both versions are shown here rather than one being picked.
 - **Stop-line persistence,** above.
 - **KPIs that do not exist:** escaped-defect rate, a control group, realised savings.
 - **Not yet measured in a real session:** the session-resume hook, the queue run, parked gates, the standing grant,
-  the landing check, the owner key, the reaper and admission.
+  the landing check, the owner key, the reaper and admission; from v12, known reds, `refused`, the yield report and
+  `coordinate-sessions` with two workers (its target: no owner relay, no merge conflict outside record docs).
+- **A known red is judged by the failing test's file only.** `run-gates.sh` prints `KNOWN` when the diff leaves that
+  file alone, even when it changed the code the test covers; v11's runner text asked for both. Mapping a test to its
+  subject is not done in code, so a branch that breaks a covered module on top of an old red reads `KNOWN`.
+- **A known-red record serves only branches cut at or before its commit.** A record from before the merge base
+  could hide a fix made since, so after each merge a red that persists needs one more `--snapshot` run at the new
+  tip; a `REUSED` tip run refreshes nothing. Whether those runs cost less than the reruns `KNOWN` saves is measured
+  in the rollout, not known.
+- **Yield by step counts the second family only.** The kept verdicts are codex-run's; the Claude-side reviewers' and
+  lanes' yield still comes from a transcript study.
 - **Least-validated component:** the segment runner, with 2 runs and one halt. It is not installed by default.
 
-### Candidates not in v11
+### Candidates not in v12
 
 From the weekly reviews and the v8 round. None is decided.
 
@@ -1800,12 +1867,11 @@ From the weekly reviews and the v8 round. None is decided.
 - Mutation probing and Phase F's first pass, deferred until after the pilot.
 - The landing check's limits ([§9](#the-landing-check)): a branch that edits the hook itself, and a remote
   mainline ref moved by hand. Hooks installed outside the working tree would close the first.
-- A known-red baseline in code. v11 states the rule as runner text (compare a failing FULL gate with the last
-  mainline log); a script that keeps the mainline's red list would make it a check.
 - Write-set overlap in code. The claim compares the Scope block's paths with every held or parked row's by
   reading; no script does it.
-- Native cross-session messages, in place of the since-last-turn line that infers other sessions from the
-  registry and the mainline's head.
+- Native cross-session messages in the runner, in place of the since-last-turn line that infers other sessions
+  from the registry and the mainline's head. v12's `coordinate-sessions` uses them between a controller and its
+  workers only.
 - Template PASS: a project's pass of the template's own test, dropped from v11 because a project's bindings
   make a byte-for-byte match fail, and one owner key covers the guard files it would protect.
 - Per-review worktrees, a padding check on state-file budgets, and write-once review returns.
@@ -1896,6 +1962,8 @@ origin. Rules ship into each project's `AGENTS.md` from `templates/agents-rules.
 node <skill dir>/scripts/harness-status.js <repo> --text      # read-only status
 node <skill dir>/scripts/retro-weekly.mjs --list              # registered repositories
 node <skill dir>/scripts/machine-sweep.mjs                    # report only; applies nothing
+node <coordinate-sessions dir>/scripts/board-check.mjs --plan <board>   # write sets disjoint: exit 0
+node <coordinate-sessions dir>/scripts/board-check.mjs <board>          # FENCE, OVERLAP and the other live lines
 ```
 
 **In a project:**
@@ -1916,7 +1984,8 @@ bash scripts/run-gates.sh --since <ref>                       # scoped verify: w
 bash scripts/run-gates.sh                                     # full verify, the session's alone
 RUN_GATES_ADMIT='' bash scripts/run-gates.sh                  # RUN_GATES_ADMIT overrides ADMIT; empty turns admission off
 RUN_GATES_GATE_TIMEOUT=900 bash scripts/run-gates.sh          # per-gate limit in seconds; 0 is none (default 3600)
-HARNESS_ROLE=executor bash scripts/run-gates.sh               # exits 99: FULL is refused (the wrappers set it)
+HARNESS_ROLE=executor bash scripts/run-gates.sh               # exits 99: FULL is refused (the wrappers set it), a promoted --since run too
+RUN_GATES_MAINLINE='' bash scripts/run-gates.sh               # overrides MAINLINE; empty records and prints no known reds
 node scripts/lib/admission.mjs --wait 0                       # admission alone: exit 0 admitted, 1 not, 2 usage
 node scripts/unit-cost.mjs --session <id> --by-step <steps file> --unit <unit>   # where the money went
 node scripts/estimate.mjs --log docs/harness/log.md --tier full                 # Gate 1's range
@@ -1938,13 +2007,14 @@ node fork/bin/verify.js --drift --since origin/main           # before committin
 ## Appendix C: test map
 
 This repository has 30 `tests/fork/harness-*.test.js` suites that test the templates and the skill's scripts, plus
-`tests/fork/harness-doc.test.js` for this file.
+`tests/fork/harness-doc.test.js` for this file. `tests/fork/coordinate-sessions.test.js` covers that skill and
+`board-check.mjs`.
 
 | Suite (`harness-…`) | Covers |
 |---|---|
 | `agent-docs`, `template-lint`, `skills`, `cli-help` | The docs check script; the templates passing a project's lint; skill structure, the shipped guard and the budget hook; `--help` on every script |
 | `command-guard`, `guard-scope` | The command guard's rules, the owner key and its ask; the commit guard's checkout scope and Branch-cell matching |
-| `run-gates`, `run-counted`, `project-tests` | The gate runner, its gate timeout, admission call and executor refusal; counted gates; an install with bindings, run at pinned suite counts |
+| `run-gates`, `run-counted`, `project-tests` | The gate runner, its gate timeout, admission call, executor refusal and known reds; counted gates and their `FAILED` lines; an install with bindings, run at pinned suite counts |
 | `review-gate`, `review-workflow` | Reviewer routing; the workflow's fail-closed verifier |
 | `unit-step`, `unit-record`, `unit-cost`, `unit-stack`, `estimate` | Step markers; record fields; cost; stack slots; ranges |
 | `due`, `retro`, `retro-weekly`, `machine-sweep` | Due-checks; digests; the weekly job; the sweep |
@@ -1953,7 +2023,7 @@ This repository has 30 `tests/fork/harness-*.test.js` suites that test the templ
 | `docs-drift`, `intake`, `status` | Drift list; intake checks; `harness-status.js` |
 
 `harness-project-tests` installs the templates, binds the `[B]` values and runs six suites at pinned counts:
-command-guard 52, edit-guard 9, harness-guard 57, context-budget 8, session-resume 19 and run-gates 16.
+command-guard 52, edit-guard 9, harness-guard 58, context-budget 8, session-resume 20 and run-gates 18.
 
 **In a project,** 23 test files run through a counted `harness` gate at `full` level, so a skip fails it. The
 new one, `admission-core.test.mjs`, pins each floor and runs the 60-minute bound on a fake clock.

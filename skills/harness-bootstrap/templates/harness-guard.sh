@@ -125,7 +125,9 @@ landing_check() {
 # the owner's HARNESS_LANDING=owner, no registry and a bare repository with no working tree pass.
 # The base is MAINLINE now, else (MAINLINE being created) the first remote MAINLINE tip; with
 # neither, or no committed review gate at the base, it passes, as the commit path does. A remote
-# MAINLINE line in the same transaction (`git fetch origin main:main` moves both) is trusted too. A
+# MAINLINE line in the same transaction (`git fetch origin main:main` moves both) is trusted too, and
+# on git before 2.50, which moves the two in separate transactions, so is the new tip that FETCH_HEAD
+# names as a configured remote's MAINLINE. A
 # move made from inside .git, or with --git-dir or GIT_DIR from another directory, is refused: there
 # the check cannot find the working tree it reads (a bare repository with no working tree passes),
 # and only an absolute core.hooksPath, which the install sets, makes git run this hook there at all.
@@ -178,6 +180,31 @@ case "${1:-}" in
     fi
     [ -n "$rt_base" ] || exit 0
     git cat-file -e "$rt_base:scripts/review-gate.mjs" 2>/dev/null || exit 0
+    # git before 2.50 moves each fetched ref in its own transaction, MAINLINE first, so a
+    # `git fetch origin main:main` brings no remote line here. That fetch has already written
+    # FETCH_HEAD: a line there for the new tip, naming MAINLINE of a configured remote's URL
+    # (anonymized and trimmed as git writes it), trusts the tip as the remote line would.
+    rt_fh=$(git rev-parse --git-path FETCH_HEAD 2>/dev/null) || rt_fh=""
+    if [ -n "$rt_fh" ] && [ -f "$rt_fh" ]; then
+      rt_urls=$(
+        for rt_r in $(git remote 2>/dev/null); do
+          git remote get-url "$rt_r" 2>/dev/null
+        done | sed -e 's#^\([A-Za-z][A-Za-z0-9+.-]*://\)[^/@]*@#\1#' -e 's#^[^:/@]*@\([^:/]*:\)#\1#' \
+          -e 's#/*$##' -e 's#\.git$##'
+      )
+      if [ -n "$rt_urls" ] && printf '%s\n' "$rt_urls" | awk -v n="$rt_new" -v m="$MAINLINE" -v fh="$rt_fh" '
+        { u[$0] = 1 }
+        END {
+          p = "branch '\''" m "'\'' of "
+          while ((getline l < fh) > 0) {
+            if (split(l, f, "\t") < 3 || f[1] != n || index(f[3], p) != 1) continue
+            if (substr(f[3], length(p) + 1) in u) exit 0
+          }
+          exit 1
+        }'; then
+        set -- "$@" "$rt_new"
+      fi
+    fi
     landing_check "$rt_new^{tree}" "$rt_base" move "$@"
     exit 0
     ;;

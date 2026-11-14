@@ -42,7 +42,8 @@
  *
  * exit: 0 ok (non-empty verdict, recovered retries allowed) | 1 failed | 2 usage | 3 unavailable
  * (quota/login/missing binary -> take the Claude fallback, ledger row `unavailable`) | 4 reserved
- * by the budget guard or the owner's switch (-> do it with Claude).
+ * by the budget guard or the owner's switch (-> do it with Claude) | 5 refused by the provider's
+ * safety filter (-> rerun that one pass on Opus, ledger row `refused`).
  *
  * env: CODEX_RUN=on|essential|off -- `essential` runs only the essential kinds (review,
  * adversarial, adversarial-frontier); `off` reserves every kind. CODEX_RUN_THRESHOLD=<pct>
@@ -66,7 +67,10 @@
  * starts from: review's merge base with --base, else the adversarial --base, else null) and
  * `treeAfter` (the same snapshot once the model exits, with `treeMoved: true` when it differs). The
  * landing check (review-gate.mjs --landing) follows each critical file from the mainline through the
- * reviewed `baseTree -> tree` changes. Each tree is null when git fails.
+ * reviewed `baseTree -> tree` changes. Each tree is null when git fails. An `ok` run's verdict is
+ * also copied to <ledger dir>/verdicts/<run>-<kind>.md, and its row records that path (relative to
+ * the ledger dir) as `verdictCopy`: the retro's yield by step reads the copies after the worktree
+ * that held --out is gone.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -96,13 +100,15 @@ import {
   validateRouterAnswer,
   worktreeLeftovers,
 } from './lib/codex-run-core.mjs';
-import { baseTreeOf, currentBranch, snapshotTree } from './lib/snapshot-tree.mjs';
+import { baseTreeOf, currentBranch, rangeText, snapshotTree } from './lib/snapshot-tree.mjs';
 
 // The kinds the landing check reads (LANDING_KINDS in scripts/lib/review-gate-core.mjs).
 const LANDING_KINDS = ['review', 'adversarial', 'adversarial-frontier'];
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.codex-runs';
+// Where an ok run's verdict is copied, inside the ledger dir.
+const VERDICTS_DIR = 'verdicts';
 // [B] The project's rule resolver: [script relative to the repo this wrapper lives in, flag].
 // Run as `node <script> <flag> <changed files...>`; it prints one rule-file path per line.
 const RULES_FOR = ['scripts/check-agent-docs.mjs', '--rules-for'];
@@ -181,6 +187,35 @@ function worktreeState(cwd) {
 function appendLedger(file, row) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+}
+
+/**
+ * A copy of a verdict beside the ledger, <ledger dir>/verdicts/<stem>-<kind>.md. Returns its path
+ * relative to the ledger dir, or null: an empty or missing verdict, a verdicts dir that is a symlink
+ * or resolves anywhere else, or a copy that failed (the run's result never depends on it). The copy
+ * is written to a temp file in that dir and renamed over the name, so a symlink planted at the name
+ * is replaced, never followed.
+ */
+function keepVerdict(ledgerFile, stem, kind, outFile) {
+  const base = path.dirname(ledgerFile);
+  const dir = path.join(base, VERDICTS_DIR);
+  const tmp = path.join(dir, `.${stem}-${kind}.${process.pid}.tmp`);
+  try {
+    if (!fs.statSync(outFile).size) return null;
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir) !== path.join(fs.realpathSync(base), VERDICTS_DIR)) return null;
+    const rel = `${VERDICTS_DIR}/${stem}-${kind}.md`;
+    fs.copyFileSync(outFile, tmp, fs.constants.COPYFILE_EXCL);
+    fs.renameSync(tmp, path.join(base, rel));
+    return rel;
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // the verdicts path is not a dir (ENOTDIR): no temp file was made there
+    }
+    return null;
+  }
 }
 
 /** Read account-wide rollouts first, then compare their mtime with the ledger's observation. */
@@ -512,6 +547,10 @@ async function main() {
       return EXIT.reserved;
     }
 
+    // An adversarial kind with a range reads all of it: the landing check certifies the whole range
+    // (a review diffs against its own --base and takes no prompt).
+    const ranged = landing && route.mode !== 'review' && snapshot.baseTree && snapshot.tree;
+    const stdin = fullPrompt + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');
     fs.rmSync(outFile, { force: true });
     const writes = route.sandbox === 'workspace-write';
     const before = writes ? worktreeState(a.cwd) : null;
@@ -519,7 +558,7 @@ async function main() {
     const errFile = `${outFile}.stderr.log`;
     const res = await runCodex(argv, {
       cwd: a.cwd,
-      stdin: fullPrompt,
+      stdin,
       logFile,
       errFile,
       timeoutMin: a.timeoutMin,
@@ -564,6 +603,7 @@ async function main() {
       leftovers.dirtyBefore = leftovers.dirtyBefore.filter(mine);
     }
 
+    const kept = result.outcome === 'ok' ? keepVerdict(ledger, base.run ?? `${startedAt}-${process.pid}`, a.kind, outFile) : null;
     appendLedger(ledger, {
       ...base,
       outcome: result.outcome,
@@ -574,6 +614,7 @@ async function main() {
       ms,
       limitsAfter,
       verdict: outFile,
+      ...(kept ? { verdictCopy: kept } : {}),
       ...moved,
       ...(leftovers ? { leftovers } : {}),
     });

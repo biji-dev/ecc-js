@@ -949,6 +949,64 @@ export function claudeRunKpis(entries, { since, until }) {
   return { runs: r.runs, notRun: r.notRun, usd: round2(r.usd), unpriced: r.unpriced };
 }
 
+// A finding line: a severity tag first on the line, after a list or table marker, an id (`F-12 ·`,
+// `| F3 |`), up to two openers (`**`, `[`, `(`, backtick: `**[P1]**`) and a `severity:` label --
+// `F-12 · P1 · a.js:3 ...`, `- **P1** ...`, `| P2 | ...`, `[P0] ...`, `- severity: P1` -- unless
+// what follows says there is none: `P1: none.`, `P1: None found`, `P1: 0 findings`, `P1: none (after
+// review)`, `P1: no issues`, `| P1 | — |`, after more tags or a noun too (`P0/P1: none`, `P0, P1:
+// none`, `P1 findings: none`), but `P1: none of the callers ...` and `P1: 0.5s slower` are findings.
+// A none line's `;` parts are read again (`P0: none; P1: a.js:3 race`). A heading names a section.
+const FINDING_LEAD = String.raw`^\s*(?:[-*+]\s+|\d+[.)]\s+|\|\s*)?`;
+const FINDING_ID = String.raw`(?:[A-Z][A-Z0-9]{0,5}-?\d+[a-z]?\s*[·:|.)\-–—]\s*)?`;
+const FINDING_OPEN = String.raw`(?:(?:\*\*|__|\[|\(|\x60)\s*){0,2}`;
+const FINDING_LABEL = String.raw`(?:(?:severity|sev)\s*(?:\*\*|__)?\s*[:=]\s*(?:\*\*|__)?\s*)?`;
+const NONE_WORD = String.raw`(?:none|nothing|n\/a|nil|0(?![.,]\d)|no\s+(?:findings?|issues?|p[0-3]s?)|[\-–—]+(?=\s*(?:\||$)))`;
+const NONE_AFTER = String.raw`(?:\s*(?:$|[.,;:()*_|\x60\-–—])|\s+(?:found|reported|identified|remaining|open|left|seen|in|at|this|so|yet|after|for|to\s+report|findings?|issues?)\b)`;
+const NONE_MORE = String.raw`(?:(?:[^A-Za-z0-9]*|\s+(?:and|or)\s+)P[0-3]\b)*(?:\s+(?:findings?|issues?)\b)?`;
+const FINDING_NOT_NONE = String.raw`(?!${NONE_MORE}[^A-Za-z0-9]*${NONE_WORD}${NONE_AFTER})`;
+const FINDING_LINE = new RegExp(`${FINDING_LEAD}${FINDING_ID}${FINDING_OPEN}${FINDING_LABEL}(P[0-3])\\b${FINDING_NOT_NONE}`, 'i');
+const FINDING_TAG = new RegExp(`${FINDING_LEAD}${FINDING_ID}${FINDING_OPEN}${FINDING_LABEL}P[0-3]\\b`, 'i');
+
+/** The findings a verdict lists, by severity: the lines FINDING_LINE takes. */
+export function countFindings(text) {
+  const out = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const parts = FINDING_LINE.test(line) || !FINDING_TAG.test(line) ? [line] : line.split(';');
+    for (const part of parts) {
+      const m = FINDING_LINE.exec(part);
+      if (m) out[m[1].toUpperCase()] += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Yield by step: codex-run's ok runs in the window by kind (its step), the verdicts kept for them
+ * (`verdictCopy`, read into `verdicts`: copy path -> text), how many of those list a P0 or P1, and
+ * the P0/P1 lines they list. A run whose copy is missing counts in `runs`, not `kept`; the rate is
+ * over the kept verdicts. Sorted by runs, then kind.
+ */
+export function stepYield(entries, verdicts, { since, until }) {
+  const by = new Map();
+  for (const e of entries) {
+    if (e.outcome !== 'ok' || !inWindow(Date.parse(e.at), since, until)) continue;
+    const kind = e.kind || 'unknown';
+    const s = by.get(kind) ?? { kind, runs: 0, kept: 0, hits: 0, p0p1: 0 };
+    s.runs += 1;
+    const text = e.verdictCopy ? verdicts.get(e.verdictCopy) : undefined;
+    if (typeof text === 'string') {
+      const f = countFindings(text);
+      s.kept += 1;
+      s.p0p1 += f.P0 + f.P1;
+      if (f.P0 + f.P1 > 0) s.hits += 1;
+    }
+    by.set(kind, s);
+  }
+  return [...by.values()]
+    .map((s) => ({ ...s, rate: s.kept ? Math.round((s.hits / s.kept) * 100) : null }))
+    .sort((x, y) => y.runs - x.runs || (x.kind < y.kind ? -1 : 1));
+}
+
 /** Each `key` KPI's median over the newest BASELINE_WEEKS earlier digests of weeks before `week`; null with none. */
 export function previousKpis(previous, week, key = 'transcripts') {
   const list = previous
@@ -1262,6 +1320,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     stepOutliers: stepOutliers(all, currentIds),
     steps: all.filter((u) => currentIds.has(u.unit)),
     stepShares: { markers: stepShares(all, 'markers'), descriptions: stepShares(all, 'descriptions') },
+    stepYield: g.ledger ? stepYield(g.ledger, g.verdicts ?? new Map(), win) : null,
     friction: frictionThemes(records, win),
     frictionCells: records.filter((r) => r.friction && inWin(r.landed)).map((r) => ({ unit: r.id, friction: r.friction })),
     missed: records.filter((r) => r.missed && inWin(r.landed)).map((r) => ({ unit: r.id, missed: r.missed })),
@@ -1403,6 +1462,18 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
   for (const [source, how] of [['markers', 'markers'], ['descriptions', 'dispatch descriptions']]) {
     const shares = d.stepShares[source].filter((x) => x.n >= MIN_COHORT);
     if (shares.length) L.push(`- Median share by step (${how}): ${shares.slice(0, 6).map((x) => `${x.step} ${x.median}% (n=${x.n})`).join(' · ')}`);
+  }
+  L.push('');
+
+  L.push('## Yield by step (Codex verdicts)', '');
+  const y = d.stepYield;
+  if (!y) L.push('- no Codex ledger');
+  else if (y.length === 0) L.push('- no ok Codex run this window');
+  else {
+    L.push('| Step (kind) | Runs | Verdicts kept | With a P0/P1 | P0/P1 lines |', '|---|---|---|---|---|');
+    for (const s of y) L.push(`| ${s.kind} | ${s.runs} | ${s.kept} | ${s.rate === null ? '—' : `${s.hits} (${s.rate}%)`} | ${s.p0p1} |`);
+    const lost = y.reduce((n, s) => n + s.runs - s.kept, 0);
+    if (lost) L.push('', `- ${lost} ok run${lost === 1 ? '' : 's'} with no kept verdict (codex-run copies each into the ledger's verdicts/ since v12)`);
   }
   L.push('');
 

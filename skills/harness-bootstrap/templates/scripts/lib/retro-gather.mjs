@@ -5,7 +5,7 @@
  * Reads what retro-core turns into a digest: the log and the follow-ups doc with each line's commit
  * time (git blame), the state and steps files, earlier digests and exports, the Claude Code
  * transcripts and a Codex host's threads that ran in the repository or one of its worktrees, and the
- * two run ledgers, codex-run's and claude-run's, and the mainline's merges and fix commits around the
+ * two run ledgers, codex-run's (with the verdicts it kept) and claude-run's, and the mainline's merges and fix commits around the
  * window (the files each changed), so a granted decision can be linked to a fix on its unit's files.
  * Read-only: it never writes, and its git is `blame`, `log`, `diff`, `diff-tree`, `rev-parse` and
  * `worktree list`.
@@ -259,6 +259,47 @@ export function findFiles(dir, suffixes, depth = 0, out = []) {
   return out.sort();
 }
 
+// A kept verdict is a Codex reply; one past this size is not a verdict the digest reads.
+const MAX_VERDICT_BYTES = 1024 * 1024;
+
+/**
+ * The verdict copies codex-run kept (`verdictCopy`, relative to the ledger's directory) for the
+ * ledger's rows since `sinceMs`: copy path -> text. Only a regular file inside `<ledger dir>/verdicts/`
+ * is read, never a symlink or a verdicts folder that resolves elsewhere; a missing, unreadable or
+ * oversized copy is left out, and the digest counts it as lost.
+ */
+export function readVerdicts(ledgerFile, entries, sinceMs = 0) {
+  const out = new Map();
+  const dir = path.resolve(path.dirname(ledgerFile), 'verdicts');
+  try {
+    // the ledger's own verdicts/, not a symlink to a folder elsewhere
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir) !== path.join(fs.realpathSync(path.dirname(dir)), 'verdicts')) return out;
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    const rel = e?.verdictCopy;
+    if (typeof rel !== 'string' || !rel || out.has(rel)) continue;
+    if (!(Date.parse(e.at) >= sinceMs)) continue;
+    const file = path.resolve(path.dirname(ledgerFile), rel);
+    if (path.dirname(file) !== dir) continue;
+    let fd = null;
+    try {
+      // a regular file only: a symlink in the folder is no copy codex-run made
+      if (!fs.lstatSync(file).isFile()) continue;
+      fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.size > MAX_VERDICT_BYTES) continue;
+      out.set(rel, fs.readFileSync(fd, 'utf8'));
+    } catch {
+      /* a copy removed or unreadable is a lost copy */
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
+    }
+  }
+  return out;
+}
+
 /** Earlier digests (`retro-*.md`, their data block) and exports (`retro-*.json`) in `dirs`, as previousData records. */
 export function readPrevious(dirs) {
   const out = [];
@@ -299,7 +340,8 @@ function addSteps(steps, markers, fallback) {
  * (rollouts under `codexDir`, streamed: one can pass 512 MB). With `history` ({ sinceMs, untilMs }, the
  * window), the mainline's merges and fixes around it (mainlineHistory, whose `note` rides along on a
  * fallback to HEAD); without it, `merges` and `fixes`
- * are null, so the digest says the git figures were not read rather than zero.
+ * are null, so the digest says the git figures were not read rather than zero. With the Codex
+ * ledger, the verdicts its rows since `sinceMs` kept (readVerdicts).
  */
 export function gather({ top, log, followUps = null, plansDirs = [], projectsDir, codexDir = codexSessionsDir(), ledger = null, claudeLedger = null, sinceMs = 0, history = null }) {
   const logFile = log === null ? null : path.join(top, log);
@@ -315,6 +357,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     sessionUnits: new Map(),
     sessions: 0,
     ledger: null,
+    verdicts: new Map(),
     codex: [],
     claudeRuns: null,
     merges: null,
@@ -348,7 +391,10 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
   }
   for (const { file } of codexProjectSessions(codexDir, roots, sinceMs)) g.codex.push(parseCodexSession(fileLines(file)));
   const ledgerFile = ledger ?? defaultLedger(top);
-  if (fs.existsSync(ledgerFile)) g.ledger = parseLedger(readText(ledgerFile));
+  if (fs.existsSync(ledgerFile)) {
+    g.ledger = parseLedger(readText(ledgerFile));
+    g.verdicts = readVerdicts(ledgerFile, g.ledger, sinceMs);
+  }
   const claudeFile = claudeLedger ?? defaultLedger(top, CLAUDE_LEDGER_DIR);
   if (fs.existsSync(claudeFile)) g.claudeRuns = parseLedger(readText(claudeFile));
   return g;

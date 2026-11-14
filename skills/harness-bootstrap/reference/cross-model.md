@@ -22,9 +22,15 @@ part of; Opus and Sonnet together are `bounded`, which Codex still reviews.
 
 `[M]` **Never block a unit on the second family.** Quota, login or a missing binary
 makes the pass `unavailable`: a fresh Claude agent takes the same prompt — Sonnet for
-a per-slice review of cold code, Opus for critical code, the adversarial pass and
-lane B — and the ledger says **degraded**, quoting the wrapper's reason. The owed
-pass runs at the next unit's equivalent step over both diffs.
+a per-slice review of cold code, Opus for critical code and the adversarial pass, and
+lane B's Opus auditor when the Impact Analysis lists a reader outside the diff — and
+the ledger says **degraded**, quoting the wrapper's reason. The owed pass runs at the
+next unit's equivalent step over both diffs. A pass the provider's safety filter
+refused (`refused`, exit 5) is not retried there: that one pass reruns on Opus with
+the same brief, and the ledger says `refused`.
+> Origin, the v12 study: an adversarial pass ran 7.8 minutes and ended on the
+> provider's cybersecurity filter; the wrapper recorded `failed`, and the retry on
+> Codex would have met the same filter.
 
 `[M]` **Use it where it finds the most, then let it build.** In the cost study the
 second family found 43% of all valid P0/P1 — half of them in re-reviews — at no cost
@@ -104,7 +110,9 @@ What it does that a bare call does not:
 - **An honest exit:** 0 only for a non-empty verdict with no failure or error event; 1
   failed; 2 usage; 3 unavailable (quota, login, missing binary → take the Claude
   fallback); 4 reserved (the budget guard or the owner's switch → do it with
-  Claude). It prints **one result line**, and that line is what the ledger quotes.
+  Claude); 5 refused (the provider's safety filter → rerun that one pass on Opus,
+  never on Codex again). It prints **one result line**, and that line is what the
+  ledger quotes.
   > Origin: the CLI exited 0 on runs that produced no verdict (a usage limit, an
   > interrupted review) and non-zero on a retry it had recovered from.
 - **An owner switch** — `CODEX_RUN=on|essential|off`. `essential` keeps only the
@@ -118,6 +126,15 @@ What it does that a bare call does not:
   error, never a silent skip.
 - **A JSONL ledger** of every real run (`--dry-run` writes none), and a **leftovers** report after write kinds
   (`commits=`, `uncommitted=`) — look at them before a fallback starts.
+- **A copy of each ok verdict** at `<ledger dir>/verdicts/<run>-<kind>.md`, named
+  in the row's `verdictCopy`: `--out` usually sits in a worktree that landing
+  removes, and the retro's *Yield by step* counts the P0/P1 lines in these copies.
+  `.codex-runs/` is ignored, so the copies stay on the machine.
+- **A landing pass reads its range.** An `adversarial` or `adversarial-frontier`
+  run with `--base` gets the files of its whole `baseTree → tree` range (up to
+  200) after its prompt, so a pass meant for the range does not stop at the last
+  diff; that it read them is asked, not checked. `claude-run.mjs` does the same
+  for its adversarial kind.
 - **The prompt goes on stdin.** A quoted-argument prompt hung.
 - **A background run uses the host's own background option** (Claude Code: the
   Bash tool's `run_in_background`), never a shell `&` or a `( … ) &` subshell: one

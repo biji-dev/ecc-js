@@ -3,9 +3,10 @@
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
 #     format, exit status = number of failed gates, the --since scoped mode, the --snapshot
 #     commit mode, the result cache keyed by tree, the single-flight lock, the
-#     instant-failure note, the per-gate timeout, the admission step and the executor refusal.
+#     instant-failure note, the per-gate timeout, the admission step, the executor refusal and
+#     the known-red baseline.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers,
-#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT and GATE_TIMEOUT lines.
+#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT and MAINLINE lines.
 #
 # Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
@@ -28,7 +29,11 @@
 #   With HARNESS_ROLE=executor (codex-run and claude-run set it for every run they start) a run
 #   with neither --since nor --list exits 99 before anything runs, saying on stderr: "run-gates:
 #   FULL is the session's, once at landing; an executor runs bash scripts/run-gates.sh --since
-#   <the slice's base>". --snapshot is a FULL run and is refused too; --list still works.
+#   <the slice's base>". --snapshot is a FULL run and is refused too; --list still works. A --since
+#   run that a change outside SCOPED_PATHS promotes to FULL exits 99 too, before the cache, admission,
+#   the lock or a gate (and so does one promoted after a lock or machine wait), saying on stderr:
+#   "run-gates: PROMOTED to FULL by <path>, outside SCOPED_PATHS: FULL is the session's, once at
+#   landing; an executor stops and reports the path".
 # Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
 #   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
@@ -40,7 +45,8 @@
 #   PASS <name> <secs>s <logpath> | FAIL <name> <secs>s <logpath> (exit <n>)
 #   | FAIL <name> <secs>s <logpath> (no count line matched)
 #   | FAIL <name> <secs>s <logpath> (timeout after <n>s) | SKIP <name> (full only)
-#   SUMMARY <p> passed, <f> failed, <s> skipped (<full|scoped>)
+#   | KNOWN <name> <secs>s <logpath> (<n> failing test(s) in the <mainline> baseline, their files untouched)
+#   SUMMARY <p> passed, <f> failed, <s> skipped[, <k> known] (<full|scoped>)
 #   A refused admission prints "NOT ADMITTED (exit <n>)" instead and exits 97: no gate ran, no SUMMARY.
 #   A FAIL in under RUN_GATES_INSTANT_SECS seconds (default 10) ends with
 #   " (instant: if the log shows no real failure, check the command/env before re-running)":
@@ -48,6 +54,22 @@
 #   genuine fast failure gets the note too, so read the log first).
 #   A --snapshot run prints "input: commit <short sha>" (and the untracked count) after the
 #   "logs:" line.
+# Known reds: a FULL run with HEAD at the tip of refs/heads/<MAINLINE> ([B], default main; env
+#   RUN_GATES_MAINLINE overrides, empty = off), on the branch or detached, and no tracked change (or
+#   a --snapshot run there) records, per gate, its commit and the failing test ids its log names
+#   (`run-counted: FAILED <file> :: <title>`, the trailing block run-counted prints) under the
+#   cache dir, and clears a gate's record when it passes, times out, misses its count line or names
+#   a failure it cannot (`run-counted: FAILED ?`). The records are written after the last gate, and
+#   only when HEAD and the tracked tree (the snapshot's, for --snapshot) are still those the run
+#   started on. Any other run, FULL or scoped, prints a gate that exited non-zero as KNOWN instead
+#   of FAIL when its command is one run-counted call (no `;`, `&`, `|` or newline), its record was
+#   made at the merge base with the mainline or after it (an older one would hide a fix made since),
+#   every failing test it names is in that record, and each of their files is a file of the tree
+#   (the path relative to the top) that the merge base has, that did not change since it
+#   (committed, uncommitted or untracked) and that holds the test's title. A KNOWN gate does not
+#   count in the exit status and starts no fix round; a run with one is never cached. The
+#   mainline's own run prints its reds as FAIL. No record, no merge base, a timeout, a missed count
+#   line, output after the FAILED block or a `FAILED ?` line: FAIL.
 # Timeout: each gate runs in a process group of its own (set -m around its launch; the group id is
 #   its pid). Past GATE_TIMEOUT seconds ([B], default 3600; env RUN_GATES_GATE_TIMEOUT overrides,
 #   0 = no limit) the group gets TERM, then KILL 10 s later, and the gate is a FAIL ending
@@ -114,23 +136,25 @@
 #   the new mode's lock (waiting as usual), then makes these checks again. A lock whose pid is dead
 #   is taken over (only while it still names that pid); a lock is removed only by its owner;
 #   after the wait limit the run goes ahead without the lock.
-# Exit status = number of FAIL lines (capped at 98); 97 = not admitted (no SUMMARY line);
+# Exit status = number of FAIL lines (capped at 98; KNOWN lines do not count); 97 = not admitted (no SUMMARY line);
 #   99 = usage error (including no gates bound, a refused --snapshot, a snapshot that could
-#   not be built and a FULL run under HARNESS_ROLE=executor).
+#   not be built and a FULL run under HARNESS_ROLE=executor, a promoted one included).
 # Known limits: a gate's child that starts its own session (setsid, a daemon) outlives the gate:
 #   the gate must stop what it starts. --snapshot does not see an edit to a file whose index entry
 #   has the skip-worktree bit (git status hides it): a sparse checkout sets that bit on every file
 #   outside its cone, so refusing it would refuse every snapshot there.
 # Env: RUN_GATES_LOG_DIR overrides the log dir. Each gate runs in the repo top (in the
 #      snapshot under --snapshot) and sees RUN_GATES_MODE=full|scoped,
-#      RUN_GATES_SINCE=<ref or empty>, RUN_GATES_CHANGED_FILE=<changed-file list, scoped only>.
+#      RUN_GATES_SINCE=<ref or empty>, RUN_GATES_CHANGED_FILE=<changed-file list, scoped only>,
+#      RUN_GATES_TOP=<that directory> (run-counted names failing test files relative to it).
 #      RUN_GATES_SNAPSHOT_COPY overrides SNAPSHOT_COPY.
 #      RUN_GATES_CACHE_DIR overrides the cache dir (default: run-gates-cache inside the git
 #      common dir, which worktrees of one repository share). RUN_GATES_NO_CACHE,
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
 #      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
 #      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
-#      HARNESS_ROLE=executor refuses a FULL run (see Usage).
+#      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline).
+#      HARNESS_ROLE=executor refuses a FULL run, a promoted one included (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
   echo "run-gates: needs bash (it uses arrays); run it as: bash scripts/run-gates.sh" >&2
@@ -211,6 +235,8 @@ SNAPSHOT_COPY='node_modules .env*'
 ADMIT='node scripts/lib/admission.mjs'
 # [B] seconds a gate may run before its process group is stopped (see Timeout above); 0 = no limit.
 GATE_TIMEOUT=3600
+# [B] the mainline branch whose clean FULL run records the known-red baseline (see Known reds above); empty = off.
+MAINLINE='main'
 
 SINCE=""
 LIST=0
@@ -287,6 +313,7 @@ DOCS_RX="${RUN_GATES_DOCS_ONLY-$DOCS_ONLY}"
 KEY_EXTRA_CMD="${RUN_GATES_KEY_EXTRA-$KEY_EXTRA}"
 ADMIT_CMD="${RUN_GATES_ADMIT-$ADMIT}"
 GATE_TIMEOUT_S=$(num_or "${RUN_GATES_GATE_TIMEOUT:-}" "$(num_or "$GATE_TIMEOUT" 3600)")
+MAINLINE_B="${RUN_GATES_MAINLINE-$MAINLINE}"
 
 # Reads paths on stdin; drops blanks, .review-work/ and the log dir by LITERAL prefix
 # (never a regex built from a path).
@@ -309,7 +336,8 @@ SCOPED_REQ=0
 [ -n "$SINCE" ] && SCOPED_REQ=1
 # Sets MODE, CHANGED and NOTE. The changed files are computed before the log dir is created,
 # minus anything under the log dirs themselves, so a run's own logs never count as a change.
-# Called again after a lock wait: the tree may have changed meanwhile.
+# Called again after a lock wait: the tree may have changed meanwhile. An executor's run promoted
+# to FULL exits 99 here, wherever it is called: FULL is the session's (see Usage).
 compute_scope() {
   local diff_out untracked_out outside
   MODE=full
@@ -329,6 +357,10 @@ compute_scope() {
     if [ -n "$outside" ]; then
       NOTE="PROMOTED to FULL: $outside"
       MODE=full
+      if [ "${HARNESS_ROLE:-}" = executor ]; then
+        echo "run-gates: PROMOTED to FULL by $outside, outside SCOPED_PATHS: FULL is the session's, once at landing; an executor stops and reports the path" >&2
+        exit 99
+      fi
     fi
   fi
 }
@@ -798,9 +830,120 @@ fi
 # CSI escape sequences (colour) out of a log, so a count regex reads the plain text.
 strip_csi() { LC_ALL=C sed $'s#\033\\[[0-?]*[ -/]*[@-~]##g'; }
 
+# -- the known-red baseline (see Known reds above) --------------------------------------------
+BASE_REC=0 # 1 = this run records the baseline: FULL, HEAD at the mainline's tip, no tracked change
+BASE_HEAD="" # the commit a recording run started on: a run that ends on another records nothing
+BASE_PENDING="" # what a recording run will write once its gates are done: <record> then <tmp file or ->, a line each
+KNOWN_ON=0 # 1 = this run may print KNOWN: KNOWN_CHANGED lists every file changed since the merge base
+KNOWN_CHANGED=""
+KNOWN_MB="" # the merge base with the mainline: a record made before it is stale
+# No tracked change in the gates' tree: the checkout, or the snapshot's worktree (a gate can write there).
+tree_clean() { st=$(git -C "$GATE_DIR" status --porcelain --untracked-files=no 2>/dev/null) && [ -z "$st" ]; }
+if [ "$CACHE_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && git check-ref-format --branch "$MAINLINE_B" >/dev/null 2>&1 &&
+  mkdir -p "$CACHE_DIR/baseline" 2>/dev/null; then
+  # HEAD at the mainline's tip, on the branch or detached at it (a worktree cannot check the branch out twice)
+  if [ "$MODE" = full ] && BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&
+    [ "$BASE_HEAD" = "$(git rev-parse -q --verify "refs/heads/$MAINLINE_B" 2>/dev/null)" ] && tree_clean; then
+    BASE_REC=1
+  elif KNOWN_MB=$(git merge-base "refs/heads/$MAINLINE_B" HEAD 2>/dev/null) &&
+    d1=$(git diff --name-only -z --no-renames "$KNOWN_MB" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") &&
+    d2=$(git ls-files -z --others --exclude-standard 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}"); then
+    KNOWN_CHANGED=$(printf '%s\n%s\n' "$d1" "$d2" | filter_changed | LC_ALL=C sort -u)
+    KNOWN_ON=1
+  fi
+fi
+base_file() { printf '%s/%s' "$CACHE_DIR/baseline" "$(hash_str "$MAINLINE_B|$1")"; }
+# The failing test ids a gate's log ends with (run-counted's trailing FAILED block), sorted, each
+# once; returns 1 when it names none, "?" (a failure it could not name), or an id whose file or
+# title holds a second " :: " (no split of it is sure).
+failed_ids() {
+  local ids
+  ids=$(strip_csi <"$1" | awk '/^run-counted: FAILED /{b = b substr($0, 21) "\n"; next} /^[ \t\r]*$/{next} {b = ""} END{printf "%s", b}' | LC_ALL=C sort -u)
+  [ -n "$ids" ] || return 1
+  if printf '%s\n' "$ids" | grep -Fxq '?'; then return 1; fi
+  if printf '%s\n' "$ids" | grep -q ' :: .* :: '; then return 1; fi
+  printf '%s\n' "$ids"
+}
+# $1 = gate, $2 = why it failed ("" = passed), $3 = log: the mainline run's record for the gate
+# (`head <commit>`, then the ids), kept only for a gate that exited non-zero naming each failing
+# test (not a timeout or a missed count line), else cleared. Held in BASE_PENDING until
+# commit_base: a run whose tree moved writes none.
+record_base() {
+  local base ids tmp=-
+  base=$(base_file "$1")
+  if [ "${2#exit }" != "$2" ] && ids=$(failed_ids "$3"); then
+    tmp="$base.tmp.$$"
+    printf 'head %s\n%s\n' "$BASE_HEAD" "$ids" >"$tmp" 2>/dev/null || { rm -f "$tmp"; tmp=-; }
+  fi
+  BASE_PENDING="$BASE_PENDING$base
+$tmp
+"
+}
+# After the gates: the pending records go in place only when HEAD is still the commit the run
+# started on and the tree is still clean (an edit during the run would record its own reds).
+commit_base() {
+  local base tmp ok=0
+  if [ "$(git rev-parse -q --verify HEAD 2>/dev/null)" = "$BASE_HEAD" ] && tree_clean; then ok=1; fi
+  [ "$ok" -eq 1 ] || echo "run-gates: the tree changed during the run: the known-red record is not updated" >&2
+  while IFS= read -r base && IFS= read -r tmp; do
+    [ -n "$base" ] || continue
+    if [ "$ok" -eq 0 ]; then
+      [ "$tmp" = - ] || rm -f "$tmp"
+    elif [ "$tmp" = - ]; then
+      rm -f "$base"
+    else
+      mv -f "$tmp" "$base" 2>/dev/null || rm -f "$tmp"
+    fi
+  done <<EOF
+$BASE_PENDING
+EOF
+}
+# 0 when a gate's command is one run-counted call and nothing else, so the gate's exit and its
+# FAILED block are that call's: a list (`;`, `&&`, `||`, `&`, a pipe, a newline) or a second call
+# can fail on a step the last block does not name.
+single_counted() {
+  case "$1" in *';'* | *'&'* | *'|'* | *$'\n'*) return 1 ;; esac
+  [ "$(printf '%s\n' "$1" | grep -o 'run-counted\.mjs' | grep -c .)" -eq 1 ]
+}
+# The words a test's title must show in its file: the last ` > ` or ` › ` part, then the last
+# `::` part (pytest), without a [project] lead or a [param] tail.
+title_needle() {
+  printf '%s' "$1" | LC_ALL=C sed -e 's/^\[[^]]*\] //' -e 's/.* > //' -e $'s/.* \xe2\x80\xba //' -e 's/.*:://' -e 's/\[.*\]$//'
+}
+# $1 = gate, $2 = why it failed, $3 = log, $4 = its command: prints the number of failing tests
+# and returns 0 when the gate is one run-counted call that exited non-zero, the gate's record was
+# made at KNOWN_MB or after it, every test it names is in that record, and each of their files is
+# a file of the gate's tree that KNOWN_MB has, that is not in KNOWN_CHANGED and that holds the
+# test's title (a path the runner printed against another root, a package's cwd, is no proof; an
+# ignored file is in no diff; a title the file does not spell, from it.each or a template, is none).
+known_red() {
+  local base ids rec_head rec_ids id f t needle
+  [ "${2#exit }" != "$2" ] && single_counted "$4" || return 1
+  base=$(base_file "$1")
+  [ -f "$base" ] && ids=$(failed_ids "$3") || return 1
+  rec_head=$(LC_ALL=C sed -n '1s/^head \([0-9a-f]\{40,64\}\)$/\1/p' "$base")
+  [ -n "$rec_head" ] && git merge-base --is-ancestor "$KNOWN_MB" "$rec_head" 2>/dev/null || return 1
+  rec_ids=$(sed 1d "$base")
+  while IFS= read -r id; do
+    printf '%s\n' "$rec_ids" | grep -Fxq -- "$id" || return 1
+    f=${id%% :: *}
+    t=${id#* :: }
+    case "$f" in '' | /* | ../* | */../*) return 1 ;; esac
+    [ "$f" != "$id" ] && [ -f "$GATE_DIR/$f" ] || return 1
+    git cat-file -e "$KNOWN_MB:$f" 2>/dev/null || return 1
+    if printf '%s\n' "$KNOWN_CHANGED" | grep -Fxq -- "$f"; then return 1; fi
+    needle=$(title_needle "$t")
+    [ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1
+  done <<EOF
+$ids
+EOF
+  printf '%s\n' "$ids" | grep -c .
+}
+
 passed=0
 failed=0
 skipped=0
+known=0
 i=0
 while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   name="${GATE_NAMES[$i]}"
@@ -820,7 +963,7 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   # The gate (and its watchdog) in a process group of its own, under wait, so a trap can stop it.
   set -m
   (cd "$GATE_DIR" && RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
-    exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null &
+    RUN_GATES_TOP="$GATE_DIR" exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null &
   GATE_PID=$!
   if [ "$GATE_TIMEOUT_S" -gt 0 ]; then
     watch_gate "$mark" </dev/null >/dev/null 2>&1 &
@@ -840,9 +983,13 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
     why="no count line matched"
   fi
+  [ "$BASE_REC" -eq 1 ] && record_base "$name" "$why" "$logfile"
   if [ -z "$why" ]; then
     emit "PASS $name ${secs}s $logfile"
     passed=$((passed + 1))
+  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$why" "$logfile" "$cmd"); then
+    emit "KNOWN $name ${secs}s $logfile ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
+    known=$((known + 1))
   else
     instant=""
     # A timeout is never instant: the gate ran its whole allowance.
@@ -852,12 +999,15 @@ while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
   fi
 done
 
-emit "SUMMARY $passed passed, $failed failed, $skipped skipped ($MODE)"
+[ "$BASE_REC" -eq 1 ] && commit_base
+known_part=""
+[ "$known" -eq 0 ] || known_part=", $known known"
+emit "SUMMARY $passed passed, $failed failed, $skipped skipped$known_part ($MODE)"
 
 # Only an all-PASS run is recorded, under the tree it started from and only if the tree (and
-# the KEY_EXTRA output) is still the same now; a FAIL is never cached.
+# the KEY_EXTRA output) is still the same now; a FAIL or a KNOWN is never cached.
 RECORD=0
-if [ "$failed" -eq 0 ] && [ "$CACHE_ON" -eq 1 ] && [ -n "$KEY" ]; then
+if [ "$failed" -eq 0 ] && [ "$known" -eq 0 ] && [ "$CACHE_ON" -eq 1 ] && [ -n "$KEY" ]; then
   START_KEY=$KEY
   START_VARIANT=$VARIANT
   compute_variant

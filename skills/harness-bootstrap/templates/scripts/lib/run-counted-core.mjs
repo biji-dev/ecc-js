@@ -54,7 +54,16 @@
  * parser does not know fails the run, never ignored (an own key of the parser's word table only:
  * `constructor` is unknown). A test title or a log line saying "5 passed" counts for nothing:
  * only the whole summary line is read.
+ *
+ * FAILING TESTS (v12). A failing run also names its failing tests, `run-counted: FAILED <file> ::
+ * <title>` each, so run-gates.sh can hold them against the known-red baseline of the last mainline
+ * FULL (run-gates.sh › Known reds). The line `run-counted: FAILED ?` follows whenever those tests
+ * are not the run's whole failure, and then no red of the run is known. The readers are in
+ * failingTests below; they read both streams.
  */
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const EXIT = { ok: 0, failed: 1, usage: 2 };
 export const KINDS = ['vitest', 'node', 'pytest', 'bun', 'playwright'];
@@ -369,4 +378,188 @@ export function verdict({ kind, min, exitCode, signal = null, spawnError = null,
   if (summary.passed > min) out.push(`run-counted: ${min} → ${summary.passed}: raise --min on the gate's line`);
   out.push(`COUNTED ${kind} ${summary.passed} passed (min ${min})`);
   return { ok: true, lines: out };
+}
+
+// ---- the failing tests a run names (run-gates' known-red baseline) ----------------------------
+
+const unescapeTap = (t) => t.replace(/\\(.)/g, '$1');
+
+/**
+ * node TAP: each `not ok` at any indent that is not a suite's and has no directive; its `# Subtest:`
+ * parents joined with ` > `. A suite that failed for itself (a hook or its describe body threw, any
+ * failureType but subtestsFailed) is a `?`: node counts it in no `# fail`, and no test id names it.
+ */
+function nodeFailing(text) {
+  const ls = rawLines(text);
+  const out = [];
+  const stack = [];
+  for (let i = 0; i < ls.length; i++) {
+    const sub = /^( *)# Subtest: (.*)$/.exec(ls[i]);
+    if (sub) {
+      const d = Math.floor(sub[1].length / 4);
+      stack.length = d;
+      stack[d] = unescapeTap(sub[2]);
+      continue;
+    }
+    const m = /^( *)not ok \d+(.*)$/.exec(ls[i]);
+    if (!m || tapDirective(m[2]) !== null) continue;
+    const pad = `${m[1]}  `;
+    let type = null;
+    let loc = null;
+    let failure = null;
+    if (ls[i + 1] === `${pad}---`)
+      for (let j = i + 2; j < ls.length && ls[j] !== `${pad}...` && ls[j].startsWith(pad); j++) {
+        const kv = ls[j].slice(pad.length);
+        if (kv.startsWith('type: ')) type = kv.slice(6).replace(/^'|'$/g, '');
+        else if (kv.startsWith('location: ')) loc = kv.slice(10).replace(/^'|'$/g, '');
+        else if (kv.startsWith('failureType: ')) failure = kv.slice(13).replace(/^'|'$/g, '');
+      }
+    const d = Math.floor(m[1].length / 4);
+    const title = [...stack.slice(0, d), unescapeTap(m[2].replace(/^ - /, ''))].join(' > ');
+    if (type === 'suite') {
+      if (failure !== 'subtestsFailed') out.push({ file: '?', title });
+      continue;
+    }
+    out.push({ file: loc ? loc.replace(/:\d+:\d+$/, '') : '?', title });
+  }
+  return out;
+}
+
+// vitest: ` FAIL  src/a.test.ts > group > title` (` FAIL  |project| src/a.test.ts > …` in a workspace),
+// under a `⎯⎯ Failed Tests 3 ⎯⎯` rule; a file that did not load or a suite whose hook threw is under
+// `⎯⎯ Failed Suites 1 ⎯⎯` and is not in the Tests count
+const VITEST_FAIL = /^\s*FAIL\s+(?:\|[^|]*\|\s+)?(\S+) > (.+?)\s*$/;
+const VITEST_FAIL_ANY = /^\s*FAIL\s/;
+const VITEST_SECTION = /^\s*⎯*\s*Failed (Suites|Tests) \d+\s*⎯*\s*$/;
+// pytest's short summary (its default -rfE): `FAILED tests/test_a.py::test_b[p] - AssertionError: …`
+const PYTEST_FAILED = /^FAILED \S.*::/;
+
+/**
+ * A pytest short-summary line as `{ file, title }`: the node id ends at the first space outside
+ * brackets, since a parameter may hold ` - ` itself, and what follows it is ` - <message>` or
+ * nothing. A line whose brackets do not balance, or that does not end that way, names no file.
+ */
+function pytestFailed(line) {
+  const rest = line.slice('FAILED '.length);
+  let depth = 0;
+  let end = rest.length;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '[') depth++;
+    else if (rest[i] === ']' && --depth < 0) break;
+    else if (rest[i] === ' ' && depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  const id = rest.slice(0, end);
+  const sep = id.indexOf('::');
+  const tail = rest.slice(end);
+  if (depth !== 0 || sep <= 0 || sep + 2 >= id.length || (tail && !tail.startsWith(' - '))) return { file: '?', title: rest };
+  return { file: id.slice(0, sep), title: id.slice(sep + 2) };
+}
+// bun: `test/a.test.ts:` before a file's results, `(fail) group > title [0.24ms]`, and a closing list without files
+const BUN_FILE = /^(\S+\.[cm]?[jt]sx?):$/;
+const BUN_FAIL = /^\(fail\) (.+?)(?: \[[^\]]*\])?$/;
+const BUN_FAILED_LIST = /^\d+ tests? failed:$/;
+// playwright, under `  1 failed`: `    [chromium] › tests/a.spec.ts:3:5 › group › title ───`
+const PW_FAILED = /^ {2}\d+ failed$/;
+const PW_TEST = /^ {4}(?:\[([^\]]+)\] › )?(.+?):\d+:\d+ › (.+?)(?:\s+─+)?\s*$/;
+
+function textFailing(kind, text) {
+  const ls = lines(text);
+  const out = [];
+  if (kind === 'vitest') {
+    let section = null;
+    for (const l of ls) {
+      const sec = VITEST_SECTION.exec(l);
+      if (sec) {
+        section = sec[1];
+        // a failed suite is no test of the count: the run's failure is not only its failing tests
+        if (section === 'Suites') out.push({ file: '?', title: l.replace(/⎯/g, '').trim() });
+        continue;
+      }
+      if (section === 'Suites' || !VITEST_FAIL_ANY.test(l)) continue;
+      const m = VITEST_FAIL.exec(l);
+      out.push(m ? { file: m[1], title: m[2] } : { file: '?', title: l.trim() });
+    }
+  } else if (kind === 'pytest') {
+    for (const l of ls) if (PYTEST_FAILED.test(l.trim())) out.push(pytestFailed(l.trim()));
+  } else if (kind === 'bun') {
+    let file = '?';
+    for (const raw of ls) {
+      const l = raw.trim();
+      if (BUN_FAILED_LIST.test(l)) break;
+      const f = BUN_FILE.exec(l);
+      if (f) file = f[1];
+      const m = BUN_FAIL.exec(l);
+      if (m) out.push({ file, title: m[1] });
+    }
+  } else if (kind === 'playwright') {
+    for (let i = 0; i < ls.length; i++) {
+      if (!PW_FAILED.test(ls[i])) continue;
+      for (let j = i + 1; j < ls.length && ls[j].startsWith('    '); j++) {
+        const m = PW_TEST.exec(ls[j]);
+        out.push(m ? { file: m[2], title: m[1] ? `[${m[1]}] ${m[3]}` : m[3] } : { file: '?', title: ls[j].trim() });
+      }
+    }
+  }
+  return out;
+}
+
+/** A test file as the id names it: relative to `top` when inside it, else as resolved against `cwd`; `?` stays. */
+function idFile(file, cwd, top) {
+  if (file === '?') return file;
+  const abs = path.resolve(cwd, file.startsWith('file://') ? fileURLToPath(file) : file);
+  const rel = path.relative(top ?? cwd, abs);
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : abs;
+}
+
+/**
+ * The failing tests `text` names, as `<file> :: <title>` ids, each once, in output order. The file
+ * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`; a
+ * file the output does not name is `?`.
+ * - node: each `not ok` result line, at any indent, whose YAML block is not a suite's and that has
+ *   no directive; its `# Subtest:` parents joined with ` > `, the file its `location:`. A suite that
+ *   failed for itself (a hook, its describe body: failureType not subtestsFailed) is a `?`.
+ * - vitest: each ` FAIL  <file> > <title>` line (a `|project|` before the file is dropped) outside
+ *   the `Failed Suites` section; that section itself, or a FAIL line naming no test, is a `?`.
+ * - pytest: each `FAILED <file>::<title>` line of the short summary (pytest's default -rfE); the
+ *   node id ends at the first space outside brackets, and a line it cannot split names no file.
+ * - bun: each `(fail) <title> [<time>]` line, under the last `<file>:` line before it; reading stops
+ *   at bun's closing `<n> tests failed:` list, which repeats them without their files.
+ * - playwright: each line four spaces in under `  <n> failed`, `[<project>] › <file>:<l>:<c> › <title>`.
+ */
+export function failingTests(kind, text, { cwd = '.', top = null } = {}) {
+  if (!KINDS.includes(kind)) throw new Error(`unknown kind: ${kind}`);
+  const ids = [];
+  for (const { file, title } of kind === 'node' ? nodeFailing(text) : textFailing(kind, text)) {
+    const id = `${idFile(file, cwd, top)} :: ${title}`;
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * The lines a failing run prints after its verdict: `run-counted: FAILED <id>` per failing test,
+ * then `run-counted: FAILED ?` unless those tests are the run's whole failure -- it ran to its end
+ * (no signal, interruption or spawn error), its summary has no problem, unknown counter, marker or
+ * bad counter but `failed`, `failed` is the number of ids, every id names its file, and the passes
+ * plus those tests reach `min`. Nothing for a passing run.
+ */
+export function failedLines({ ok, min, summary, ids, signal = null, spawnError = null, interrupted = null }) {
+  if (ok) return [];
+  const whole =
+    !interrupted &&
+    !spawnError &&
+    !signal &&
+    Boolean(summary) &&
+    (summary.problems ?? []).length === 0 &&
+    (summary.unknown ?? []).length === 0 &&
+    (summary.markers ?? []).length === 0 &&
+    BAD_COUNTERS.every((c) => c === 'failed' || (summary[c] ?? 0) === 0) &&
+    (summary.failed ?? 0) > 0 &&
+    summary.failed === ids.length &&
+    ids.every((id) => !id.startsWith('? :: ')) &&
+    summary.passed + ids.length >= min;
+  return [...ids.map((id) => `run-counted: FAILED ${id}`), ...(whole ? [] : ['run-counted: FAILED ?'])];
 }

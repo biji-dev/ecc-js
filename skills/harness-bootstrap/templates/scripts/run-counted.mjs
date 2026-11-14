@@ -20,7 +20,10 @@
  * 2. The stream its runner writes the summary to (stdout; bun's stderr) holds exactly one summary of
  *    `--kind`, which is read (the rules are in run-counted-core.mjs). A summary on the other stream
  *    alone is not read: the run fails closed.
- * 3. A newline, then the verdict lines, so `COUNTED` always starts a line of the gate's log.
+ * 3. A newline, then the verdict lines, so `COUNTED` always starts a line of the gate's log. A
+ *    failing run then names its failing tests, `run-counted: FAILED <file> :: <title>` each, and
+ *    `run-counted: FAILED ?` when they are not its whole failure (run-counted-core.mjs › FAILING
+ *    TESTS); files are relative to RUN_GATES_TOP, which run-gates.sh sets to the gate's repo top.
  *
  * exit: 0 when the command exited 0 and its one summary has no failed, errors, skipped, todo,
  * flaky, interrupted, not-run, cancelled, filtered-out, deselected, xfailed or xpassed count, no
@@ -42,7 +45,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { EXIT, SUMMARY_STREAM, nodeOptionsProblem, parseArgs, parseSummary, verdict } from './lib/run-counted-core.mjs';
+import { EXIT, SUMMARY_STREAM, failedLines, failingTests, nodeOptionsProblem, parseArgs, parseSummary, verdict } from './lib/run-counted-core.mjs';
 
 const USAGE =
   'usage: node scripts/run-counted.mjs --kind <vitest|node|pytest|bun|playwright> --min <n> -- <cmd> [args...]';
@@ -145,6 +148,7 @@ async function main() {
     return EXIT.failed;
   }
   const res = await run(a.cmd, a.args);
+  const summary = res.spawnError ? null : parseSummary(a.kind, res[SUMMARY_STREAM[a.kind]]);
   const v = verdict({
     kind: a.kind,
     min: a.min,
@@ -152,14 +156,26 @@ async function main() {
     signal: res.signal,
     spawnError: res.spawnError,
     interrupted: res.interrupted,
-    summary: res.spawnError ? null : parseSummary(a.kind, res[SUMMARY_STREAM[a.kind]]),
+    summary,
   });
   // The verdict starts a line of its own: the child's output (both land in the gate's one log)
   // may have ended without a newline.
   process.stdout.write('\n');
   for (const l of v.lines) console.log(l);
+  const ids = v.ok || res.spawnError ? [] : failingTests(a.kind, `${res.stdout}\n${res.stderr}`, { cwd: process.cwd(), top: realTop(process.env.RUN_GATES_TOP) });
+  for (const l of failedLines({ ok: v.ok, min: a.min, summary, ids, signal: res.signal, spawnError: res.spawnError, interrupted: res.interrupted })) console.log(l);
   if (res.interrupted) return res.exitCode || 128 + os.constants.signals[res.signal ?? res.interrupted];
   return v.ok ? EXIT.ok : EXIT.failed;
+}
+
+/** The gate's repo top as a real path (a test's location is one; macOS /tmp is a link), or null. */
+function realTop(top) {
+  if (!top) return null;
+  try {
+    return fs.realpathSync(top);
+  } catch {
+    return top;
+  }
 }
 
 // Run only as the entry script; compare real paths (macOS /tmp is a symlink). The exit code is

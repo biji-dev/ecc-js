@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { BAD_COUNTERS, KINDS, SUMMARY_STREAM, nodeDirectiveMarkers, nodeOptionsProblem, parseArgs, parseSummary, stripAnsi, verdict } from './run-counted-core.mjs';
+import { BAD_COUNTERS, KINDS, SUMMARY_STREAM, failedLines, failingTests, nodeDirectiveMarkers, nodeOptionsProblem, parseArgs, parseSummary, stripAnsi, verdict } from './run-counted-core.mjs';
 
 const WRAPPER = fileURLToPath(new URL('../run-counted.mjs', import.meta.url));
 const ESC = '\u001b';
@@ -347,6 +347,350 @@ test('verdict: a forwarded signal fails the run, once, even when the command exi
   ]);
 });
 
+// ---- the failing tests a run names (run-gates' known-red baseline)
+
+// node 26.5.0, TAP reporter, the stack lines cut and the temp path shortened to /repo
+const TAP_FAILING = [
+  'TAP version 13',
+  '# Subtest: passes',
+  'ok 1 - passes',
+  '  ---',
+  '  duration_ms: 0.82075',
+  "  type: 'test'",
+  '  ...',
+  '# Subtest: top fails',
+  'not ok 2 - top fails',
+  '  ---',
+  '  duration_ms: 1.249792',
+  "  type: 'test'",
+  "  location: '/repo/tests/a.test.mjs:4:1'",
+  "  failureType: 'testCodeFailure'",
+  '  ...',
+  '# Subtest: group',
+  '    # Subtest: inner fails',
+  '    not ok 1 - inner fails',
+  '      ---',
+  '      duration_ms: 0.380375',
+  "      type: 'test'",
+  "      location: '/repo/tests/a.test.mjs:6:3'",
+  "      failureType: 'testCodeFailure'",
+  '      ...',
+  '    # Subtest: inner passes',
+  '    ok 2 - inner passes',
+  '      ---',
+  '      duration_ms: 0.144709',
+  "      type: 'test'",
+  '      ...',
+  '    1..2',
+  'not ok 3 - group',
+  '  ---',
+  '  duration_ms: 0.893541',
+  "  type: 'suite'",
+  "  location: '/repo/tests/a.test.mjs:5:1'",
+  "  failureType: 'subtestsFailed'",
+  "  error: '1 subtest failed'",
+  '  ...',
+  '# Subtest: parent',
+  '    # Subtest: child fails',
+  '    not ok 1 - child fails',
+  '      ---',
+  '      duration_ms: 7.033458',
+  "      type: 'test'",
+  "      location: '/repo/tests/a.test.mjs:10:11'",
+  "      failureType: 'testCodeFailure'",
+  '      ...',
+  '    1..1',
+  'not ok 4 - parent',
+  '  ---',
+  '  duration_ms: 7.358708',
+  "  type: 'test'",
+  "  location: '/repo/tests/a.test.mjs:9:1'",
+  "  failureType: 'subtestsFailed'",
+  "  error: '1 subtest failed'",
+  '  ...',
+  '# Subtest: b passes',
+  'ok 5 - b passes',
+  '  ---',
+  '  duration_ms: 0.390833',
+  "  type: 'test'",
+  '  ...',
+  '# Subtest: b \\# hash fails',
+  'not ok 6 - b \\# hash fails',
+  '  ---',
+  '  duration_ms: 0.241917',
+  "  type: 'test'",
+  "  location: '/repo/tests/b.test.mjs:3:1'",
+  "  failureType: 'testCodeFailure'",
+  "  error: 'x'",
+  '  ...',
+  '1..6',
+  '# tests 8',
+  '# suites 1',
+  '# pass 3',
+  '# fail 5',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 155.143583',
+].join('\n');
+
+// vitest 4.0.18, stdout and stderr as the wrapper reads them, the error blocks cut
+const VITEST_FAILING = [
+  ' RUN  v4.0.18 /repo',
+  '',
+  ' ❯ src/a.test.js (4 tests | 2 failed) 6ms',
+  '   ✓ passes 0ms',
+  '   × top fails 4ms',
+  '     × inner fails 0ms',
+  '     ✓ inner passes 0ms',
+  ' ❯ src/b.test.js (1 test | 1 failed) 98ms',
+  '   × b fails 90ms',
+  '',
+  '⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯',
+  '',
+  ' FAIL  src/a.test.js > top fails',
+  'AssertionError: expected 1 to be 2 // Object.is equality',
+  ' ❯ src/a.test.js:2:37',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯',
+  '',
+  ' FAIL  src/a.test.js > group > inner fails',
+  'AssertionError: expected 1 to be 2 // Object.is equality',
+  ' ❯ src/a.test.js:4:41',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯',
+  '',
+  ' FAIL  src/b.test.js > b fails',
+  'AssertionError: expected true to be false // Object.is equality',
+  ' ❯ src/b.test.js:1:38',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯',
+  '',
+  '',
+  ' Test Files  2 failed (2)',
+  '      Tests  3 failed | 2 passed (5)',
+  '   Start at  10:58:55',
+  '   Duration  405ms (transform 50ms, setup 0ms, import 164ms, tests 104ms, environment 0ms)',
+].join('\n');
+
+// vitest 4.0.18, a file that does not load and a suite whose beforeAll threw: neither is in the Tests count
+const VITEST_SUITES = [
+  ' RUN  v4.0.18 /repo',
+  '',
+  ' ❯ src/c.test.js (0 test)',
+  ' ❯ src/a.test.js (2 tests | 1 failed) 4ms',
+  '   ✓ passes 0ms',
+  '   × top fails 2ms',
+  '',
+  ' Test Files  2 failed (2)',
+  '      Tests  1 failed | 1 passed (2)',
+  '',
+  '⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯',
+  '',
+  ' FAIL  src/c.test.js [ src/c.test.js ]',
+  "Error: Cannot find module './missing.js' imported from '/repo/src/c.test.js'",
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯',
+  '',
+  ' FAIL  src/d.test.js > hooked',
+  'Error: boom',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯',
+  '',
+  '⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯',
+  '',
+  ' FAIL  src/a.test.js > top fails',
+  'AssertionError: expected 1 to be 2 // Object.is equality',
+].join('\n');
+
+// bun 1.3.6, stderr, the source excerpts and stack lines cut
+const BUN_FAILING = [
+  'test/b.test.ts:',
+  'error: expect(received).toBe(expected)',
+  '(fail) b fails [7.05ms]',
+  '',
+  'test/a.test.ts:',
+  'error: expect(received).toBe(expected)',
+  '(fail) top fails [0.24ms]',
+  'error: expect(received).toBe(expected)',
+  '(fail) group > inner fails [0.16ms]',
+  '',
+  ' 2 pass',
+  ' 3 fail',
+  ' 3 expect() calls',
+  'Ran 5 tests across 2 files. [211.00ms]',
+].join('\n');
+
+test('failingTests, node: each failing test with its parents and the file of its location; a suite is no test, `\\#` is unescaped', () => {
+  const ids = failingTests('node', TAP_FAILING, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(ids, [
+    'tests/a.test.mjs :: top fails',
+    'tests/a.test.mjs :: group > inner fails',
+    'tests/a.test.mjs :: parent > child fails',
+    'tests/a.test.mjs :: parent',
+    'tests/b.test.mjs :: b # hash fails',
+  ]);
+  const summary = parseSummary('node', TAP_FAILING);
+  assert.equal(summary.failed, 5);
+  // the run's whole failure: one line per test, no `FAILED ?`
+  assert.deepEqual(failedLines({ ok: false, min: 3, summary, ids }), ids.map((id) => `run-counted: FAILED ${id}`));
+  // a result with no location names no file: `?`, and the run's failure is not whole
+  assert.deepEqual(failingTests('node', TAP_FAIL), ['? :: broken']);
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary: parseSummary('node', TAP_FAIL), ids: ['? :: broken'] }), ['run-counted: FAILED ? :: broken', 'run-counted: FAILED ?']);
+  // a skipped test is no failure; a directive on a `not ok` (todo) is none either
+  assert.deepEqual(failingTests('node', 'not ok 1 - later # TODO\n  ---\n  type: \'test\'\n  ...\n'), []);
+});
+
+// node's own output for a suite whose after hook threw beside a failing test of another file: the
+// hook counts in no `# fail` (node 22 and 26 print the same fields)
+const TAP_HOOK_FAILED = [
+  'TAP version 13',
+  '# Subtest: grp3',
+  '    # Subtest: fine',
+  '    ok 1 - fine',
+  '      ---',
+  '      duration_ms: 0.218208',
+  "      type: 'test'",
+  '      ...',
+  '    1..1',
+  'not ok 1 - grp3',
+  '  ---',
+  '  duration_ms: 0.665791',
+  "  type: 'suite'",
+  "  location: '/repo/tests/c.test.mjs:2:1'",
+  "  failureType: 'hookFailed'",
+  "  error: 'after only'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+  '# Subtest: two',
+  'not ok 2 - two',
+  '  ---',
+  '  duration_ms: 0.269458',
+  "  type: 'test'",
+  "  location: '/repo/tests/e.test.mjs:2:1'",
+  "  failureType: 'testCodeFailure'",
+  "  error: 'x'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+  '1..2',
+  '# tests 2',
+  '# suites 1',
+  '# pass 1',
+  '# fail 1',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0',
+  '# duration_ms 34.934',
+].join('\n');
+
+test('failingTests, node: a suite that failed for itself (its hook, its describe body) is a `?`, so the run is never its tests alone', () => {
+  const ids = failingTests('node', TAP_HOOK_FAILED, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(ids, ['? :: grp3', 'tests/e.test.mjs :: two']);
+  const summary = parseSummary('node', TAP_HOOK_FAILED);
+  assert.equal(summary.failed, 1, 'node counts the hook in no # fail');
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary, ids }).at(-1), 'run-counted: FAILED ?');
+  const describeThrew = TAP_HOOK_FAILED.replace("failureType: 'hookFailed'", "failureType: 'testCodeFailure'");
+  assert.deepEqual(failingTests('node', describeThrew, { cwd: '/repo', top: '/repo' })[0], '? :: grp3');
+});
+
+test('failingTests, vitest: the FAIL lines of Failed Tests; a Failed Suites section is a `?` (its files are not in the Tests count)', () => {
+  const ids = failingTests('vitest', VITEST_FAILING, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(ids, ['src/a.test.js :: top fails', 'src/a.test.js :: group > inner fails', 'src/b.test.js :: b fails']);
+  assert.equal(failedLines({ ok: false, min: 2, summary: parseSummary('vitest', VITEST_FAILING), ids }).includes('run-counted: FAILED ?'), false);
+  const suites = failingTests('vitest', VITEST_SUITES, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(suites, ['? :: Failed Suites 2', 'src/a.test.js :: top fails']);
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary: parseSummary('vitest', VITEST_SUITES), ids: suites }).at(-1), 'run-counted: FAILED ?');
+  // in colour, in a workspace (`|project|` before the file), and a FAIL line that names no test
+  assert.deepEqual(failingTests('vitest', `${ESC}[41m${ESC}[1m FAIL ${ESC}[22m${ESC}[49m src/a.test.js${ESC}[2m > ${ESC}[22mtop fails\n`), ['src/a.test.js :: top fails']);
+  assert.deepEqual(failingTests('vitest', ' FAIL  |unit| src/a.test.ts > group > t\n'), ['src/a.test.ts :: group > t']);
+  assert.deepEqual(failingTests('vitest', ' FAIL  src/c.test.js [ src/c.test.js ]\n'), ['? :: FAIL  src/c.test.js [ src/c.test.js ]']);
+});
+
+test('failingTests, bun: each (fail) line under the file line before it; the closing list is not read again', () => {
+  const ids = failingTests('bun', BUN_FAILING, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(ids, ['test/b.test.ts :: b fails', 'test/a.test.ts :: top fails', 'test/a.test.ts :: group > inner fails']);
+  assert.equal(failedLines({ ok: false, min: 2, summary: parseSummary('bun', BUN_FAILING), ids }).length, 3);
+  // bun's closing list repeats the failures without their files: none of them lands under test/a.test.ts
+  const closing = `${BUN_FAILING}\n\n3 tests failed:\n(fail) b fails [7.05ms]\n(fail) top fails [0.24ms]\n(fail) group > inner fails [0.16ms]\n`;
+  assert.deepEqual(failingTests('bun', closing, { cwd: '/repo', top: '/repo' }), ids);
+  // a file that did not load: bun counts it in fail with no (fail) line, and adds an error counter
+  const load = 'c.test.js:\n# Unhandled error between tests\na.test.js:\n(fail) top fails [3.53ms]\n 1 pass\n 2 fail\n 1 error\n 1 expect() calls\nRan 3 tests across 2 files. [162.00ms]\n';
+  const loadIds = failingTests('bun', load);
+  assert.deepEqual(loadIds, ['a.test.js :: top fails']);
+  assert.equal(failedLines({ ok: false, min: 1, summary: parseSummary('bun', load), ids: loadIds }).at(-1), 'run-counted: FAILED ?');
+});
+
+test("failingTests, pytest and playwright: pytest's short summary, a parameter's ` - ` kept; the tests under playwright's `failed` line, a project kept in the title", () => {
+  const py = [
+    '=========================== short test summary info ============================',
+    'FAILED tests/test_a.py::test_b - assert 1 == 2',
+    'FAILED tests/test_a.py::TestX::test_y',
+    '========================= 2 failed, 3 passed in 0.12s ==========================',
+  ].join('\n');
+  const pyIds = failingTests('pytest', py, { cwd: '/repo', top: '/repo' });
+  assert.deepEqual(pyIds, ['tests/test_a.py :: test_b', 'tests/test_a.py :: TestX::test_y']);
+  assert.equal(failedLines({ ok: false, min: 3, summary: parseSummary('pytest', py), ids: pyIds }).length, 2);
+  // a parameter that holds ` - ` stays in the id, so two such cases never share one
+  const params = [
+    'FAILED tests/test_a.py::test_p[a - b] - assert 1 == 2',
+    'FAILED tests/test_a.py::test_p[a - c]',
+    'FAILED tests/test_a.py::test_p[x[1] - y] - ValueError: no',
+    'FAILED tests/test_a.py::test_q[open - x',
+    'FAILED tests/test_a.py::test_r extra words',
+  ].join('\n');
+  assert.deepEqual(failingTests('pytest', params, { cwd: '/repo', top: '/repo' }), [
+    'tests/test_a.py :: test_p[a - b]',
+    'tests/test_a.py :: test_p[a - c]',
+    'tests/test_a.py :: test_p[x[1] - y]',
+    '? :: tests/test_a.py::test_q[open - x',
+    '? :: tests/test_a.py::test_r extra words',
+  ]);
+  const pw = [
+    '  1 failed',
+    '    t/a.spec.mjs:5:1 › broken ──────────────────────',
+    '  1 flaky',
+    '    t/a.spec.mjs:4:1 › flaky ───────────────────────',
+    '  1 passed (1.3s)',
+  ].join('\n');
+  const pwIds = failingTests('playwright', pw);
+  // the flaky test is no failing test, and its counter keeps the failure from being whole
+  assert.deepEqual(pwIds, ['t/a.spec.mjs :: broken']);
+  assert.equal(failedLines({ ok: false, min: 1, summary: parseSummary('playwright', pw), ids: pwIds }).at(-1), 'run-counted: FAILED ?');
+  assert.deepEqual(failingTests('playwright', '  2 failed\n    [chromium] › tests/a.spec.ts:3:5 › group › title ─────\n    something else\n  1 passed (2.0s)\n'), [
+    'tests/a.spec.ts :: [chromium] group › title',
+    '? :: something else',
+  ]);
+});
+
+test('failingTests: the file is relative to the top when inside it, absolute outside it, relative to cwd with no top', () => {
+  const line = ' FAIL  src/a.test.ts > t\n';
+  assert.deepEqual(failingTests('vitest', line, { cwd: '/repo/packages/x', top: '/repo' }), ['packages/x/src/a.test.ts :: t']);
+  assert.deepEqual(failingTests('vitest', line, { cwd: '/elsewhere', top: '/repo' }), ['/elsewhere/src/a.test.ts :: t']);
+  assert.deepEqual(failingTests('vitest', line, { cwd: '/repo/packages/x' }), ['src/a.test.ts :: t']);
+  const url = "not ok 1 - u\n  ---\n  type: 'test'\n  location: 'file:///repo/t/u.test.mjs:1:1'\n  ...\n";
+  assert.deepEqual(failingTests('node', url, { cwd: '/repo', top: '/repo' }), ['t/u.test.mjs :: u']);
+  // each id once
+  assert.deepEqual(failingTests('vitest', `${line}${line}`, { cwd: '/repo', top: '/repo' }), ['src/a.test.ts :: t']);
+  assert.throws(() => failingTests('jest', line), /unknown kind: jest/);
+});
+
+test('failedLines: nothing for a pass; `FAILED ?` unless the named tests are the whole failure of a run that ran to its end', () => {
+  const s = (extra = {}) => ({ passed: 2, failed: 2, unknown: [], problems: [], markers: [], ...extra });
+  const ids = ['a.test.mjs :: one', 'a.test.mjs :: two'];
+  const named = ids.map((id) => `run-counted: FAILED ${id}`);
+  assert.deepEqual(failedLines({ ok: true, min: 1, summary: s(), ids: [] }), []);
+  assert.deepEqual(failedLines({ ok: false, min: 4, summary: s(), ids }), named);
+  const partial = (args) => assert.deepEqual(failedLines({ ok: false, min: 1, summary: s(), ids, ...args }), [...named, 'run-counted: FAILED ?'], JSON.stringify(args));
+  partial({ signal: 'SIGKILL' });
+  partial({ interrupted: 'SIGTERM' });
+  partial({ spawnError: 'ENOENT' });
+  partial({ summary: null });
+  partial({ summary: s({ problems: ['2 vitest summary lines in the output (one expected)'] }) });
+  partial({ summary: s({ unknown: ['1 error'] }) });
+  partial({ summary: s({ markers: ['ok 2 - later # SKIP'] }) });
+  for (const c of BAD_COUNTERS.filter((c) => c !== 'failed')) partial({ summary: s({ [c]: 1 }) });
+  partial({ summary: s({ failed: 3 }) });
+  partial({ min: 5 });
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary: s(), ids: ['? :: one', ids[1]] }).at(-1), 'run-counted: FAILED ?');
+  // a failure with no failing test named (an exit code alone): `FAILED ?` only
+  assert.deepEqual(failedLines({ ok: false, min: 1, summary: s({ failed: 0 }), ids: [] }), ['run-counted: FAILED ?']);
+});
+
 // ---- the wrapper
 
 const tempDirs = [];
@@ -494,6 +838,10 @@ function alive(pid) {
 
 // run-counted's STOP_GRACE_MS (2 s) and a margin: the bound on a wrapper that must not hang.
 const GRACE_BOUND_MS = 4000;
+// A wait for something that comes at once on an idle machine (a PID file, a trapped signal, a
+// process ending): a loaded test pool can stall a process past 2 s, and a pass returns as soon as
+// the condition holds, so this bound only decides how long a real failure takes to report.
+const SETTLE_MS = 10_000;
 
 /**
  * A script that writes its PID to `pidFile` (written, then renamed, so it appears whole) once it
@@ -525,7 +873,7 @@ function startWrap(script) {
 }
 
 const pidOf = async (pidFile, r) => {
-  await until(() => fs.existsSync(pidFile), 2000, `${path.basename(pidFile)} to appear`);
+  await until(() => fs.existsSync(pidFile), SETTLE_MS, `${path.basename(pidFile)} to appear`);
   const pid = Number(fs.readFileSync(pidFile, 'utf8'));
   r.pids.push(pid);
   return pid;
@@ -544,7 +892,7 @@ test('the wrapper forwards SIGTERM to the command, waits for it and exits 128 + 
       assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
       assert.match(r.out, INTERRUPTED);
       assert.doesNotMatch(r.out, /killed by SIGTERM|^COUNTED/m);
-      await until(() => !alive(pid), 2000, 'the command to end');
+      await until(() => !alive(pid), SETTLE_MS, 'the command to end');
     } finally {
       r.stop();
     }
@@ -564,7 +912,7 @@ test('the wrapper stops the processes the command started: SIGTERM reaches its w
     await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
     assert.deepEqual(r.closed, { code: 143, signal: null }, r.out);
     assert.match(r.out, INTERRUPTED);
-    await until(() => !alive(pid), 2000, 'the worker to end');
+    await until(() => !alive(pid), SETTLE_MS, 'the worker to end');
   } finally {
     r.stop();
   }
@@ -595,13 +943,54 @@ test('a second SIGTERM kills a command that traps the first and never exits: exi
   try {
     const pid = await pidOf(pidFile, r);
     r.kill('SIGTERM');
-    await until(() => fs.existsSync(`${pidFile}.term`), 2000, 'the command to get the first SIGTERM');
+    await until(() => fs.existsSync(`${pidFile}.term`), SETTLE_MS, 'the command to get the first SIGTERM');
     r.kill('SIGTERM');
     await until(() => r.closed !== null, GRACE_BOUND_MS, 'the wrapper to exit');
     assert.deepEqual(r.closed, { code: 137, signal: null }, r.out);
     assert.match(r.out, INTERRUPTED);
-    await until(() => !alive(pid), 2000, 'the command to end');
+    await until(() => !alive(pid), SETTLE_MS, 'the command to end');
   } finally {
     r.stop();
   }
+});
+
+test('the wrapper names each failing test after its verdict: relative to RUN_GATES_TOP (a link resolved), to its cwd without one', () => {
+  const d = tmp();
+  fs.mkdirSync(path.join(d, 'pkg'));
+  fs.writeFileSync(
+    path.join(d, 'pkg', 'a.test.mjs'),
+    "import assert from 'node:assert/strict';\nimport { describe, test } from 'node:test';\ntest('passes', () => {});\ntest('top fails', () => { assert.equal(1, 2); });\ndescribe('group', () => { test('inner fails', () => { assert.equal(1, 2); }); });\n",
+  );
+  fs.writeFileSync(path.join(d, 'pkg', 'b.test.mjs'), "import { test } from 'node:test';\ntest('passes', () => {});\n");
+  const node = (file) => ['--kind', 'node', '--min', '1', '--', process.execPath, '--test', '--test-reporter=tap', file];
+  const tail = (r) => r.stdout.trim().split('\n').slice(-4);
+  const top = wrap(node('a.test.mjs'), { RUN_GATES_TOP: d }, path.join(d, 'pkg'));
+  assert.equal(top.status, 1, top.stdout + top.stderr);
+  assert.deepEqual(tail(top), [
+    'run-counted: FAIL the command exited 1',
+    'run-counted: FAIL 2 failed (must be 0)',
+    'run-counted: FAILED pkg/a.test.mjs :: top fails',
+    'run-counted: FAILED pkg/a.test.mjs :: group > inner fails',
+  ]);
+  const link = path.join(tmp(), 'top');
+  fs.symlinkSync(d, link);
+  assert.deepEqual(tail(wrap(node('a.test.mjs'), { RUN_GATES_TOP: link }, path.join(d, 'pkg'))), tail(top));
+  assert.deepEqual(tail(wrap(node('a.test.mjs'), { RUN_GATES_TOP: '' }, path.join(d, 'pkg'))).slice(2), [
+    'run-counted: FAILED a.test.mjs :: top fails',
+    'run-counted: FAILED a.test.mjs :: group > inner fails',
+  ]);
+  const pass = wrap(node('b.test.mjs'), { RUN_GATES_TOP: d }, path.join(d, 'pkg'));
+  assert.equal(pass.status, 0, pass.stdout + pass.stderr);
+  assert.doesNotMatch(pass.stdout, /FAILED/);
+});
+
+test("the wrapper: a failure it cannot put down to named tests ends with `FAILED ?` -- a missing binary, a count the names do not cover", () => {
+  const d = tmp();
+  const named = wrap(['--kind', 'vitest', '--min', '1', '--', ...fakeRunner(d, ' FAIL  src/a.test.ts > t\n      Tests  1 failed | 1 passed (2)\n', { code: 1 })], { RUN_GATES_TOP: d }, d);
+  assert.equal(named.status, 1);
+  assert.equal(named.stdout.trim().split('\n').at(-1), 'run-counted: FAILED src/a.test.ts :: t');
+  const short = wrap(['--kind', 'vitest', '--min', '1', '--', ...fakeRunner(d, ' FAIL  src/a.test.ts > t\n      Tests  2 failed | 1 passed (3)\n', { code: 1 })], { RUN_GATES_TOP: d }, d);
+  assert.deepEqual(short.stdout.trim().split('\n').slice(-2), ['run-counted: FAILED src/a.test.ts :: t', 'run-counted: FAILED ?']);
+  const missing = wrap(['--kind', 'bun', '--min', '1', '--', path.join(d, 'no-such-runner')], { RUN_GATES_TOP: d }, d);
+  assert.equal(missing.stdout.trim().split('\n').at(-1), 'run-counted: FAILED ?');
 });

@@ -215,7 +215,7 @@ change (then register the repository for the weekly job, `learning.md` › The w
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 11, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 12, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -345,11 +345,12 @@ entry is stale, and the sheet's list of what the owner reviews again.
 | 9 | 2.2.3-js.12 | the process fits the stakes and reaches product code first: Phase A's **stakes line** and forecast; the **short foundation** (`foundation.md`: the skeleton is the pass-signal unit, the flip follows it at once, `Paths:` lines feed the re-derive, no other harness unit first); the **harness lane** (`runner.md`, `review-gate.mjs --tier harness` over `HARNESS` paths); cadences count product landings and none is due in foundation (`harness-due.mjs`); severity judged against the stakes line, critical entries citing a harm, the narrowed tier test and taste as a card (`gate-design.md`, `policy-derivation.md`); the claim audit over **behaviour claims**, one round, record prose quote-or-delete at 8b (`claim-auditor.md`); **batched rows** (`runner.md`, the state file's `Rows:`); an owner's own push as a fact; the plan check only when the approach is open; the run's blocks in `process.md` (`harness-targets.md`); `estimate.mjs --log` repeatable; the retro's self-reference share and product rows per day; hazards `stakes-line-missing` and `block-in-base`. The rest of an upgrade to v9 is in *Upgrading to v9* below |
 | 10 | 2.2.3-js.13 | the run waits on the owner only where the owner must decide: the **standing grant** and the digest (`gate-design.md` › The standing grant), the decision rows' `By` and `Card kind`; **`production: none \| live`** on the stakes line; the **landing check** (`review-gate.mjs --landing`, `lib/snapshot-tree.mjs`, the guard's refusal, the guard also as `reference-transaction`); rounds 3 to 5 as adversarial, redesign and cut; the **relevance test** and the **harness freeze**, reports never units (`runner.md`); `harness-due.mjs`'s new lines; budgets that warn; an absolute `core.hooksPath`; a landing whose host names itself nowhere counts no review row; hazards `grant-line-missing`, `push-deploys-missing`, `production-missing`, `grant-without-machine-gates`, `ref-unguarded`, `hooks-path-relative` and `hooks-path-missing`. The rest is in *Upgrading to v10* below |
 | 11 | 2.2.3-js.14 | the owner is asked last and once: the **owner key** (`commit-guard.md`; the command guard asks for `HARNESS_LANDING=owner git merge --no-ff` and a deploying push, refuses any other form, and adds `unbounded-wait` and `full-verify-executor`); **asks are the run's last action**; **task first** (`harness-due.mjs --claim` prints only `DUE preflight` and `WAIT`, the plain run once at the end of the run, reports only once the product queue is empty; the `HOLD` valve goes); unsure → the grant on reversible C cards; the local dev stack is the agent's; **act, don't warn** (the leftover hook reaps and reports on every Claude Code install, the memory notice goes; admission and a gate timeout in `run-gates.sh`, FULL only by the session; `DISK_MIN_GB` 10); known reds; session-resume on UserPromptSubmit; `.gitattributes` union merges for record docs; cleanup on the owner's word. The rest is in *Upgrading to v11* below |
+| 12 | 2.2.3-js.15 | pay only for the steps that find: a round that fixed only P2s is **`defer`** on cold code and on critical code from round 3 (`gate-design.md` › the fix-round table); Small's lane A carries the **claim checklist** and the claim audit is Full only; the **Opus `code-reviewer`** reads what the second family wrote, a Sonnet one only when the second family is unavailable; lane B's Opus auditor only when a reader sits outside the diff; **known reds in code** (`run-gates.sh` prints `KNOWN`, run-counted prints the failing tests); codex-run's **`refused`** (exit 5, that pass on Opus) and **verdict copies**, the retro's *Yield by step*; session-resume names only this checkout's row, and an executor's run that would be FULL exits 99; the guard trusts a fetch into the mainline on git before 2.50; the own skill **coordinate-sessions**. The rest is in *Upgrading to v12* below |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v10 install the v11 row, a v9 install the v10 and v11
-rows, a v3 install the v4 to v11 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v11 install the v12 row, a v10 install the v11 and v12
+rows, a v3 install the v4 to v12 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
@@ -360,7 +361,7 @@ with no manifest starts from the fingerprints (Step 1): its entries are `legacy`
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 11.
+`skillVersion` 12.
 
 `[M]` **The upgrade cadence.** An install upgrades only between units, and only
 when a defect in its version costs product work or the owner asks; a new version
@@ -644,3 +645,28 @@ module is replaced by the template's when it does the same job; its floors carry
 over as bindings. **A local landing binding that answers `NONE` for paths no
 risk-map entry covers** is reverted to the template's rule: such a path is cold
 code. An install's feedback goes to its `docs/harness/upstream-notes.md`, never a unit.
+
+### Upgrading to v12
+
+`[M]` **Lands by the grant, between units, with the owner key.** Every v12 row is a
+replace, a keep or a clean merge, so there is no owner card. The files it replaces
+include guards (`run-gates.sh`, `run-counted.mjs`, `codex-run.mjs`, the review-gate
+core, the commit guard's hooks), so the landing check says `NONE` and the merge is
+the owner's: `! HARNESS_LANDING=owner git merge --no-ff <branch>`, one owner key on
+Claude Code (`commit-guard.md`).
+
+`[M]` **What regenerates.** `run-gates.sh`, `run-counted.mjs` and its core,
+`codex-run.mjs` and its core, `claude-run.mjs`, `lib/snapshot-tree.mjs`, the review-gate core, `retro-core.mjs` and
+`retro-gather.mjs`, `session-resume.mjs` and the guard's hook copies, each with its
+test. **New binding:** `MAINLINE` in `run-gates.sh`, the branch whose clean FULL runs
+record the known reds (default `main`; `RUN_GATES_MAINLINE` overrides it, and empty
+turns the record off). A gate whose command is one `run-counted.mjs` call gets known
+reds as it is. A gate that runs tests another way prints no `FAILED` lines, and one
+that wraps the call (`cd <dir> && …`, a scoped/full `if`) gets none either: both stay `FAIL`.
+
+`[M]` **Local rules v12 removes.** A session rule or runbook line that sends a diff
+the second family wrote to a Sonnet reviewer goes: `review-gate.mjs` names the Opus
+`code-reviewer`. A `database-reviewer` trigger wider than migrations and schema files
+(a whole `db/` or repository folder) narrows to the template's (`\.sql$`, the
+migrations folder, the schema file). A runbook that retries a `failed` Codex pass
+reads the outcome first: `refused` reruns on Opus, never on Codex.

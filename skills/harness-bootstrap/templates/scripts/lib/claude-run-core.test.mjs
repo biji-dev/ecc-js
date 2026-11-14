@@ -240,15 +240,15 @@ test('the wrapper: refuses Claude Code and a sandbox with no network, honours th
 
 /**
  * A repository on branch `feature`, forked from `main` at `fork`, with `main` one commit further on
- * and pay.js edited in the working tree, and a stub `claude` that answers ok (and, with STUB_EDIT
- * set, edits pay.js while it runs). `run(env, ...args)` returns the exit and the ledger's last row.
+ * and pay.js edited in the working tree, and a stub `claude` that keeps its stdin and answers ok
+ * (and, with STUB_EDIT set, edits pay.js while it runs). `run(env, ...args)` returns the exit and the ledger's last row.
  */
 function landingRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-run-landing-'));
   const bin = path.join(dir, 'bin');
   const repo = path.join(dir, 'repo');
   for (const d of [bin, repo]) fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$STUB_DIR/argv.txt"\ncat > /dev/null\n[ -n "$STUB_EDIT" ] && echo "// during" >> pay.js\ncat "$STUB_DIR/answer.json"\n');
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$STUB_DIR/argv.txt"\ncat > "$STUB_DIR/stdin.txt"\n[ -n "$STUB_EDIT" ] && echo "// during" >> pay.js\ncat "$STUB_DIR/answer.json"\n');
   fs.chmodSync(path.join(bin, 'claude'), 0o755);
   fs.writeFileSync(path.join(dir, 'answer.json'), result());
   fs.writeFileSync(path.join(dir, 'p.md'), 'the focus');
@@ -300,7 +300,7 @@ test('the wrapper: a review row records baseTree, the tree of its merge base, an
   }
 });
 
-test('the wrapper: adversarial records its optional --base as baseTree, never on the claude command line', () => {
+test('the wrapper: adversarial records its optional --base as baseTree, never on the claude command line, and lists the range in the brief', () => {
   const { dir, git, run, prompt } = landingRepo();
   try {
     const { res, row } = run({}, 'adversarial', '--prompt', prompt, '--base', 'main');
@@ -308,9 +308,14 @@ test('the wrapper: adversarial records its optional --base as baseTree, never on
     assert.equal(row.baseTree, git('rev-parse', 'main^{tree}'));
     const argv = fs.readFileSync(path.join(dir, 'argv.txt'), 'utf8').split('\n');
     assert.equal(argv.includes('--base') || argv.includes('main'), false, argv.join(' '));
+    // The landing check counts the pass as a read of main..working tree: pay.js and other.js both.
+    const brief = fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8');
+    assert.ok(brief.includes(`from tree ${row.baseTree} to the working tree`), brief);
+    assert.ok(brief.includes('\n- pay.js\n') && brief.includes('\n- other.js\n'), brief);
     const { row: without } = run({}, 'adversarial', '--prompt', prompt);
     assert.equal(without.baseTree, null);
     assert.equal(without.treeAfter, without.tree);
+    assert.equal(fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8').includes('## The range'), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

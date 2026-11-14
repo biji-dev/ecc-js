@@ -8,6 +8,10 @@
 // startup it reads the registry's held and parked rows and each unit's state file, and hands the
 // model the resume point the owner used to paste by hand:
 //   compact                 -> continue the held unit's next step, re-reading process.md (Step 0a)
+// A session started in a linked worktree that a held row names sees only the rows that name its
+// checkout in full; the others are one `HELD ELSEWHERE` line each, other sessions' units it never
+// continues. A session started in the main checkout sees every held row, as before: it may drive a
+// unit in a linked worktree with `cd`.
 //   startup, resume, clear  -> context only: nothing starts until the owner asks
 // The registry and the state files are the record; a compaction summary is not (harness-bootstrap's
 // reference/context.md). Reads files and runs `git rev-parse`, `git show`, `git rev-list`, `git log` and
@@ -45,6 +49,9 @@ const QID = /^Q-\d+$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const CLOSING = {
   compact: "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.",
+  one: (unit) => `Continue ${unit}'s next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); units held elsewhere are other sessions', never continue one; parked units wait for the owner's answers.`,
+  several: "Several units are held: continue only the one this session was running, from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); the others are other sessions'. A controller (coordinate-sessions) re-reads its board and runs board-check instead. Parked units wait for the owner's answers.",
+  elsewhere: "No unit is held in this checkout; units held elsewhere are other sessions', never continue one. Parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape); a worker under a controller waits for its next message.",
   parkedOnly: "No unit is held; parked units wait for the owner's answers. If a queue run is on, start the next ready unit (the runner's Shape).",
   none: "No unit is held or parked. If a queue run is on, run harness-due and start the next unit in the runner's order (the runner's Shape) under the standing grant and any Stop: line.",
   context: 'Context only: start nothing until the owner asks; /task-runner resumes the held unit, then answered parked units, then the next original plan row.',
@@ -188,8 +195,7 @@ const nextLines = (lines = []) => lines.map((l) => clip(l.replace(/^\s*[-*+]\s+/
 function stateOf(row, root) {
   if (row.cells) return { note: 'state file not read: the registry table has no header row' };
   if (!UNIT_ID.test(row.unit) || row.unit.includes('..')) return { note: `state file not read: '${clip(row.unit)}' is not a unit id` };
-  const checkout = !row.worktree || row.worktree === 'main' || row.worktree === '.' ? root : resolve(root, row.worktree);
-  const file = join(checkout, STATE_DIR, `${row.unit}.state.md`);
+  const file = join(rowCheckout(row, root), STATE_DIR, `${row.unit}.state.md`);
   try {
     return readState(readFileSync(file, 'utf8'));
   } catch {
@@ -201,6 +207,19 @@ function stateOf(row, root) {
     } catch {
       return { note: `${missing} (in this checkout or on ${clip(row.branch)})` };
     }
+  }
+}
+
+/**
+ * The checkout a row's Worktree cell names, as the commit guard reads it: the main checkout for an empty
+ * cell, `main` or `.`, else the path from the main checkout; a realpath when it exists.
+ */
+function rowCheckout(row, root) {
+  const path = !row.worktree || row.worktree === 'main' || row.worktree === '.' ? root : resolve(root, row.worktree);
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
   }
 }
 
@@ -254,18 +273,35 @@ export function capped(first, body, last, max = MAX_BYTES) {
   return bytes.subarray(0, end).toString('utf8');
 }
 
+/** A held row of another session: one line, its state file unread. */
+const elsewhereLine = (row) => `HELD ELSEWHERE ${[row.unit, row.step && `step ${row.step}`, row.branch, row.worktree].filter(Boolean).map(clip).join(' · ')}`;
+
 /**
  * The text for a SessionStart from `source`; with no held or parked row, a compaction's pointer at the queue,
  * else null. `grant` is standingGrant's { grant, pushDeploys }; a grant line follows the first line.
+ * `checkout` is the checkout the session started in (a realpath). Started in a linked worktree while a held
+ * row names a linked worktree, the session's units are the held rows that name its checkout, and every other
+ * held row is one HELD ELSEWHERE line. Anywhere else, or with no `checkout`, every held row is the session's.
  */
-export function resumeText(source, rows, root, grant = null) {
+export function resumeText(source, rows, root, grant = null, { checkout } = {}) {
   if (!rows.length && source !== 'compact') return null;
   const first = `[session-resume] ${source}: the harness's resume point, read from the registry and the state files (newer than any summary).`;
   const standing = grant?.grant ?? null;
-  const body = rows.flatMap((row) => unitLines(row, stateOf(row, root), standing));
+  const held = rows.filter((row) => row.kind === 'held');
+  const located = checkout !== undefined && checkout !== root && held.some((row) => !row.cells && rowCheckout(row, root) !== root);
+  const mine = held.filter((row) => !located || rowCheckout(row, root) === checkout);
+  const body = [
+    ...mine.flatMap((row) => unitLines(row, stateOf(row, root), standing)),
+    ...held.filter((row) => !mine.includes(row)).map(elsewhereLine),
+    ...rows.filter((row) => row.kind !== 'held').flatMap((row) => unitLines(row, stateOf(row, root), standing)),
+  ];
   if (standing !== null) body.unshift(`standing grant (AGENTS.md › merge): ${standing}; push deploys: ${grant.pushDeploys ?? '?'}`);
-  const held = rows.some((row) => row.kind === 'held');
-  return capped(first, body, source !== 'compact' ? CLOSING.context : held ? CLOSING.compact : rows.length ? CLOSING.parkedOnly : CLOSING.none);
+  let last = CLOSING.context;
+  if (source === 'compact') {
+    if (located) last = mine.length === 0 ? CLOSING.elsewhere : mine.length === 1 ? CLOSING.one(clip(mine[0].unit)) : CLOSING.several;
+    else last = mine.length > 1 ? CLOSING.several : mine.length ? CLOSING.compact : rows.length ? CLOSING.parkedOnly : CLOSING.none;
+  }
+  return capped(first, body, last);
 }
 
 /** The main checkout, as the commit guard finds it: the parent of git's common dir when that is a .git, else the top level. */
@@ -415,7 +451,8 @@ async function main() {
       }
     }
     const rows = registryRows(readFileSync(join(root, REGISTRY), 'utf8'));
-    const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root, readGrant(root));
+    const checkout = realpathSync(gitOut(dir, ['rev-parse', '--show-toplevel']));
+    const text = resumeText(SOURCES.includes(input.source) ? input.source : 'startup', rows, root, readGrant(root), { checkout });
     if (text) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }));
   } catch {
     // No registry, not a checkout, or anything else: a resume note must never break a session's start.

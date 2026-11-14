@@ -92,8 +92,11 @@ names into a list-2 finding.
 - **Plan mode:** the plan row, its trace and the Scope block.
 - **Change mode, Full:** the written plan, verbatim, plus the Scope block. A change
   request's milestone row and the sections it cites are the plan.
-- **Small:** the Scope block alone. It still runs — a Small unit with no audit is a
-  unit nobody checked against what it said it would do.
+- **Small:** the Scope block, plus the claim checklist Small has no claim audit for:
+  each "Done when" line's evidence and the record's test counts, checked against the
+  tree, the cited command re-run; a claim the tree does not back is a list-2 finding
+  (`claim-auditor.md`). It still runs — a Small unit with no audit is a unit nobody
+  checked against what it said it would do.
 
 `[M]` Each item comes back `DONE file:line` · `PARTIAL` (the paths, callers or
 platforms missing) · `MISSING` · `DIVERGED` (what differs, and whether the plan

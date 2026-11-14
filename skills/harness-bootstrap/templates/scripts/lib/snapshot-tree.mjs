@@ -10,7 +10,9 @@
  * its skip-worktree files are absent on disk. With no flagged entry the tree is built once.
  * codex-run and claude-run write these into the ledger row of every review they dispatch. The landing
  * check (`review-gate.mjs --landing`) follows each critical file from the mainline through the
- * reviewed `baseTree -> tree` changes, so content no review read cannot reach the mainline.
+ * reviewed `baseTree -> tree` changes, so content no review read cannot reach the mainline. Since
+ * that check counts an adversarial pass with a base as a read of its whole range, `rangeText` lists
+ * the range's files for both wrappers to append to that pass's prompt.
  *
  * The tree is built in a throwaway copy of the index (`GIT_INDEX_FILE`): the real index, the working
  * tree, HEAD and every ref are never touched. No function here throws; a failure returns `null`.
@@ -115,5 +117,39 @@ export function currentBranch(cwd) {
     return git(['branch', '--show-current'], cwd).trim() || null;
   } catch {
     return null;
+  }
+}
+
+// ---- the range a landing pass is recorded as reading -------------------------------------------
+
+/** At most this many paths go into a range block; the rest are counted, with the command that lists them. */
+export const RANGE_MAX = 200;
+
+/**
+ * The prompt block for an adversarial pass with a base: the landing check (review-gate.mjs --landing)
+ * counts such a row as a review of every change from `from` to the working tree, whatever its brief
+ * narrowed, so the pass is told the range and asked to read each changed file. '' for no file.
+ */
+export function rangeBlock(files, from, max = RANGE_MAX) {
+  const list = files.filter(Boolean);
+  if (list.length === 0) return '';
+  const shown = list.slice(0, max).map((f) => `- ${f}`);
+  if (list.length > max) shown.push(`- and ${list.length - max} more: \`git diff --name-only ${from}\``);
+  return (
+    '\n\n## The range this pass is recorded as reading\n\n' +
+    `The harness's landing check counts this pass as a review of every change from tree ${from} to the ` +
+    `working tree (\`git diff ${from}\`). Read each changed file below in that diff, whatever the brief ` +
+    'above narrows, and report on any of them that holds a finding:\n\n' +
+    `${shown.join('\n')}\n`
+  );
+}
+
+/** The range block for the paths that differ between trees `from` and `to`, or '' when git fails. */
+export function rangeText(cwd, from, to) {
+  try {
+    if (!TREE_ID.test(from ?? '') || !TREE_ID.test(to ?? '')) return '';
+    return rangeBlock(git(['-c', 'core.quotePath=false', 'diff', '--name-only', '--no-renames', from, to, '--'], cwd).split('\n'), from);
+  } catch {
+    return '';
   }
 }

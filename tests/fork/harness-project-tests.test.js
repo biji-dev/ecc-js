@@ -19,10 +19,10 @@ const TEMPLATES = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates');
 const SUITES = {
   'command-guard': 52,
   'edit-guard': 9,
-  'harness-guard': 57,
+  'harness-guard': 58,
   'context-budget': 8,
-  'session-resume': 19,
-  'run-gates': 16,
+  'session-resume': 20,
+  'run-gates': 19,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).
@@ -134,8 +134,10 @@ function hermeticEnv() {
   return env;
 }
 
-function runSuite(dir, name) {
-  return spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join('scripts', 'lib', `${name}.test.mjs`)], {
+/** Run one installed suite; `only` keeps the tests whose name matches it (`--test-name-pattern`). */
+function runSuite(dir, name, only = null) {
+  const pick = only ? [`--test-name-pattern=${only}`] : [];
+  return spawnSync(process.execPath, ['--test', '--test-reporter=tap', ...pick, path.join('scripts', 'lib', `${name}.test.mjs`)], {
     cwd: dir,
     encoding: 'utf8',
     env: hermeticEnv(),
@@ -180,15 +182,16 @@ console.log('\nharness project tests: each suite fails on a broken install');
 
 /**
  * Install (the `variant` install when given), break one line of the copy a suite tests (each copy when
- * `rel` lists several, as the two hook copies of the guard), and assert the suite fails.
+ * `rel` lists several, as the two hook copies of the guard), and assert the suite fails (its tests
+ * named like `only` when given, so a mutant that one test covers costs one test's time).
  */
-function mutantFails(name, rel, from, to, { variant } = {}) {
+function mutantFails(name, rel, from, to, { variant, only = null } = {}) {
   test(`mutant: ${name}`, () => {
     const dir = install({ variant });
     const rels = [].concat(rel);
     for (const r of rels) edit(dir, r, from, to);
     const suite = Object.keys(SUITES).find(s => rels[0].includes(s)) ?? (/^\.(?:githooks|husky)\//.test(rels[0]) ? 'harness-guard' : null);
-    const res = runSuite(dir, suite);
+    const res = runSuite(dir, suite, only);
     assert.notStrictEqual(res.status, 0, `the ${suite} suite passed the mutant`);
     assert.ok(tapCount(`${res.stdout}${res.stderr}`, 'fail') >= 1);
   });
@@ -398,6 +401,101 @@ mutantFails(
   'scripts/run-gates.sh',
   'if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then',
   'if false; then',
+);
+
+// The known-red baseline: each check the runner makes before it prints KNOWN for a failing gate.
+const KNOWN_REDS = { only: 'known reds' };
+mutantFails(
+  'a runner that prints KNOWN when the branch changed the failing test file',
+  'scripts/run-gates.sh',
+  String.raw`if printf '%s\n' "$KNOWN_CHANGED" | grep -Fxq -- "$f"; then return 1; fi`,
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a failing test the mainline record lacks',
+  'scripts/run-gates.sh',
+  String.raw`printf '%s\n' "$rec_ids" | grep -Fxq -- "$id" || return 1`,
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that caches a run with a KNOWN gate',
+  'scripts/run-gates.sh',
+  '[ "$failed" -eq 0 ] && [ "$known" -eq 0 ] &&',
+  '[ "$failed" -eq 0 ] &&',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that keeps the mainline record after the gate passes there',
+  'scripts/run-gates.sh',
+  '    rm -f "$base"\n',
+  '    :\n',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that reads a FAILED block with other output after it',
+  'scripts/run-gates.sh',
+  'next} {b = ""} END',
+  'next} {} END',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a test file the merge base lacks (an ignored one is in no diff)',
+  'scripts/run-gates.sh',
+  'git cat-file -e "$KNOWN_MB:$f" 2>/dev/null || return 1',
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that reads a record made before the merge base',
+  'scripts/run-gates.sh',
+  '[ -n "$rec_head" ] && git merge-base --is-ancestor "$KNOWN_MB" "$rec_head" 2>/dev/null || return 1',
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  "a runner that checks the checkout, not the snapshot, for a tree that moved during a --snapshot run",
+  'scripts/run-gates.sh',
+  'st=$(git -C "$GATE_DIR" status',
+  'st=$(git status',
+  KNOWN_REDS,
+);
+
+mutantFails(
+  'a runner that prints KNOWN for a gate of more than one command',
+  'scripts/run-gates.sh',
+  '[ "${2#exit }" != "$2" ] && single_counted "$4" || return 1',
+  '[ "${2#exit }" != "$2" ] || return 1',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a title its file does not spell',
+  'scripts/run-gates.sh',
+  '[ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1',
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records the reds of a mainline run whose tree moved',
+  'scripts/run-gates.sh',
+  'if [ "$(git rev-parse -q --verify HEAD 2>/dev/null)" = "$BASE_HEAD" ] && tree_clean; then ok=1; fi',
+  'ok=1',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records only with the mainline checked out, never detached at its tip',
+  'scripts/run-gates.sh',
+  'BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&',
+  '[ "$(git symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$MAINLINE_B" ] && BASE_HEAD=$(git rev-parse -q --verify HEAD 2>/dev/null) &&',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that records an id with a second " :: "',
+  'scripts/run-gates.sh',
+  String.raw`  if printf '%s\n' "$ids" | grep -q ' :: .* :: '; then return 1; fi` + '\n',
+  '',
+  KNOWN_REDS,
 );
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

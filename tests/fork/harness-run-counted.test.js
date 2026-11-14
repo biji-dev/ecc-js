@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'run-counted-core.mjs');
 const CLI_REL = 'run-counted.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 26;
+const EXPECTED_TESTS = 35;
 
 let passed = 0;
 let failed = 0;
@@ -127,6 +127,17 @@ mutantFails('ignoring the exit code', 'else if (exitCode !== 0) reasons.push(', 
 mutantFails("reading bun's summary from stdout", "bun: 'stderr'", "bun: 'stdout'");
 mutantFails('reading an inherited key as a counter word', 'Object.hasOwn(words, m[2]) && words[m[2]]', 'words[m[2]]');
 mutantFails('ignoring a --test flag in NODE_OPTIONS', "if (!/--test/.test(v)) return null;", 'return null;');
+
+// The failing-test ids run-counted prints after its verdict (the known-red baseline reads them).
+mutantFails('naming a node suite as a failing test', "    if (type === 'suite') {\n", '    if (false) {\n');
+mutantFails("leaving vitest's Failed Suites out of the ids", "if (section === 'Suites') out.push(", 'if (false) out.push(');
+mutantFails('naming the ids whole when they are fewer than the failed count', '    summary.failed === ids.length &&\n', '');
+mutantFails('naming the ids whole after the command died of a signal', '    !signal &&\n', '');
+mutantFails("reading bun's failing tests past its summary list", 'if (BUN_FAILED_LIST.test(l)) break;', '');
+mutantFails('naming ids relative to the cwd, not the gate tree', 'top: realTop(process.env.RUN_GATES_TOP)', 'top: null', CLI_REL);
+mutantFails('taking the gate tree through a symlink as given', 'return fs.realpathSync(top);', 'return top;', CLI_REL);
+mutantFails("ending a pytest id at a space inside a parameter's brackets", "if (rest[i] === '[') depth++;", 'if (false) depth++;');
+mutantFails('skipping a node suite whose own hook failed', "if (failure !== 'subtestsFailed') out.push({ file: '?', title });", '');
 
 test("a project's own kind and flag in its core do not fail the shipped suite", () => {
   const copy = mutatedCopy([

@@ -69,6 +69,10 @@ codex-run's and claude-run's — and writes one digest of at most 8 KB:
   step under `MIN_SHARE` of its unit never.
 - **Where the money went, by step**: from the step markers (`runner.md` › Step
   markers); for a unit from before them, its subagents by dispatch description.
+- **Yield by step**: codex-run's ok runs in the window by kind, how many of the
+  verdicts it kept (`cross-model.md` › The wrapper) list a P0 or P1, and the P0/P1
+  lines — the evidence for cutting a pass that costs and finds nothing. A run whose
+  copy is gone counts in the runs, never in the rate.
 - **Friction**: two-word phrases that recur in the Friction cells of two or more
   units, one of them in the window, then the window's cells.
 - **Missed by harness**, the **queue** (follow-ups by status and age, P3s still

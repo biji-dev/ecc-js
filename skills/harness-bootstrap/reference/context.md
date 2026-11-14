@@ -265,7 +265,7 @@ every stop was 5–8% of spend in the measured project.
 
 `[M]` A unit's final report ends with **one ledger row per step the tier
 requires**: `ran` with quoted evidence (the agent or command, and the line of
-output that matters), or `skipped` / `unavailable` / `degraded` with the reason.
+output that matters), or `skipped` / `unavailable` / `degraded` / `refused` with the reason.
 **A step missing from the ledger did not run.**
 > Origin: across 88 audited "done" reports in the third project, an independent
 > cross-check found something in 87 and contradicted the report in 81; most had

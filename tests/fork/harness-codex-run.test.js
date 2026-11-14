@@ -18,7 +18,7 @@ const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
 const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 63;
+const EXPECTED_TESTS = 66;
 // The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
 const EXPECTED_SNAPSHOT_TESTS = 16;
 
@@ -197,6 +197,39 @@ test('mutant: dropping HARNESS_ROLE=executor from the model env makes the suite 
   const res = runSuite(copy, cleanup);
   assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
 });
+
+/** Copy the shipped scripts, replace `needle` (it must occur exactly once) in the file at `rel`, and assert the suite fails. */
+function codexMutant(name, rel, needle, replacement) {
+  test(`mutant: ${name} makes the suite fail`, () => {
+    const copy = tmp('codex-run-mutant-');
+    cleanup.push(copy);
+    fs.cpSync(SCRIPTS, copy, { recursive: true });
+    const file = path.join(copy, rel);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(before.split(needle).length, 2, `the needle must occur exactly once in ${rel}: ${needle}`);
+    fs.writeFileSync(file, before.replace(needle, () => replacement));
+    const res = runSuite(copy, cleanup);
+    assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+  });
+}
+
+// A provider safety refusal is its own outcome (exit 5, rerun that pass on Opus), never a plain failure.
+codexMutant('classifying a safety refusal as a failure', CORE_REL, 'const REFUSED = /flagged for possible cyber ?security risk|cyber[- ]permissive safeguards/i;', 'const REFUSED = /(?!)/;');
+codexMutant(
+  'not checking an interrupted review for a refusal',
+  CORE_REL,
+  "    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  '',
+);
+codexMutant(
+  'not checking a failed turn for a refusal',
+  CORE_REL,
+  "\n  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  '\n',
+);
+// An ok run's verdict is copied next to the ledger, where the retro's yield by step reads it.
+codexMutant('keeping no verdict copy for an ok run', WRAPPER_REL, "const kept = result.outcome === 'ok' ? keepVerdict(", 'const kept = false ? keepVerdict(');
+codexMutant('keeping a verdict copy for a run that did not end ok', WRAPPER_REL, "const kept = result.outcome === 'ok' ? keepVerdict(", 'const kept = true ? keepVerdict(');
 
 test('the shipped snapshot-tree suite passes with the pinned test count', () => {
   const res = runSuite(SCRIPTS, cleanup, {}, SNAPSHOT_TEST_REL);

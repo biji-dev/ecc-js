@@ -1444,6 +1444,65 @@ test('a run with no CODEX_BIN reaches the PATH stub, proving the guard is first 
   fs.rmSync(GUARD_MARKER); // deliberate: the closing test asserts nothing else called codex
 });
 
+// The safety filter's words, as a refused adversarial run's ledger row quoted them.
+const CYBER = 'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. If you are doing authorized security work that requires more cyber permissive safeguards, apply for access.';
+
+test('classify: a safety-filter refusal is refused (exit 5), in a failed turn, an error event or an interrupted review; a verdict that quotes it is ok', () => {
+  const failedTurn = parseEvents(
+    ['{"type":"thread.started","thread_id":"t-9"}', '{"type":"turn.started"}', JSON.stringify({ type: 'turn.failed', error: { message: CYBER } })].join('\n'),
+  );
+  const c = classify({ exitCode: 1, events: failedTurn, verdict: '' });
+  assert.deepEqual([c.outcome, c.exit], ['refused', EXIT.refused]);
+  assert.match(c.reason, /flagged for possible cybersecurity risk/);
+  assert.equal(classify({ exitCode: 1, events: parseEvents(JSON.stringify({ type: 'error', message: CYBER })), verdict: '' }).outcome, 'refused');
+  assert.equal(classify({ exitCode: 1, events: parseEvents(''), verdict: '', stderr: `ERROR: ${CYBER}` }).outcome, 'refused');
+  const interrupted = parseEvents([JSON.stringify({ type: 'error', message: CYBER }), '{"type":"turn.completed","usage":{}}'].join('\n'));
+  assert.equal(classify({ exitCode: 0, events: interrupted, verdict: 'Review was interrupted.', mode: 'review' }).exit, EXIT.refused);
+  // a finished verdict that quotes the filter's words (Codex reading this file) is a verdict
+  assert.equal(classify({ exitCode: 0, events: parseEvents(ok), verdict: `the wrapper maps "${CYBER}" to refused` }).exit, EXIT.ok);
+  // the codes stay distinct: a caller tells "rerun on Opus" from "take the fallback" by the exit alone
+  assert.equal(new Set(Object.values(EXIT)).size, Object.keys(EXIT).length);
+});
+
+test('a refused run exits 5 with a refused ledger row and no verdict copy', () => {
+  const dir = tmpDir('codex-run-refused-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+  const fake = fakeCodex(`#!/bin/sh\ncat > /dev/null\necho '${JSON.stringify({ type: 'turn.failed', error: { message: CYBER } })}'\nexit 1\n`);
+  const res = runWrapper(dir, ['adversarial', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir], { CODEX_BIN: fake });
+  assert.equal(res.status, EXIT.refused, res.stdout + res.stderr);
+  assert.match(res.stdout, /^codex-run: refused kind=adversarial .* — This content was flagged for possible cybersecurity risk/m);
+  const row = JSON.parse(fs.readFileSync(path.join(dir, '.codex-runs/ledger.jsonl'), 'utf8'));
+  assert.equal(row.outcome, 'refused');
+  assert.equal(row.verdictCopy, undefined);
+  assert.equal(fs.existsSync(path.join(dir, '.codex-runs', 'verdicts')), false);
+});
+
+test("an ok run's verdict is copied beside the ledger and named in its row; it outlives --out, and a failed run keeps none", () => {
+  const dir = tmpDir('codex-run-keep-');
+  fs.writeFileSync(path.join(dir, 'p.md'), 'P1: the verdict text\n');
+  // Copies stdin (the prompt) into the -o verdict file.
+  const fake = fakeCodex('#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > "$out"\nexit 0\n');
+  const lastRow = () => JSON.parse(fs.readFileSync(path.join(dir, '.codex-runs/ledger.jsonl'), 'utf8').trim().split('\n').at(-1));
+  const verdict = path.join(dir, 'v.md');
+  const res = runWrapper(dir, ['investigate', '--prompt', 'p.md', '--out', verdict, '--cwd', dir], { CODEX_BIN: fake });
+  assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+  const row = lastRow();
+  assert.equal(row.verdictCopy, `verdicts/${row.run}-investigate.md`);
+  assert.match(row.run, /^\d+-\d+$/);
+  const copy = path.join(dir, '.codex-runs', row.verdictCopy);
+  assert.equal(fs.readFileSync(copy, 'utf8'), 'P1: the verdict text\n');
+  fs.rmSync(verdict);
+  assert.equal(fs.readFileSync(copy, 'utf8'), 'P1: the verdict text\n', 'the copy went with --out');
+  // A failed turn that wrote part of a verdict first: a copy is for an ok run only.
+  const turnFailed = JSON.stringify({ type: 'turn.failed', error: { message: 'stream disconnected' } });
+  const failing = fakeCodex(`#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\necho "P0: half a verdict" > "$out"\necho '${turnFailed}'\nexit 1\n`);
+  const bad = runWrapper(dir, ['investigate', '--prompt', 'p.md', '--out', path.join(dir, 'w.md'), '--cwd', dir], { CODEX_BIN: failing });
+  assert.equal(bad.status, EXIT.failed, bad.stdout + bad.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'w.md'), 'utf8'), 'P0: half a verdict\n', 'the failed run wrote its --out');
+  assert.equal(lastRow().verdictCopy, undefined);
+  assert.deepEqual(fs.readdirSync(path.join(dir, '.codex-runs', 'verdicts')), [path.basename(copy)]);
+});
+
 test('no spawned run reached a codex binary other than a deliberately set CODEX_BIN', () => {
   assert.equal(fs.existsSync(GUARD_MARKER), false, 'a run called the PATH codex');
 });

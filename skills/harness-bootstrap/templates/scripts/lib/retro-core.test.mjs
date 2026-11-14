@@ -40,6 +40,7 @@ import {
   claimRows,
   contextCommand,
   contextCommands,
+  countFindings,
   decisionOutcomes,
   decisionRows,
   dispatchOwners,
@@ -64,6 +65,7 @@ import {
   stepOfDescription,
   stepOutliers,
   stepShares,
+  stepYield,
   transcriptKpis,
   unitOutliers,
   unitSteps,
@@ -71,7 +73,7 @@ import {
 } from './retro-core.mjs';
 import { COLUMNS, TIER_WORDS, fmtMinutes } from './estimate-core.mjs';
 import { MAIN } from './harness-due-core.mjs';
-import { blameDates, gather, lastCommitTimes, mainlineHistory, readFollowUps } from './retro-gather.mjs';
+import { blameDates, gather, lastCommitTimes, mainlineHistory, readFollowUps, readVerdicts } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { FINDINGS_HEADING } from './unit-record-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
@@ -773,7 +775,7 @@ test('buildRetro and formatDigest: every section in order, the numbers from the 
   assert.deepEqual(d.steps.map((u) => [u.unit, u.source, u.total]), [['EP-1', 'descriptions', 7], ['EP-2', 'markers', 4]]);
   const text = formatDigest(d);
   const headings = text.split('\n').filter((l) => l.startsWith('#'));
-  assert.deepEqual(headings, ['# Retro 2026-W44 — demo', '## KPIs', '## Outliers', '## Where the money went, by step', '## Friction', '## Missed by harness', '## Queue', '## Candidates for the retro review']);
+  assert.deepEqual(headings, ['# Retro 2026-W44 — demo', '## KPIs', '## Outliers', '## Where the money went, by step', '## Yield by step (Codex verdicts)', '## Friction', '## Missed by harness', '## Queue', '## Candidates for the retro review']);
   assert.match(text, /^\| Units landed \| 2 \| 0\.3\/wk \|$/m);
   assert.match(text, /^\| Claude spend \(main · subagents\) \| \$11\.00 \(\$4\.00 · \$7\.00\) \| \$5\.00 \|$/m);
   assert.match(text, /^- EP-2 \(markers\): \$4\.00 — 2 \$3\.00 \(75%\) · 8b \$1\.00 \(25%\)$/m);
@@ -1092,7 +1094,7 @@ test('fitDigest keeps a worst-case digest within MAX_BYTES, every section and th
   assert.ok(size(formatDigest(d)) > MAX_BYTES, `the unfitted digest is ${size(formatDigest(d))} bytes`);
   const fitted = fitDigest(d);
   assert.ok(size(fitted) <= MAX_BYTES, `${size(fitted)} bytes`);
-  for (const h of ['## KPIs', '## Outliers', '## Where the money went, by step', '## Friction', '## Missed by harness', '## Queue', '## Candidates for the retro review']) {
+  for (const h of ['## KPIs', '## Outliers', '## Where the money went, by step', '## Yield by step (Codex verdicts)', '## Friction', '## Missed by harness', '## Queue', '## Candidates for the retro review']) {
     assert.ok(fitted.includes(`\n${h}\n`), h);
   }
   assert.match(fitted, /^- EP-00\.01: a long cell/m, 'it shrinks the lists, never empties them first');
@@ -1744,4 +1746,127 @@ test('mainlineHistory: read from the mainline, not the checked-out branch; a mis
   assert.deepEqual(fb.fixes, [], "the branch's own history holds no fix");
   assert.ok(fb.note.includes(MAIN) && fb.note.includes('HEAD'), 'the fallback is named');
   assert.equal(gather({ top: m.repo, log: null, plansDirs: [], projectsDir: path.join(m.repo, 'none'), codexDir: path.join(m.repo, 'none'), ledger: path.join(m.repo, 'none'), claudeLedger: path.join(m.repo, 'none'), history: window }).note, fb.note, 'gather passes it on');
+});
+
+test('countFindings counts a finding line by its severity, after an id, a list or table marker or a label, and never a heading, prose or a none', () => {
+  const verdict = [
+    '# Verdict',
+    '### P1',
+    `F-12 ${DOT} P1 ${DOT} api/src/store.ts:116 ${DOT} the grant is read before the lock ${DOT} repro: two writers`,
+    `F-13 ${DOT} P3 ${DOT} api/src/store.ts:9 ${DOT} a stale comment`,
+    '- **P0** data/migrate.sql:4 drops the column the reader still selects',
+    '| F-3 | P2 | web/a.tsx:7 | x |',
+    '| P1 | web/b.tsx:2 | y |',
+    '[P2] edge case',
+    '1. P1: wrong count',
+    '- severity: P0',
+    '**Severity:** P3',
+    '`P2` web/c.tsx:1',
+    '(P3) nit',
+    'P1: none',
+    '- P0 — none',
+    '**P1:** None.',
+    '| P0 | n/a |',
+    'P2: 0',
+    'No P0 or P1 findings.',
+    'The P1 above is pre-existing, see F-12.',
+    'Verdict: 0 P0, 1 P1',
+    'P1: None of the callers check the flag',
+  ].join('\n');
+  assert.deepEqual(countFindings(verdict), { P0: 2, P1: 4, P2: 3, P3: 3 });
+  assert.deepEqual(countFindings(''), { P0: 0, P1: 0, P2: 0, P3: 0 });
+  assert.deepEqual(countFindings(null), { P0: 0, P1: 0, P2: 0, P3: 0 });
+  assert.deepEqual(countFindings('p1 · a.js:3 · lower case\r\nP4 · a.js:4 · not a severity'), { P0: 0, P1: 1, P2: 0, P3: 0 });
+});
+
+test('stepYield: ok runs in the window by kind, the kept verdicts with a P0 or P1, the lines, and a rate only over kept copies', () => {
+  const iso = (s) => new Date(at(s)).toISOString();
+  const win = { since: iso('19T12:00:00'), until: iso('26T12:00:00') };
+  const entries = [
+    { at: iso('20T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('21T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/b-review.md' },
+    { at: iso('22T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/gone-review.md' },
+    { at: iso('22T11:00:00'), kind: 'review', outcome: 'ok' },
+    { at: iso('23T10:00:00'), kind: 'investigate', outcome: 'ok', verdictCopy: 'verdicts/c-investigate.md' },
+    { at: iso('23T11:00:00'), kind: 'investigate', outcome: 'failed', verdictCopy: 'verdicts/c-investigate.md' },
+    { at: iso('23T12:00:00'), kind: 'investigate', outcome: 'refused' },
+    { at: iso('18T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('26T13:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('24T10:00:00'), outcome: 'ok' },
+  ];
+  const verdicts = new Map([
+    ['verdicts/a-review.md', `F-1 ${DOT} P1 ${DOT} a.js:1 ${DOT} x\nF-2 ${DOT} P0 ${DOT} a.js:2 ${DOT} y\nF-3 ${DOT} P2 ${DOT} a.js:3 ${DOT} z`],
+    ['verdicts/b-review.md', 'P0: none\nP1: none\n- P3 a.js:9 nit'],
+    ['verdicts/c-investigate.md', '| P1 | b.js:4 | cause |'],
+  ]);
+  assert.deepEqual(stepYield(entries, verdicts, win), [
+    { kind: 'review', runs: 4, kept: 2, hits: 1, p0p1: 2, rate: 50 },
+    { kind: 'investigate', runs: 1, kept: 1, hits: 1, p0p1: 1, rate: 100 },
+    { kind: 'unknown', runs: 1, kept: 0, hits: 0, p0p1: 0, rate: null },
+  ]);
+  assert.deepEqual(stepYield([], verdicts, win), []);
+});
+
+test('buildRetro and formatDigest: the yield by step table after the money section, the lost copies counted, and the no-ledger and no-run lines', () => {
+  const iso = (s) => new Date(at(s)).toISOString();
+  const withLedger = (ledger, verdicts) => {
+    const d = fixtureData();
+    d.stepYield = ledger === null ? null : stepYield(ledger, verdicts, { since: d.since, until: d.until });
+    return formatDigest(d);
+  };
+  const ledger = [
+    { at: iso('20T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('21T10:00:00'), kind: 'review', outcome: 'ok' },
+  ];
+  const text = withLedger(ledger, new Map([['verdicts/a-review.md', `F-1 ${DOT} P1 ${DOT} a.js:1 ${DOT} x`]]));
+  const section = text.slice(text.indexOf('## Yield by step (Codex verdicts)'), text.indexOf('## Friction'));
+  assert.match(section, /^\| Step \(kind\) \| Runs \| Verdicts kept \| With a P0\/P1 \| P0\/P1 lines \|$/m);
+  assert.match(section, /^\| review \| 2 \| 1 \| 1 \(100%\) \| 1 \|$/m);
+  assert.match(section, /^- 1 ok run with no kept verdict /m);
+  assert.ok(text.indexOf('## Where the money went, by step') < text.indexOf('## Yield by step (Codex verdicts)'));
+  assert.match(withLedger(null, new Map()), /^## Yield by step \(Codex verdicts\)\n\n- no Codex ledger$/m);
+  assert.match(withLedger([], new Map()), /^## Yield by step \(Codex verdicts\)\n\n- no ok Codex run this window$/m);
+  assert.deepEqual(fixtureData().stepYield, [], 'buildRetro computes it from the gathered ledger');
+});
+
+test('readVerdicts and gather: the copies of the ledger rows since sinceMs, only inside the ledger\'s verdicts/, a missing or oversized one left out', () => {
+  const top = tmpDir('retro-verdicts-');
+  const dir = path.join(top, 'ledger');
+  fs.mkdirSync(path.join(dir, 'verdicts'), { recursive: true });
+  const ledgerFile = path.join(dir, 'codex-runs.jsonl');
+  fs.writeFileSync(path.join(dir, 'verdicts', 'a-review.md'), `F-1 ${DOT} P1 ${DOT} a.js:1 ${DOT} x\n`);
+  fs.writeFileSync(path.join(dir, 'verdicts', 'old-review.md'), 'P0 old\n');
+  fs.writeFileSync(path.join(dir, 'verdicts', 'big-review.md'), 'x'.repeat(1024 * 1024 + 1));
+  fs.writeFileSync(path.join(dir, 'outside.md'), 'P0 outside\n');
+  fs.writeFileSync(path.join(top, 'secret.md'), 'P0 secret\n');
+  fs.mkdirSync(path.join(dir, 'verdicts', 'sub'));
+  fs.writeFileSync(path.join(dir, 'verdicts', 'sub', 'deep.md'), 'P0 deep\n');
+  const since = at('19T12:00:00');
+  const iso = (s) => new Date(at(s)).toISOString();
+  const rows = [
+    { at: iso('20T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('18T10:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/old-review.md' },
+    { at: iso('20T11:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/gone-review.md' },
+    { at: iso('20T12:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/big-review.md' },
+    { at: iso('20T13:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'outside.md' },
+    { at: iso('20T14:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/../../secret.md' },
+    { at: iso('20T15:00:00'), kind: 'review', outcome: 'ok', verdictCopy: path.join(top, 'secret.md') },
+    { at: iso('20T16:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/sub/deep.md' },
+    { at: iso('20T17:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 'verdicts' },
+    { at: 'not a date', kind: 'review', outcome: 'ok', verdictCopy: 'verdicts/a-review.md' },
+    { at: iso('20T18:00:00'), kind: 'review', outcome: 'ok', verdictCopy: 42 },
+  ];
+  fs.writeFileSync(ledgerFile, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  const read = readVerdicts(ledgerFile, rows, since);
+  assert.deepEqual([...read.keys()], ['verdicts/a-review.md']);
+  assert.equal(read.get('verdicts/a-review.md'), `F-1 ${DOT} P1 ${DOT} a.js:1 ${DOT} x\n`);
+  assert.equal(readVerdicts(ledgerFile, rows, 0).has('verdicts/old-review.md'), true, 'sinceMs bounds which rows are read');
+  const g = gather({ top, log: null, projectsDir: path.join(top, 'no-projects'), codexDir: path.join(top, 'no-codex'), ledger: ledgerFile, sinceMs: since });
+  assert.equal(g.ledger.length, rows.length);
+  assert.deepEqual([...g.verdicts.keys()], ['verdicts/a-review.md']);
+  const none = gather({ top, log: null, projectsDir: path.join(top, 'no-projects'), codexDir: path.join(top, 'no-codex'), ledger: path.join(top, 'no-ledger.jsonl') });
+  assert.equal(none.ledger, null);
+  assert.equal(none.verdicts.size, 0);
+  const d = buildRetro({ ...g, previous: [] }, { project: 'demo', now: NOW, since: iso('19T12:00:00'), until: iso('26T12:00:00') });
+  assert.deepEqual(d.stepYield.find((s) => s.kind === 'review'), { kind: 'review', runs: 9, kept: 1, hits: 1, p0p1: 1, rate: 100 });
 });

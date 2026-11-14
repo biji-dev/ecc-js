@@ -42,7 +42,8 @@
  *
  * exit: 0 ok (non-empty verdict, recovered retries allowed) | 1 failed | 2 usage | 3 unavailable
  * (quota/login/missing binary -> take the Claude fallback, ledger row `unavailable`) | 4 reserved
- * by the budget guard or the owner's switch (-> do it with Claude).
+ * by the budget guard or the owner's switch (-> do it with Claude) | 5 refused by the provider's
+ * safety filter (-> rerun that one pass on Opus, ledger row `refused`).
  *
  * env: CODEX_RUN=on|essential|off -- `essential` runs only the essential kinds (review,
  * adversarial, adversarial-frontier); `off` reserves every kind. CODEX_RUN_THRESHOLD=<pct>
@@ -66,7 +67,10 @@
  * starts from: review's merge base with --base, else the adversarial --base, else null) and
  * `treeAfter` (the same snapshot once the model exits, with `treeMoved: true` when it differs). The
  * landing check (review-gate.mjs --landing) follows each critical file from the mainline through the
- * reviewed `baseTree -> tree` changes. Each tree is null when git fails.
+ * reviewed `baseTree -> tree` changes. Each tree is null when git fails. An `ok` run's verdict is
+ * also copied to <ledger dir>/verdicts/<run>-<kind>.md, and its row records that path (relative to
+ * the ledger dir) as `verdictCopy`: the retro's yield by step reads the copies after the worktree
+ * that held --out is gone.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -103,6 +107,8 @@ const LANDING_KINDS = ['review', 'adversarial', 'adversarial-frontier'];
 
 // [B] Where the ledger lives, relative to the main checkout (gitignore it).
 const LEDGER_DIR = '.codex-runs';
+// Where an ok run's verdict is copied, inside the ledger dir.
+const VERDICTS_DIR = 'verdicts';
 // [B] The project's rule resolver: [script relative to the repo this wrapper lives in, flag].
 // Run as `node <script> <flag> <changed files...>`; it prints one rule-file path per line.
 const RULES_FOR = ['scripts/check-agent-docs.mjs', '--rules-for'];
@@ -181,6 +187,23 @@ function worktreeState(cwd) {
 function appendLedger(file, row) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+}
+
+/**
+ * A copy of a verdict beside the ledger, <ledger dir>/verdicts/<stem>-<kind>.md. Returns its path
+ * relative to the ledger dir, or null: an empty or missing verdict, or a copy that failed (the run's
+ * result never depends on it).
+ */
+function keepVerdict(ledgerFile, stem, kind, outFile) {
+  try {
+    if (!fs.statSync(outFile).size) return null;
+    const rel = `${VERDICTS_DIR}/${stem}-${kind}.md`;
+    fs.mkdirSync(path.join(path.dirname(ledgerFile), VERDICTS_DIR), { recursive: true });
+    fs.copyFileSync(outFile, path.join(path.dirname(ledgerFile), rel));
+    return rel;
+  } catch {
+    return null;
+  }
 }
 
 /** Read account-wide rollouts first, then compare their mtime with the ledger's observation. */
@@ -564,6 +587,7 @@ async function main() {
       leftovers.dirtyBefore = leftovers.dirtyBefore.filter(mine);
     }
 
+    const kept = result.outcome === 'ok' ? keepVerdict(ledger, base.run ?? `${startedAt}-${process.pid}`, a.kind, outFile) : null;
     appendLedger(ledger, {
       ...base,
       outcome: result.outcome,
@@ -574,6 +598,7 @@ async function main() {
       ms,
       limitsAfter,
       verdict: outFile,
+      ...(kept ? { verdictCopy: kept } : {}),
       ...moved,
       ...(leftovers ? { leftovers } : {}),
     });

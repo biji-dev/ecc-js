@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 71;
+const EXPECTED_TESTS = 75;
 
 let passed = 0;
 let failed = 0;
@@ -254,6 +254,15 @@ mutantFails('proposing never-auto for the grant', "    if (k === 'never-auto') c
 mutantFails('linking a fix past the defect window', 'after(f, m) && f.t <= m.t + days * DAY && ', 'after(f, m) && ');
 mutantFails('letting a defect link beat a reversal', "      if (reversed.has(rowKey(r))) return { ...r, outcome: 'reversed' };\n", '');
 mutantFails("reading a unit branch's own commits as the mainline's", "['log', '--first-parent', ", "['log', ", GATHER_REL);
+// Yield by step: the finding counter, the per-kind rate and the verdict copies the gather reads.
+mutantFails('counting a "P1: none" line as a finding', '(P[0-3])\\\\b${FINDING_NOT_NONE}', '(P[0-3])\\\\b');
+mutantFails('counting a heading as a finding', '(?:[-*+]\\s+|', '(?:#{1,6}\\s+|[-*+]\\s+|');
+mutantFails('missing a finding line that starts with its id', '${FINDING_LEAD}${FINDING_ID}', '${FINDING_LEAD}');
+mutantFails('counting a run that did not end ok', "if (e.outcome !== 'ok' || !inWindow(Date.parse(e.at), since, until)) continue;", 'if (!inWindow(Date.parse(e.at), since, until)) continue;');
+mutantFails('taking the rate over runs, lost copies included', 'Math.round((s.hits / s.kept) * 100)', 'Math.round((s.hits / s.runs) * 100)');
+mutantFails("reading a verdict copy outside the ledger's verdicts/", 'if (path.dirname(file) !== dir) continue;', '', GATHER_REL);
+mutantFails('reading the copies of rows before the window', 'if (!(Date.parse(e.at) >= sinceMs)) continue;', '', GATHER_REL);
+mutantFails('reading an oversized verdict copy', 'st.size > MAX_VERDICT_BYTES', 'false', GATHER_REL);
 
 /** What the shipped suite no longer pins: it builds its fixtures from the bound values, so the template's own are read here. */
 function checkDefaults(scriptsDir) {

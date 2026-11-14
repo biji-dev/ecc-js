@@ -24,7 +24,8 @@ a command's word — all left waiting on the owner (`gate-design.md` › Parking
 unit), a `Stop:` line, the host's own usage limit — or when nothing passes the
 relevance test: then end on `DONE — waiting on you:`, the `OWED` lines first
 (› Due-checks). Never invent work. A memory refusal at a live step parks its unit;
-a second family out of quota is `degraded`, never a stop.
+a second family out of quota is `degraded`, never a stop, and a pass its safety
+filter refused reruns on Opus (`refused`).
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
@@ -444,7 +445,8 @@ listening one at 6 hours or once its directory is gone.
   and `effort` passed on each (`gate-design.md` › Review lineup; lane B's brief in
   `blast-radius-auditor.md`). On Small the adversarial pass with lane B's brief joins
   when the Impact Analysis lists a reader outside the diff. The second family
-  unavailable → the fallbacks in `gate-design.md`, `degraded`.
+  unavailable → the fallbacks in `gate-design.md`, `degraded`; a pass it refused
+  (`codex-run` exit 5) → that pass on Opus, `refused`.
 - `[M]` **Each dispatch gets its own scratch directory**, `.review-work/<name>/`.
   Briefs forbid host-level operations and repository-wide suite runs. A reviewer
   that mutates code to prove a test does it in a worktree of its own, never the

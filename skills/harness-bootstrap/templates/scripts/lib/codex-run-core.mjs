@@ -147,7 +147,7 @@ export const ROUTES = {
 const WRITE_KINDS = new Set(['implement-cold', 'fix-cold', 'docs']);
 
 /** Exit codes the callers branch on (the CLI's own exit code lies both ways). */
-export const EXIT = { ok: 0, failed: 1, usage: 2, unavailable: 3, reserved: 4 };
+export const EXIT = { ok: 0, failed: 1, usage: 2, unavailable: 3, reserved: 4, refused: 5 };
 
 /**
  * The owner's switch, `CODEX_RUN`: `on` (default), `essential` (only the decorrelated
@@ -430,10 +430,16 @@ export function parseEvents(jsonl) {
 
 const UNAVAILABLE =
   /usage limit|rate.?limit|hit your usage|spend.?control|not logged in|log ?in again|unauthori[sz]ed|\b401\b|refresh token|token (?:has )?expired|credits/i;
+// The provider's safety filter turned the content down ("This content was flagged for possible
+// cybersecurity risk. ... more cyber permissive safeguards ..."): no rephrasing or retry of the
+// same pass helps, and nothing is wrong with the call.
+const REFUSED = /flagged for possible cyber ?security risk|cyber[- ]permissive safeguards/i;
 
 /**
  * A completed turn can recover retry errors, but a review's generated interruption
- * message is not a verdict. Quota, login and missing-binary failures allow fallback.
+ * message is not a verdict. Quota, login and missing-binary failures allow fallback. A
+ * refusal by the provider's safety filter is `refused` (exit 5): the caller reruns that one
+ * pass with Claude, never the same pass again.
  */
 export function classify({
   exitCode,
@@ -458,6 +464,7 @@ export function classify({
       .join('\n'),
   ].join('\n');
   if (mode === 'review' && /^review was interrupted\b/i.test(verdict?.trim() ?? '')) {
+    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
     // Interrupted by quota/login -> still the Claude fallback, not "fix the call".
     if (UNAVAILABLE.test(errorText))
       return { outcome: 'unavailable', exit: EXIT.unavailable, reason: firstLine(errorText) };
@@ -473,6 +480,7 @@ export function classify({
     if (warnings.length) reasons.push(`warnings: ${warnings.join('; ')}`);
     return { outcome: 'ok', exit: EXIT.ok, reason: reasons.join('; ') };
   }
+  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
   if (UNAVAILABLE.test(errorText))
     return { outcome: 'unavailable', exit: EXIT.unavailable, reason: firstLine(errorText) };
   if (events.failed || events.errors.length > 0)

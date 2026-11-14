@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 95;
+const EXPECTED_TESTS = 97;
 
 let passed = 0;
 let failed = 0;
@@ -293,6 +293,26 @@ test('mutant: the harness lane running a third round instead of dropping the cha
   mutantRun("    if (round >= 3)\n      return out(\n        'drop',", "    if (round >= 9)\n      return out(\n        'drop',");
 });
 
+test('mutant: a cold fix that closed only P2s is re-reviewed again (v12)', () => {
+  mutantRun("if (maxFixed === 'P2')\n", "if (false)\n");
+});
+
+test('mutant: a P2-only round on critical code past round 2 climbs the adversarial ladder again (v12)', () => {
+  mutantRun("if (maxFixed === 'P2' && round >= 3)", 'if (false)');
+});
+
+test('mutant: a deferred fix drops the triggered specialist (v12)', () => {
+  mutantRun("if (r.decision === 'skip' || r.decision === 'defer')", "if (r.decision === 'skip')");
+});
+
+test('mutant: the Sonnet code-reviewer reads what the second family wrote again (v12)', () => {
+  mutantRun("secondFamilyWrote(writer) ? 'opus-code-reviewer' : 'second-family-review'", "secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review'");
+});
+
+test('mutant: production none takes the Opus reader off a fix the second family wrote (v12)', () => {
+  mutantRun('if (none && !secondFamilyWrote(writer) && r.reviewers', 'if (none && r.reviewers');
+});
+
 test('mutant: a critical round 5 redesigned again instead of cut', () => {
   mutantRun('  if (round >= 5)\n    return d(\n      \'cut\',', '  if (round >= 6)\n    return d(\n      \'cut\',');
 });
@@ -302,7 +322,7 @@ test('mutant: a test diff with a deleted line routed as cold, so a weakened asse
 });
 
 test('mutant: production none keeping the Opus code-reviewer on a critical fix', () => {
-  mutantRun("if (none && r.reviewers.includes('opus-code-reviewer'))", 'if (false)');
+  mutantRun("if (none && !secondFamilyWrote(writer) && r.reviewers.includes('opus-code-reviewer'))", 'if (false)');
 });
 
 test('mutant: production none dropping the adversarial pass over critical code', () => {

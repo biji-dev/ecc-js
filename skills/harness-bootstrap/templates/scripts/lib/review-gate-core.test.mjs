@@ -316,7 +316,7 @@ test('unit 2: a small unit is reviewed by the OTHER family, plus matching specia
   assert.equal(claude.decision, 'review');
   assert.deepEqual(claude.reviewers, ['second-family-review']);
   const codex = decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer: 'codex' });
-  assert.deepEqual(codex.reviewers, ['sonnet-code-reviewer']);
+  assert.deepEqual(codex.reviewers, ['opus-code-reviewer']);
   const withDb = decide({
     files: [f(COLD, 20), f('db/migrations/001_init.sql', 9)],
     kind: 'unit',
@@ -329,7 +329,7 @@ test('unit 2: a small unit is reviewed by the OTHER family, plus matching specia
     tier: 'small',
     writer: 'codex',
   });
-  assert.deepEqual(small.reviewers, ['sonnet-code-reviewer', 'security-reviewer']);
+  assert.deepEqual(small.reviewers, ['opus-code-reviewer', 'security-reviewer']);
 });
 
 test('unit 3: a full unit is Opus + adversarial, then specialists in TRIGGERS order, then the test analyzer', () => {
@@ -370,7 +370,7 @@ test('unit 3: a full unit is Opus + adversarial, then specialists in TRIGGERS or
 
 test('unit 4: the harness lane is one cross-family review over a harness-only diff, critical or not, no specialist', () => {
   const lane = [f('AGENTS.md', 12), f('.githooks/pre-commit', 30), f('scripts/check-agent-docs.mjs', 8), f('scripts/lib/auth-token.test.mjs', 40)];
-  for (const [writer, reviewer] of [['claude', 'second-family-review'], ['sonnet', 'second-family-review'], ['codex', 'sonnet-code-reviewer'], ['mixed', 'sonnet-code-reviewer']]) {
+  for (const [writer, reviewer] of [['claude', 'second-family-review'], ['sonnet', 'second-family-review'], ['codex', 'opus-code-reviewer'], ['mixed', 'opus-code-reviewer']]) {
     const r = withCritical([/^\.githooks\//], () => decide({ files: lane, kind: 'unit', tier: 'harness', writer }));
     assert.equal(r.decision, 'review', writer);
     assert.deepEqual(r.reviewers, [reviewer], writer);
@@ -462,6 +462,21 @@ test('fix 3: a cold fix round is reviewed by the second family once, never again
   }
 });
 
+test('fix 3b: a cold fix that closed only P2s is deferred at every round, whoever wrote it; a triggered specialist still re-reads it', () => {
+  for (const writer of ['claude', 'sonnet', 'codex', 'mixed'])
+    for (const round of [1, 2, 5]) {
+      const r = bound(() => decide({ files: [f(COLD, 80)], kind: 'fix', maxFixed: 'P2', round, writer }));
+      assert.deepEqual([r.decision, r.reviewers], ['defer', []], `${writer} round ${round}`);
+      assert.match(r.reason, /^cold fix that closed only P2s: no re-review of its own -- the unit review reads it when one is still to come, its regression tests otherwise$/);
+    }
+  // a fix that closed a P1 or a P0 keeps its round 1 re-review
+  for (const maxFixed of ['P1', 'P0'])
+    assert.equal(bound(() => decide({ files: [f(COLD, 80)], kind: 'fix', maxFixed, round: 1 })).decision, 'second-family', maxFixed);
+  const auth = decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P2', round: 1, writer: 'codex' });
+  assert.deepEqual([auth.decision, auth.reviewers], ['review', ['security-reviewer']]);
+  assert.match(auth.reason, /^cold fix that closed only P2s: .*; the triggered specialist re-reads the fix$/);
+});
+
 test('fix 8: the specialist whose trigger the fix hits joins its re-review', () => {
   const auth = [f('src/auth/login.ts', 5)];
   const r1 = decide({ files: auth, kind: 'fix', maxFixed: 'P1', round: 1 });
@@ -476,6 +491,9 @@ test('fix 8: the specialist whose trigger the fix hits joins its re-review', () 
   const hot = [f('src/core/migrations/0002.sql', 90)];
   const r3 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P1', round: 3 }));
   assert.deepEqual(r3.reviewers, ['second-family-adversarial', 'database-reviewer']);
+  // a P2-only round there is deferred, and the specialist alone re-reads it
+  const r3p2 = bound(() => decide({ files: hot, kind: 'fix', maxFixed: 'P2', round: 3 }));
+  assert.deepEqual([r3p2.decision, r3p2.reviewers], ['review', ['database-reviewer']]);
   assert.equal(decide({ files: auth, kind: 'fix', maxFixed: 'P3' }).decision, 'p3-batch');
 });
 
@@ -486,7 +504,8 @@ test('fix 9: the harness lane has one fix round, re-read by the other family; a 
   assert.deepEqual(r1.reviewers, ['second-family-review']);
   assert.match(r1.reason, /^harness lane, fix round 1: the second family re-reads the fix/);
   const c1 = decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P2', round: 1, writer: 'codex' });
-  assert.deepEqual([c1.decision, c1.reviewers], ['review', ['sonnet-code-reviewer']]);
+  assert.deepEqual([c1.decision, c1.reviewers], ['review', ['opus-code-reviewer']]);
+  assert.match(c1.reason, /^harness lane, fix round 1: the Opus reviewer re-reads the fix written by the second family/);
   // round 2: an adversarial pass by the family that did not write the fix, run without asking
   for (const [writer, reviewer] of [['claude', 'second-family-adversarial'], ['sonnet', 'opus-adversarial'], ['codex', 'opus-adversarial']]) {
     const r = decide({ files: lane, kind: 'fix', tier: 'harness', maxFixed: 'P2', round: 2, writer });
@@ -510,9 +529,9 @@ test('fix 9: the harness lane has one fix round, re-read by the other family; a 
   assert.equal(stray.decision, 'skip');
 });
 
-test('fix 4: on critical code round 3 is an adversarial pass, round 4 a redesign, round 5 and later a cut', () => {
+test('fix 4: on critical code round 3 is an adversarial pass, round 4 a redesign, round 5 and later a cut; a round that closed only P2s is deferred from round 3', () => {
   for (const [writer, reviewer] of [['claude', 'second-family-adversarial'], ['sonnet', 'opus-adversarial']]) {
-    for (const maxFixed of ['P1', 'P2', 'P0']) {
+    for (const maxFixed of ['P1', 'P0']) {
       const r3 = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed, round: 3, writer }));
       assert.equal(r3.decision, 'adversarial', `${writer} ${maxFixed} round 3`);
       assert.deepEqual(r3.reviewers, [reviewer], `${writer} ${maxFixed} round 3`);
@@ -530,6 +549,19 @@ test('fix 4: on critical code round 3 is an adversarial pass, round 4 a redesign
       assert.deepEqual(r.reviewers, [], `${writer} round ${round}`);
       assert.match(r.reason, /cut the area \(flag-off or out of the diff\), land what is green, file one follow-up/);
       assert.match(r.reason, /parks only when the way forward is never-auto/);
+    }
+    // P2s go in one batch round: past round 2 a P2-only round opens no ladder, the landing check reads it
+    for (const round of [3, 4, 5, 9]) {
+      const r = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P2', round, writer }));
+      assert.equal(r.decision, 'defer', `${writer} P2 round ${round}`);
+      assert.deepEqual(r.reviewers, [], `${writer} P2 round ${round}`);
+      assert.match(r.reason, new RegExp(`^fix round ${round} on critical code closed only P2s: no re-review loop past round 2`));
+      assert.match(r.reason, /the landing check reads what it changed \(RE-REVIEW\), no adversarial pass, redesign or cut/);
+    }
+    // rounds 1 and 2 on critical code keep their re-review
+    for (const round of [1, 2]) {
+      const r = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P2', round, writer }));
+      assert.deepEqual([r.decision, r.reviewers], writer === 'claude' ? ['second-family', ['second-family-review']] : ['review', ['opus-code-reviewer']], `${writer} P2 round ${round}`);
     }
   }
   // no round tells anyone to ask the owner
@@ -580,11 +612,13 @@ test('fix 7: critical code with a P1 fixed in more than FIX_LINES lines adds Opu
 const codexFix = (files, maxFixed, round = 1) =>
   bound(() => decide({ files, kind: 'fix', writer: 'codex', maxFixed, round }));
 
-test('fix codex 1: a cold round 1 fix by the second family goes to a Sonnet reviewer', () => {
+test('fix codex 1: a cold round 1 P1 fix by the second family goes to the Opus reviewer; one that closed only P2s is deferred', () => {
   const r = codexFix([f(COLD, 80)], 'P1');
   assert.equal(r.decision, 'review');
-  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer']);
-  assert.match(r.reason, /cold fix round 1 written by the second family: a Claude reviewer \(Sonnet\) re-reads the fix/);
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer']);
+  assert.match(r.reason, /^cold fix round 1 closed a P1, written by the second family: the Opus reviewer re-reads the fix/);
+  const p2 = codexFix([f(COLD, 80)], 'P2');
+  assert.deepEqual([p2.decision, p2.reviewers], ['defer', []]);
 });
 
 test('fix codex 2: a cold round 2+ fix by the second family is still skipped', () => {
@@ -636,7 +670,7 @@ test('fix codex 6: critical rounds 3 and 4 by the second family are read by an O
 
 test('fix codex 7: triggered specialists still join a codex fix re-review', () => {
   const r = decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', writer: 'codex', maxFixed: 'P1' });
-  assert.deepEqual(r.reviewers, ['sonnet-code-reviewer', 'security-reviewer']);
+  assert.deepEqual(r.reviewers, ['opus-code-reviewer', 'security-reviewer']);
 });
 
 test('unit codex: a full unit written by the second family keeps Opus first and says it is the cross-family review', () => {
@@ -933,10 +967,10 @@ test('stakes none 1: a critical full unit by Opus is the cross-family review plu
   assert.deepEqual(live.reviewers, ['opus-code-reviewer', 'second-family-adversarial', 'security-reviewer', 'silent-failure-hunter', 'pr-test-analyzer']);
 });
 
-test('stakes none 2: the second family\'s unit is read by Sonnet and Opus\'s adversarial pass; a small tier gets no re-tier advice', () => {
+test('stakes none 2: the second family\'s unit is read by the Opus reviewer and Opus\'s adversarial pass; a small tier gets no re-tier advice', () => {
   for (const writer of ['codex', 'mixed']) {
     const r = bound(() => decide({ files: [f(HOT, 9)], kind: 'unit', tier: 'small', writer, stakes: 'none' }));
-    assert.deepEqual(r.reviewers, ['sonnet-code-reviewer', 'opus-adversarial'], writer);
+    assert.deepEqual(r.reviewers, ['opus-code-reviewer', 'opus-adversarial'], writer);
     assert.doesNotMatch(r.reason, /re-tier/, writer);
   }
   for (const writer of ['claude', 'sonnet']) {
@@ -954,7 +988,7 @@ test('stakes none 2: the second family\'s unit is read by Sonnet and Opus\'s adv
 
 test('stakes none 3: a cold unit at production none is one cross-family review, no adversarial pass', () => {
   for (const tier of ['small', 'full'])
-    for (const [writer, reviewer] of [['claude', 'second-family-review'], ['codex', 'sonnet-code-reviewer']]) {
+    for (const [writer, reviewer] of [['claude', 'second-family-review'], ['codex', 'opus-code-reviewer']]) {
       const r = bound(() => decide({ files: [f(COLD, 40), f('tests/a.test.js', 9), f('db/migrations/001.sql', 3)], kind: 'unit', tier, writer, stakes: 'none' }));
       assert.deepEqual(r.reviewers, [reviewer, 'database-reviewer'], `${tier} ${writer}`);
       assert.ok(!r.reviewers.some((x) => /adversarial/.test(x)), `${tier} ${writer}`);
@@ -965,16 +999,19 @@ test('stakes none 3: a cold unit at production none is one cross-family review, 
   assert.equal(decide({ files: [f('docs/a.md', 3)], kind: 'unit', stakes: 'none' }).decision, 'skip');
 });
 
-test('stakes none 4: a fix on critical code never names the Opus reviewer; the cross-family reviewer reads it', () => {
+test('stakes none 4: a fix on critical code names the Opus reviewer only as the reader of what the second family wrote; the cross-family reviewer reads the rest', () => {
   const at = (stakes, o) => bound(() => decide({ kind: 'fix', stakes, ...o }));
-  // where live names the Opus reviewer alone (a fix not written by Opus)
-  for (const [writer, reviewer, decision] of [['sonnet', 'second-family-review', 'second-family'], ['codex', 'sonnet-code-reviewer', 'review'], ['mixed', 'sonnet-code-reviewer', 'review']])
+  // where live names the Opus reviewer alone (a fix not written by Opus): a Sonnet fix goes to the
+  // second family; a fix the second family wrote keeps the Opus reviewer, its cross-family reader
+  for (const writer of ['sonnet', 'codex', 'mixed'])
     for (const [maxFixed, lines] of [['P2', FIX_LINES * 5], ['P1', FIX_LINES], ['P1', FIX_LINES + 1]]) {
       const live = at('live', { files: [f(HOT, lines)], maxFixed, writer });
       assert.deepEqual(live.reviewers, ['opus-code-reviewer'], `live ${writer} ${maxFixed} ${lines}`);
       const none = at('none', { files: [f(HOT, lines)], maxFixed, writer });
-      assert.deepEqual([none.decision, none.reviewers], [decision, [reviewer]], `none ${writer} ${maxFixed} ${lines}`);
-      assert.match(none.reason, /^production: none: /);
+      if (writer === 'sonnet') {
+        assert.deepEqual([none.decision, none.reviewers], ['second-family', ['second-family-review']], `none ${writer} ${maxFixed} ${lines}`);
+        assert.match(none.reason, /^production: none: /);
+      } else assert.deepEqual([none.decision, none.reviewers, none.reason], [live.decision, live.reviewers, live.reason], `none ${writer} ${maxFixed} ${lines}`);
     }
   // where live names the second family plus Opus (Opus's own large P1 fix)
   const live = at('live', { files: [f(HOT, FIX_LINES + 1)], maxFixed: 'P1', writer: 'claude' });
@@ -986,19 +1023,22 @@ test('stakes none 4: a fix on critical code never names the Opus reviewer; the c
   assert.deepEqual([p3.decision, p3.reviewers], ['second-family', ['second-family-review']]);
   // a specialist still joins; rounds 3 to 5 are unchanged
   const auth = withCritical([/^src\/auth\//], () => decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P1', writer: 'codex', stakes: 'none' }));
-  assert.deepEqual(auth.reviewers, ['sonnet-code-reviewer', 'security-reviewer']);
+  assert.deepEqual(auth.reviewers, ['opus-code-reviewer', 'security-reviewer']);
   for (const round of [3, 4, 5])
     for (const writer of ['claude', 'codex']) {
       const a = at('none', { files: [f(HOT, 5)], maxFixed: 'P1', round, writer });
       const b = at('live', { files: [f(HOT, 5)], maxFixed: 'P1', round, writer });
       assert.deepEqual([a.decision, a.reviewers], [b.decision, b.reviewers], `round ${round} ${writer}`);
     }
-  // no fix decision at none names the Opus code-reviewer
+  // no fix decision at none names the Opus code-reviewer, except as the reader of what the second family wrote
   for (const writer of ['claude', 'sonnet', 'codex', 'mixed'])
     for (const maxFixed of ['P0', 'P1', 'P2', 'P3'])
       for (const round of [1, 2])
-        for (const lines of [1, FIX_LINES + 1])
-          assert.ok(!at('none', { files: [f(HOT, lines)], maxFixed, round, writer }).reviewers.includes('opus-code-reviewer'), `${writer} ${maxFixed} ${round} ${lines}`);
+        for (const lines of [1, FIX_LINES + 1]) {
+          const r = at('none', { files: [f(HOT, lines)], maxFixed, round, writer });
+          if (writer === 'claude' || writer === 'sonnet') assert.ok(!r.reviewers.includes('opus-code-reviewer'), `${writer} ${maxFixed} ${round} ${lines}`);
+          else assert.deepEqual(r.reviewers, ['opus-code-reviewer'], `${writer} ${maxFixed} ${round} ${lines}`);
+        }
 });
 
 test('stakes none 5: a slice is unchanged: critical code not written by Opus still gets the Opus reviewer', () => {
@@ -1020,7 +1060,7 @@ test('stakes none 6: a P3-only fix round has no P3 batch at production none; cri
     assert.equal(bound(() => decide({ files, kind: 'fix', maxFixed: 'P3', writer })).decision, 'p3-batch', `${files[0].path} by ${writer}`);
   }
   // critical code not written by Opus is still read, by the cross-family reviewer
-  for (const [writer, decision, reviewer] of [['sonnet', 'second-family', 'second-family-review'], ['codex', 'review', 'sonnet-code-reviewer']]) {
+  for (const [writer, decision, reviewer] of [['sonnet', 'second-family', 'second-family-review'], ['codex', 'review', 'opus-code-reviewer']]) {
     const r = bound(() => decide({ files: [f(HOT, 9)], kind: 'fix', maxFixed: 'P3', writer, stakes: 'none' }));
     assert.deepEqual([r.decision, r.reviewers], [decision, [reviewer]], writer);
   }
@@ -1452,12 +1492,12 @@ test('writer mixed 1: a critical fix round from several executors is re-read by 
 test('writer mixed 2: a cold mixed fix round or slice is never a second-family-only review', () => {
   const fix = decide({ files: [f(COLD, 80)], kind: 'fix', maxFixed: 'P1', writer: 'mixed' });
   assert.equal(fix.decision, 'review');
-  assert.deepEqual(fix.reviewers, ['sonnet-code-reviewer']);
+  assert.deepEqual(fix.reviewers, ['opus-code-reviewer']);
   assert.ok(!fix.reviewers.some((x) => x.startsWith('second-family')));
   const slice = bound(() => decide({ files: [f(COLD, 80)], kind: 'slice', writer: 'mixed' }));
   assert.equal(slice.decision, 'defer');
   const unit = decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer: 'mixed' });
-  assert.deepEqual(unit.reviewers, ['sonnet-code-reviewer']);
+  assert.deepEqual(unit.reviewers, ['opus-code-reviewer']);
 });
 
 test('writer bounded: Opus and Sonnet together are bounded (sonnet on Claude Code), read by the second family; mixed means the second family wrote part of it', () => {
@@ -1473,8 +1513,25 @@ test('writer bounded: Opus and Sonnet together are bounded (sonnet on Claude Cod
   }
   const mixed = writerRole('mixed', 'codex');
   assert.equal(coldSlice(mixed).decision, 'defer', 'a cold mixed slice');
-  assert.deepEqual(smallUnit(mixed).reviewers, ['sonnet-code-reviewer'], 'a small mixed unit');
+  assert.deepEqual(smallUnit(mixed).reviewers, ['opus-code-reviewer'], 'a small mixed unit');
   assert.equal(hotSlice(mixed).decision, 'required', 'a critical mixed slice');
+});
+
+test('writer v12: decide() never names the Sonnet code-reviewer; the Opus code-reviewer reads what the second family wrote', () => {
+  const sets = [[f(COLD, 20)], [f(HOT, 20)], [f('src/auth/login.ts', 5)], [f('AGENTS.md', 3)], [f(TEST_FILE, 9)], [f(COLD, 9), f('db/migrations/001.sql', 3)]];
+  let n = 0;
+  for (const files of sets)
+    for (const kind of ['slice', 'unit', 'fix'])
+      for (const tier of ['small', 'full', 'harness'])
+        for (const writer of WRITERS)
+          for (const stakes of STAKES)
+            for (const maxFixed of kind === 'fix' ? ['P0', 'P1', 'P2', 'P3'] : [null])
+              for (const round of kind === 'fix' ? [1, 2, 3, 5] : [1]) {
+                const r = bound(() => decide({ files, kind, tier, writer, stakes, maxFixed, round }));
+                assert.ok(!r.reviewers.includes('sonnet-code-reviewer'), `${files[0].path} ${kind} ${tier} ${writer} ${stakes} ${maxFixed} ${round}`);
+                n++;
+              }
+  assert.ok(n > 1000, `${n} routings checked`);
 });
 
 // ---- the host: --writer names the writer's role, so a family name never routes as Claude Code's
@@ -1560,10 +1617,10 @@ test('host 3: writerRole maps each role to the same routing value on every host'
   for (const host of ['claude', 'codex', 'zcode', 'kimi', 'unknown'])
     for (const [role, routed] of [['main', 'claude'], ['bounded', 'sonnet'], ['second', 'codex'], ['mixed', 'mixed']])
       assert.equal(writerRole(role, host), routed, `${role} on ${host}`);
-  // so on any host the role main sends a small unit to the second family, second to the bounded model
+  // so on any host the role main sends a small unit to the second family, second to the judgment model's reviewer
   const unit = (writer) => decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer }).reviewers;
   assert.deepEqual(unit(writerRole('main', 'codex')), ['second-family-review']);
-  assert.deepEqual(unit(writerRole('second', 'zcode')), ['sonnet-code-reviewer']);
+  assert.deepEqual(unit(writerRole('second', 'zcode')), ['opus-code-reviewer']);
 });
 
 test('host 4: a family name keeps its meaning on Claude Code or an unknown host, and is refused on any other', () => {

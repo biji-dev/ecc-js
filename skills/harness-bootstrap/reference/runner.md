@@ -202,14 +202,14 @@ next check.
 | Gate 1 | — | **auto** unless the risk map or the policy is hit | the grant (the gate table) — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
 | 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
-| 4 conform | — | against the Scope block | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
+| 4 conform | — | against the Scope block, carrying the claim checklist | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
 | 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s ride along | the same (`gate-design.md`) |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
 | 8a verify | scoped | FULL once before merge | FULL |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
-| 8c claims | — | **skipped; the record is generated** | blocking, **behaviour claims**, one round |
+| 8c claims | — | **skipped; the record is generated**, lane A carries the checklist | blocking, **behaviour claims**, one round |
 | Gate 2 | merge when green | merge when green | merge when green, the landing check passed |
 
 `[M]` **At `production: none`** critical code runs Small's column plus the adversarial
@@ -464,7 +464,9 @@ listening one at 6 hours or once its directory is gone.
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
   fix diff only; `--writer` is the role that wrote the fix, as for the unit. Round 3
-  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks.
+  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks. P2s go
+  in one batch round: a round that closed only P2s is `defer`, no re-review of its
+  own, on cold code and on critical code from round 3 (the landing check reads it).
 - `[M]` **The P3 batch**, at `production: live` only, runs once per slice set after
   the fix rounds: one Sonnet fixer (or the second family's `fix-cold`) over every P3
   still IN scope, its targeted tests, no re-review (`review-gate.mjs` says

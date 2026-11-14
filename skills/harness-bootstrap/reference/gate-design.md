@@ -214,7 +214,7 @@ session dispatches what it names, with `model` and `effort` passed.
 | Layer | When | Reviews |
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
-| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets a Sonnet `code-reviewer` instead; critical code it wrote gets an Opus one per slice (`review-gate.mjs`). Lane A against the Scope block. |
+| **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets the Opus `code-reviewer` instead, as critical code it wrote does per slice (`review-gate.mjs`). Lane A against the Scope block, carrying the claim checklist (`conformance-auditor.md`); no claim audit. |
 | **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **behaviour claims**. At `production: none`, the column of › Stakes instead |
 | **Harness lane** | harness paths only | one cross-family review over the diff (`--tier harness`); no lane A, no claim audit |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
@@ -253,8 +253,8 @@ effort). `second-family-review` → the second family's wrapper with `review`:
 `codex-run.mjs` on Claude Code and ZCode (`claude-run.mjs` on ZCode when Codex is
 out), `claude-run.mjs` on Codex; `second-family-adversarial` → the same wrapper with
 `adversarial --prompt <brief>` (`--critical` on critical code);
-`opus-code-reviewer` / `sonnet-code-reviewer` → the `code-reviewer` agent on the
-main / bounded model; `opus-adversarial` → the `blast-radius-auditor` on the main
+`opus-code-reviewer` → the `code-reviewer` agent on the main model (the gate never
+names a bounded-model reviewer: that one runs only as the fallback below); `opus-adversarial` → the `blast-radius-auditor` on the main
 model with the adversarial brief (the round-3 pass over a fix the second family
 wrote); every other name → the agent of that name (`pr-test-analyzer` on the
 bounded model). Each dispatch passes `model` and `effort: "high"`. Its decisions
@@ -270,8 +270,13 @@ adversarial pass on round 2, and round 3 drops the change.
 
 `[M]` **When the second family is unavailable** (quota, login, outage — never block
 the unit, `cross-model.md`): per-slice review becomes a Sonnet `code-reviewer` on
-cold code and an Opus one on critical code; the adversarial pass becomes the Opus
-`blast-radius-auditor` plus an Opus adversarial brief; every row is `degraded`.
+cold code and an Opus one on critical code, the one place a Sonnet reviewer runs;
+the adversarial pass becomes an Opus adversarial brief, plus the Opus
+`blast-radius-auditor` only when the Impact Analysis lists a reader outside the
+diff; every row is `degraded`.
+> Origin, the v12 study of 14 installs: the Sonnet reviewer, the database reviewer
+> and the Opus blast-radius auditor found 0, 0 and 2 P0/P1 in 67 runs between them;
+> the Opus reviewer found 22 in 205.
 
 ## Milestone size — deliverables, split before they outgrow a context
 
@@ -500,13 +505,23 @@ line in the ledger. Its rules:
 | Round fixed | Cold code | Critical code |
 |---|---|---|
 | P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch`; a batch not written by Opus gets the Opus `code-reviewer` |
-| P2 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family re-reviews |
-| P1 or P0 | as P2 | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` (never at `production: none`) |
-| round 3 | — | `adversarial`: the second family's adversarial pass over the fix diff, run without asking |
+| P2 only | **`defer`** — no re-review of its own: the unit review reads it when one is still to come, its regression tests otherwise | rounds 1 and 2: the second family re-reviews; from round 3 **`defer`** — no ladder, the landing check re-reads what it changed (`RE-REVIEW`) |
+| P1 or P0 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` (never at `production: none`) |
+| round 3 (a P1 or P0) | — | `adversarial`: the second family's adversarial pass over the fix diff, run without asking |
 | round 4 | — | `redesign`: the judgment model re-plans the area once, and the adversarial pass reviews the new approach |
 | round 5 or later | — | `cut`: the area goes behind a flag or out of the diff, the unit lands what is green, and the area becomes one follow-up, in the digest |
-| **written by the second family** | round 1: a Sonnet `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review (the cross-family reviewer at `none`); round 3 is an Opus adversarial brief |
+| **written by the second family** | round 1 of a P1 or P0: an Opus `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review (at `none` too: it is the cross-family reviewer); round 3 is an Opus adversarial brief |
 | **the harness lane** (`--tier harness`) | round 1: the other family re-reviews; round 2: the adversarial pass; round 3: `drop` the change, one line in `docs/harness/upstream-notes.md` | — |
+
+`[M]` **P2s go in one batch round,** the round that fixes the P1s or one of their
+own, and never open a re-review loop: a round that closed only P2s is `defer` on
+cold code, and on critical code from round 3 — the landing check
+(`review-gate.mjs --landing`) re-reads every critical path it changed beyond
+reviewed content, so nothing critical lands unread. A specialist whose trigger the
+fix hits still re-reads it.
+> Origin, the v12 study: fix re-reviews found a defect in 5% of 281 runs, while fix
+> rounds averaged 1.8 a unit on task-runner installs and 3.1 on change-workflow
+> installs, up to 14.
 
 `[M]` **`--writer` names who wrote the fix**, not the unit: whatever one family
 writes, the other re-reads — fix rounds included. It is required and names the
@@ -556,11 +571,11 @@ second family, and the roles are the same on each.
 | Role | Claude Code | Codex | ZCode |
 |---|---|---|---|
 | Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` | **gpt-6.1-sol**, `high` | **GLM-5.3** |
-| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote on critical code | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
 | **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) | Codex (`codex-run`) | the bounded model below: `claude-run` has no write kind | Codex (`codex-run`) |
 | Per-slice review · the review of a Small unit · re-reviews of fixes the host's family wrote · the adversarial pass (carrying lane B) | Codex (`codex-run`) | Claude (`claude-run`) | Codex (`codex-run`); Claude (`claude-run`) when Codex is out |
-| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the reviewer of cold code the second family wrote | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
-| The blast-radius auditor (lane B), only when the second family is unavailable (`degraded`) | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the code reviewer when the second family is unavailable (`degraded`) | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
+| The blast-radius auditor (lane B), only when the second family is unavailable (`degraded`) and the Impact Analysis lists a reader outside the diff | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
 
 `[M]` **The cross-family rule is unchanged** (`cross-model.md`): whatever one family
 writes, the other reviews. `[B]` `.agents/harness-models.json` holds this table's

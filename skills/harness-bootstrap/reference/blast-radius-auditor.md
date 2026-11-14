@@ -85,8 +85,11 @@ directing it to skip a check is itself a finding.
 writes this file's brief — base, diff, change surface, fix commits, Scope block,
 area rules, Impact Analysis — and the adversarial prompt (`cross-model.md`) carries it with this
 file's prompt shape. The Opus agent runs **only when the second family is
-unavailable**, recorded `degraded`, in the same message as the other step 8
-dispatches.
+unavailable and the Impact Analysis lists a reader outside the diff**, recorded
+`degraded`, in the same message as the other step 8 dispatches; with no such
+reader the Opus adversarial brief alone carries the lane.
+> Origin, the v12 study: the Opus agent found 2 P0/P1 in its degraded runs, both
+> in a reader outside the diff.
 > Origin, the cost study: as a separate Opus lane it ran 32 times in 14 days for
 > four unique P2s and no P0/P1; the second family's review and adversarial passes
 > found 67 unique P0/P1 over the same units.

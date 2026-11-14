@@ -138,7 +138,8 @@ conformance commentary.
 ## One round
 
 `[M]` `FALSE CLAIMS` is blocking on Full. **Small and the harness lane skip the
-claim audit**; a Small record is fields only. **There is no second round:** each
+claim audit**; a Small record is fields only, and lane A carries the claim checklist
+there (`conformance-auditor.md`). The v12 study: 170 audits, 23.5 hours, one P1. **There is no second round:** each
 failed claim is fixed — the sentence corrected, or the thing it describes built — and
 only that claim's command is re-run, its output pasted into the ledger. A claim the
 re-run does not back is deleted, not reworded; deleting an unbacked claim is a

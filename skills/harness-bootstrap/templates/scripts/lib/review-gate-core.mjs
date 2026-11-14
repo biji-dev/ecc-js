@@ -31,6 +31,16 @@
 // It reviews production files, tests and the harness's instruction files, and skips only docs
 // alone: a weakened test is a weakened control, and a test under a critical path is critical.
 //
+// V12: PAY ONLY FOR STEPS THAT FIND THINGS. A 10-day study of 14 installs: fix re-reviews found a
+// defect in 5% of 281 runs, the Sonnet code-reviewer no P0/P1 at all. So a fix that closed only P2s
+// on cold code gets no re-review of its own (`defer`: the unit review reads it when one is still to
+// come, its regression tests otherwise); P2s go in one batch round, and a P2-only round on critical
+// code past round 2 is `defer` too, never the adversarial, redesign or cut ladder: the landing check
+// re-reads every critical path it changed beyond reviewed content. A fix that closed a P0 or P1, or
+// touched critical code in rounds 1 and 2, keeps its re-review. The Claude-side reader of what the
+// second family wrote is the Opus code-reviewer; a Sonnet one runs only where no second family does
+// (the session's degraded fallback, harness-bootstrap's reference/gate-design.md › Review lineup).
+//
 // THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
 // model, a bounded model and a second family (harness-bootstrap's reference/gate-design.md › Model
 // and effort). Read as Claude Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
@@ -85,7 +95,8 @@ export const LANDING_KINDS = ['review', 'adversarial', 'adversarial-frontier'];
 // who wrote the diff, as decide() routes it, in Claude Code's names: claude = Opus (main thread /
 // implementer), codex = the second family, sonnet = a Sonnet builder (or Opus and Sonnet
 // together), mixed = several executors, the second family among them (routes like codex). The
-// CLI takes a role and maps it with writerRole.
+// CLI takes a role and maps it with writerRole. What the second family wrote is read on the Claude
+// side by the Opus code-reviewer: decide() never names `sonnet-code-reviewer` (v12).
 export const WRITERS = ['claude', 'codex', 'sonnet', 'mixed'];
 // --writer's role → the routing value; the same on every host
 export const ROLES = { main: 'claude', bounded: 'sonnet', second: 'codex', mixed: 'mixed' };
@@ -306,11 +317,13 @@ function checkLanding(a, given) {
  *               after its last fix group); `maxFixed` is the highest severity the round fixed
  *               (P0 counts as P1) and `round` counts fix rounds on this area from 1. For this
  *               kind `writer` is who wrote THE FIX: a codex, sonnet or mixed fix on critical code
- *               is re-read by Opus ('review'); a codex or mixed cold fix by a Sonnet reviewer.
+ *               is re-read by Opus ('review'); a codex or mixed cold fix that closed a P1 too.
+ *               A cold fix that closed only P2s is 'defer': no re-review of its own.
  *               A P3 round is the P3 batch ('p3-batch', no re-review) unless it touches critical
  *               code and Opus did not write it: then the Opus reviewer reads it ('review').
  *               On critical code round 3 is an adversarial pass over the fix diff ('adversarial'),
- *               round 4 a redesign that pass reviews ('redesign'), round 5 and later a cut ('cut').
+ *               round 4 a redesign that pass reviews ('redesign'), round 5 and later a cut ('cut');
+ *               a round that closed only P2s is 'defer' from round 3 on, never on the ladder.
  * tier 'harness': the harness lane, a diff of HARNESS paths alone -- one cross-family review over the
  *               unit, one fix round re-read by the other family, an adversarial second round, and
  *               the change dropped at the third ('drop'). A reviewed path outside HARNESS takes the
@@ -374,9 +387,11 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   };
   const coldTests = testsAdded && underCritical.length > 0 ? '; tests added under a critical path, nothing deleted: routed as cold' : '';
   const out = (decision, reviewers, reason) => ({ decision, reviewers, reason: `${reason}${coldTests}`, ...facts });
-  // where live names the Opus code-reviewer on a fix, production none names the cross-family reviewer
-  const crossFamily = secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review';
-  const crossDecision = crossFamily === 'sonnet-code-reviewer' ? 'review' : 'second-family';
+  // the reviewer from the family that did not write the diff: the second family's review, or for what
+  // the second family wrote the Opus code-reviewer (a Sonnet one found no P0/P1 in the v12 study);
+  // where live names the Opus code-reviewer on a fix, production none names this one
+  const crossFamily = secondFamilyWrote(writer) ? 'opus-code-reviewer' : 'second-family-review';
+  const crossDecision = crossFamily === 'opus-code-reviewer' ? 'review' : 'second-family';
   const DOCS_ONLY = 'no production code and no tests: docs only';
   // a specialist reads code: an instruction file's prose names auth or sessions without being either
   const specialists = Object.keys(TRIGGERS).filter((name) =>
@@ -424,7 +439,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     if (lane)
       return out(
         'review',
-        [secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review'],
+        [crossFamily],
         `harness lane: one cross-family review over the diff, written by ${WRITER_NAMES[writer]}${what}`,
       );
     if (none) {
@@ -440,11 +455,10 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     // critical code is Full (harness-bootstrap's reference/gate-design.md › Tiers): a mis-tiered unit gets the full lineup anyway
     const escalate = tier === 'small' && critical.length > 0;
     if (tier === 'small' && !escalate) {
-      // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Sonnet
-      const base = secondFamilyWrote(writer) ? 'sonnet-code-reviewer' : 'second-family-review';
+      // a Claude-family writer (Opus, Sonnet) is read by the second family; codex or mixed by Opus
       return out(
         'review',
-        [base, ...specialists],
+        [crossFamily, ...specialists],
         `small unit written by ${WRITER_NAMES[writer]}: the other model family reviews the whole unit diff${what}`,
       );
     }
@@ -480,7 +494,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
         'harness lane, fix round 2: the lane allows one standard fix round, so this one is an adversarial pass over the fix diff, run without asking',
       );
     return secondFamilyWrote(writer)
-      ? out('review', ['sonnet-code-reviewer'], 'harness lane, fix round 1: a Claude reviewer (Sonnet) re-reads the fix written by the second family')
+      ? out('review', ['opus-code-reviewer'], 'harness lane, fix round 1: the Opus reviewer re-reads the fix written by the second family')
       : out('second-family', ['second-family-review'], 'harness lane, fix round 1: the second family re-reads the fix');
   }
   if (maxFixed === 'P3') {
@@ -502,16 +516,17 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   }
   if (docsOnly) return out('skip', [], DOCS_ONLY);
   let r = fixRound({ critical, maxFixed, round, prodLines, writer });
-  if (none && r.reviewers.includes('opus-code-reviewer'))
+  // what the second family wrote keeps its Opus reader at none: it is the cross-family one
+  if (none && !secondFamilyWrote(writer) && r.reviewers.includes('opus-code-reviewer'))
     r = {
       decision: crossDecision,
       reviewers: [crossFamily],
       reason: `production: none: critical code, ${maxFixed === 'P2' ? 'P2' : 'P1'} fixed in ${prodLines} production lines: the cross-family reviewer re-reads the fix written by ${WRITER_NAMES[writer]}, no Opus pass`,
     };
-  // the specialist whose trigger the fix hits joins its re-review (harness-bootstrap's reference/gate-design.md › Fix rounds);
-  // a cut has nothing left to review
+  // the specialist whose trigger the fix hits joins its re-review (harness-bootstrap's reference/gate-design.md › Fix rounds),
+  // and re-reads a fix that has none; a cut has nothing left to review
   if (specialists.length === 0 || r.decision === 'cut') return out(r.decision, r.reviewers, r.reason);
-  if (r.decision === 'skip')
+  if (r.decision === 'skip' || r.decision === 'defer')
     return out('review', specialists, `${r.reason}; the triggered specialist re-reads the fix`);
   return out(r.decision, [...r.reviewers, ...specialists], r.reason);
 }
@@ -524,17 +539,32 @@ function fixRound({ critical, maxFixed, round, prodLines, writer }) {
   const notOpus = writer !== 'claude';
   const byCodex = secondFamilyWrote(writer);
   if (critical.length === 0) {
+    // fix re-reviews found a defect in 5% of 281 runs: only a fix that closed a P0 or P1 earns one
+    if (maxFixed === 'P2')
+      return d(
+        'defer',
+        [],
+        'cold fix that closed only P2s: no re-review of its own -- the unit review reads it when one is still to come, its regression tests otherwise',
+      );
     if (round === 1) {
       if (byCodex)
         return d(
           'review',
-          ['sonnet-code-reviewer'],
-          'cold fix round 1 written by the second family: a Claude reviewer (Sonnet) re-reads the fix',
+          ['opus-code-reviewer'],
+          'cold fix round 1 closed a P1, written by the second family: the Opus reviewer re-reads the fix',
         );
-      return d('second-family', ['second-family-review'], 'cold fix round 1: the second family re-reviews the fix');
+      return d('second-family', ['second-family-review'], 'cold fix round 1 closed a P1: the second family re-reviews the fix');
     }
     return d('skip', [], 'cold fix round: its regression tests prove it, not another review');
   }
+  // P2s go in one batch round: past round 2 a round that closed only P2s opens no ladder, and the
+  // landing check re-reads each critical path it changed beyond reviewed content
+  if (maxFixed === 'P2' && round >= 3)
+    return d(
+      'defer',
+      [],
+      `fix round ${round} on critical code closed only P2s: no re-review loop past round 2 -- the landing check reads what it changed (RE-REVIEW), no adversarial pass, redesign or cut`,
+    );
   // rounds end by themselves: a third is adversarial, a fourth re-plans the area, a fifth cuts it
   const adversary = notOpus ? 'opus-adversarial' : 'second-family-adversarial';
   const byAdversary = notOpus ? 'the adversarial pass by Opus (the fix was not written by Opus)' : 'the adversarial pass by the second family';

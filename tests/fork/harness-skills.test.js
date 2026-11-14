@@ -950,7 +950,7 @@ test('v11: the owner key asks on Claude Code, a claim hears only what blocks it,
     '**Asks are the run\'s last action.**',
     'Executors and reviewers run `bash scripts/run-gates.sh --since <slice base>`, never FULL',
     '**Known reds.**',
-    'a failure the mainline shows too is `KNOWN` in the state file, both log lines quoted. It is never a fix round and never a reason to re-run FULL',
+    'prints `KNOWN` instead of `FAIL`: it counts as no failure, is never a fix round, never a reason to re-run FULL and never cached.',
   ]) assert.ok(runner.includes(part), `runner.md lacks: ${part}`);
   assert.ok(!runner.includes('HOLD claims') && !runner.includes('VALVE_'), 'runner.md still holds claims on the digest');
   for (const rel of ['reference/sweep.md', 'reference/hygiene.md']) {

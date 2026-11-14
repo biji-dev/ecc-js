@@ -452,3 +452,81 @@ test('lock: a run promoted to FULL after a lock wait takes the FULL lock, so a l
     for (const r of [a, b, c]) if (r) r.child.kill();
   }
 });
+
+test('known reds: a red the mainline FULL run named, in a file the branch did not touch, is KNOWN -- no exit count, never cached; anything else FAILs', () => {
+  const said = path.join(tmp('run-gates-said-'), 'said');
+  // gate t ends as run-counted ends a failing run, with the ids `say` wrote, and passes when none are written
+  const lines = [`gate t always 'if [ -s ${said} ]; then cat ${said}; exit 1; fi'`, "gate ok always 'true'"];
+  const say = (...ids) =>
+    fs.writeFileSync(said, ids.length ? ['run-counted: FAIL the command exited 1', `run-counted: FAIL ${ids.length} failed (must be 0)`, ...ids.map((id) => `run-counted: FAILED ${id}`), ''].join('\n') : '');
+  const git = (repo, ...a) => {
+    const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: repo, encoding: 'utf8', env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  const commit = (repo, file, text) => {
+    fs.writeFileSync(path.join(repo, file), text);
+    git(repo, 'add', file);
+    git(repo, 'commit', '-q', '-m', file);
+  };
+  const prepare = (repo) => {
+    fs.mkdirSync(path.join(repo, 'tests'));
+    commit(repo, 'tests/a.test.mjs', 'a\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'new.test.mjs'), 'untracked\n');
+  };
+  const A1 = 'tests/a.test.mjs :: one';
+  const A2 = 'tests/a.test.mjs :: group > two';
+  say(A1, A2, 'tests/new.test.mjs :: fresh', 'tests/gone.test.mjs :: gone', '/abs/x.test.mjs :: abs');
+  const main = runCopy(lines, [], { prepare });
+  const shared = { repo: main.repo, cache: main.cache };
+  // the mainline's own reds are FAIL: its run records them
+  assert.equal(main.status, 1, main.stdout + main.stderr);
+  assert.match(main.stdout, /^FAIL t \d+s \S+ \(exit 1\)/m);
+  git(main.repo, 'checkout', '-q', '-b', 'unit');
+  commit(main.repo, 'b.txt', 'b\n');
+  say(A1, A2);
+  const known = runCopy(lines, [], shared);
+  assert.equal(known.status, 0, known.stdout + known.stderr);
+  assert.match(known.stdout, /^KNOWN t \d+s \S+ \(2 failing test\(s\) in the main baseline, their files untouched\)$/m);
+  assert.equal(known.lines.at(-1), 'SUMMARY 1 passed, 0 failed, 0 skipped, 1 known (full)');
+  const again = runCopy(lines, [], shared);
+  assert.doesNotMatch(again.stdout, /^REUSED /m, 'a run with a KNOWN gate was cached');
+  assert.match(again.stdout, /^KNOWN t /m);
+  say(A2);
+  assert.match(runCopy(lines, [], shared).stdout, /^KNOWN t \d+s \S+ \(1 failing test\(s\) in the main baseline/m);
+  assert.match(runCopy(lines, ['--since', 'main'], { ...shared, scoped: '.*' }).stdout, /^KNOWN t /m, 'a scoped run');
+  const fails = (why, opts = {}) => {
+    const r = runCopy(lines, [], { ...shared, ...opts });
+    assert.equal(r.status, 1, `${why}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /^FAIL t \d+s \S+ \(exit 1\)/m, why);
+    assert.doesNotMatch(r.stdout, /^KNOWN /m, why);
+  };
+  fails('no baseline: RUN_GATES_MAINLINE empty', { env: { RUN_GATES_MAINLINE: '' } });
+  fails('no merge base: a mainline that does not exist', { env: { RUN_GATES_MAINLINE: 'trunk' } });
+  say(A1, 'tests/a.test.mjs :: three');
+  fails('a failing test the baseline does not name');
+  say(A1, '?');
+  fails('a failure run-counted could not name');
+  say(A1);
+  fs.appendFileSync(said, 'more output\n');
+  fails('output after the FAILED block');
+  say('tests/gone.test.mjs :: gone');
+  fails('a file that is not in the tree');
+  say('/abs/x.test.mjs :: abs');
+  fails('a file outside the tree');
+  say('tests/new.test.mjs :: fresh');
+  fails('an untracked test file');
+  say(A1);
+  fs.appendFileSync(path.join(main.repo, 'tests', 'a.test.mjs'), 'edit\n');
+  fails('an uncommitted edit to the test file');
+  git(main.repo, 'add', 'tests/a.test.mjs');
+  git(main.repo, 'commit', '-q', '-m', 'edit a');
+  fails('a committed edit to the test file');
+  // the mainline passes: its record is cleared, and the branch's red FAILs again
+  git(main.repo, 'checkout', '-q', 'main');
+  say();
+  assert.equal(runCopy(lines, ['--no-cache'], shared).status, 0);
+  git(main.repo, 'checkout', '-q', '-b', 'unit2');
+  commit(main.repo, 'c.txt', 'c\n');
+  say(A2);
+  fails('the mainline passed since');
+});

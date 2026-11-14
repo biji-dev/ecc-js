@@ -496,12 +496,18 @@ listening one at 6 hours or once its directory is gone.
   one. The key is the working tree's tracked and untracked files plus what
   `RUN_GATES_KEY_EXTRA` names and `NODE_OPTIONS`; ignored inputs (`node_modules`, `.env`) and refs are
   not in it unless named, and worktrees of one repository share the cache.
-- `[M]` **Known reds.** A failing FULL gate is compared with that gate's last
-  mainline FULL log; a failure the mainline shows too is `KNOWN` in the state file,
-  both log lines quoted. It is never a fix round and never a reason to re-run FULL,
-  nor blocks merge when green while the diff touches neither the test nor its
-  subject; each gets one follow-up row.
+- `[M]` **Known reds.** `run-gates.sh` keeps, per gate, the failing tests of the
+  last FULL run on the mainline (`MAINLINE`, `[B]`) from a clean tree — the
+  `run-counted: FAILED <file> :: <test>` lines run-counted prints after its verdict
+  — and a mainline pass clears them. On a branch, a gate that exits non-zero naming
+  only tests in that record, each in a file of the tree the diff and the untracked
+  files leave alone, prints `KNOWN` instead of `FAIL`: it counts as no failure, is
+  never a fix round, never a reason to re-run FULL and never cached. Quote the
+  `KNOWN` line in the state file; each gets one follow-up row. A failure it cannot
+  name (`FAILED ?`, a timeout, a missing count line) stays `FAIL`.
   > Origin: 324 FULL runs, 37 hours, for 102 merges; known reds re-run each time.
+  > The v12 study: 28 of 179 FULL reds were pre-existing or flaky, and v11's rule,
+  > text the session applied by hand, caught few of them.
 
 **Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
 not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state

@@ -22,7 +22,7 @@ const SUITES = {
   'harness-guard': 58,
   'context-budget': 8,
   'session-resume': 20,
-  'run-gates': 17,
+  'run-gates': 18,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).
@@ -134,8 +134,10 @@ function hermeticEnv() {
   return env;
 }
 
-function runSuite(dir, name) {
-  return spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join('scripts', 'lib', `${name}.test.mjs`)], {
+/** Run one installed suite; `only` keeps the tests whose name matches it (`--test-name-pattern`). */
+function runSuite(dir, name, only = null) {
+  const pick = only ? [`--test-name-pattern=${only}`] : [];
+  return spawnSync(process.execPath, ['--test', '--test-reporter=tap', ...pick, path.join('scripts', 'lib', `${name}.test.mjs`)], {
     cwd: dir,
     encoding: 'utf8',
     env: hermeticEnv(),
@@ -180,15 +182,16 @@ console.log('\nharness project tests: each suite fails on a broken install');
 
 /**
  * Install (the `variant` install when given), break one line of the copy a suite tests (each copy when
- * `rel` lists several, as the two hook copies of the guard), and assert the suite fails.
+ * `rel` lists several, as the two hook copies of the guard), and assert the suite fails (its tests
+ * named like `only` when given, so a mutant that one test covers costs one test's time).
  */
-function mutantFails(name, rel, from, to, { variant } = {}) {
+function mutantFails(name, rel, from, to, { variant, only = null } = {}) {
   test(`mutant: ${name}`, () => {
     const dir = install({ variant });
     const rels = [].concat(rel);
     for (const r of rels) edit(dir, r, from, to);
     const suite = Object.keys(SUITES).find(s => rels[0].includes(s)) ?? (/^\.(?:githooks|husky)\//.test(rels[0]) ? 'harness-guard' : null);
-    const res = runSuite(dir, suite);
+    const res = runSuite(dir, suite, only);
     assert.notStrictEqual(res.status, 0, `the ${suite} suite passed the mutant`);
     assert.ok(tapCount(`${res.stdout}${res.stderr}`, 'fail') >= 1);
   });
@@ -398,6 +401,51 @@ mutantFails(
   'scripts/run-gates.sh',
   'if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then',
   'if false; then',
+);
+
+// The known-red baseline: each check the runner makes before it prints KNOWN for a failing gate.
+const KNOWN_REDS = { only: 'known reds' };
+mutantFails(
+  'a runner that prints KNOWN when the branch changed the failing test file',
+  'scripts/run-gates.sh',
+  String.raw`if printf '%s\n' "$KNOWN_CHANGED" | grep -Fxq -- "$f"; then return 1; fi`,
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a failing test the mainline record lacks',
+  'scripts/run-gates.sh',
+  String.raw`[ -z "$(printf '%s\n' "$ids" | LC_ALL=C comm -23 - "$base")" ] || return 1`,
+  ':',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that caches a run with a KNOWN gate',
+  'scripts/run-gates.sh',
+  '[ "$failed" -eq 0 ] && [ "$known" -eq 0 ] &&',
+  '[ "$failed" -eq 0 ] &&',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that keeps the mainline record after the gate passes there',
+  'scripts/run-gates.sh',
+  '    rm -f "$base"\n',
+  '    :\n',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that reads a FAILED block with other output after it',
+  'scripts/run-gates.sh',
+  'next} {b = ""} END',
+  'next} {} END',
+  KNOWN_REDS,
+);
+mutantFails(
+  'a runner that prints KNOWN for a test file not in the tree',
+  'scripts/run-gates.sh',
+  '[ -f "$GATE_DIR/$f" ] || return 1',
+  ':',
+  KNOWN_REDS,
 );
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });

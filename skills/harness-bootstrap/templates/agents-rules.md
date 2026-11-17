@@ -48,7 +48,7 @@ Each rule was produced by a failure in another project; the incident behind each
 - **A conformance verdict is not evidence of correctness.** Conformance returned CLEAN on code with a CRITICAL nine tasks running.
 - **An implementer may always raise a gate, never lower one.**
 - **Ask the owner only what only the owner can decide.** 81% of 373 owner questions were process or technical; 89% took the recommendation.
-- **Taste is not a risk tier.** Copy, naming and visual identity are the owner's call however clean every check is.
+- **Taste is not a risk tier.** Copy, naming and visual identity are a `taste` card, decided by the grant unless `ASK` lists `taste`; never a reason for Full.
 - **Never-auto product code merges when green; the owner reads it at deploy, and the owner key is for `GUARDS` only.** About 60 owner-key dialogs froze controllers for about 1,800 minutes; about 1 in 6 protected a harness file.
 - **Decide the reversible; ask a card at most twice.** About 90 of 169 controller stops needed no owner; one unanswered card was listed 11 times.
 

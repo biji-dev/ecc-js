@@ -183,7 +183,8 @@ process question a rule answers is never asked (`gate-design.md` › Who decides
 
 **Taste is not a risk tier.** A table keyed on size, blast radius and
 dependencies cannot catch a deliverable that is correct by every check and still
-the owner's call — visual identity, product copy, naming.
+a matter of taste — visual identity, product copy, naming. It is a `taste` card,
+decided by the grant unless `ASK` lists `taste`, and never a reason for Full.
 > Origin: a task raised its own gate for exactly this reason, by judgment. The
 > rule exists so it is not judgment next time.
 

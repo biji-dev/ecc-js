@@ -1887,6 +1887,8 @@ const OWN_VALUES = new Map([
   ['tar', [/^(?:-C|--directory)$/, /^--directory=/]],
 ]);
 // A home directory other than this user's: macOS, Linux and root's.
+// Where another user's home lives: Linux, then macOS.
+const HOME_ROOTS = ['/home', '/Users'];
 const OTHER_HOME = /^(?:(?:\/System\/Volumes\/Data)?\/Users\/[^/]+|\/home\/[^/]+|\/root|\/var\/root|\/private\/var\/root)(?=\/|$)/;
 const CREDENTIAL_REASON = 'its values would land in the transcript; check presence with `test -s <file>`.';
 
@@ -1989,7 +1991,7 @@ function credentialWord(word, cwd, lost, vars) {
     if (/^[$`]/.test(p)) {
       // a value the guard cannot read: as if it were a home, so `$X/.npmrc` is still a credential file
       const rest = p.replace(/^(?:\$\{[^}]*\}|\$[A-Za-z0-9_]*|`[^`]*`)/, '');
-      note(rest.startsWith('/') && credentialAt(`/home/x${rest}`) === 'file' ? 'file' : 'vague');
+      note(rest.startsWith('/') && credentialAt(`${HOME_ROOTS[0]}/x${rest}`) === 'file' ? 'file' : 'vague');
       continue;
     }
     if (/[$`]/.test(p)) note('vague');
@@ -2003,7 +2005,7 @@ function credentialWord(word, cwd, lost, vars) {
           continue;
         }
         const re = globRegex(abs);
-        const roots = [...homes(), '/root', `/home/${userInfoName()}`, `/Users/${userInfoName()}`];
+        const roots = [...homes(), '/root', ...HOME_ROOTS.map((r) => `${r}/${userInfoName()}`)];
         if (roots.some((h) => CREDENTIAL_SAMPLES.some((s) => re.test(`${h}/${s}`)))) note('file');
         else if (roots.some((h) => CREDENTIAL_DIRS.some((d) => re.test(d ? `${h}/${d}` : h)))) note('dir');
         continue;

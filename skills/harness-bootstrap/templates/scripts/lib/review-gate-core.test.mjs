@@ -1364,12 +1364,16 @@ test('ledgerFixRound: the highest `8 fix r<N>` Step cell in ## Ledger; 0 with no
   assert.equal(ledgerFixRound(['## Notes', '| 8 fix r9 | x |', '## Ledger', '| Step | Status |', '|---|---|', '```', '| 8 fix r7 | ran |', '```', '| 18 fix r6 | ran |', '| 8 fixed r8 | ran |', '| 8 review r1 | 8 fix r9 |'].join('\n')), 0);
   // a `###` heading inside the ledger is not a new section
   assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '### round two', '| 8 fix r2 | ran |'].join('\n')), 2);
+  // a heading with a suffix, and a second table with its own header and column
+  assert.equal(ledgerFixRound(['## Ledger (unit u1)', '| Step | Status |', '|---|---|', '| 8 fix r3 | ran |'].join('\n')), 3);
+  assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '| 8 fix r1 | ran |', '', '| Status | Step |', '|---|---|', '| ran | 8 fix r3 |'].join('\n')), 3);
 });
 
 test('roundBelowLedger: a round below the recorded one is refused, the same or a later one runs', () => {
   assert.equal(roundBelowLedger(3, 3, 'docs/plans/u1.state.md'), null);
   assert.equal(roundBelowLedger(4, 3, 'docs/plans/u1.state.md'), null);
   assert.equal(roundBelowLedger(1, 0), null);
+  assert.equal(roundBelowLedger(Number('x'), 3), null, "a --round that is no integer is decide()'s to refuse");
   assert.equal(
     roundBelowLedger(1, 3, 'docs/plans/u1.state.md'),
     '--round 1 is below r3, the highest fix round the ledger in docs/plans/u1.state.md records: fix rounds count on and never restart; pass --round 3 or higher',

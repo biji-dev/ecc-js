@@ -319,25 +319,28 @@ function checkLanding(a, given) {
 }
 
 /**
- * A unit's state file → the highest fix round its `## Ledger` table records: a Step cell (the
- * column named Step, else the first) that starts `8 fix r<N>`. 0 when it records none. Fenced
- * examples are dropped first, so a sample row never counts.
+ * A unit's state file → the highest fix round its `## Ledger` section records: a Step cell (the
+ * column its table's header names Step, else the first) that starts `8 fix r<N>`. 0 when it records
+ * none. Fenced examples are dropped first, so a sample row never counts. A header is the row above a
+ * `|---|` separator (else the section's first row), so a second table reads its own Step column.
  */
 export function ledgerFixRound(text) {
   let section = null;
   let stepCol = null;
   let highest = 0;
-  for (const line of dropFences(text).split('\n')) {
+  const lines = dropFences(text).split('\n');
+  const cellsOf = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const isSep = (line) => line.trim().startsWith('|') && cellsOf(line).every((c) => /^:?-+:?$/.test(c));
+  for (const [i, line] of lines.entries()) {
     const heading = /^##(?!#)\s*(.*?)\s*$/.exec(line);
     if (heading) {
       section = heading[1].toLowerCase();
       stepCol = null;
       continue;
     }
-    if (section !== 'ledger' || !line.trim().startsWith('|')) continue;
-    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
-    if (cells.every((c) => /^:?-+:?$/.test(c))) continue;
-    if (stepCol === null) {
+    if (!/^ledger\b/.test(section ?? '') || !line.trim().startsWith('|') || isSep(line)) continue;
+    const cells = cellsOf(line);
+    if (stepCol === null || isSep(lines[i + 1] ?? '')) {
       stepCol = Math.max(0, cells.findIndex((c) => c.toLowerCase() === 'step'));
       continue;
     }
@@ -352,7 +355,7 @@ export function ledgerFixRound(text) {
  * re-numbered below what the unit already ran, so the ladder (redesign, then cut) cannot restart.
  */
 export function roundBelowLedger(round, recorded, file = "the unit's state file") {
-  if (!Number.isInteger(recorded) || round >= recorded) return null;
+  if (!Number.isInteger(recorded) || !Number.isInteger(round) || round >= recorded) return null;
   return `--round ${round} is below r${recorded}, the highest fix round the ledger in ${file} records: fix rounds count on and never restart; pass --round ${recorded} or higher`;
 }
 

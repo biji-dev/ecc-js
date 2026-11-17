@@ -910,6 +910,7 @@ async function main() {
     'cat ~/.np*', 'cat ~/.ssh/*', 'cat ~/.{npmrc,bashrc}', 'echo ~/.npmrc | xargs cat', 'find ~/.ssh -type f -exec cat {} +', 'grep -r token ~',
     'cp -r ~/.ssh /tmp/keys', 'bash -c "cat ~/.npmrc"', 'sudo cat ~/.npmrc', '/bin/cat ~/.npmrc', 'grep -f$HOME/.npmrc x',
     "python3 -c \"print(open('/root/.aws/credentials').read())\"", "node -e \"require('fs').readFileSync(process.env.HOME + '/.npmrc')\"",
+    'cat ~/.NPMRC', 'sort ~/.npmrc', 'tar -cf - ~/.ssh', 'xargs -a ~/.npmrc echo', "python3 <<'E'\nprint(open('/root/.npmrc').read())\nE",
   ];
   for (const command of credentialBlocked) {
     test(`blocks (credential-read): ${command}`, () => {
@@ -922,6 +923,7 @@ async function main() {
     'test -s ~/.npmrc', '[ -s ~/.npmrc ] && echo set', 'ls -la ~/.ssh', 'stat ~/.aws/credentials', 'ssh-add ~/.ssh/id_ed25519', 'echo ~/.npmrc',
     'cat .env', 'cat .npmrc', 'cat ~/.bashrc', 'cat ~/.aws/config', 'cat ~/.claude/settings.json', 'grep -r todo ~/.claude/skills', 'cat ~/*rc',
     'cat ~/.npmrc.example', 'git ls-files | xargs grep foo', 'find . -name "*.md" -exec cat {} \\;', 'cat "$f"', "node -e \"console.log(1)\"",
+    'test -s ~/.npmrc && python3 --version', 'echo x | tee ~/notes.txt', "python3 <<'E'\nprint(1)\nE",
   ];
   for (const command of credentialAllowed) {
     test(`allows (credential-read): ${command}`, () => {
@@ -1136,6 +1138,9 @@ async function main() {
     ["cred-inline", "if (CREDENTIAL_NAMES.some((parts) => parts.every((re) => re.test(script)))) return refuse(", "if (false) return refuse("],
     ["cred-recursive", "const cluster = name === 'cp' || name === 'scp' ? /^-[A-Za-z]*[rRa]/ : /grep$/.test(name) ? /^-[A-Za-z]*[rR]/ : null;", "const cluster = null;"],
     ["cred-tilde", "const tilde = /^~([A-Za-z0-9._-]*)(?=\\/|$)/.exec(p);", "const tilde = null;"],
+    ['cred-case', '  rel = rel.toLowerCase();\n', ''],
+    ['cred-stdin', "const fed = /<<|\\|/.test(String(commands.line?.raw ?? ''));", 'const fed = false;'],
+    ['cred-fed', "const fed = /<<|\\|/.test(String(commands.line?.raw ?? ''));", 'const fed = true;'],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
@@ -1255,6 +1260,7 @@ async function main() {
     ['install-absolute', 'the install command with the repository\'s real path is allowed', `git config core.hooksPath ${installRepo}/.githooks`, { cwd: installRepo, currentBranch: 'feature/x' }],
     ['unset-git', 'an unset of a host variable on a line with no git is allowed', 'unset CLAUDECODE; claude -p "summarise"'],
     ['cred-dot-glob', 'a leading * skips dot files, as the shell does', 'cat ~/*rc'],
+    ['cred-fed', 'an interpreter with no script fed on a line that only tests a credential runs nothing from it', 'test -s ~/.npmrc && python3 --version'],
     ['path-compose', 'a PATH superseded on the line is not the PATH git runs with', 'export PATH=./node_modules/.bin:$PATH; export PATH=/usr/bin:/bin; git status --short'],
   ];
   for (const [label, title, command, o = opts] of allowedOnlyByShipped) {
@@ -1282,6 +1288,8 @@ async function main() {
     ['cred-inline', 'not reading inline scripts lets python -c open(...credentials) through', "python3 -c \"print(open('/root/.aws/credentials').read())\""],
     ['cred-recursive', 'no recursive readers lets cp -r ~/.ssh through', 'cp -r ~/.ssh /tmp/keys'],
     ['cred-tilde', 'not expanding ~ lets cat ~/.npmrc through', 'cat ~/.npmrc'],
+    ['cred-case', 'matching names in one letter case lets cat ~/.NPMRC through', 'cat ~/.NPMRC'],
+    ['cred-stdin', 'not reading a heredoc-fed interpreter lets python3 <<E open(...) through', "python3 <<'E'\nprint(open('/root/.npmrc').read())\nE"],
   ];
   for (const [label, title, command, o = opts] of blockedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => surviving(label, command, o));

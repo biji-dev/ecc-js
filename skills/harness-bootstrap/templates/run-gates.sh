@@ -35,6 +35,8 @@
 #   the lock or a gate (and so does one promoted after a lock or machine wait), saying on stderr:
 #   "run-gates: PROMOTED to FULL by <path>, outside SCOPED_PATHS: FULL is the session's, once at
 #   landing; an executor stops and reports the path".
+#   A gate name registered twice, a PRODUCT_PATHS or RECORDS grep -E cannot read or that matches an
+#   empty path (so every path: '.*'), and a SERIAL name that is no gate exit 99 before anything runs.
 # Gates: `gate <name> <always|full|paths> '<command>'` passes when the command exits 0.
 #   `gate_counted <name> <always|full|paths> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
@@ -89,8 +91,10 @@
 #   FAILs, and is not KNOWN, runs once more when its command is one run-counted call, it exited
 #   non-zero (not a timeout, not a missed count line) after RUN_GATES_INSTANT_SECS or more, its log
 #   ends with a FAILED block naming every failure (no `FAILED ?`, one ` :: ` per id), and each failing
-#   test's file is a file of the tree (relative to the top) that did not change since the merge base
-#   with the mainline (committed, uncommitted or untracked; no mainline or no merge base: no retry).
+#   test's file is a file of the tree (relative to the top) that the merge base with the mainline has,
+#   that did not change since it (committed, uncommitted or untracked; no mainline or no merge base:
+#   no retry) and that holds the test's title, as for a known red. A red the branch causes in a test
+#   file it did not touch is retried too: a second fail prints FAIL; a pass is a flake in the register.
 #   A pass on the retry prints the flaky PASS line above, with the retry's log and both runs' time,
 #   appends {"at","gate","ids","tree","top"} as one JSON line to <cache dir>/flakes.jsonl (shared by
 #   every worktree) and counts as a PASS, so the run can be cached. A second fail prints FAIL, as the
@@ -119,7 +123,10 @@
 #   LEASE_SLOTS slot files in ~/.harness/leases, HARNESS_LEASE_DIR overrides, printed `LEASE <path>`;
 #   with every slot held by a live run it waits as for memory). The EXIT trap removes the slot (the one
 #   printed and any naming this pid), and a run a wait turns scoped removes it then: a scoped run never
-#   holds one; a slot whose run died is taken over by the next. Its stdout is passed through once it
+#   holds one; a slot whose run died is taken over by the next. A run that then waits for this
+#   worktree's lock keeps its slot through the wait, so a FULL run in another worktree may wait on
+#   "lease held" meanwhile: the slots bound FULL runs admitted, not only those running gates. Its
+#   stdout is passed through once it
 #   ends (`ADMISSION ...`, after a wait `MACHINE WAIT <ISO> → <ISO> <reason>`; never part of a cache
 #   record); its stderr goes straight through. It runs in the background under `wait`, in a process
 #   group of its own (`set -m`), so INT or TERM ends the run at once: the group gets TERM (a compound
@@ -138,7 +145,10 @@
 #   temporary index; the real index is never touched. [B] RECORDS (an extended regex, env
 #   RUN_GATES_RECORDS overrides, empty = off) names the run's own records, the state files and step
 #   ledgers a land commit adds: they leave the key, the scoped changed list and the paths diff, so the
-#   land commit and the merge after a FULL run print REUSED. Bind it only to files no gate reads. A run with every gate PASS is recorded under that tree,
+#   land commit and the merge after a FULL run print REUSED (not the run on the mainline after the
+#   merge when a `paths` gate skipped on the branch: the mainline's tip runs it, another variant, and
+#   every gate runs). Bind it only to files no gate's result depends on (the agent-docs gate's
+#   state-file budget only warns). A run with every gate PASS is recorded under that tree,
 #   the mode (full or scoped:<since-sha>), the bound gate list, the KEY_EXTRA output and
 #   NODE_OPTIONS (hashed, never stored; unset = empty: it changes what every node child runs).
 #   The next run for the same tree, mode, gates, extra and NODE_OPTIONS prints, instead of
@@ -217,6 +227,12 @@ GATE_NAMES=()
 GATE_MODES=()
 GATE_CMDS=()
 GATE_RXS=()
+# A gate's log, timeout mark and retry log are named after it, so a name is registered once.
+new_gate_name() {
+  local gn
+  [ "${#GATE_NAMES[@]}" -gt 0 ] || return 0
+  for gn in "${GATE_NAMES[@]}"; do [ "$gn" != "$1" ] || usage "gate '$1' is registered twice"; done
+}
 # gate <name> <always|full|paths> '<command>' only registers; the runner executes after the block.
 gate() {
   [ "$#" -eq 3 ] && [ -n "$3" ] || usage "gate '${1:-}': expected exactly: gate <name> <always|full|paths> '<command>' (quote the command, and do not leave it empty)"
@@ -224,6 +240,7 @@ gate() {
     always | full | paths) ;;
     *) usage "gate '${1:-}': mode must be always, full or paths" ;;
   esac
+  new_gate_name "$1"
   GATE_NAMES+=("$1")
   GATE_MODES+=("$2")
   GATE_CMDS+=("$3")
@@ -241,6 +258,7 @@ gate_counted() {
   local rc=0
   printf '' | grep -Eq -- "$3" 2>/dev/null || rc=$?
   [ "$rc" -le 1 ] || usage "gate '$1': the count regex is not a valid extended regex: $3"
+  new_gate_name "$1"
   GATE_NAMES+=("$1")
   GATE_MODES+=("$2")
   GATE_CMDS+=("$4")
@@ -375,25 +393,31 @@ RECORDS_RX="${RUN_GATES_RECORDS-$RECORDS}"
 RETRY_ON=0
 [ "${RUN_GATES_RETRY_FLAKY-$RETRY_FLAKY}" = 1 ] && RETRY_ON=1
 # A pattern grep -E cannot read would match nothing: a paths gate would always run (safe), but the
-# records would silently stay in the key. Both are usage errors instead.
+# records would silently stay in the key. One that matches an empty line ('.*', 'x?$') matches every
+# path: every tree would hash alike, every paths gate would skip. Both are usage errors instead.
 for rx_pair in "PRODUCT_PATHS:$PRODUCT_RX" "RECORDS:$RECORDS_RX"; do
   rx_val=${rx_pair#*:}
   [ -n "$rx_val" ] || continue
   rx_rc=0
   printf '' | grep -Eq -- "$rx_val" 2>/dev/null || rx_rc=$?
   [ "$rx_rc" -le 1 ] || usage "${rx_pair%%:*} is not a valid extended regex: $rx_val"
+  if printf '\n' | grep -Eq -- "$rx_val" 2>/dev/null; then usage "${rx_pair%%:*} matches an empty path, so every path: $rx_val"; fi
 done
 HAS_PATHS=0
 for gm in "${GATE_MODES[@]}"; do [ "$gm" != paths ] || HAS_PATHS=1; done
 JOBS=$(num_or "${RUN_GATES_GATE_JOBS:-}" "$(num_or "$GATE_JOBS" 1)")
 [ "$JOBS" -ge 1 ] || JOBS=1
-SERIAL_NAMES=" ${RUN_GATES_SERIAL-$SERIAL} "
-# shellcheck disable=SC2086 # the list is split on spaces on purpose
+# The SERIAL names, split on blanks and newlines (no globbing), each checked, kept as " a b " for is_serial.
+SERIAL_NAMES=" "
+set -f
+# shellcheck disable=SC2086 # the list is split on purpose
 for sn in ${RUN_GATES_SERIAL-$SERIAL}; do
   sn_ok=0
   for gn in "${GATE_NAMES[@]}"; do [ "$gn" != "$sn" ] || sn_ok=1; done
   [ "$sn_ok" -eq 1 ] || usage "SERIAL names $sn, which is no gate"
+  SERIAL_NAMES="$SERIAL_NAMES$sn "
 done
+set +f
 RUN_PID=$$
 
 # Reads paths on stdin; drops the ones RECORDS matches (none when it is empty).
@@ -749,7 +773,8 @@ release_lease() {
   LEASE_PATH=""
   return 0
 }
-trap 'remove_snapshot; release_lock; release_lease' EXIT
+# INT or TERM during the cleanup is ignored: on_signal's exit would end the trap before the lock and lease go.
+trap 'trap "" INT TERM; remove_snapshot; release_lock; release_lease' EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
@@ -1180,6 +1205,7 @@ EOF
 # mainline, no merge base or a failing git: 0, and no gate is retried.
 TOUCHED=""
 TOUCHED_OK=0
+TOUCHED_MB=""
 if [ "$RETRY_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && r_tip=$(git rev-parse -q --verify "refs/heads/$MAINLINE_B^{commit}" 2>/dev/null) &&
   r_head=$(if [ "$SNAPSHOT" -eq 1 ]; then echo "$SNAP_COMMIT"; else git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null; fi) &&
   r_mb=$(git merge-base "$r_tip" "$r_head" 2>/dev/null) && [ -n "$r_mb" ]; then
@@ -1190,18 +1216,24 @@ if [ "$RETRY_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && r_tip=$(git rev-parse -q --v
       t2=$(git ls-files -z --others --exclude-standard 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") && TOUCHED_OK=1
   fi
   [ "$TOUCHED_OK" -eq 0 ] || TOUCHED=$(printf '%s\n%s\n' "$t1" "$t2" | LC_ALL=C sort -u)
+  TOUCHED_MB=$r_mb
 fi
 # $1 = why the gate failed, $2 = its log, $3 = its command, $4 = its seconds: prints the failing ids
 # and returns 0 when the gate may run once more (see Flaky retry above).
 flaky_ids() {
-  local ids id f
+  local ids id f needle
   [ "$RETRY_ON" -eq 1 ] && [ "$TOUCHED_OK" -eq 1 ] && [ "${1#exit }" != "$1" ] && [ "$4" -ge "$INSTANT_SECS" ] && single_counted "$3" || return 1
   ids=$(failed_ids "$2") || return 1
   while IFS= read -r id; do
     f=${id%% :: *}
     case "$f" in '' | /* | ../* | */../*) return 1 ;; esac
     [ "$f" != "$id" ] && [ -f "$GATE_DIR/$f" ] || return 1
+    # as for a known red: a file the merge base has (an ignored or generated file is in no diff) and
+    # that spells the test's title (a path printed against another root is no proof)
+    git cat-file -e "$TOUCHED_MB:$f" 2>/dev/null || return 1
     if printf '%s\n' "$TOUCHED" | grep -Fxq -- "$f"; then return 1; fi
+    needle=$(title_needle "${id#* :: }")
+    [ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1
   done <<EOF
 $ids
 EOF

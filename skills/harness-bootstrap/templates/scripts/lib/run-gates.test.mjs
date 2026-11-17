@@ -909,6 +909,14 @@ test('flaky retry: a failure in untouched test files runs once more; a pass prin
   const again = runCopy([f.line()], [], { repo, cache, env: FLAKY_ENV });
   assert.match(again.lines[0], REUSED_RX, `a run healed by its retry was not cached: ${again.stdout}`);
   assert.equal(f.n(), 2);
+  // the same through a parallel worker's result file
+  f.setFails(3);
+  const par = runCopy([f.line(), "gate ok always 'true'"], ['--no-cache'], { repo, cache, env: { ...FLAKY_ENV, RUN_GATES_GATE_JOBS: '2' } });
+  assert.equal(par.status, 0, par.stdout + par.stderr);
+  assert.match(par.stdout, /^PASS t \d+s \S+\/t\.retry\.log \(flaky: tests\/a\.test\.mjs :: one; tests\/a\.test\.mjs :: two, retried\)$/m);
+  assert.equal(par.lines.at(-1), 'SUMMARY 2 passed, 0 failed, 0 skipped (full)');
+  assert.equal(f.n(), 4);
+  assert.equal(fs.readFileSync(path.join(cache, 'flakes.jsonl'), 'utf8').trim().split('\n').length, 2);
 });
 
 test('flaky retry: a second fail is a FAIL and registers nothing; RUN_GATES_RETRY_FLAKY=0 never retries', () => {
@@ -951,6 +959,14 @@ test('flaky retry: never on a timeout, an instant exit, a missing count line, a 
     },
   });
   once('a file not in the tree', ['tests/gone.test.mjs :: gone'], {});
+  once('an ignored file the merge base lacks', ['gen/b.test.mjs :: b'], {
+    prepare: (repo) => {
+      commitFile(repo, '.gitignore', 'gen/\n');
+      fs.mkdirSync(path.join(repo, 'gen'));
+      fs.writeFileSync(path.join(repo, 'gen', 'b.test.mjs'), "test('b')\n");
+    },
+  });
+  once('a title the file does not spell', ['tests/a.test.mjs :: three'], {});
   once('a failure run-counted could not name', ['?'], {});
   once('two commands in the gate', ONE, { line: (f) => `gate_counted t always '^COUNTED node [1-9][0-9]* passed' 'true && bash ${f.fake}'` });
   once('no mainline', ONE, { env: { RUN_GATES_MAINLINE: '' } });
@@ -1014,7 +1030,7 @@ test('parallel: a timeout in one gate is its FAIL alone; its group is gone; the 
 test('parallel: a SERIAL gate starts once the running gates end, and none starts while it runs; a SERIAL name that is no gate exits 99', () => {
   const ev = path.join(tmp('run-gates-serial-'), 'events');
   const g = (name) => `gate ${name} always 'echo start ${name} >> ${ev}; sleep 0.5; echo end ${name} >> ${ev}'`;
-  const r = runCopy([g('a'), g('s'), g('b'), g('c')], ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '4', RUN_GATES_SERIAL: 's' } });
+  const r = runCopy([g('a'), g('s'), g('b'), g('c')], ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '4', RUN_GATES_SERIAL: '\ts\n' } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const e = fs.readFileSync(ev, 'utf8').trim().split('\n');
   const at = (x) => e.indexOf(x);
@@ -1057,4 +1073,40 @@ test('watchdog: a run-gates killed with KILL (no trap runs) still has its gate s
     await exited;
     noSleepers(68, `GATE_JOBS=${jobs}: the gate outlived a KILLed run-gates`);
   }
+});
+
+test('usage: a gate name registered twice, and a PRODUCT_PATHS or RECORDS that matches an empty path, exit 99 before anything runs', () => {
+  const h = counter();
+  const twice = runCopy([h.gate('t'), h.gate('t')], ['--no-cache']);
+  assert.equal(twice.status, 99, twice.stdout + twice.stderr);
+  assert.match(twice.stderr, /gate 't' is registered twice/);
+  for (const [name, env] of [
+    ['RECORDS', { RUN_GATES_RECORDS: '.*' }],
+    ['RECORDS', { RUN_GATES_RECORDS: '(\\.state\\.md)?$' }],
+    ['PRODUCT_PATHS', { RUN_GATES_PRODUCT_PATHS: 'x*' }],
+  ]) {
+    const r = runCopy([h.gate('t')], ['--no-cache'], { env });
+    assert.equal(r.status, 99, `${JSON.stringify(env)}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`${name} matches an empty path, so every path`));
+  }
+  assert.equal(h.n(), 0, 'a gate ran');
+});
+
+test('paths: --snapshot decides on the commit: a product-only commit skips the paths gate, a committed path outside runs it', () => {
+  const h = counter();
+  const lines = [h.gate('h', 'paths')];
+  const env = { RUN_GATES_PRODUCT_PATHS: '^src/' };
+  const repo = newRepo();
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/a.js', 'a\n');
+  fs.writeFileSync(path.join(repo, 'tool.sh'), 'untracked: not in the snapshot\n');
+  const skip = runCopy(lines, ['--snapshot', '--no-cache'], { repo, env });
+  assert.equal(skip.status, 0, skip.stdout + skip.stderr);
+  assert.ok(skip.lines.some((l) => SKIP_PATHS_RX.test(l)), skip.stdout);
+  assert.equal(h.n(), 0);
+  commitFile(repo, 'tool.sh', 'outside\n');
+  const run = runCopy(lines, ['--snapshot', '--no-cache'], { repo, env });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.doesNotMatch(run.stdout, /^SKIP /m);
+  assert.equal(h.n(), 1);
 });

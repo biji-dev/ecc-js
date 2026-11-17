@@ -1349,9 +1349,9 @@ test('--snapshot: the worktree and its temp dir are gone after a FAIL and after 
       // already gone
     }
   }
-  const from = "trap 'remove_snapshot; release_lock; release_lease' EXIT";
+  const from = `trap 'trap "" INT TERM; remove_snapshot; release_lock; release_lease' EXIT`;
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
-  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, "trap 'release_lock; release_lease' EXIT"));
+  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, `trap 'trap "" INT TERM; release_lock; release_lease' EXIT`));
   run(kept, ['--snapshot']);
   const left = path.dirname(fs.readFileSync(where, 'utf8').trim());
   assert.ok(fs.existsSync(left), 'the mutant leaves the snapshot behind');

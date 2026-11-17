@@ -1,7 +1,8 @@
 // harness-bootstrap codex-run core (generated YYYY-MM-DD). Pure core of scripts/codex-run.mjs.
-// [M] mechanism (ships as-is): everything below except the model catalog. [B] binding: the
-// CATALOG block, re-derived from the models this machine's codex CLI offers; the route table
-// rows (ROUTES) are a starting point to tune per project, the clamp and exit codes are not.
+// [M] mechanism (ships as-is): everything below except the model catalog and RECORDS. [B] binding:
+// the CATALOG block, re-derived from the models this machine's codex CLI offers, and RECORDS, the
+// harness's own record files; the route table rows (ROUTES) are a starting point to tune per
+// project, the clamp and exit codes are not.
 /**
  * The per-task route table, the clamp a router's answer passes through, the `--json` event
  * parser, the run verdict and the budget guard. No I/O here, so `codex-run-core.test.mjs`
@@ -25,6 +26,21 @@ export const MODELS = Object.values(CATALOG);
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 const DEFAULT_MODEL = CATALOG.default;
+
+// [B] The records the harness writes while a unit runs (its state file and its step ledger), as
+// run-gates.sh's RECORDS names them: keep the two equal. A tree that moved only in these paths
+// during a review did not move under the reviewer, so the row still counts at landing.
+export const RECORDS = /(^|\/)[^/]+\.(state\.md|steps\.jsonl)$/;
+
+/**
+ * Whether a landing row's tree moved under the reviewer: `changed` lists the paths that differ
+ * between the tree before the run and the tree after it, or is null when git could not list them.
+ * A path outside RECORDS moves it, and so does a list git could not give.
+ */
+export function movedBeyondRecords(changed, records = RECORDS) {
+  if (!Array.isArray(changed)) return true;
+  return changed.some((p) => !records.test(p));
+}
 
 // [B] Where the codex CLI's installer puts it, relative to the home directory, tried in order
 // before `codex` on PATH: a terminal can put its own `codex` shim first on PATH, and the shim

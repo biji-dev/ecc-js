@@ -7,9 +7,11 @@
 // CRITICAL set per call, so a project's bindings never change what they assert. FIX_LINES is read
 // relatively (FIX_LINES, FIX_LINES + 1), which holds for any value.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
-// global git config; no network, no real repository.
+// global git config; no network, no real repository. The golden matrix reads review-gate.golden.json
+// beside this file, and REVIEW_GATE_GOLDEN=write rewrites it from the core.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +28,7 @@ import {
   ROLES,
   STAKES,
   TESTS,
+  TIERS,
   TRIGGERS,
   WRITERS,
   decide as decideCore,
@@ -36,6 +39,7 @@ import {
   isGuard,
   isHarness,
   isInstruction,
+  isLandingCritical,
   isProduction,
   isTest,
   landing as landingCore,
@@ -1317,6 +1321,171 @@ test('formatLine prints one line: decision, reason, reviewers, facts, what was n
   );
   assert.match(formatLine(decide({ files: [], kind: 'slice' })), /→ none \[0 production files, 0 lines;/);
   assert.match(formatLine(decide({ files: [f(COLD, 1)], kind: 'unit', stakes: 'none' })), /\[1 production files, 1 lines; stakes none; not checked: /);
+});
+
+// ---- the golden matrix: decide() and landing() over every input class, pinned in a file
+//
+// Every cell is one input combination; its value names an outcome (decision, reviewers, reason) in
+// the file's `outcomes` table. A routing change shows as changed cells: the test lists them in words.
+// After a deliberate change, regenerate with REVIEW_GATE_GOLDEN=write and read the file's diff: a
+// cell that changed beyond the change's intent is a finding. Runs under INJECTED with CRITICAL bound
+// to src/core/, and the line counts are FIX_LINES-relative, so a project's bindings never change it.
+
+const GOLDEN = fileURLToPath(new URL('./review-gate.golden.json', import.meta.url));
+const GOLDEN_ROUNDS = [1, 2, 3, 4, 5];
+const GOLDEN_FIXED = ['P1', 'P2', 'P3']; // P0 counts as P1: the test checks that apart
+// the file archetypes: cold and critical production, tests under a critical path, docs, an
+// instruction file, a guard and a harness script; FIX_LINES lines unless named large
+const GOLDEN_FILES = {
+  cold: () => [ns(COLD, FIX_LINES, 0)],
+  critical: () => [ns(HOT, FIX_LINES, 0)],
+  'critical-large': () => [ns(HOT, FIX_LINES + 1, 0)],
+  'critical-money': () => [ns('src/core/payment.ts', FIX_LINES, 0)],
+  'tests-added-critical': () => [ns(TEST_FILE, 30, 0)],
+  'tests-edited-critical': () => [ns(TEST_FILE, 20, 4)],
+  docs: () => [ns('docs/a.md', 5, 1)],
+  instruction: () => [ns('.claude/rules/x.md', 6, 2)],
+  guard: () => [ns('.githooks/pre-commit', 4, 1)],
+  harness: () => [ns('scripts/retro.mjs', 9, 3)],
+  'cold-and-critical': () => [ns(COLD, 3, 0), ns(HOT, 3, 0)],
+};
+const G_BASE = 'b'.repeat(40);
+const G_RESULT = 'c'.repeat(40);
+const G_TREES = ['0', '1', '2', '3'].map((c) => c.repeat(40));
+// the landing archetypes: what the merge changed, the guard and block facts beside it
+const GOLDEN_LANDS = {
+  cold: { changed: [COLD] },
+  critical: { changed: [HOT] },
+  'tests-critical': { changed: [TEST_FILE] },
+  docs: { changed: ['docs/a.md'] },
+  instruction: { changed: ['.claude/rules/x.md'] },
+  guard: { changed: ['.githooks/pre-commit'] },
+  'guard-and-critical': { changed: [HOT, 'scripts/review-gate.mjs'] },
+  harness: { changed: ['scripts/retro.mjs'] },
+  'agents-prose': { changed: ['AGENTS.md', HOT], blockChanged: { 'AGENTS.md': false } },
+};
+// what the ledgers hold for each critical path: the base blob is A, the result blob B
+const goldenRow = (k, from, to, at) => ({ kind: k, outcome: 'ok', at, ledger: '/r/.codex-runs/ledger.jsonl', family: 'codex', baseTree: G_TREES[from], tree: G_TREES[to] });
+const GOLDEN_STATES = {
+  unreviewed: () => ({ rows: [], facts: () => ({ starts: ['A'], result: 'B', edges: [] }) }),
+  'empty-review': () => {
+    const row = goldenRow('review', 1, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('B', 'B', row)] }) };
+  },
+  reviewed: () => {
+    const row = goldenRow('review', 0, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'B', row)] }) };
+  },
+  partial: () => {
+    const row = goldenRow('review', 0, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'X', row)] }) };
+  },
+  'chain-gap': () => {
+    const unit = goldenRow('review', 0, 1, '2026-11-09T09:00:00.000Z');
+    const fix = goldenRow('adversarial', 2, 3, '2026-11-09T10:00:00.000Z');
+    return { rows: [unit, fix], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'X', unit), edge('Y', 'B', fix)] }) };
+  },
+  trusted: () => ({ rows: [], trust: [G_TREES[2]], facts: () => ({ starts: ['A', 'B'], result: 'B', edges: [] }) }),
+  'no-facts': () => ({ rows: [], facts: () => undefined }),
+};
+const GOLDEN_HOSTS = ['claude', 'codex', 'unknown'];
+
+/** A reason with its line counts named, so FIX_LINES's bound value never shows in the file. */
+const goldenReason = (r) =>
+  r.reason.replaceAll(`in ${r.prodLines} `, 'in <lines> ').replaceAll(`${FIX_LINES} production lines`, 'FIX_LINES production lines');
+const goldenLandingReason = (reason) => {
+  let s = reason.replaceAll(G_BASE, '<base>').replaceAll(G_RESULT, '<result>');
+  G_TREES.forEach((t, i) => {
+    s = s.replaceAll(t, `<T${i}>`);
+  });
+  return s;
+};
+
+/** The matrix the core computes now: { outcomes, decide, landing }, cells naming outcome ids. */
+function goldenMatrix() {
+  const outcomes = {};
+  const id = (text) => {
+    const key = createHash('sha256').update(text).digest('hex').slice(0, 8);
+    assert.ok(outcomes[key] === undefined || outcomes[key] === text, `outcome id ${key} collides`);
+    outcomes[key] = text;
+    return key;
+  };
+  const decideCell = (o) => {
+    try {
+      const r = decideCore(o);
+      return id(`${r.decision} | ${r.reviewers.join(' + ') || 'none'} | ${goldenReason(r)}`);
+    } catch (e) {
+      return id(`throws | ${e.message}`);
+    }
+  };
+  const cells = {};
+  const lands = {};
+  bound(() => {
+    for (const tier of TIERS)
+      for (const kind of ['slice', 'unit', 'fix'])
+        for (const writer of WRITERS)
+          for (const stakes of STAKES)
+            for (const [arch, files] of Object.entries(GOLDEN_FILES)) {
+              const at = `${tier} ${kind} ${writer} ${stakes} ${arch}`;
+              if (kind !== 'fix') {
+                cells[at] = decideCell({ files: files(), kind, tier, writer, stakes });
+                continue;
+              }
+              for (const maxFixed of GOLDEN_FIXED) {
+                const ids = GOLDEN_ROUNDS.map((round) => decideCell({ files: files(), kind, tier, writer, stakes, maxFixed, round }));
+                cells[`${at} ${maxFixed}`] = new Set(ids).size === 1 ? ids[0] : ids.join(' ');
+              }
+            }
+    for (const [arch, land] of Object.entries(GOLDEN_LANDS))
+      for (const [state, make] of Object.entries(GOLDEN_STATES))
+        for (const host of GOLDEN_HOSTS) {
+          const s = make();
+          const paths = {};
+          for (const p of land.changed.filter(isLandingCritical)) {
+            const facts = s.facts();
+            if (facts) paths[p] = facts;
+          }
+          const r = landingCore({ result: G_RESULT, base: G_BASE, trust: s.trust ?? [], changed: land.changed, blockChanged: land.blockChanged ?? {}, rows: s.rows, paths, host });
+          const from = r.from === null ? '-' : goldenLandingReason(r.from);
+          lands[`${arch} ${state} ${host}`] = id(`${r.verdict} | from ${from} | unreached ${r.unreached.join(', ') || '-'} | ${goldenLandingReason(r.reason)}`);
+        }
+  });
+  const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return { outcomes: sorted(outcomes), decide: cells, landing: lands };
+}
+
+const GOLDEN_ABOUT =
+  'review-gate golden matrix: decide() over tier x kind x writer x stakes x file archetype (fix: x max-fixed, rounds 1-5 left to right, one id when all agree) and landing() over archetype x ledger state x host. Each cell names an outcome: decision | reviewers | reason. Regenerate: REVIEW_GATE_GOLDEN=write node --test scripts/lib/review-gate-core.test.mjs';
+
+test('golden: decide() and landing() match review-gate.golden.json, cell for cell', () => {
+  const now = goldenMatrix();
+  if (process.env.REVIEW_GATE_GOLDEN === 'write') {
+    fs.writeFileSync(GOLDEN, `${JSON.stringify({ about: GOLDEN_ABOUT, ...now }, null, 2)}\n`);
+    return;
+  }
+  const pinned = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
+  const words = (table, cell) => (cell === undefined ? '(absent)' : cell.split(' ').map((k) => table[k] ?? `?${k}`).join(' || '));
+  const changed = [];
+  for (const part of ['decide', 'landing'])
+    for (const key of new Set([...Object.keys(pinned[part]), ...Object.keys(now[part])]))
+      if (pinned[part][key] !== now[part][key])
+        changed.push(`${part} ${key}:\n    was ${words(pinned.outcomes, pinned[part][key])}\n    now ${words(now.outcomes, now[part][key])}`);
+  assert.equal(changed.length, 0, `${changed.length} golden cells changed (first 20):\n${changed.slice(0, 20).join('\n')}`);
+  assert.deepEqual(Object.keys(pinned.outcomes).sort(), Object.keys(now.outcomes).sort(), 'the outcomes table holds exactly the outcomes the cells name');
+});
+
+test('golden: a P0 fixed routes as a P1 fixed, in every fix cell of the matrix', () => {
+  bound(() => {
+    for (const tier of TIERS)
+      for (const writer of WRITERS)
+        for (const stakes of STAKES)
+          for (const [arch, files] of Object.entries(GOLDEN_FILES))
+            for (const round of GOLDEN_ROUNDS) {
+              const o = { files: files(), kind: 'fix', tier, writer, stakes, round };
+              const strip = (r) => ({ ...r, maxFixed: null });
+              assert.deepEqual(strip(decideCore({ ...o, maxFixed: 'P0' })), strip(decideCore({ ...o, maxFixed: 'P1' })), `${tier} ${writer} ${stakes} ${arch} r${round}`);
+            }
+  });
 });
 
 // ---- the wrapper, end to end, in a temp repo

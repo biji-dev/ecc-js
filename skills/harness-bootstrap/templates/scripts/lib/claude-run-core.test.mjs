@@ -13,11 +13,13 @@ import {
   BUDGET_USD,
   CATALOG,
   EXIT,
+  RECORDS,
   TOOLS,
   budgetDecision,
   claudeArgv,
   classify,
   hostCheck,
+  movedBeyondRecords,
   networkCheck,
   parseArgs,
   resolveRoute,
@@ -248,7 +250,7 @@ function landingRepo() {
   const bin = path.join(dir, 'bin');
   const repo = path.join(dir, 'repo');
   for (const d of [bin, repo]) fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$STUB_DIR/argv.txt"\ncat > "$STUB_DIR/stdin.txt"\n[ -n "$STUB_EDIT" ] && echo "// during" >> pay.js\ncat "$STUB_DIR/answer.json"\n');
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$STUB_DIR/argv.txt"\ncat > "$STUB_DIR/stdin.txt"\n[ -n "$STUB_EDIT" ] && echo "// during" >> pay.js\n[ -n "$STUB_RECORD" ] && echo "| 8 fix r1 |" >> docs/plans/u1.state.md\ncat "$STUB_DIR/answer.json"\n');
   fs.chmodSync(path.join(bin, 'claude'), 0o755);
   fs.writeFileSync(path.join(dir, 'answer.json'), result());
   fs.writeFileSync(path.join(dir, 'p.md'), 'the focus');
@@ -330,6 +332,41 @@ test('the wrapper: a tracked file edited while the model runs gives treeMoved: t
     assert.equal(row.treeMoved, true);
     assert.equal(git('cat-file', '-p', `${row.tree}:pay.js`), 'export const fee = 3;');
     assert.equal(git('cat-file', '-p', `${row.treeAfter}:pay.js`), 'export const fee = 3;\n// during');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('RECORDS is the state file and the step ledger, as codex-run-core and run-gates.sh name them', () => {
+  assert.equal(RECORDS.source, String.raw`(^|\/)[^/]+\.(state\.md|steps\.jsonl)$`);
+  for (const p of ['u1.state.md', 'docs/plans/u1.state.md', '.review-work/u1.steps.jsonl'])
+    assert.ok(RECORDS.test(p), p);
+  for (const p of ['state.md.bak', 'src/state.mdx', 'u1.state.md/x.ts', '.state.md', 'pay.js', 'u1.steps.json'])
+    assert.ok(!RECORDS.test(p), p);
+});
+
+test('movedBeyondRecords: only a path outside RECORDS moves a tree; a list git could not give moves it too', () => {
+  assert.equal(movedBeyondRecords([]), false);
+  assert.equal(movedBeyondRecords(['docs/plans/u1.state.md', 'docs/plans/u1.steps.jsonl']), false);
+  assert.equal(movedBeyondRecords(['docs/plans/u1.state.md', 'pay.js']), true);
+  assert.equal(movedBeyondRecords(null), true);
+  assert.equal(movedBeyondRecords(undefined), true);
+  assert.equal(movedBeyondRecords(['docs/plan.md'], /(^|\/)plan\.md$/), false);
+});
+
+test('the wrapper: a state file edited while the model runs leaves treeMoved off; beside a code edit it sets it', () => {
+  const { dir, git, run, prompt } = landingRepo();
+  try {
+    fs.mkdirSync(path.join(dir, 'repo', 'docs', 'plans'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'repo', 'docs', 'plans', 'u1.state.md'), '## Ledger\n');
+    git('add', 'docs');
+    const { res, row } = run({ STUB_RECORD: '1' }, 'adversarial', '--prompt', prompt, '--base', 'main');
+    assert.equal(res.status, EXIT.ok, res.stderr + res.stdout);
+    assert.notEqual(row.treeAfter, row.tree, 'the state file moved the tree');
+    assert.equal('treeMoved' in row, false, 'a records-only move still counts at landing');
+    assert.equal(git('cat-file', '-p', `${row.treeAfter}:docs/plans/u1.state.md`), '## Ledger\n| 8 fix r1 |');
+    const { row: moved } = run({ STUB_RECORD: '1', STUB_EDIT: '1' }, 'adversarial', '--prompt', prompt, '--base', 'main');
+    assert.equal(moved.treeMoved, true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

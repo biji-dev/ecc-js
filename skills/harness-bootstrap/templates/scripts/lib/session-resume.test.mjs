@@ -236,6 +236,9 @@ test('started in a linked worktree a held row names: only the rows naming this c
   put(a, `${STATE_DIR}/CR-040.state.md`, stateFile({ unit: 'CR-040', next: ['- next: 5 implement, slice 2'] }));
   put(b, `${STATE_DIR}/CR-041.state.md`, stateFile({ unit: 'CR-041', next: ['- next: 8 review'] }));
   const inA = run(a, 'compact', { CLAUDE_PROJECT_DIR: a });
+  const reenter = /^in .* \(the unit's\): do not re-enter$/m;
+  // the session is in its unit's worktree already: the first body line says so
+  assert.equal(inA.split('\n')[1], `in ${fs.realpathSync(a)} (the unit's): do not re-enter`);
   assert.match(inA, /^HELD CR-040 · step 5 implement · change\/cr-040 · \.\.\/wt-a · tier Full\n {2}next: next: 5 implement, slice 2$/m);
   assert.match(inA, /^HELD ELSEWHERE CR-041 · step 8 review · change\/cr-041 · \.\.\/wt-b$/m);
   assert.doesNotMatch(inA, /next: 8 review|^HELD CR-041/m, "another session's state file is not read");
@@ -244,6 +247,7 @@ test('started in a linked worktree a held row names: only the rows naming this c
   // a worktree no held row names (its unit landed): nothing to continue here
   const inC = run(c, 'compact', { CLAUDE_PROJECT_DIR: c });
   assert.doesNotMatch(inC, /^HELD (?!ELSEWHERE)/m);
+  assert.doesNotMatch(inC, reenter, 'no unit of its own: nothing to re-enter');
   assert.match(inC, /^HELD ELSEWHERE CR-040 [^\n]*\nHELD ELSEWHERE CR-041 /m);
   assert.match(lastLine(inC), /^No unit is held in this checkout; units held elsewhere are other sessions', never continue one\./);
   // startup in a worktree: the same lines, context only
@@ -255,12 +259,14 @@ test('started in a linked worktree a held row names: only the rows naming this c
   assert.match(inMain, /^HELD CR-040 [^\n]*\n {2}next: next: 5 implement, slice 2$/m);
   assert.match(inMain, /^HELD CR-041 [^\n]*\n {2}next: next: 8 review$/m);
   assert.doesNotMatch(inMain, /ELSEWHERE/);
+  assert.doesNotMatch(inMain, reenter, 'the main checkout is no unit worktree');
   assert.match(lastLine(inMain), /^Several units are held: continue only the one this session was running/);
   // a registry naming no linked worktree keeps every held row the session's, wherever it started
   put(main, REGISTRY, registry({ held: ['| 1 | CR-040 | 5 implement | change/cr-040 | main | | |'] }));
   put(main, `${STATE_DIR}/CR-040.state.md`, stateFile({ unit: 'CR-040', next: ['- next: from main'] }));
   const unnamed = run(a, 'compact', { CLAUDE_PROJECT_DIR: a });
   assert.match(unnamed, /^HELD CR-040 · step 5 implement · change\/cr-040 · main · tier Full$/m);
+  assert.doesNotMatch(unnamed, reenter, 'a row naming no linked worktree names no worktree to stay in');
   assert.equal(lastLine(unnamed), "Continue the held unit's next step from its state file and the runner's process.md (Step 0a: verify, do not trust the marker); parked units wait for the owner's answers.");
 });
 

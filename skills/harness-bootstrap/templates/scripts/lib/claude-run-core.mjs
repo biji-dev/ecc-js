@@ -1,6 +1,6 @@
 // harness-bootstrap claude-run core (generated YYYY-MM-DD). Pure core of scripts/claude-run.mjs.
 // [M] mechanism (ships as-is): everything below the [B] block. [B] binding: the block right
-// below -- the models `claude --model` takes and the dollar cap of one run.
+// below -- the models `claude --model` takes, the dollar cap of one run and RECORDS.
 /**
  * The route table, the `claude -p` argv, the owner's switch, the host and sandbox checks and the
  * run verdict of claude-run, the second family for a host that is not Claude Code. No I/O here,
@@ -19,7 +19,21 @@ import { detectHost } from './harness-host-core.mjs';
 export const CATALOG = { judgment: 'opus', bounded: 'sonnet' };
 // [B] Dollars one run may spend (`--max-budget-usd`).
 export const BUDGET_USD = 5;
+// [B] The records the harness writes while a unit runs (its state file and its step ledger), as
+// run-gates.sh's RECORDS and codex-run-core.mjs's name them: keep the three equal. A tree that moved
+// only in these paths during a review did not move under the reviewer, so the row still counts at landing.
+export const RECORDS = /(^|\/)[^/]+\.(state\.md|steps\.jsonl)$/;
 // ---- end [B]
+
+/**
+ * Whether a landing row's tree moved under the reviewer: `changed` lists the paths that differ
+ * between the tree before the run and the tree after it, or is null when git could not list them.
+ * A path outside RECORDS moves it, and so does a list git could not give.
+ */
+export function movedBeyondRecords(changed, records = RECORDS) {
+  if (!Array.isArray(changed)) return true;
+  return changed.some((p) => !records.test(p));
+}
 
 // Read-only, always: no command, edit or web tool reaches a run.
 export const TOOLS = ['Read', 'Grep', 'Glob'];

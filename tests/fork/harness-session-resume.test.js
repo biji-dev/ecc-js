@@ -169,6 +169,7 @@ test("a held row in a linked worktree: CLAUDE_PROJECT_DIR wins over cwd, and the
   const text = runHook(elsewhere, { env: { CLAUDE_PROJECT_DIR: wt, GIT_CEILING_DIRECTORIES: co.base } });
   assert.strictEqual(text, [
     "[session-resume] compact: the harness's resume point, read from the registry and the state files (newer than any summary).",
+    `in ${wt} (the unit's): do not re-enter`,
     'HELD CR-021 · step 5 implement · change/cr-021 · ../wt-cr-021 · tier Full',
     '  next: next: 5 implement, slice 2',
     '  open: Q-1 Merge or hold?',
@@ -176,7 +177,9 @@ test("a held row in a linked worktree: CLAUDE_PROJECT_DIR wins over cwd, and the
     ONE('CR-021'),
   ].join('\n'));
   // the same rows from the main checkout, through cwd alone: it may drive the unit with cd, so the closing names none
-  assert.strictEqual(runHook(co.main), [...text.split('\n').slice(0, -1), COMPACT].join('\n'));
+  // and no worktree is the session's to stay in
+  const lines = text.split('\n');
+  assert.strictEqual(runHook(co.main), [lines[0], ...lines.slice(2, -1), COMPACT].join('\n'));
 });
 
 test('a parked row: gate, since and cards from the registry; its state file\'s Parked line when the cells are empty', () => {
@@ -688,6 +691,16 @@ test('mutation: a parse that also reads rows outside the marked sections is caug
   put(main, '.claude/registry.md', registry({ outside }));
   assert.match(runHook(main, { script }) || '', /HELD CR-099/, 'the mutant reads the row outside the markers');
   assert.strictEqual(source(main, 'startup'), null);
+});
+
+test('mutation: a resume line that drops the worktree note is caught', () => {
+  const script = mutant("if (located && mine.length) body.unshift(", 'if (false) body.unshift(');
+  const co = checkout();
+  const wt = worktree(co, 'wt-cr-021', 'change/cr-021');
+  put(co.main, '.claude/registry.md', registry({ held: [heldRow(1, 'CR-021', { wt: '../wt-cr-021' })] }));
+  const note = `in ${wt} (the unit's): do not re-enter`;
+  assert.ok(!runHook(wt, { script, env: { CLAUDE_PROJECT_DIR: wt } }).includes(note), 'the mutant drops the note');
+  assert.strictEqual(runHook(wt, { env: { CLAUDE_PROJECT_DIR: wt } }).split('\n')[1], note);
 });
 
 test('mutation: a cap that is never applied is caught', () => {

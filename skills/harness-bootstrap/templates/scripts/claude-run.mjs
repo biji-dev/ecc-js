@@ -53,7 +53,8 @@
  * dispatch), `branch` (the checked-out branch, null when detached) and `baseTree` (the tree its diff
  * starts from: review's merge base with --base, else the adversarial --base, else null), taken
  * before the model starts. Once the model exits the row adds `treeAfter`, the same snapshot again,
- * with `treeMoved: true` when it differs. The landing check (review-gate.mjs --landing) follows each
+ * with `treeMoved: true` when it differs beyond RECORDS (a unit's state file and step ledger, which
+ * the harness writes while a review runs). The landing check (review-gate.mjs --landing) follows each
  * critical file from the mainline through the reviewed `baseTree -> tree` changes. Each tree is null
  * when git fails.
  */
@@ -69,6 +70,7 @@ import {
   classify,
   framePrompt,
   hostCheck,
+  movedBeyondRecords,
   networkCheck,
   parseArgs,
   resolveRoute,
@@ -308,9 +310,9 @@ async function main() {
     const ranged = a.kind === 'adversarial' && snapshot.baseTree && snapshot.tree;
     const stdin = run.brief + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');
     const res = await runClaude(run.argv, { cwd: a.cwd, stdin, timeoutMin: a.timeoutMin, onSpawn });
-    // The reviewer read the live working tree: an edit during the run detaches the row from `tree`.
-    const treeAfter = reviewed ? snapshotTree(a.cwd) : undefined;
-    const moved = reviewed ? { treeAfter, ...(treeAfter !== snapshot.tree ? { treeMoved: true } : {}) } : {};
+    // The reviewer read the live working tree: an edit during the run detaches the row from `tree`,
+    // unless it touched only RECORDS.
+    const moved = reviewed ? treeAfterRun(a.cwd, snapshot.tree) : {};
     const result = classify({
       exitCode: res.code,
       stdout: res.stdout,
@@ -323,6 +325,29 @@ async function main() {
     return record({ a, run, res, result, ms: Date.now() - startedAt, ledger, base: { ...base, run: sidecar.record.run, ...moved } });
   } finally {
     sidecar.remove();
+  }
+}
+
+/** `treeAfter`, and `treeMoved: true` when the tree changed beyond RECORDS during the run. */
+function treeAfterRun(cwd, tree) {
+  const treeAfter = snapshotTree(cwd);
+  if (treeAfter === tree) return { treeAfter };
+  const changed = tree && treeAfter ? treeDiff(cwd, tree, treeAfter) : null;
+  return movedBeyondRecords(changed) ? { treeAfter, treeMoved: true } : { treeAfter };
+}
+
+/** The paths that differ between two trees, or null when git cannot list them. */
+function treeDiff(cwd, from, to) {
+  try {
+    const out = execFileSync('git', ['diff-tree', '-r', '-z', '--name-only', '--no-renames', from, to], {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.split('\0').filter(Boolean);
+  } catch {
+    return null;
   }
 }
 

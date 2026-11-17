@@ -428,7 +428,7 @@ test('landing: a merge into the mainline of a branch that changed a critical pat
   const d = landing();
   const before = head(d);
   const m = merge(d, LANDS);
-  assertLandingRefused(d, m, 'NONE');
+  assertLandingRefused(d, m, 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 
@@ -457,7 +457,7 @@ test(`landing: on host ${HOST} a review in its own family's ledger alone is not 
   reviewed(d, LANDS, { which: own });
   const before = head(d);
   const m = merge(d, LANDS);
-  assertLandingRefused(d, m, 'NONE');
+  assertLandingRefused(d, m, 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 
@@ -476,7 +476,7 @@ test('landing: a branch with no critical path merges with no review recorded', (
 test('landing: the working-tree copy of the review gate is never what runs; a mainline without a committed one skips the check', () => {
   const d = landing();
   fs.rmSync(path.join(d, GATE));
-  assertLandingRefused(d, merge(d, LANDS), 'NONE');
+  assertLandingRefused(d, merge(d, LANDS), 'RE-REVIEW');
   setup(d, ['merge', '--abort']);
   const bare = landing(MONEY, { commit: false });
   const m = merge(bare, LANDS);
@@ -497,7 +497,7 @@ test('landing: a conflicted merge concluded by a commit is checked by its result
   git(d, 'add', 'a.txt');
   const before = head(d);
   const c = git(d, 'commit', '-q', '--no-edit');
-  assertLandingRefused(d, c, 'NONE');
+  assertLandingRefused(d, c, 'RE-REVIEW');
   assert.equal(head(d), before);
   reviewed(d);
   const ok = git(d, 'commit', '-q', '--no-edit');
@@ -540,7 +540,7 @@ test('landing: a squash merge of an unreviewed critical edit, concluded by git c
   assert.equal(s.status, 0, `git merge --squash: ${s.stderr}`);
   const before = head(d);
   const c = git(d, 'commit', '-q', '-m', 'squash');
-  assertLandingRefused(d, c, 'NONE');
+  assertLandingRefused(d, c, 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 
@@ -548,18 +548,18 @@ test('landing: a merge by SHA, and a merge of a tag, of an unreviewed critical e
   const d = landing();
   const before = head(d);
   const sha = git(d, 'rev-parse', LANDS).stdout.trim();
-  assertLandingRefused(d, merge(d, sha), 'NONE');
+  assertLandingRefused(d, merge(d, sha), 'RE-REVIEW');
   assert.equal(head(d), before);
   setup(d, ['merge', '--abort']);
   setup(d, ['tag', 'landing-tag', LANDS]);
-  assertLandingRefused(d, merge(d, 'landing-tag'), 'NONE');
+  assertLandingRefused(d, merge(d, 'landing-tag'), 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 
 test('landing: a merge that spoofs a pull in GIT_REFLOG_ACTION is still checked', () => {
   const d = landing();
   const before = head(d);
-  assertLandingRefused(d, merge(d, LANDS, { GIT_REFLOG_ACTION: 'pull x' }), 'NONE');
+  assertLandingRefused(d, merge(d, LANDS, { GIT_REFLOG_ACTION: 'pull x' }), 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 
@@ -916,7 +916,7 @@ test('landing: NODE_OPTIONS cannot run code before the gate; the unread edit com
   git(d, 'add', MONEY);
   const before = head(d);
   const c = run(d, ['commit', '-q', '-m', 'unread'], { NODE_OPTIONS: '--import=data:text/javascript,process.exit(0)' });
-  assertLandingRefused(d, c, 'NONE');
+  assertLandingRefused(d, c, 'RE-REVIEW');
   assert.equal(head(d), before);
 });
 

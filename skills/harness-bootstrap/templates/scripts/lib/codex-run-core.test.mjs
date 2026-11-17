@@ -17,6 +17,7 @@ import {
   CODEX_CANDIDATES,
   EXIT,
   MODELS,
+  RECORDS,
   ROUTES,
   ROUTER_SCHEMA,
   RUN_MODES,
@@ -28,6 +29,7 @@ import {
   formatTokens,
   freshestLimits,
   lastRateLimits,
+  movedBeyondRecords,
   parseArgs,
   parseEvents,
   planRun,
@@ -1420,6 +1422,51 @@ test('a tracked file edited while the model runs gives treeMoved: true, and tree
   assert.equal(git('cat-file', '-p', `${row.tree}:a.txt`), 'feature, uncommitted');
   assert.equal(git('cat-file', '-p', `${row.treeAfter}:a.txt`), 'feature, uncommitted\nduring');
   assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'feature, uncommitted\nduring\n');
+});
+
+test('RECORDS is the state file and the step ledger, the default run-gates.sh names too', () => {
+  assert.equal(RECORDS.source, String.raw`(^|\/)[^/]+\.(state\.md|steps\.jsonl)$`);
+  for (const p of ['u1.state.md', 'docs/harness/units/u1.state.md', '.review-work/u1.steps.jsonl', 'a/b/x.steps.jsonl'])
+    assert.ok(RECORDS.test(p), p);
+  for (const p of ['state.md.bak', 'src/state.mdx', 'u1.state.md/x.ts', 'steps.jsonl.tmp', '.state.md', 'src/core/engine.ts', 'u1.steps.json'])
+    assert.ok(!RECORDS.test(p), p);
+});
+
+test('movedBeyondRecords: only a path outside RECORDS moves a tree; a list git could not give moves it too', () => {
+  assert.equal(movedBeyondRecords([]), false);
+  assert.equal(movedBeyondRecords(['docs/harness/u1.state.md', 'docs/harness/u1.steps.jsonl']), false);
+  assert.equal(movedBeyondRecords(['docs/harness/u1.state.md', 'src/core/engine.ts']), true);
+  assert.equal(movedBeyondRecords(['a.txt']), true);
+  assert.equal(movedBeyondRecords(null), true);
+  assert.equal(movedBeyondRecords(undefined), true);
+  // a project's widened RECORDS is the second argument
+  assert.equal(movedBeyondRecords(['docs/plan.md'], /(^|\/)plan\.md$/), false);
+});
+
+test('a records file edited while the model runs leaves treeMoved off; a records edit beside a code edit sets it', () => {
+  const { root, git, repo, run } = landingRepo();
+  fs.mkdirSync(path.join(repo, 'docs'));
+  fs.writeFileSync(path.join(repo, 'docs/u1.state.md'), 'state\n');
+  fs.writeFileSync(path.join(repo, 'docs/u1.steps.jsonl'), '{"step":"1"}\n');
+  git('add', 'docs');
+  git('commit', '-q', '-m', 'records');
+  // Appends to both records mid-run (and, with EDIT_CODE set, to a.txt), then answers with a verdict.
+  const fake = fakeCodex(
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > /dev/null\necho "8 review r1" >> docs/u1.state.md\necho \'{"step":"8"}\' >> docs/u1.steps.jsonl\n[ -n "$EDIT_CODE" ] && echo during >> a.txt\necho "No findings." > "$out"\necho \'{"type":"turn.completed","usage":{}}\'\nexit 0\n',
+  );
+  const prompt = path.join(root, 'p.md');
+  const { res, row } = run(['adversarial', '--prompt', prompt, '--base', 'main'], fake);
+  assert.equal(res.status, EXIT.ok, res.stdout + res.stderr);
+  assert.equal(row.outcome, 'ok');
+  assert.notEqual(row.treeAfter, row.tree, 'the records moved the tree');
+  assert.equal('treeMoved' in row, false, 'a records-only move still counts at landing');
+  assert.equal(git('cat-file', '-p', `${row.treeAfter}:docs/u1.state.md`), 'state\n8 review r1');
+  // the same records edit beside a code edit: the reviewer did not read what lands
+  const fakeCode = path.join(root, 'fake-code.sh');
+  fs.writeFileSync(fakeCode, `#!/bin/sh\nEDIT_CODE=1 exec "${fake}" "$@"\n`, { mode: 0o755 });
+  const { row: moved } = run(['adversarial', '--prompt', prompt, '--base', 'main'], fakeCode);
+  assert.equal(moved.outcome, 'ok');
+  assert.equal(moved.treeMoved, true);
 });
 
 /** Dirent-shaped entries as old Node 20.x returns them: `path` only, no `parentPath`. */

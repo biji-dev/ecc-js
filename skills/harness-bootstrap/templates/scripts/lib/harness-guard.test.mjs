@@ -30,6 +30,8 @@ const REF_GUARD = '.githooks/reference-transaction';
 const HOOK_FILES = ['.githooks/pre-commit', '.githooks/pre-merge-commit', '.githooks/reference-transaction'];
 // [B] The branch lands merge into, as the guard's MAINLINE must read; the throwaway repos use it too.
 const MAINLINE = 'main';
+// [B] The guard's lock scope, as its SCOPE must read: checkout, one lock per checkout (worktree).
+const EXPECTED_SCOPE = 'checkout';
 // [B] Every id shape the plan uses: ID_PATTERN must take each one whole (commit-guard.md).
 const IDS = [];
 
@@ -173,9 +175,9 @@ test('each hook file git runs exists and is the guard, or runs it first and pass
   }
 });
 
-test('the bindings: REGISTRY is set, SCOPE is repo or checkout, MAINLINE is the expected one, and ID_PATTERN takes every id whole', () => {
+test('the bindings: REGISTRY is set, SCOPE and MAINLINE are the expected ones, and ID_PATTERN takes every id whole', () => {
   assert.ok(REGISTRY, `no REGISTRY= line in ${GUARD}`);
-  assert.ok(['repo', 'checkout'].includes(SCOPE), `SCOPE is ${SCOPE}`);
+  assert.equal(SCOPE, EXPECTED_SCOPE, `${GUARD} binds SCOPE to ${SCOPE}, not ${EXPECTED_SCOPE}`);
   assert.equal(binding('MAINLINE'), MAINLINE, `${GUARD} binds MAINLINE to ${binding('MAINLINE')}, not ${MAINLINE}`);
   if (ID_PATTERN === '') assert.deepEqual(IDS, [], 'IDS lists ids but ID_PATTERN is empty');
   else assert.ok(IDS.length > 0, 'ID_PATTERN is set but IDS lists no id to hold it to');

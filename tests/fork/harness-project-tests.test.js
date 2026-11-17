@@ -98,7 +98,7 @@ const HOOK_FILES_LINE = "const HOOK_FILES = ['.githooks/pre-commit', '.githooks/
 
 /**
  * A fresh install in a temp git repo: every template where it lands, the [B] lines bound unless `bind`
- * is false. `variant` 'husky' installs the guard for husky; 'checkout' binds SCOPE="checkout" in it.
+ * is false. `variant` 'husky' installs the guard for husky; 'repo' binds SCOPE="repo" in it ('checkout' is the default).
  */
 function install({ bind = true, variant = 'default' } = {}) {
   const dir = tmp('harness-project-');
@@ -118,7 +118,10 @@ function install({ bind = true, variant = 'default' } = {}) {
     edit(dir, TEST_COPY, GUARD_LINES, "const GUARD = '.githooks/harness-guard.sh';\nconst MERGE_GUARD = '.githooks/harness-guard.sh';\nconst REF_GUARD = '.githooks/harness-guard.sh';");
     edit(dir, TEST_COPY, HOOK_FILES_LINE, "const HOOK_FILES = ['.husky/pre-commit', '.husky/pre-merge-commit', '.husky/reference-transaction'];");
   }
-  if (variant === 'checkout') for (const hook of GUARD_COPIES) edit(dir, hook, 'SCOPE="repo"', 'SCOPE="checkout"');
+  if (variant === 'repo') {
+    for (const hook of GUARD_COPIES) edit(dir, hook, 'SCOPE="checkout"', 'SCOPE="repo"');
+    edit(dir, TEST_COPY, "const EXPECTED_SCOPE = 'checkout';", "const EXPECTED_SCOPE = 'repo';");
+  }
   const init = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, encoding: 'utf8' });
   assert.strictEqual(init.status, 0, init.stderr);
   return dir;
@@ -166,7 +169,7 @@ for (const [name, expected] of Object.entries(SUITES)) {
   });
 }
 
-for (const variant of ['husky', 'checkout']) {
+for (const variant of ['husky', 'repo']) {
   test(`harness-guard, ${variant} install: all ${SUITES['harness-guard']} pass, none skipped`, () => {
     assertAllPass(runSuite(install({ variant }), 'harness-guard'), SUITES['harness-guard']);
   });
@@ -307,16 +310,14 @@ mutantFails(
 mutantFails(
   'a checkout-scope guard that resolves no Worktree cell, so every row locks the main checkout',
   GUARD_COPIES,
-  'if [ "$SCOPE" = "checkout" ]; then resolve "$wt"; else res=$curp; fi',
-  'res=$curp',
-  { variant: 'checkout' },
+  '    if [ "$SCOPE" = "checkout" ]; then\n      resolve "$wt" ||',
+  '    if false; then\n      resolve "$wt" ||',
 );
 mutantFails(
   'a checkout-scope guard without the merge refusal, so the main checkout merges a branch whose row is held',
   GUARD_COPIES,
   'if [ "$merging" = 1 ] && [ -n "$held" ]; then',
   'if false; then',
-  { variant: 'checkout' },
 );
 mutantFails(
   'a commit guard whose MAINLINE was rebound, which its own suite would read back',

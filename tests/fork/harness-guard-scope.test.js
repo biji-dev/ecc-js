@@ -126,6 +126,12 @@ function addWorktree(dir, rel, branch) {
   return fs.realpathSync(target);
 }
 
+/** A detached linked worktree at `rel`: a checkout git lists, holding no branch. */
+function addDetached(dir, rel) {
+  const result = git(dir, ['worktree', 'add', '-q', '--detach', path.resolve(dir, rel)]);
+  assert.strictEqual(result.status, 0, `worktree add --detach failed: ${result.stderr}`);
+}
+
 function tryCommit(dir) {
   fs.appendFileSync(path.join(dir, 'work.txt'), 'x\n');
   git(dir, ['add', 'work.txt']);
@@ -203,9 +209,34 @@ if (!hasGit) {
     const dir = guardedRepo(guardText('checkout'));
     try {
       git(dir, ['switch', '-qc', 'fix/login']);
+      addDetached(dir, '.worktrees/elsewhere');
       setRegistry(dir, '| 1 | `fix-login` | 1 | fix/login | `.worktrees/elsewhere` | 2026-10-09T10:00Z |', WT_HEADER);
       const result = tryCommit(dir);
       assertRefused(result, /row for fix\/login locks .*elsewhere, not this checkout/);
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: a Worktree cell that does not resolve refuses every commit, naming the cell (fail closed)', () => {
+    const dir = guardedRepo(guardText('checkout'));
+    try {
+      setRegistry(dir, '| 1 | `fix-login` | 1 | fix/login | `.worktrees/gone` | 2026-10-09T10:00Z |', WT_HEADER);
+      assertRefused(tryCommit(dir), /row for fix\/login names Worktree '\.worktrees\/gone', which does not resolve: fix the cell in \.claude\/registry\.md/);
+      fs.mkdirSync(path.join(dir, '.worktrees', 'gone'), { recursive: true });
+      // a directory that exists but is no checkout still locks nothing: refused, naming git's list
+      assertRefused(tryCommit(dir), /row for fix\/login names Worktree '\.worktrees\/gone', which is no checkout of this repository \(git worktree list\): fix the cell/);
+      fs.rmSync(path.join(dir, '.worktrees', 'gone'), { recursive: true });
+      addDetached(dir, '.worktrees/gone');
+      assertAllowed(tryCommit(dir)); // a real checkout: it locks that one and not the main one
+    } finally { cleanup(dir); }
+  });
+
+  test('checkout scope: a Worktree cell naming the worktrees parent directory refuses (it is no checkout)', () => {
+    const dir = guardedRepo(guardText('checkout'));
+    try {
+      const wt = addWorktree(dir, '.worktrees/fix-a', 'fix/a');
+      setRegistry(dir, '| 1 | `fix-a` | 1 | fix/a | `.worktrees` | 2026-10-09T10:00Z |', WT_HEADER);
+      assertRefused(tryCommit(dir), /names Worktree '\.worktrees', which is no checkout/);
+      assertRefused(tryCommit(wt), /names Worktree '\.worktrees', which is no checkout/);
     } finally { cleanup(dir); }
   });
 
@@ -403,6 +434,7 @@ if (!hasGit) {
     const repoDir = guardedRepo(guardText('repo'));
     try {
       git(dir, ['switch', '-qc', 'fix/login']);
+      addDetached(dir, 'fix/login');
       setRegistry(dir, row, header);
       assertAllowed(tryCommit(dir)); // the row locks another path, not this checkout
       git(repoDir, ['switch', '-qc', 'fix/login']);
@@ -818,6 +850,8 @@ if (!hasGit) {
     let wt = dir;
     if (scope === 'checkout') wt = addWorktree(dir, '.worktrees/held', 'task/p2-20');
     else git(dir, ['switch', '-qc', 'task/p2-20']);
+    // every other row's Worktree cell names a checkout that exists: one that does not resolve refuses all
+    for (const cell of more.matchAll(/`(\.worktrees\/[^`]+)`/g)) addDetached(dir, cell[1]);
     setRegistry(dir, [OWN_ROW[scope], more].filter(Boolean).join('\n'), scope === 'checkout' ? WT_HEADER : PLAIN_HEADER);
     assertAllowed(tryCommit(wt));
     return { dir, wt };
@@ -984,7 +1018,7 @@ if (!hasGit) {
   });
 
   test('mutation: dropping the physical-path resolve makes every non-trivial Worktree spelling refuse its owner', () => {
-    const from = 'res=$(cd "$p" 2>/dev/null && pwd -P) || res=$p';
+    const from = 'res=$(cd "$p" 2>/dev/null && pwd -P)';
     assert.ok(fs.readFileSync(GUARD, 'utf8').includes(from), 'the resolve exists in the shipped file');
     const apply = (t) => {
       const out = t.replace(from, 'res=$p');
@@ -994,7 +1028,7 @@ if (!hasGit) {
     for (const [label, spec] of wtSpecs) {
       const s = wtScenario(spec, 'fix/x', 'checkout', apply);
       try {
-        assertRefused(tryCommit(s.wt), /not this checkout/);
+        assertRefused(tryCommit(s.wt), /not this checkout|which is no checkout/);
       } catch (error) {
         error.message = `${label}: ${error.message}`;
         throw error;

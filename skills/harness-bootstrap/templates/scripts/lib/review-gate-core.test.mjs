@@ -5,7 +5,7 @@
 // matching the core. Only the [B] tests read the core's bound values (and one shape test each);
 // every behaviour test runs under INJECTED, the tests' own copy of the template's bindings, with
 // CRITICAL set per call, so a project's bindings never change what they assert. FIX_LINES is read
-// relatively (FIX_LINES, FIX_LINES + 1), which holds for any value.
+// relatively (FIX_LINES, FIX_LINES + 1) and NOTES by name, which holds for any value.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
 // global git config; no network, no real repository. The golden matrix reads review-gate.golden.json
 // beside this file, and REVIEW_GATE_GOLDEN=write rewrites it from the core.
@@ -25,6 +25,7 @@ import {
   INSTRUCTIONS,
   LANDING_KINDS,
   NON_PRODUCTION,
+  NOTES,
   ROLES,
   STAKES,
   TESTS,
@@ -194,6 +195,7 @@ for (const [name, value, ok, what] of [
     'a plain object of reviewer name to a non-empty array of RegExp',
   ],
   ['FIX_LINES', FIX_LINES, Number.isInteger(FIX_LINES) && FIX_LINES > 0, 'a positive integer'],
+  ['NOTES', NOTES, typeof NOTES === 'string' && NOTES.trim() !== '', 'a non-empty path'],
 ])
   test(`the bound ${name} is ${what}`, () => {
     const shown = Array.isArray(value) || typeof value !== 'object' ? String(value) : Object.keys(value).join(', ');
@@ -530,7 +532,7 @@ test('fix 9: the harness lane has one fix round, re-read by the other family; a 
     assert.equal(r.decision, 'drop', `round ${round}`);
     assert.deepEqual(r.reviewers, [], `round ${round}`);
     assert.match(r.reason, new RegExp(`^harness lane, fix round ${round}: drop the change`));
-    assert.match(r.reason, /docs\/harness\/upstream-notes\.md/);
+    assert.ok(r.reason.includes(`one line in ${NOTES};`), r.reason);
     assert.doesNotMatch(r.reason, /owner/);
   }
   // P3s stay the P3 batch; a stray path takes the ordinary fix rules
@@ -1420,7 +1422,8 @@ test('parseArgs: --state takes a file, with --kind fix only, and never beside --
 // the file's `outcomes` table. A routing change shows as changed cells: the test lists them in words.
 // After a deliberate change, regenerate with REVIEW_GATE_GOLDEN=write and read the file's diff: a
 // cell that changed beyond the change's intent is a finding. Runs under INJECTED with CRITICAL bound
-// to src/core/, and the line counts are FIX_LINES-relative, so a project's bindings never change it.
+// to src/core/, the line counts are FIX_LINES-relative and the notes path is <notes>, so a project's
+// bindings never change it.
 
 const GOLDEN = fileURLToPath(new URL('./review-gate.golden.json', import.meta.url));
 const GOLDEN_ROUNDS = [1, 2, 3, 4, 5];
@@ -1481,9 +1484,12 @@ const GOLDEN_STATES = {
 };
 const GOLDEN_HOSTS = ['claude', 'codex', 'unknown'];
 
-/** A reason with its line counts named, so FIX_LINES's bound value never shows in the file. */
+/** A reason with its line counts and the notes path named, so FIX_LINES's and NOTES's bound values never show in the file. */
 const goldenReason = (r) =>
-  r.reason.replaceAll(`in ${r.prodLines} `, 'in <lines> ').replaceAll(`${FIX_LINES} production lines`, 'FIX_LINES production lines');
+  r.reason
+    .replaceAll(`in ${r.prodLines} `, 'in <lines> ')
+    .replaceAll(`${FIX_LINES} production lines`, 'FIX_LINES production lines')
+    .replaceAll(NOTES, '<notes>');
 const goldenLandingReason = (reason) => {
   let s = reason.replaceAll(G_BASE, '<base>').replaceAll(G_RESULT, '<result>');
   G_TREES.forEach((t, i) => {

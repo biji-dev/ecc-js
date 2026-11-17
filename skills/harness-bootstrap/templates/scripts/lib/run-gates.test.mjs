@@ -66,13 +66,17 @@ function newRepo() {
   return repo;
 }
 
+// the template's SCOPED_PATHS, which no RUN_GATES_ variable overrides: runCopy writes it into every copy
+const TEMPLATE_SCOPED = String.raw`^(src|apps|packages|lib|docs|tests?)/|\.md$`;
+
 /**
  * A copy of the runner, its gate block replaced by `lines`, run in a repo (a new one unless `repo`
  * is given) with a cache dir (a new one unless `cache` is given), so two runs can share both. The
- * docs-only pattern, KEY_EXTRA and admission are off unless `env` sets them; `scoped` replaces
- * SCOPED_PATHS in the copy; `admit` replaces the ADMIT line in the copy (and leaves admission on);
- * `out` ([stdout file, stderr file]) starts the run in the background and returns its child. No
- * bound value is read. Returns the spawn result with `repo`, `cache` and `lines`.
+ * docs-only pattern, KEY_EXTRA, the snapshot copy and admission are off unless `env` sets them, and
+ * every other binding runs at the template's value; SCOPED_PATHS is `scoped` or the template's; `admit` replaces the
+ * ADMIT line in the copy (and leaves admission on); `out` ([stdout file, stderr file]) starts the
+ * run in the background and returns its child. No bound value is read. Returns the spawn result
+ * with `repo`, `cache` and `lines`.
  */
 function runCopy(lines, args, opts = {}) {
   const o = typeof opts === 'function' ? { prepare: opts } : opts;
@@ -82,11 +86,8 @@ function runCopy(lines, args, opts = {}) {
   const copy = path.join(tmp('run-gates-copy-'), 'run-gates.sh');
   // A replacer function, not a string: a gate line may hold `$'`, a replacement pattern.
   let text = SOURCE.replace(BLOCK, () => ['# >>> harness:gates', ...lines, '# <<< harness:gates'].join('\n'));
-  if (o.scoped !== undefined) {
-    const before = text;
-    text = text.replace(/^SCOPED_PATHS=.*$/m, () => `SCOPED_PATHS='${o.scoped}'`);
-    assert.notEqual(text, before, 'no SCOPED_PATHS line in scripts/run-gates.sh');
-  }
+  assert.match(text, /^SCOPED_PATHS=.*$/m, 'no SCOPED_PATHS line in scripts/run-gates.sh');
+  text = text.replace(/^SCOPED_PATHS=.*$/m, () => `SCOPED_PATHS='${o.scoped ?? TEMPLATE_SCOPED}'`);
   if (o.admit !== undefined) {
     const before = text;
     text = text.replace(/^ADMIT=.*$/m, () => `ADMIT='${o.admit}'`);
@@ -100,6 +101,14 @@ function runCopy(lines, args, opts = {}) {
     RUN_GATES_SNAPSHOT_COPY: '',
     RUN_GATES_DOCS_ONLY: '',
     RUN_GATES_KEY_EXTRA: '',
+    // the template's values, so an install's bindings never reach a test; a test that needs another sets it
+    RUN_GATES_MAINLINE: 'main',
+    RUN_GATES_PRODUCT_PATHS: '',
+    RUN_GATES_RECORDS: String.raw`(^|/)[^/]+\.(state\.md|steps\.jsonl)$`,
+    RUN_GATES_RETRY_FLAKY: '1',
+    RUN_GATES_GATE_JOBS: '1',
+    RUN_GATES_SERIAL: '',
+    RUN_GATES_GATE_TIMEOUT: '3600',
     ...(o.admit === undefined ? { RUN_GATES_ADMIT: '' } : {}),
     ...o.env,
   };

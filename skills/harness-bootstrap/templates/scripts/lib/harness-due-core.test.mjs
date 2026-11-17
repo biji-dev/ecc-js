@@ -1429,7 +1429,7 @@ test('the wrapper: a held row whose local branch is past SPLIT_LINES production 
 
 test('the wrapper: HARNESS_LIVE_REF counts the mainline merges past it; no ref, a ref at the tip or one that does not resolve prints no line', () => {
   const f = fixture();
-  f.git(['tag', 'live']);
+  f.git(['tag', 'fixture-live']);
   const land = (name, date) => {
     f.git(['checkout', '-q', '-b', name, MAIN]);
     f.write(`src/${name}.js`, 'x\n');
@@ -1442,18 +1442,18 @@ test('the wrapper: HARNESS_LIVE_REF counts the mainline merges past it; no ref, 
   land('feat-b', '2026-10-24T10:00:00Z');
   const oldest = Math.floor((Date.parse(RUN_NOW) - Date.parse('2026-10-22T10:00:00Z')) / DAY);
   const line = `2 lands not deployed (oldest ${oldest} days)`;
-  const withRef = run(f, [], f.repo, { HARNESS_LIVE_REF: 'live' });
+  const withRef = run(f, [], f.repo, { HARNESS_LIVE_REF: 'fixture-live' });
   assert.equal(withRef.status, 0, withRef.stderr);
   assert.ok(withRef.stdout.split('\n').includes(line), withRef.stdout);
-  assert.deepEqual(JSON.parse(run(f, ['--json'], f.repo, { HARNESS_LIVE_REF: 'live' }).stdout).undeployed, { lands: 2, oldestDays: oldest });
+  assert.deepEqual(JSON.parse(run(f, ['--json'], f.repo, { HARNESS_LIVE_REF: 'fixture-live' }).stdout).undeployed, { lands: 2, oldestDays: oldest });
   assert.doesNotMatch(run(f, []).stdout, /not deployed/, 'no ref bound: no line');
   assert.equal(JSON.parse(run(f, ['--json']).stdout).undeployed, null);
-  f.git(['tag', 'tip']);
-  assert.doesNotMatch(run(f, [], f.repo, { HARNESS_LIVE_REF: 'tip' }).stdout, /not deployed/, 'production is at the tip');
+  f.git(['tag', 'fixture-tip']);
+  assert.doesNotMatch(run(f, [], f.repo, { HARNESS_LIVE_REF: 'fixture-tip' }).stdout, /not deployed/, 'production is at the tip');
   const missing = run(f, [], f.repo, { HARNESS_LIVE_REF: 'no-such-ref' });
   assert.equal(missing.status, 0, missing.stderr);
   assert.doesNotMatch(missing.stdout, /not deployed/, 'an unresolvable ref is no line, never a failure');
-  assert.doesNotMatch(run(f, ['--claim', ROW(1, 9)], f.repo, { HARNESS_LIVE_REF: 'live' }).stdout, /not deployed/, 'a claim prints only what blocks it');
+  assert.doesNotMatch(run(f, ['--claim', ROW(1, 9)], f.repo, { HARNESS_LIVE_REF: 'fixture-live' }).stdout, /not deployed/, 'a claim prints only what blocks it');
 });
 
 const hasSshKeygen = spawnSync('ssh-keygen', ['-?'], { encoding: 'utf8' }).error === undefined;
@@ -1466,7 +1466,7 @@ test('the wrapper: signed merges count under log.showSignature=true (git prints 
   assert.equal(spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key], { encoding: 'utf8' }).status, 0);
   fs.writeFileSync(path.join(keyDir, 'allowed'), `t@t ${fs.readFileSync(`${key}.pub`, 'utf8')}`);
   for (const [k, v] of [['gpg.format', 'ssh'], ['user.signingkey', `${key}.pub`], ['gpg.ssh.allowedSignersFile', path.join(keyDir, 'allowed')], ['log.showSignature', 'true']]) f.git(['config', k, v]);
-  f.git(['tag', 'live']);
+  f.git(['tag', 'fixture-live']);
   f.git(['checkout', '-q', '-b', 'feat-s', MAIN]);
   f.write('src/s.js', 'x\n');
   f.git(['add', '.']);
@@ -1474,7 +1474,7 @@ test('the wrapper: signed merges count under log.showSignature=true (git prints 
   f.git(['checkout', '-q', MAIN]);
   f.git(['merge', '-q', '--no-ff', '-S', '-m', "Merge branch 'feat-s'", 'feat-s'], '2026-10-22T10:00:00Z');
   assert.doesNotMatch(f.git(['log', '-1', '--format=%H']), /^[0-9a-f]{40}\n/, 'the repository config makes git print the signature lines ahead of each record');
-  const res = run(f, [], f.repo, { HARNESS_LIVE_REF: 'live' });
+  const res = run(f, [], f.repo, { HARNESS_LIVE_REF: 'fixture-live' });
   assert.equal(res.status, 0, res.stderr);
   assert.ok(res.stdout.split('\n').some((l) => /^1 lands not deployed \(oldest \d+ days\)$/.test(l)), res.stdout);
   assert.doesNotMatch(res.stderr, /WARN/);

@@ -80,6 +80,7 @@ export const TRIGGERS = {
   ],
 };
 export const FIX_LINES = 40; // a critical P1 fix at or under this many production lines skips the Opus pass
+export const NOTES = 'docs/harness/upstream-notes.md'; // the install's upstream-notes file: a dropped harness-lane change files one line there
 // [B] Paths only the owner merges: the guards, the gates and the files that hold reviewed blocks.
 // The landing check says NONE when a merge changes one, so no agent judges its own edit to them.
 export const GUARDS = [
@@ -552,7 +553,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
       return out(
         'drop',
         [],
-        `harness lane, fix round ${round}: drop the change and file one line in docs/harness/upstream-notes.md; the lane does not run a third round`,
+        `harness lane, fix round ${round}: drop the change and file one line in ${NOTES}; the lane does not run a third round`,
       );
     if (round === 2)
       return out(

@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 105;
+const EXPECTED_TESTS = 106;
 
 let passed = 0;
 let failed = 0;
@@ -101,6 +101,7 @@ const REBINDINGS = [
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that are not production', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /^scripts\\//]; // paths that are not production'],
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that count as tests', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /(^|\\/)\\.maestro\\//]; // paths that count as tests'],
   [CORE_REL, 'export const FIX_LINES = 40;', 'export const FIX_LINES = 25;'],
+  [CORE_REL, "export const NOTES = 'docs/harness/upstream-notes.md';", "export const NOTES = 'harness/notes.md';"],
   [CORE_REL, 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//];', 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//, /^scripts\\//, /^harness\\//];'],
   [TEST_REL, 'const EXPECTED_CRITICAL = [];', REBOUND_CRITICAL.replace('export const CRITICAL', 'const EXPECTED_CRITICAL')],
 ];

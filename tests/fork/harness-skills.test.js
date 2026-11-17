@@ -1347,6 +1347,56 @@ test('RECORDS: run-gates.sh, codex-run-core.mjs and claude-run-core.mjs bind one
   assert.notStrictEqual(plain(wider.codex), seen.gates, 'a widened codex-run RECORDS still matches');
 });
 
+// ── the shipped run-gates test: an install's bindings never reach it ──────────
+
+/** run-gates.sh's [B] bindings, each name to the value its line assigns, quotes dropped. */
+function gateBindings(gates) {
+  const lines = gates.matchAll(/^# \[B\][^\n]*\n(?:#[^\n]*\n)*([A-Z_]+)=(?:'([^']*)'|(\S*))$/gm);
+  return new Map([...lines].map(m => [m[1], m[2] ?? m[3]]));
+}
+
+/** What runCopy gives each binding: its RUN_GATES_ env value, or SCOPED_PATHS's template constant. */
+function runCopyValues(runTest) {
+  const start = runTest.indexOf('function runCopy(');
+  const body = start < 0 ? '' : runTest.slice(start, runTest.indexOf('\n}\n', start));
+  const values = new Map();
+  for (const m of body.matchAll(/RUN_GATES_([A-Z_]+): (?:'([^']*)'|String\.raw`([^`]*)`)/g)) values.set(m[1], m[2] ?? m[3]);
+  const scoped = runTest.match(/^const TEMPLATE_SCOPED = String\.raw`([^`]*)`;$/m);
+  if (scoped && body.includes('o.scoped ?? TEMPLATE_SCOPED')) values.set('SCOPED_PATHS', scoped[1]);
+  return values;
+}
+
+// bindings the shipped tests keep off; a test that needs one sets it
+const OFF_IN_TESTS = ['DOCS_ONLY', 'KEY_EXTRA', 'SNAPSHOT_COPY', 'ADMIT'];
+
+/** Each binding runCopy leaves to the install, or gives a value other than the template's. */
+function bindingMismatches(gates, runTest) {
+  const have = runCopyValues(runTest);
+  const out = [];
+  for (const [name, value] of gateBindings(gates)) {
+    if (!have.has(name)) out.push(`unset: ${name}`);
+    else if (have.get(name) !== value && !(OFF_IN_TESTS.includes(name) && have.get(name) === '')) out.push(`${name}: ${have.get(name)}, not ${value}`);
+  }
+  return out;
+}
+
+test('run-gates.test.mjs: runCopy gives every [B] binding the template value (or off), so an install never reaches it', () => {
+  const gates = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'run-gates.sh'), 'utf8');
+  const runTest = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'scripts', 'lib', 'run-gates.test.mjs'), 'utf8');
+  assert.ok(gateBindings(gates).size >= 12, `too few bindings found: ${[...gateBindings(gates).keys()]}`);
+  assert.deepStrictEqual(bindingMismatches(gates, runTest), []);
+  // mutants: a runCopy that drops SERIAL, or runs two gates at once, must fail the check
+  const dropped = runTest.replace(/^ {4}RUN_GATES_SERIAL: '',\n/m, '');
+  assert.notStrictEqual(dropped, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, dropped), ['unset: SERIAL']);
+  const two = runTest.replace(/^ {4}RUN_GATES_GATE_JOBS: '1',$/m, "    RUN_GATES_GATE_JOBS: '2',");
+  assert.notStrictEqual(two, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, two), ['GATE_JOBS: 2, not 1']);
+  const scopedOnly = runTest.replace('o.scoped ?? TEMPLATE_SCOPED', 'o.scoped');
+  assert.notStrictEqual(scopedOnly, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, scopedOnly), ['unset: SCOPED_PATHS']);
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

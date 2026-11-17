@@ -386,7 +386,10 @@ test('admission: a refused FULL run prints NOT ADMITTED (exit <n>) and exits 97,
   assert.ok(r.lines.includes('NOT ADMITTED (exit 1)'), r.stdout);
   assert.doesNotMatch(r.stdout, /^(SUMMARY|PASS|FAIL|logs:) /m);
   assert.equal(c.n(), 0, 'a gate ran in a refused run');
-  assert.deepEqual(fs.readFileSync(a.calls, 'utf8').trim().split('\n'), [`--top ${r.repo}`], 'the bound ADMIT was not run once with --top <repo top>');
+  const calls = fs.readFileSync(a.calls, 'utf8').trim().split('\n');
+  assert.equal(calls.length, 1, 'the bound ADMIT was not run once');
+  assert.match(calls[0], /^--holder [1-9][0-9]* --top (\S+)$/);
+  assert.equal(calls[0].replace(/^--holder \d+ --top /, ''), r.repo, 'not run with --holder <pid> --top <repo top>');
   const env = runCopy([c.gate()], [], { repo: r.repo, cache: r.cache, env: { RUN_GATES_ADMIT: admitter(3).cmd } });
   assert.equal(env.status, 97, env.stdout + env.stderr);
   assert.ok(env.lines.includes('NOT ADMITTED (exit 3)'), `RUN_GATES_ADMIT does not override ADMIT: ${env.stdout}`);
@@ -413,6 +416,76 @@ test('admission: a scoped run, RUN_GATES_ADMIT=\'\' and a cache hit never call i
   assert.equal(off.status, 0, off.stdout + off.stderr);
   assert.equal(a.n(), 1, "RUN_GATES_ADMIT='' did not turn admission off");
   assert.equal(c.n(), 3, 'the run with admission off did not run its gate');
+});
+
+/**
+ * A leasing admission stand-in: writes slot-1 in `dir` naming its --holder the way admission.mjs does,
+ * prints `LEASE <slot>` (unless `print` is false) and exits `code`.
+ */
+function leaser(dir, { code = 0, print = true } = {}) {
+  const script = path.join(tmp('run-gates-lease-'), 'admit.sh');
+  const slot = path.join(dir, 'slot-1');
+  fs.writeFileSync(
+    script,
+    [
+      "h=''; p=''",
+      'for a in "$@"; do [ "$p" = --holder ] && h=$a; p=$a; done',
+      `mkdir -p ${dir}`,
+      `printf '{"pid":%s,"top":"/repo/shop","at":"2026-01-15T10:00:00Z"}\\n' "$h" > ${slot}`,
+      print ? `echo "LEASE ${slot}"` : ':',
+      `exit ${code}`,
+      '',
+    ].join('\n'),
+  );
+  return { cmd: `sh ${script}`, slot };
+}
+
+test('lease: a FULL run holds its slot while its gates run and removes it at exit, passed, failed or refused', () => {
+  const dir = path.join(tmp('run-gates-leases-'), 'leases');
+  const seen = path.join(tmp('run-gates-seen-'), 'seen');
+  const l = leaser(dir);
+  const env = { HARNESS_LEASE_DIR: dir };
+  const pass = runCopy([`gate t always 'cat ${l.slot} > ${seen}'`], ['--no-cache'], { admit: l.cmd, env });
+  assert.equal(pass.status, 0, pass.stdout + pass.stderr);
+  assert.ok(pass.lines.includes(`LEASE ${l.slot}`), pass.stdout);
+  assert.match(fs.readFileSync(seen, 'utf8'), /^\{"pid":[1-9][0-9]*,/, 'the gate ran without the slot');
+  assert.ok(!fs.existsSync(l.slot), 'a passing run left its slot');
+  const fail = runCopy(["gate t always 'exit 1'"], ['--no-cache'], { admit: l.cmd, env });
+  assert.equal(fail.status, 1, fail.stdout + fail.stderr);
+  assert.ok(!fs.existsSync(l.slot), 'a failing run left its slot');
+  const refused = runCopy(["gate t always 'true'"], ['--no-cache'], { admit: leaser(dir, { code: 1 }).cmd, env });
+  assert.equal(refused.status, 97, refused.stdout + refused.stderr);
+  assert.ok(!fs.existsSync(l.slot), 'a refused run left its slot');
+});
+
+test('lease: a slot naming this run that admission never printed is removed; one naming another pid is left', () => {
+  const dir = path.join(tmp('run-gates-leases-'), 'leases');
+  const l = leaser(dir, { print: false });
+  fs.mkdirSync(dir, { recursive: true });
+  const other = path.join(dir, 'slot-2');
+  fs.writeFileSync(other, '{"pid":1,"top":"/repo/ledger","at":"2026-01-15T09:00:00Z"}\n');
+  const r = runCopy(["gate t always 'true'"], ['--no-cache'], { admit: l.cmd, env: { HARNESS_LEASE_DIR: dir } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!fs.existsSync(l.slot), 'the unprinted slot naming this run was left');
+  assert.ok(fs.existsSync(other), "another run's slot was removed");
+});
+
+test('lease: TERM during a gate removes the slot', () => {
+  const dir = path.join(tmp('run-gates-leases-'), 'leases');
+  const started = path.join(tmp('run-gates-started-'), 'started');
+  const l = leaser(dir);
+  const out = path.join(tmp('run-gates-out-'), 'out');
+  const r = runCopy([`gate t always 'touch ${started}; sleep 30'`], ['--no-cache'], { admit: l.cmd, env: { HARNESS_LEASE_DIR: dir }, out: [out, out] });
+  try {
+    waitFor(started);
+    assert.ok(fs.existsSync(l.slot));
+    r.child.kill('SIGTERM');
+    const end = Date.now() + 15000;
+    while (fs.existsSync(l.slot) && Date.now() < end) sleepMs(50);
+    assert.ok(!fs.existsSync(l.slot), `TERM left the slot: ${fs.readFileSync(out, 'utf8')}`);
+  } finally {
+    r.child.kill('SIGKILL');
+  }
 });
 
 test('lock: a run promoted to FULL after a lock wait takes the FULL lock, so a later FULL run waits for it', async () => {

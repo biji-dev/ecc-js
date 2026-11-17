@@ -104,8 +104,12 @@
 #   none) the signals go to the gate's pid alone, never to run-gates' own group.
 # Admission: a FULL run only (a scoped run is never held), after the cache check and before the lock
 #   (so a run waiting on the machine holds no lock, and one waiting on the lock waits only for the
-#   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --top <repo top>` runs ([B]
-#   ADMIT, scripts/lib/admission.mjs: memory, disk and load). Its stdout is passed through once it
+#   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --holder <run-gates' pid> --top
+#   <repo top>` runs ([B] ADMIT, scripts/lib/admission.mjs: memory, disk, load and the host lease, one of
+#   LEASE_SLOTS slot files in ~/.harness/leases, HARNESS_LEASE_DIR overrides, printed `LEASE <path>`;
+#   with every slot held by a live run it waits as for memory). The EXIT trap removes the slot (the one
+#   printed and any naming this pid), and a run a wait turns scoped removes it then: a scoped run never
+#   holds one; a slot whose run died is taken over by the next. Its stdout is passed through once it
 #   ends (`ADMISSION ...`, after a wait `MACHINE WAIT <ISO> → <ISO> <reason>`; never part of a cache
 #   record); its stderr goes straight through. It runs in the background under `wait`, in a process
 #   group of its own (`set -m`), so INT or TERM ends the run at once: the group gets TERM (a compound
@@ -115,7 +119,7 @@
 #   included) is passed through. A non-zero exit prints "NOT ADMITTED (exit <n>)" and exits 97. After
 #   a wait the changed files, the mode, the variant and the tree are worked out again and the cache
 #   is read again, as after a lock wait. A cache hit never runs it. After a lock wait that is not a
-#   cache hit, a FULL run runs it once more, given `--wait 0 --top <repo top>`, while it holds the
+#   cache hit, a FULL run runs it once more, given `--wait 0 --holder <pid> --top <repo top>`, while it holds the
 #   lock: the machine may have gone short meanwhile; a refusal exits 97 (the EXIT trap releases the
 #   lock); it never waits for the machine holding the lock. So an ADMIT override must not fix its
 #   own --wait (the CLI refuses a repeated flag: exit 2, so 97).
@@ -558,16 +562,20 @@ stop_admit() {
   ADMIT_OUT=""
   return 0
 }
-# Runs $ADMIT_CMD given "$@" and --top <repo top>, in the background under wait (a trap interrupts wait,
-# and the INT or TERM trap stops it), in a process group of its own (set -m: the group id is its pid).
-# Passes its stdout through once it ends and keeps it in ADMIT_TEXT; a non-zero exit prints NOT ADMITTED
-# (exit <n>) and exits 97. Its lines go through echo, never emit, so no record carries a wait.
+# Runs $ADMIT_CMD given "$@", --holder <this run's pid> and --top <repo top>, in the background under wait
+# (a trap interrupts wait, and the INT or TERM trap stops it), in a process group of its own (set -m: the
+# group id is its pid). Passes its stdout through once it ends and keeps it in ADMIT_TEXT, and the slot
+# its `LEASE <path>` line names in LEASE_PATH; a non-zero exit prints NOT ADMITTED (exit <n>) and exits 97.
+# Its lines go through echo, never emit, so no record carries a wait.
 ADMIT_TEXT=""
+LEASE_PATH=""
+LEASE_ASKED=0
 run_admission() {
-  local rc=0
+  local rc=0 l
   ADMIT_OUT=$(mktemp "${TMPDIR:-/tmp}/run-gates-admit.XXXXXX") || usage "cannot create a temp file for the admission output"
+  LEASE_ASKED=1
   set -m
-  bash -c "$ADMIT_CMD \"\$@\"" admit "$@" --top "$TOP" </dev/null >"$ADMIT_OUT" &
+  bash -c "$ADMIT_CMD \"\$@\"" admit "$@" --holder "$$" --top "$TOP" </dev/null >"$ADMIT_OUT" &
   ADMIT_PID=$!
   set +m
   wait "$ADMIT_PID" || rc=$?
@@ -576,6 +584,8 @@ run_admission() {
   rm -f "$ADMIT_OUT"
   ADMIT_OUT=""
   [ -z "$ADMIT_TEXT" ] || printf '%s\n' "$ADMIT_TEXT"
+  l=$(printf '%s\n' "$ADMIT_TEXT" | sed -n 's/^LEASE //p' | tail -n 1)
+  [ -z "$l" ] || LEASE_PATH=$l
   if [ "$rc" -ne 0 ]; then
     echo "NOT ADMITTED (exit $rc)"
     exit 97
@@ -636,7 +646,19 @@ on_signal() {
   end_gate
   exit "$1"
 }
-trap 'remove_snapshot; release_lock' EXIT
+# Removes the host lease slot this run holds: the one the admission named, and any slot in the lease dir
+# that names this run's pid (an admission stopped after it took one). A slot naming another pid is left.
+release_lease() {
+  local f
+  [ "$LEASE_ASKED" -eq 1 ] || return 0
+  for f in "$LEASE_PATH" "${HARNESS_LEASE_DIR:-${HOME:-/nonexistent}/.harness/leases}"/slot-*; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    if grep -Eq "\"pid\":$$[,}]" "$f" 2>/dev/null; then rm -f "$f"; fi
+  done
+  LEASE_PATH=""
+  return 0
+}
+trap 'remove_snapshot; release_lock; release_lease' EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
@@ -802,6 +824,8 @@ admit_full() {
   else
     compute_scope
   fi
+  # A scoped run never holds a lease: the wait may have turned this one scoped.
+  [ "$MODE" = full ] || release_lease
 }
 
 # Sets LOCK_DIR to the lock of MODE_ID, the mode the run is in now (unchanged when it cannot be hashed).
@@ -881,6 +905,7 @@ if [ "$CACHE_ON" -eq 1 ]; then
         # The mode changed (a scoped run promoted to FULL, or back): the lock held is the other
         # mode's. Released; then admission (a FULL run's), the new mode's lock and these checks again.
         release_lock
+        [ "$MODE" = full ] || release_lease
         admit_full
         continue
       fi
@@ -1120,17 +1145,17 @@ EOF
 # Prints gate $1's SKIP line and returns 0 when this run skips it: a full-only gate in a scoped run,
 # or a paths gate the paths decision skips (with PRODUCT_PATHS empty a paths gate is a full one).
 skip_line() {
-  local gm=${GATE_MODES[$1]}
-  if [ "$gm" = paths ]; then
+  local gmode=${GATE_MODES[$1]}
+  if [ "$gmode" = paths ]; then
     case "$PATHS_DECISION" in
       skip)
         echo "SKIP ${GATE_NAMES[$1]} (no path outside PRODUCT_PATHS changed since ${PATHS_BASE:0:12})"
         return 0
         ;;
-      off) gm=full ;;
+      off) gmode=full ;;
     esac
   fi
-  if [ "$MODE" = scoped ] && [ "$gm" = full ]; then
+  if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then
     echo "SKIP ${GATE_NAMES[$1]} (full only)"
     return 0
   fi
@@ -1139,7 +1164,7 @@ skip_line() {
 # Runs gate $1 (its index) once, its output in log $2: the gate and its watchdog in a process group of
 # their own, under wait, so a trap can stop them. Sets G_SECS and G_WHY ("" = it passed).
 launch_gate() {
-  local mark="$2.timeout" t0 rc=0
+  local logfile=$2 rx=${GATE_RXS[$1]} mark="$2.timeout" t0 rc=0
   rm -f "$mark"
   t0=$SECONDS
   set -m
@@ -1160,7 +1185,7 @@ launch_gate() {
     G_WHY="timeout after ${GATE_TIMEOUT_S}s"
   elif [ "$rc" -ne 0 ]; then
     G_WHY="exit $rc"
-  elif [ -n "${GATE_RXS[$1]}" ] && ! strip_csi <"$2" | grep -Eq -- "${GATE_RXS[$1]}"; then
+  elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
     G_WHY="no count line matched"
   fi
 }

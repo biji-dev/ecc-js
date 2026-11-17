@@ -578,9 +578,9 @@ test('gate_counted: colour codes are stripped before the regex is matched', () =
   const r = run(makeRepo(withGates(SOURCE, gates)), []);
   assert.strictEqual(r.status, 0, r.stdout + r.stderr);
   assert.ok(/^PASS t /.test(r.lines[1]), r.stdout);
-  const from = 'strip_csi <"$2" |';
+  const from = 'strip_csi <"$logfile" |';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
-  const m = run(makeRepo(withGates(SOURCE.replace(from, 'cat "$2" |'), gates)), []);
+  const m = run(makeRepo(withGates(SOURCE.replace(from, 'cat "$logfile" |'), gates)), []);
   assert.strictEqual(m.status, 1, 'the mutant matches against the escapes: ' + m.stdout);
 });
 
@@ -1349,9 +1349,9 @@ test('--snapshot: the worktree and its temp dir are gone after a FAIL and after 
       // already gone
     }
   }
-  const from = "trap 'remove_snapshot; release_lock' EXIT";
+  const from = "trap 'remove_snapshot; release_lock; release_lease' EXIT";
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
-  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, 'trap release_lock EXIT'));
+  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, "trap 'release_lock; release_lease' EXIT"));
   run(kept, ['--snapshot']);
   const left = path.dirname(fs.readFileSync(where, 'utf8').trim());
   assert.ok(fs.existsSync(left), 'the mutant leaves the snapshot behind');
@@ -1448,7 +1448,7 @@ test('mutant that stops after the first FAIL no longer runs later gates', () => 
 });
 
 test('mutant that ignores the count regex lets a zero-test runner PASS', () => {
-  const from = '! strip_csi <"$2" | grep -Eq -- "${GATE_RXS[$1]}"';
+  const from = '! strip_csi <"$logfile" | grep -Eq -- "$rx"';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
   const mutant = SOURCE.replace(from, 'false');
   assert.notStrictEqual(mutant, SOURCE, 'mutation applied');

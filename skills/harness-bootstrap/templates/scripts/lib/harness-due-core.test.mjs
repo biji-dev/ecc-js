@@ -24,6 +24,7 @@ import {
   DISK_MIN_GB,
   FOLLOW_UPS,
   KINDS,
+  LIVE_REF,
   LOG,
   MAIN,
   OWED_DAYS,
@@ -48,6 +49,7 @@ import {
   isHarnessMerge,
   isHarnessUnit,
   lastReadOf,
+  liveRef,
   markDigestRead,
   markSeen,
   matchReports,
@@ -62,6 +64,9 @@ import {
   registryWorktrees,
   reportShape,
   splitItems,
+  parseCommitTimes,
+  undeployedLands,
+  undeployedLine,
   waitDue,
   worktreesDue,
 } from './harness-due-core.mjs';
@@ -918,11 +923,61 @@ test('formatClaim prints only what blocks the claim: the wait and the opening pr
   assert.equal(formatClaim(parts), 'harness-due: nothing due\n');
 });
 
+test('liveRef: the env var wins over the binding, blank or unset falls back to it, an option-like value is none', () => {
+  assert.equal(liveRef({ HARNESS_LIVE_REF: 'refs/tags/live' }), 'refs/tags/live');
+  assert.equal(liveRef({ HARNESS_LIVE_REF: '  deploy  ' }), 'deploy');
+  assert.equal(liveRef({ HARNESS_LIVE_REF: '--all' }), null);
+  assert.equal(liveRef({ HARNESS_LIVE_REF: '' }), LIVE_REF);
+  assert.equal(liveRef({}), LIVE_REF);
+  assert.equal(liveRef(), LIVE_REF);
+});
+
+test('undeployedLands: the count and the oldest one in whole days; none for no merges, a bad time is skipped', () => {
+  assert.equal(undeployedLands([], NOW), null);
+  assert.equal(undeployedLands(undefined, NOW), null);
+  assert.equal(undeployedLands([Number.NaN], NOW), null);
+  assert.deepEqual(undeployedLands([NOW - 3 * DAY - HOUR, NOW - HOUR, Number.NaN], NOW), { lands: 2, oldestDays: 3 });
+  assert.deepEqual(undeployedLands([NOW - HOUR], NOW), { lands: 1, oldestDays: 0 });
+  assert.deepEqual(undeployedLands([NOW - 2.6 * DAY], NOW), { lands: 1, oldestDays: 2 }, 'whole days are rounded down: 2.6 days is day 2');
+  assert.deepEqual(undeployedLands([NOW + DAY], NOW), { lands: 1, oldestDays: 0 }, 'a merge dated ahead of the clock is day 0, never negative');
+});
+
+test('parseCommitTimes: a `%ct` line per record; a line that is no time (a signature line git printed first) is counted, not read', () => {
+  assert.deepEqual(parseCommitTimes('1700000000\n1700086400\n'), { times: [1700000000000, 1700086400000], unparsed: 0 });
+  assert.deepEqual(parseCommitTimes('\n\n'), { times: [], unparsed: 0 });
+  assert.deepEqual(parseCommitTimes(undefined), { times: [], unparsed: 0 });
+  assert.deepEqual(parseCommitTimes('gpg: Signature made Mon\n1700000000\nGood "git" signature with ED25519 key\n1700086400\n'), { times: [1700000000000, 1700086400000], unparsed: 2 });
+});
+
+test('undeployedLine: `N lands not deployed (oldest D days)`, the words always plural, empty for none', () => {
+  assert.equal(undeployedLine({ lands: 3, oldestDays: 12 }), '3 lands not deployed (oldest 12 days)');
+  assert.equal(undeployedLine({ lands: 1, oldestDays: 1 }), '1 lands not deployed (oldest 1 days)');
+  assert.equal(undeployedLine({ lands: 2, oldestDays: 0 }), '2 lands not deployed (oldest 0 days)');
+  assert.equal(undeployedLine(null), '');
+});
+
+test('the undeployed line prints after ASK and before the digest, only when lands are past the live ref', () => {
+  const facts = { now: NOW, claim: null, owner: false, top: '/x', log: null, followUps: null, reports: {}, merges: [], disk: null, worktrees: [] };
+  const some = dueParts({ ...facts, undeployed: [NOW - 2 * DAY, NOW - DAY] });
+  assert.deepEqual(some.undeployed, { lands: 2, oldestDays: 2 });
+  const lines = formatDue(some).split('\n');
+  const at = lines.indexOf('2 lands not deployed (oldest 2 days)');
+  assert.ok(at > 0, lines.join('\n'));
+  assert.match(lines[at - 1], /^ASK /);
+  assert.match(lines[at + 1], /^DIGEST /);
+  const none = dueParts({ ...facts, undeployed: [] });
+  assert.equal(none.undeployed, null);
+  assert.doesNotMatch(formatDue(none), /not deployed/);
+  assert.doesNotMatch(formatDue(dueParts(facts)), /not deployed/);
+  assert.doesNotMatch(formatClaim(some), /not deployed/, 'a claim hears only what blocks it');
+});
+
 // ---- the wrapper, in a temp repo with dated commits and a temp --home
 
 function cleanEnv(extra = {}) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  delete env.HARNESS_LIVE_REF;
   return { ...env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', HOME: tmpDir('harness-due-home-'), ...extra };
 }
 
@@ -971,8 +1026,8 @@ const RUN_NOW = new Date(Date.UTC(2026, 9, 18 + SWEEP_DAYS, 12)).toISOString();
 const dayOf = (n) => new Date(Date.UTC(2026, 9, n)).toISOString().slice(0, 10);
 const DUE_SWEEP = new RegExp(`^REPORT sweep — ${SWEEP_DAYS} d, 5 landings since .*2026-10-18.* — `, 'm');
 
-function run(f, args, cwd = f.repo) {
-  return spawnSync(process.execPath, [RUNNER, '--now', RUN_NOW, '--home', f.home, ...args], { cwd, env: cleanEnv(), encoding: 'utf8' });
+function run(f, args, cwd = f.repo, env = {}) {
+  return spawnSync(process.execPath, [RUNNER, '--now', RUN_NOW, '--home', f.home, ...args], { cwd, env: cleanEnv(env), encoding: 'utf8' });
 }
 
 test('the wrapper: claiming the row that opens a phase with no preflight stops with exit 1; a phase under way is no line of a claim', () => {
@@ -1370,6 +1425,59 @@ test('the wrapper: a held row whose local branch is past SPLIT_LINES production 
   ]);
   assert.doesNotMatch(res.stdout, /nothing due/);
   assert.deepEqual(JSON.parse(run(f, ['--json']).stdout).split, [{ unit: 'P2-16', branch: 'task/big', lines: SPLIT_LINES + 1, cap: SPLIT_LINES }]);
+});
+
+test('the wrapper: HARNESS_LIVE_REF counts the mainline merges past it; no ref, a ref at the tip or one that does not resolve prints no line', () => {
+  const f = fixture();
+  f.git(['tag', 'live']);
+  const land = (name, date) => {
+    f.git(['checkout', '-q', '-b', name, MAIN]);
+    f.write(`src/${name}.js`, 'x\n');
+    f.git(['add', '.']);
+    f.git(['commit', '-q', '-m', name], date);
+    f.git(['checkout', '-q', MAIN]);
+    f.git(['merge', '-q', '--no-ff', '-m', `Merge branch '${name}'`, name], date);
+  };
+  land('feat-a', '2026-10-22T10:00:00Z');
+  land('feat-b', '2026-10-24T10:00:00Z');
+  const oldest = Math.floor((Date.parse(RUN_NOW) - Date.parse('2026-10-22T10:00:00Z')) / DAY);
+  const line = `2 lands not deployed (oldest ${oldest} days)`;
+  const withRef = run(f, [], f.repo, { HARNESS_LIVE_REF: 'live' });
+  assert.equal(withRef.status, 0, withRef.stderr);
+  assert.ok(withRef.stdout.split('\n').includes(line), withRef.stdout);
+  assert.deepEqual(JSON.parse(run(f, ['--json'], f.repo, { HARNESS_LIVE_REF: 'live' }).stdout).undeployed, { lands: 2, oldestDays: oldest });
+  assert.doesNotMatch(run(f, []).stdout, /not deployed/, 'no ref bound: no line');
+  assert.equal(JSON.parse(run(f, ['--json']).stdout).undeployed, null);
+  f.git(['tag', 'tip']);
+  assert.doesNotMatch(run(f, [], f.repo, { HARNESS_LIVE_REF: 'tip' }).stdout, /not deployed/, 'production is at the tip');
+  const missing = run(f, [], f.repo, { HARNESS_LIVE_REF: 'no-such-ref' });
+  assert.equal(missing.status, 0, missing.stderr);
+  assert.doesNotMatch(missing.stdout, /not deployed/, 'an unresolvable ref is no line, never a failure');
+  assert.doesNotMatch(run(f, ['--claim', ROW(1, 9)], f.repo, { HARNESS_LIVE_REF: 'live' }).stdout, /not deployed/, 'a claim prints only what blocks it');
+});
+
+const hasSshKeygen = spawnSync('ssh-keygen', ['-?'], { encoding: 'utf8' }).error === undefined;
+
+test('the wrapper: signed merges count under log.showSignature=true (git prints the signature lines ahead of each record), and warn of none', (t) => {
+  if (!hasSshKeygen) return t.diagnostic('ssh-keygen is not installed: no signed commit to try, the case passes unrun');
+  const f = fixture();
+  const keyDir = tmpDir('harness-due-key-');
+  const key = path.join(keyDir, 'key');
+  assert.equal(spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key], { encoding: 'utf8' }).status, 0);
+  fs.writeFileSync(path.join(keyDir, 'allowed'), `t@t ${fs.readFileSync(`${key}.pub`, 'utf8')}`);
+  for (const [k, v] of [['gpg.format', 'ssh'], ['user.signingkey', `${key}.pub`], ['gpg.ssh.allowedSignersFile', path.join(keyDir, 'allowed')], ['log.showSignature', 'true']]) f.git(['config', k, v]);
+  f.git(['tag', 'live']);
+  f.git(['checkout', '-q', '-b', 'feat-s', MAIN]);
+  f.write('src/s.js', 'x\n');
+  f.git(['add', '.']);
+  f.git(['commit', '-q', '-S', '-m', 'feat-s'], '2026-10-22T10:00:00Z');
+  f.git(['checkout', '-q', MAIN]);
+  f.git(['merge', '-q', '--no-ff', '-S', '-m', "Merge branch 'feat-s'", 'feat-s'], '2026-10-22T10:00:00Z');
+  assert.doesNotMatch(f.git(['log', '-1', '--format=%H']), /^[0-9a-f]{40}\n/, 'the repository config makes git print the signature lines ahead of each record');
+  const res = run(f, [], f.repo, { HARNESS_LIVE_REF: 'live' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(res.stdout.split('\n').some((l) => /^1 lands not deployed \(oldest \d+ days\)$/.test(l)), res.stdout);
+  assert.doesNotMatch(res.stderr, /WARN/);
 });
 
 test('the wrapper exits 2 with a usage line on a bad flag and outside a repository', () => {

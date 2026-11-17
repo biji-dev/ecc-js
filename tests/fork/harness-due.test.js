@@ -18,7 +18,7 @@ const CLI_REL = 'harness-due.mjs';
 const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 55;
+const EXPECTED_TESTS = 62;
 
 let passed = 0;
 let failed = 0;
@@ -156,6 +156,7 @@ const INSTALL = [
   [DUE_CORE, "export const STATE_DIR = 'docs/plans';", "export const STATE_DIR = '.claude/plans';"],
   [DUE_CORE, 'export const OWED_DAYS = 3;', 'export const OWED_DAYS = 5;'],
   [DUE_CORE, 'export const DIGEST_LINES = 5;', 'export const DIGEST_LINES = 12;'],
+  [DUE_CORE, 'export const LIVE_REF = null;', "export const LIVE_REF = 'refs/tags/live-prod';"],
   [DUE_CORE, 'export const SPLIT_LINES = 10000;', 'export const SPLIT_LINES = 4000;'],
   [DUE_CORE, 'export const DISK_MIN_GB = 10;', 'export const DISK_MIN_GB = 40;'],
   [DUE_CORE, 'export const WORKTREE_IDLE_HOURS = 6;', 'export const WORKTREE_IDLE_HOURS = 72;'],
@@ -216,6 +217,7 @@ console.log(JSON.stringify({
   stateDir: c.STATE_DIR,
   owed: c.OWED_DAYS,
   digestLines: c.DIGEST_LINES,
+  liveRef: [c.LIVE_REF, c.liveRef({}), c.liveRef({ HARNESS_LIVE_REF: 'deploy' })],
   gone: ['VALVE_ITEMS', 'VALVE_DAYS', 'valve', 'HOLD_COMMAND'].filter((k) => k in c),
   split: c.SPLIT_LINES,
   commands: { sweep: c.COMMANDS.sweep, retro: c.COMMANDS.retro, hygiene: c.COMMANDS.hygiene, p3: c.COMMANDS.p3 ?? null, proposals: c.COMMANDS.proposals ?? null },
@@ -246,6 +248,7 @@ console.log(JSON.stringify({
   assert.strictEqual(got.stateDir, 'docs/plans', 'the template STATE_DIR');
   assert.strictEqual(got.owed, 3, 'the template OWED_DAYS');
   assert.strictEqual(got.digestLines, 5, 'the template DIGEST_LINES');
+  assert.deepStrictEqual(got.liveRef, [null, null, 'deploy'], 'the template LIVE_REF: unbound, and the env var HARNESS_LIVE_REF names it');
   assert.deepStrictEqual(got.gone, [], 'the valve is gone: no VALVE_ITEMS, VALVE_DAYS, valve or HOLD_COMMAND');
   assert.strictEqual(got.split, 10000, 'the template SPLIT_LINES');
   assert.deepStrictEqual(
@@ -330,6 +333,10 @@ mutantFails('reading a fast-forwarded branch as one cut and never started', 'con
 mutantFails('moving a seen week backward', "if (!(typeof out[project] === 'string' && out[project] >= week)) out[project] = week;", 'out[project] = week;');
 mutantFails('ignoring a report no commit holds yet', 'return time === null ? [] : [{ rel: r.rel, time, pending: true }];', 'return [];', CLI_REL);
 mutantFails("counting a landed branch's merge of the mainline as a landing", "'--merges', '--first-parent', ", "'--merges', ", CLI_REL);
+mutantFails('rounding the oldest undeployed land up instead of down', 'Math.floor((now - Math.min(...t)) / DAY)', 'Math.round((now - Math.min(...t)) / DAY)');
+mutantFails('leaving --no-show-signature off the undeployed lands\' log', "['log', '--no-show-signature', '--merges', '--first-parent', '--format=%ct', ", "['log', '--merges', '--first-parent', '--format=%ct', ", CLI_REL);
+mutantFails('reading a line that is no commit time as one', '/^\\d+$/.test(line.trim())', 'true');
+mutantFails('not counting a line that is no commit time', 'else unparsed += 1;', '');
 mutantFails('dating a line not committed yet by the time of the blame', 'committed ? time : null', 'time', GATHER_REL);
 mutantFails('counting every merge subject as naming a function-bound phase', '.some((token) => phaseOf(token, pattern)?.toLowerCase() === phase.toLowerCase())', '.some(() => true)');
 mutantFails('reading only separator-joined words of a merge subject as ids', 'const ID_TOKEN = /[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/g;', 'const ID_TOKEN = /[A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)+/g;');
@@ -544,6 +551,62 @@ test('CLI: a committed report rewritten and not committed yet is pending: its fi
   git('2026-11-05T06:30:00Z', 'add', rel);
   assert.doesNotMatch(run('--now', now).stdout, /^REPORT sweep/m, 'a staged rewrite is pending too');
 });
+
+const hasSshKeygen = spawnSync('ssh-keygen', ['-?'], { encoding: 'utf8' }).error === undefined;
+
+/**
+ * Signed merges past a live tag, in a repository whose config has log.showSignature=true (git then prints signature
+ * lines ahead of each log record). The digest must count them and say nothing on stderr. The repository's own config
+ * carries the setting: the CLI's git runs with no GIT_* variable, so GIT_CONFIG_* could not reach it. Run against the CLI
+ * at `cli`, so a mutated copy can fail it.
+ */
+function signedMergesScenario(cli) {
+  const { repo, home } = cliRepo({ 'docs/harness/log.md': SMOKE_LOG }, '2026-11-01T10:00:00Z');
+  const keyDir = tmp('harness-due-key-');
+  cleanup.push(keyDir);
+  const key = path.join(keyDir, 'key');
+  assert.strictEqual(spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key], { encoding: 'utf8' }).status, 0);
+  fs.writeFileSync(path.join(keyDir, 'allowed'), `t@t ${fs.readFileSync(`${key}.pub`, 'utf8')}`);
+  const date = '2026-11-04T10:00:00Z';
+  const env = hermeticEnv(cleanup, { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo, env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  for (const [k, v] of [['gpg.format', 'ssh'], ['user.signingkey', `${key}.pub`], ['gpg.ssh.allowedSignersFile', path.join(keyDir, 'allowed')], ['log.showSignature', 'true']]) git('config', k, v);
+  git('tag', 'live');
+  git('checkout', '-q', '-b', 'feat-s');
+  fs.writeFileSync(path.join(repo, 's.txt'), 's\n');
+  git('add', '.');
+  git('commit', '-q', '-S', '-m', 'feat s');
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--no-ff', '-S', '-m', "Merge branch 'feat-s'", 'feat-s');
+  assert.doesNotMatch(git('log', '-1', '--format=%ct'), /^\d+\n$/, 'the repository config makes git print signature lines ahead of each record');
+  const res = spawnSync(process.execPath, [cli, '--home', home, '--now', '2026-11-05T10:00:00Z'], { cwd: repo, env: { ...env, HARNESS_LIVE_REF: 'live' }, encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^1 lands not deployed \(oldest 1 days\)$/m);
+  assert.strictEqual(res.stderr, '');
+}
+
+if (hasSshKeygen) {
+  test('CLI: signed merges under log.showSignature=true are counted as undeployed lands, with nothing on stderr', () => {
+    signedMergesScenario(path.join(SCRIPTS, CLI_REL));
+  });
+  test('mutant: leaving --no-show-signature off the undeployed lands\' log makes the signed-merge scenario fail', () => {
+    const copy = tmp('harness-due-cli-mutant-');
+    cleanup.push(copy);
+    fs.cpSync(SCRIPTS, copy, { recursive: true });
+    const file = path.join(copy, CLI_REL);
+    const needle = "['log', '--no-show-signature', '--merges', '--first-parent', '--format=%ct', ";
+    const before = fs.readFileSync(file, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, `${needle} is not in ${CLI_REL} exactly once`);
+    fs.writeFileSync(file, before.replace(needle, () => "['log', '--merges', '--first-parent', '--format=%ct', "));
+    assert.throws(() => signedMergesScenario(file), 'the scenario still passed');
+  });
+} else {
+  console.log('  - skipped the signed-merge cases: ssh-keygen is not installed, so there is no commit to sign (the CLI flag is unpinned on this machine)');
+}
 
 for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true });
 

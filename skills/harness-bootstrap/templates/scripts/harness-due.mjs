@@ -18,7 +18,8 @@
  *   --owner        the owner's word for a harness claim: skip the WAIT check, nothing else
  *   --json         { due: [{ kind, subject, why, command, blocking }], blocking, held, inbox: [{ unit, gate,
  *                  parked, branch, worktree, cards, command }], owed: [{ id, since, what }], split: [{ unit,
- *                  branch, lines, cap }], ask: { ask, demoted, promoted, ignored }, digest: { unread, lines } }
+ *                  branch, lines, cap }], ask: { ask, demoted, promoted, ignored }, digest: { unread, lines },
+ *                  undeployed: { lands, oldestDays } | null }
  *                  instead of lines; with --claim it still carries every part
  *   --now <ISO>    the time to check against (default now)
  *   --home <dir>   the directory holding .agents/harness (default the home directory): the machine
@@ -38,7 +39,8 @@
  * SPLIT or REPORT line; while the manifest (MANIFEST) says `"stage": "foundation"`, one `HELD <kinds> — …` line; the
  * `ASK <kinds> — <why>` line, from every STATE_DIR/*.state.md at MAIN; and the digest block, `DIGEST
  * <n> unread since <last read>`, the newest DIGEST_LINES unread grant and default decisions and merged
- * log rows, and the disk and worktrees checks; nothing blocks on it, and --digest-read marks it read. An inbox line never changes the exit code, and a registry that is missing
+ * log rows, and the disk and worktrees checks, preceded by `<n> lands not deployed (oldest <d> days)`
+ * when LIVE_REF (or the env var HARNESS_LIVE_REF) names a ref that resolves and the mainline has merges past it; nothing blocks on it, and --digest-read marks it read. An inbox line never changes the exit code, and a registry that is missing
  * or unreadable prints none; a missing or unreadable manifest holds nothing. A worktree a registry row
  * names, held or parked, is never listed. It reads files and git (`log`, `blame`, `worktree list`,
  * `merge-base`, `rev-list`, `reflog`, `status`, `ls-tree`, `cat-file`, `rev-parse`, `diff`) and writes
@@ -64,11 +66,13 @@ import {
   heldBranches,
   inboxLines,
   lastReadOf,
+  liveRef,
   markDigestRead,
   markSeen,
   matchReports,
   parkedUnits,
   parseArgs,
+  parseCommitTimes,
   parseWorktrees,
   projectName,
   reportShape,
@@ -208,10 +212,23 @@ function mainCheckout(top) {
  * First-parent only: a landed branch that merged the mainline into itself is one landing, not two.
  */
 function readMerges(top) {
-  return (git(['log', '--merges', '--first-parent', '--format=%ct%x09%s', MAIN], top) ?? '').split('\n').flatMap((line) => {
+  return (git(['log', '--no-show-signature', '--merges', '--first-parent', '--format=%ct%x09%s', MAIN], top) ?? '').split('\n').flatMap((line) => {
     const tab = line.indexOf('\t');
     return tab === -1 ? [] : [{ t: Number(line.slice(0, tab)) * 1000, subject: line.slice(tab + 1) }];
   });
+}
+
+/**
+ * The mainline's merges past the live ref (`LIVE_REF..MAIN`, first-parent), as their times in ms: the
+ * lands production does not have yet. [] without a ref, when it does not resolve to a commit, or when
+ * git fails: no line, never a failure.
+ */
+function readUndeployed(top, ref) {
+  if (ref === null || git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], top) === null) return [];
+  // --no-show-signature: log.showSignature=true prints signature lines ahead of each record, which would not read as a time
+  const { times, unparsed } = parseCommitTimes(git(['log', '--no-show-signature', '--merges', '--first-parent', '--format=%ct', `${ref}..${MAIN}`], top));
+  if (unparsed > 0) process.stderr.write(`harness-due: WARN ${unparsed} log lines past ${ref} were no commit time and were left out of the count\n`);
+  return times;
 }
 
 /**
@@ -228,7 +245,7 @@ function readWorktrees(top) {
     mainline ??= new Set((git(['rev-list', '--first-parent', MAIN], top) ?? '').split('\n').filter(Boolean));
     const moved = w.branch ? (git(['reflog', 'show', '-n', '2', '--format=%H', `refs/heads/${w.branch}`, '--'], top) ?? '').trim().split('\n').filter(Boolean).length > 1 : false;
     const own = merged && (!mainline.has(w.head) || moved);
-    const commit = Number(git(['log', '-1', '--format=%ct', w.head], top)?.trim()) * 1000;
+    const commit = Number(git(['log', '--no-show-signature', '-1', '--format=%ct', w.head], top)?.trim()) * 1000;
     // the worktree's own reflog moves at every commit, checkout and reset in it; its .git file at creation
     const gitdir = /^gitdir:\s*(.+)$/m.exec(fs.existsSync(path.join(w.path, '.git')) ? fs.readFileSync(path.join(w.path, '.git'), 'utf8') : '')?.[1];
     const times = [commit, mtime(path.join(w.path, '.git')), gitdir ? mtime(path.join(path.resolve(w.path, gitdir), 'logs', 'HEAD')) : null];
@@ -404,15 +421,16 @@ function main() {
       ...readDecisions(top),
       lastRead: lastReadOf(readJson(readFile), project),
       splits: readSplits(top, registryText),
+      undeployed: readUndeployed(top, liveRef(process.env)),
     };
     parts = dueParts(facts);
   } catch (e) {
     return usage(e.message);
   }
-  const { items, owed, split, ask, digest, held } = parts;
+  const { items, owed, split, ask, digest, held, undeployed } = parts;
   const blocking = items.filter((i) => i.blocking).length;
   const text = args.claim === null ? formatDue({ ...parts, inbox: inboxLines(registryText) }) : formatClaim(parts);
-  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, held, inbox: parkedUnits(registryText), owed, split, ask, digest }, null, 2)}\n` : text);
+  process.stdout.write(args.json ? `${JSON.stringify({ due: items, blocking, held, inbox: parkedUnits(registryText), owed, split, ask, digest, undeployed }, null, 2)}\n` : text);
   if (blocking) process.exitCode = 1;
 }
 

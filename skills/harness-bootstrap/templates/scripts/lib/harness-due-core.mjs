@@ -75,6 +75,9 @@ export const STATE_DIR = 'docs/plans';
 export const OWED_DAYS = 3;
 // [B] The digest lists at most this many unread items, newest first.
 export const DIGEST_LINES = 5;
+// [B] A git ref naming what production runs (a deploy tag or branch): `N lands not deployed` counts
+// the mainline's merges past it. null: no line. The env var HARNESS_LIVE_REF overrides it per run.
+export const LIVE_REF = null;
 // [B] A held unit's branch past this many production lines (added + deleted against MAIN, docs and
 // tests aside, as review-gate-core's isProduction reads a path) is split.
 export const SPLIT_LINES = 10000;
@@ -554,6 +557,42 @@ export function digest({ rows = [], rowTimes = new Map(), records = [], lastRead
 }
 
 /**
+ * The ref production runs: the env's HARNESS_LIVE_REF, else LIVE_REF; null when neither is set or the
+ * value could be read as an option.
+ */
+export function liveRef(env = {}) {
+  const v = String(env.HARNESS_LIVE_REF ?? '').trim() || LIVE_REF;
+  return v === null || v.startsWith('-') ? null : v;
+}
+
+/**
+ * `git log --format=%ct` output -> { times (ms), unparsed }: one time per line; a line that is no time (a
+ * signature line git printed ahead of a record) is counted in `unparsed`, never read as a time.
+ */
+export function parseCommitTimes(text) {
+  const times = [];
+  let unparsed = 0;
+  for (const line of String(text ?? '').split('\n')) {
+    if (line.trim() === '') continue;
+    if (/^\d+$/.test(line.trim())) times.push(Number(line.trim()) * 1000);
+    else unparsed += 1;
+  }
+  return { times, unparsed };
+}
+
+/** The mainline's merge times (ms) past the live ref -> { lands, oldestDays } (whole days, never negative), or null when there are none. */
+export function undeployedLands(times, now) {
+  const t = (times ?? []).filter(Number.isFinite);
+  if (t.length === 0) return null;
+  return { lands: t.length, oldestDays: Math.max(0, Math.floor((now - Math.min(...t)) / DAY)) };
+}
+
+/** `3 lands not deployed (oldest 2 days)`, the words always plural so the line can be grepped; '' when none. */
+export function undeployedLine(u) {
+  return u ? `${u.lands} lands not deployed (oldest ${u.oldestDays} days)` : '';
+}
+
+/**
  * Each held unit past the cap: `list` is [{ unit, branch, numstat }] (`git diff --numstat --no-renames
  * MAIN...<branch>`), and its production lines are the added and deleted lines of the paths `production`
  * accepts (review-gate-core's isProduction: no docs, no tests) -> [{ unit, branch, lines, cap }].
@@ -577,8 +616,8 @@ export function askLine(r) {
 /**
  * Every part of the report from what the CLI read: checkAll's facts and `decisions` (every state
  * file's decision rows at MAIN), `rowTimes` (`<unit>/<id>` -> the row's commit ms), `lastRead` (ms or
- * null), `splits` ([{ unit, branch, numstat }], the held rows' branches). -> { items, owed, split,
- * ask, digest, held }, as formatDue takes them (the inbox aside: the CLI reads it).
+ * null), `splits` ([{ unit, branch, numstat }], the held rows' branches), `undeployed` (the merge times
+ * in ms past the live ref, or none). -> { items, owed, split, ask, digest, held, undeployed }, as formatDue takes them (the inbox aside: the CLI reads it).
  */
 export function dueParts(f) {
   const items = checkAll(f);
@@ -597,6 +636,7 @@ export function dueParts(f) {
     ask: askKinds(rows),
     digest: d,
     held: heldKinds(f.stage ?? null),
+    undeployed: undeployedLands(f.undeployed, f.now),
   };
 }
 
@@ -608,10 +648,10 @@ const dueLine = (i) => (i.kind === 'wait'
 /**
  * The report, in C7's order: `OWED` lines, the inbox lines (inboxLines), `SPLIT` lines, `DUE` lines (the
  * wait, then the preflight), `REPORT` lines (the cadences), then the all-clear when there is no SPLIT,
- * DUE or REPORT line, the `HELD` line of the foundation stage (heldKinds), the `ASK` line and the digest
- * block. The disk and worktrees items print in the digest only. A part not given prints nothing.
+ * DUE or REPORT line, the `HELD` line of the foundation stage (heldKinds), the `ASK` line, the
+ * `N lands not deployed (oldest D days)` line (undeployedLine, only when N > 0) and the digest block. The disk and worktrees items print in the digest only. A part not given prints nothing.
  */
-export function formatDue({ items = [], owed = [], inbox = [], split = [], ask = null, digest: d = null, held = [] } = {}) {
+export function formatDue({ items = [], owed = [], inbox = [], split = [], ask = null, digest: d = null, held = [], undeployed = null } = {}) {
   const due = items.filter((i) => !REPORT_KINDS.includes(i.kind) && !HOUSEKEEPING.includes(i.kind));
   const reports = items.filter((i) => REPORT_KINDS.includes(i.kind));
   const lines = [
@@ -624,6 +664,7 @@ export function formatDue({ items = [], owed = [], inbox = [], split = [], ask =
   if (!split.length && !due.length && !reports.length) lines.push('harness-due: nothing due');
   if (held.length) lines.push(`HELD ${held.join(', ')} — foundation stage — they wait for the flip`);
   if (ask) lines.push(askLine(ask));
+  if (undeployed) lines.push(undeployedLine(undeployed));
   if (d) lines.push(...d.lines);
   return lines.map((l) => `${l}\n`).join('');
 }

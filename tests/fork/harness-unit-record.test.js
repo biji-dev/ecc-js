@@ -16,7 +16,7 @@ const TEST_REL = path.join('lib', 'unit-record-core.test.mjs');
 const CORE_REL = path.join('lib', 'unit-record-core.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 43;
+const EXPECTED_TESTS = 53;
 
 let passed = 0;
 let failed = 0;
@@ -230,6 +230,15 @@ mutantFails('reading a bare 0 owner wait as unreadable', "if (term === '0') cont
 mutantFails('ignoring the bound log columns', '${columns.map((name) => logCell(name, known)).join', '${LOG_COLUMNS.map((name) => logCell(name, known)).join');
 mutantFails('dropping a batch unit\'s Rows from the Deliverable cell', 'const rows = h.rows ?', 'const rows = false ?');
 mutantFails('ignoring --steps', "if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));", '', 'unit-record.mjs');
+// The Never-auto header: one line is the contract, the categories split outside parentheses, a none can carry a note.
+mutantFails('reading a category from a combined Type / Tier / Never-auto line', " && !(key === 'neverAuto' && keys.length > 1)", '');
+mutantFails('splitting a category list inside a parenthesised note', "if (ch === ',' && depth === 0) parts.push('');", "if (ch === ',') parts.push('');");
+mutantFails('keeping the parenthesised note in a category name', 'const c = withoutNotes(part).trim()', 'const c = part.trim()');
+mutantFails('reading `none (docs only)` as a category', 'if (NO_CATEGORY.test(text)) return [];', '');
+mutantFails('reading `None.` as a category', '(?:[\\s.,;:]*\\(.*\\))?[\\s.]*$/i;\n', '(?:[\\s.,;:]*\\(.*\\))?$/i;\n');
+mutantFails('printing a trailer for a state whose Never-auto value names no category', 'if (neverAutoUnreadable(header.neverAuto)) {', 'if (false) {', 'unit-record.mjs');
+mutantFails('reading a note alone as none', "return note ? !/^(?:none|nothing|n\\/a|-|\\u2014|\\u2013)$/i.test(note[1].trim()) : !NO_CATEGORY.test(text);", 'return false;');
+mutantFails('printing a trailer for a state with no Never-auto line', 'if (!header.neverAuto.trim()) {', 'if (false) {', 'unit-record.mjs');
 
 /** The core's default LOG_COLUMNS are log-format.md's columns, in its order, and each one has a cell (Yield, Friction, Missed). */
 function checkLogColumns(scriptsDir) {

@@ -6,7 +6,8 @@
  * Reads the harness log, the follow-ups doc, the state and steps files, earlier digests, this
  * repository's Claude Code transcripts, the threads a Codex host ran in it ($CODEX_HOME/sessions and
  * archived_sessions, CODEX_HOME defaulting to ~/.codex) and the two run ledgers, codex-run's and
- * claude-run's, and writes
+ * claude-run's, and the gate runner's flakes register (`<git common dir>/run-gates-cache/flakes.jsonl`, or
+ * under $RUN_GATES_CACHE_DIR), and writes
  * `<REPORTS_DIR>/retro-<YYYY-Www>.md`, at most 8 KB: KPIs against the four weeks before (among them how
  * much the owner touched the sessions: prompts and /clear and /compact per unit landed, the median agent
  * run between prompts, counted from the transcripts' structure), outliers, where the money went by step,
@@ -27,6 +28,10 @@
  *   --dry-run           print the digest; write nothing
  *   --json              print the digest's data as JSON; write nothing
  *   --export <dir>      write only <dir>/retro-<YYYY-Www>.json, the data, which outlives the transcripts
+ *
+ * A test id the register shows flaking FLAKE_MIN times (3) in the FLAKE_DAYS (7) before the window's end is
+ * one line under the Queue: `- FLAKY <gate> <test id> <n>x in <days>d: follow-up, never a unit`. It is
+ * never a unit, a step or a candidate; a register with none, or no register, adds no line.
  *
  * A figure that reads zero or missing for a reason the project can fix (spend against an empty log,
  * landed units and no session, a follow-ups doc with no status column) is also a `Warn:` line in the

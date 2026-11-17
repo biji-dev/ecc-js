@@ -12,6 +12,7 @@
  *
  *   node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"]
  *     [--steps <steps file>] [--json]
+ *   node scripts/unit-record.mjs --state <state file> --trailer
  *
  * options:
  *   --state <file>   the unit's state file (docs/plans/<unit>.state.md by default layout)
@@ -21,12 +22,22 @@
  *                    (CR/LF in it become one space, so the row stays one line)
  *   --steps <file>   the unit's steps file (unit-step.mjs, `<unit>.steps.jsonl`): adds a `Steps:` line
  *                    and each ledger step's time; a missing file is a usage error, an empty one adds nothing
- *   --json           print { header, summary, commits, diffstat, gates, record } instead
+ *   --json           print { header, summary, commits, diffstat, gates, trailer, record } instead
+ *   --trailer        print the land commit's trailer lines and nothing else, from the state file alone (no
+ *                    git, no other option): `Unit: <unit id>` and, when the state names never-auto product
+ *                    categories (the state file's `Never-auto: <categories, comma-separated, or none>` header
+ *                    line, which must be there: with no such line, or an empty one, it exits 2 saying so, and so it does for a value that names no category
+ *                    (`(money)`) and is not none; `-`, `none`, `none (docs only)` and `n/a` are none, and a parenthesised note
+ *                    is no part of a category), `Never-auto: <cat>[, <cat>]` (lower-cased, in the file's
+ *                    order, once each). Pass them
+ *                    to `git commit --trailer` or paste them at the end of the land commit message: the
+ *                    owner reads them at the deploy (deploy-list.mjs). The record carries the same
+ *                    category list as a `Land commit trailer:` line, only when categories are set
  *
  * Commits are `git log --reverse <base>..HEAD`, the diffstat is `git diff --shortstat
  * <base>..HEAD`, both from the repository top.
  *
- * exit: 0 ok | 2 usage (no --state, no base anywhere, unreadable state or gates file, git failure).
+ * exit: 0 ok | 2 usage (no --state, no base anywhere, --trailer on a state with no unit or no Never-auto line, unreadable state or gates file, git failure).
  *
  * Read-only. It prints; it never writes into the repo.
  */
@@ -34,7 +45,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import {
   buildRecord,
+  landTrailer,
   lastSummary,
+  neverAutoUnreadable,
   parseArgs,
   parseState,
   summarizeFindings,
@@ -42,7 +55,7 @@ import {
 import { parseSteps } from './lib/unit-step-core.mjs';
 
 const USAGE =
-  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--steps <steps file>] [--json]';
+  'usage: node scripts/unit-record.mjs --state <state file> [--base <sha>] [--gates <file>] [--cost "<line>"] [--steps <steps file>] [--json] | --state <state file> --trailer';
 
 function usage(msg) {
   process.stderr.write(`unit-record: ${msg}\n${USAGE}\n`);
@@ -82,6 +95,27 @@ function main() {
   } catch (e) {
     return usage(e.message);
   }
+  if (args.trailer) {
+    try {
+      const { header } = parseState(readFile(args.state, 'state file'));
+      if (!header.unit) throw new Error('no unit: add a `Unit:` line to the state file');
+      if (neverAutoUnreadable(header.neverAuto)) {
+        process.stderr.write(`unit-record: ${args.state} has a Never-auto: value that names no category (write none when there are none)\n`);
+        process.exitCode = 2;
+        return;
+      }
+      if (!header.neverAuto.trim()) {
+        // a missing line is not `none`: the land commit would go out without the category the owner reads at the deploy
+        process.stderr.write(`unit-record: ${args.state} has no Never-auto: line (write none when there are none)\n`);
+        process.exitCode = 2;
+        return;
+      }
+      process.stdout.write(`${landTrailer(header).join('\n')}\n`);
+    } catch (e) {
+      usage(e.message);
+    }
+    return;
+  }
   let state;
   let gatesText = null;
   let steps = null;
@@ -98,7 +132,7 @@ function main() {
     if (args.steps) steps = parseSteps(readFile(args.steps, 'steps file'));
     const top = git(['rev-parse', '--show-toplevel'], process.cwd()).trim();
     const range = `${base}..HEAD`;
-    commits = git(['log', '--reverse', '--format=%h%x09%s', range], top)
+    commits = git(['log', '--no-show-signature', '--reverse', '--format=%h%x09%s', range], top)
       .split('\n')
       .filter(Boolean)
       .map((line) => {
@@ -125,7 +159,7 @@ function main() {
   if (args.json) {
     const summary = summarizeFindings(state.findings);
     process.stdout.write(
-      `${JSON.stringify({ header: state.header, summary, commits, diffstat, gates, record }, null, 2)}\n`,
+      `${JSON.stringify({ header: state.header, summary, commits, diffstat, gates, trailer: landTrailer(state.header), record }, null, 2)}\n`,
     );
   } else process.stdout.write(record);
 }

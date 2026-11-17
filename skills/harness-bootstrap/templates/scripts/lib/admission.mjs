@@ -6,7 +6,8 @@
  * run-gates.sh runs it before a verify's gates, after the cache check and before the lock and the snapshot:
  *
  *   node scripts/lib/admission.mjs [--mem-gb <n>] [--disk-gb <n>] [--load-per-cpu <n>] [--wait <s>]
- *                                  [--poll <s>] [--top <dir>] [--reading <file>]
+ *                                  [--poll <s>] [--top <dir>] [--reading <file>] [--holder <pid>]
+ *                                  [--lease-slots <n>]
  *
  * options (numbers of 0 or more, fractions allowed):
  *   --mem-gb <n>        memory available the run needs, GB (default MEM_RESERVE_GB)
@@ -18,13 +19,18 @@
  *   --reading <file>    the test seam: a JSON reading { mem, disk, load, cpus } (bytes, bytes, load, CPUs; a
  *                       null is unread), or a list of them, one per read, the last repeated; the machine is
  *                       not read
+ *   --holder <pid>      take a host lease slot for this pid (run-gates passes its own and removes the slot
+ *                       when it exits): slot-<i> files in HARNESS_LEASE_DIR, default ~/.harness/leases
+ *   --lease-slots <n>   the slot count (default LEASE_SLOTS, or from the machine's total memory when null)
  *
  * It prints on stdout: `ADMISSION unread <what>` once for a reading it could not read (admitted on the
- * rest); after a wait, `MACHINE WAIT <ISO> → <ISO> <reason>`; then `ADMISSION admitted — <readings>` or
- * `NOT ADMITTED <reason>; free: <command>`. On stderr, once, at the first short reading: `ADMISSION waiting
- * <reason>`. SIGTERM or SIGINT during a wait ends it with the pair, `<reason> (interrupted)`, so the wait
- * is not lost from the record. The wait limit is on the monotonic clock; the pair's times are wall-clock.
- * It reads sysctl, /proc/meminfo, statfs and the load average and writes nothing; it starts nothing.
+ * rest; `lease` when the lease dir cannot be read or written); after a wait, `MACHINE WAIT <ISO> → <ISO>
+ * <reason>` (`lease held by <top> since <at>` when every slot was held); with --holder, `LEASE <slot path>`;
+ * then `ADMISSION admitted — <readings>` or `NOT ADMITTED <reason>; free: <command>`. On stderr, once, at
+ * the first short reading: `ADMISSION waiting <reason>`. SIGTERM or SIGINT during a wait ends it with the
+ * pair, `<reason> (interrupted)`, so the wait is not lost from the record. The wait limit is on the
+ * monotonic clock; the pair's times are wall-clock. It reads sysctl, /proc/meminfo, statfs and the load
+ * average; it writes only the lease slot (with --holder) and starts nothing.
  *
  * exit: 0 admitted | 1 not admitted at the wait limit | 2 usage | 128 + the signal (143 SIGTERM, 130
  * SIGINT) interrupted.
@@ -33,10 +39,21 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { EXIT, admit, parseArgs, readMachine } from './admission-core.mjs';
+import path from 'node:path';
+import { EXIT, admit, leaseSlots, parseArgs, readMachine, takeLease } from './admission-core.mjs';
 
 const USAGE =
-  'usage: node scripts/lib/admission.mjs [--mem-gb <n>] [--disk-gb <n>] [--load-per-cpu <n>] [--wait <s>] [--poll <s>] [--top <dir>] [--reading <file>]';
+  'usage: node scripts/lib/admission.mjs [--mem-gb <n>] [--disk-gb <n>] [--load-per-cpu <n>] [--wait <s>] [--poll <s>] [--top <dir>] [--reading <file>] [--holder <pid>] [--lease-slots <n>]';
+
+/** A pid runs: signal 0 reaches it, or it exists under another user (EPERM). */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
 
 function usage(msg) {
   process.stderr.write(`admission: ${msg}\n${USAGE}\n`);
@@ -97,6 +114,19 @@ async function main() {
     floors: { mem: a.mem, disk: a.disk, load: a.load },
     waitS: a.wait,
     pollS: a.poll,
+    lease:
+      a.holder === null
+        ? null
+        : () =>
+            takeLease({
+              dir: path.resolve(process.env.HARNESS_LEASE_DIR || path.join(os.homedir(), '.harness', 'leases')),
+              slots: a.leaseSlots ?? leaseSlots(os.totalmem()),
+              holder: a.holder,
+              top: a.top ?? process.cwd(),
+              now: () => Date.now(),
+              fs,
+              alive,
+            }),
   });
   process.exitCode = code === EXIT.interrupted ? 128 + os.constants.signals[caught] : code;
 }

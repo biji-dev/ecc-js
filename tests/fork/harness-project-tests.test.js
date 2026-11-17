@@ -22,7 +22,7 @@ const SUITES = {
   'harness-guard': 58,
   'context-budget': 8,
   'session-resume': 20,
-  'run-gates': 19,
+  'run-gates': 38,
 };
 
 // Where each template lands in a project (SKILL.md, Phase C).

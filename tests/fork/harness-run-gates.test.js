@@ -130,7 +130,7 @@ test('template has header, markers, SCOPED_PATHS and default gates', () => {
   const lines = SOURCE.split('\n');
   assert.strictEqual(lines[0], '#!/usr/bin/env bash');
   assert.ok(/^# harness-bootstrap run-gates \(generated YYYY-MM-DD\)$/.test(lines[1]), 'header line');
-  assert.ok(SOURCE.includes('# >>> harness:gates [B] — one line per gate: gate <name> <always|full> \'<command>\''));
+  assert.ok(SOURCE.includes('# >>> harness:gates [B] — one line per gate: gate <name> <always|full|paths> \'<command>\''));
   assert.ok(SOURCE.includes('# <<< harness:gates'));
   assert.ok(SOURCE.includes("SCOPED_PATHS='^(src|apps|packages|lib|docs|tests?)/|\\.md$'"));
   for (const g of [
@@ -1349,9 +1349,9 @@ test('--snapshot: the worktree and its temp dir are gone after a FAIL and after 
       // already gone
     }
   }
-  const from = "trap 'remove_snapshot; release_lock' EXIT";
+  const from = `trap 'trap "" INT TERM; remove_snapshot; release_lock; release_lease' EXIT`;
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
-  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, 'trap release_lock EXIT'));
+  const kept = snapshotRepo([`gate where always 'pwd -P > ${where}'`], SOURCE.replace(from, `trap 'trap "" INT TERM; release_lock; release_lease' EXIT`));
   run(kept, ['--snapshot']);
   const left = path.dirname(fs.readFileSync(where, 'utf8').trim());
   assert.ok(fs.existsSync(left), 'the mutant leaves the snapshot behind');
@@ -1432,8 +1432,8 @@ test('a non-bash shell (dash) exits 99 with a message instead of a syntax error'
 console.log('\nrun-gates.sh: mutation');
 
 test('mutant that stops after the first FAIL no longer runs later gates', () => {
-  const from = '    failed=$((failed + 1))\n  fi\ndone';
-  const to = '    failed=$((failed + 1))\n    break\n  fi\ndone';
+  const from = '    take_result "${GATE_NAMES[$i]}"\n';
+  const to = '    take_result "${GATE_NAMES[$i]}"\n    [ "$R_STATUS" != FAIL ] || break\n';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
   const mutant = SOURCE.replace(from, to);
   assert.notStrictEqual(mutant, SOURCE, 'mutation applied');

@@ -3,10 +3,11 @@
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
 #     format, exit status = number of failed gates, the --since scoped mode, the --snapshot
 #     commit mode, the result cache keyed by tree, the single-flight lock, the
-#     instant-failure note, the per-gate timeout, the admission step, the executor refusal and
-#     the known-red baseline.
+#     instant-failure note, the per-gate timeout, the admission step and its host lease, the
+#     executor refusal, the known-red baseline, the paths mode, the flaky retry and its register.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers,
-#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT and MAINLINE lines.
+#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT, MAINLINE, PRODUCT_PATHS, RECORDS,
+#     RETRY_FLAKY, GATE_JOBS and SERIAL lines.
 #
 # Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
@@ -34,18 +35,34 @@
 #   the lock or a gate (and so does one promoted after a lock or machine wait), saying on stderr:
 #   "run-gates: PROMOTED to FULL by <path>, outside SCOPED_PATHS: FULL is the session's, once at
 #   landing; an executor stops and reports the path".
-# Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
-#   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
+#   A gate name registered twice, a PRODUCT_PATHS or RECORDS grep -E cannot read or that matches an
+#   empty path (so every path: '.*'), and a SERIAL name that is no gate exit 99 before anything runs.
+# Gates: `gate <name> <always|full|paths> '<command>'` passes when the command exits 0.
+#   `gate_counted <name> <always|full|paths> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
 #   ran zero tests (or skipped them all) and exited 0 is a FAIL, not a PASS. Run a test
 #   runner through scripts/run-counted.mjs: it reads the runner's own summary and prints
 #   `COUNTED <kind> <n> passed (min <m>)` only when nothing failed, was skipped or went
 #   unrun, so the regex is '^COUNTED <kind> [1-9][0-9]* passed'.
+# Paths mode: a `paths` gate is for tests that read only the harness (or any part that is not the
+#   product), so a change that touches only the product need not run them. [B] PRODUCT_PATHS is an
+#   extended regex of the product's paths (env RUN_GATES_PRODUCT_PATHS overrides); empty = off, and a
+#   `paths` gate then runs as `full`. A FULL run prints
+#     SKIP <name> (no path outside PRODUCT_PATHS changed since <12-hex merge base>)
+#   only when the paths changed since merge-base(refs/heads/<MAINLINE>, HEAD) (committed, staged,
+#   unstaged and untracked; for --snapshot, the commit against merge-base(<MAINLINE>, <commit>)),
+#   minus .review-work/, the log dir and RECORDS, are not none and every one matches PRODUCT_PATHS. It
+#   runs the gate on the mainline's tip itself (HEAD there), with no mainline or no merge base, with
+#   nothing changed and when a git command fails. A scoped run runs it when a changed path is outside
+#   PRODUCT_PATHS, and prints the SKIP line with the --since commit otherwise (nothing changed too).
+#   The run-or-skip decision joins the cache variant, so a skipped run never answers one that runs it.
 # Output: one line per gate, in registration order, then a SUMMARY line:
 #   PASS <name> <secs>s <logpath> | FAIL <name> <secs>s <logpath> (exit <n>)
 #   | FAIL <name> <secs>s <logpath> (no count line matched)
 #   | FAIL <name> <secs>s <logpath> (timeout after <n>s) | SKIP <name> (full only)
+#   | SKIP <name> (no path outside PRODUCT_PATHS changed since <12-hex commit>)
 #   | KNOWN <name> <secs>s <logpath> (<n> failing test(s) in the <mainline> baseline, their files untouched)
+#   | PASS <name> <secs>s <retry logpath> (flaky: <id>[; <id>...], retried)
 #   SUMMARY <p> passed, <f> failed, <s> skipped[, <k> known] (<full|scoped>)
 #   A refused admission prints "NOT ADMITTED (exit <n>)" instead and exits 97: no gate ran, no SUMMARY.
 #   A FAIL in under RUN_GATES_INSTANT_SECS seconds (default 10) ends with
@@ -70,17 +87,46 @@
 #   count in the exit status and starts no fix round; a run with one is never cached. The
 #   mainline's own run prints its reds as FAIL. No record, no merge base, a timeout, a missed count
 #   line, output after the FAILED block or a `FAILED ?` line: FAIL.
+# Flaky retry: with [B] RETRY_FLAKY=1 (env RUN_GATES_RETRY_FLAKY overrides; 0 = off) a gate that
+#   FAILs, and is not KNOWN, runs once more when its command is one run-counted call, it exited
+#   non-zero (not a timeout, not a missed count line) after RUN_GATES_INSTANT_SECS or more, its log
+#   ends with a FAILED block naming every failure (no `FAILED ?`, one ` :: ` per id), and each failing
+#   test's file is a file of the tree (relative to the top) that the merge base with the mainline has,
+#   that did not change since it (committed, uncommitted or untracked; no mainline or no merge base:
+#   no retry) and that holds the test's title, as for a known red. A red the branch causes in a test
+#   file it did not touch is retried too: a second fail prints FAIL; a pass is a flake in the register.
+#   A pass on the retry prints the flaky PASS line above, with the retry's log and both runs' time,
+#   appends {"at","gate","ids","tree","top"} as one JSON line to <cache dir>/flakes.jsonl (shared by
+#   every worktree) and counts as a PASS, so the run can be cached. A second fail prints FAIL, as the
+#   first would have.
 # Timeout: each gate runs in a process group of its own (set -m around its launch; the group id is
 #   its pid). Past GATE_TIMEOUT seconds ([B], default 3600; env RUN_GATES_GATE_TIMEOUT overrides,
 #   0 = no limit) the group gets TERM, then KILL 10 s later, and the gate is a FAIL ending
 #   "(timeout after <n>s)". When a gate ends, whatever it left running in its group gets TERM, and
 #   KILL after 10 s: a gate's children in its process group never outlive it. INT or TERM to run-gates stops the running
 #   gate's group the same way before the EXIT cleanup (snapshot, lock). With no group (set -m made
-#   none) the signals go to the gate's pid alone, never to run-gates' own group.
+#   none) the signals go to the gate's pid alone, never to run-gates' own group. A run-gates killed
+#   with KILL runs no trap: each gate's watchdog sees it gone within a second and stops the gate's
+#   group the same way (GATE_TIMEOUT 0 starts no watchdog, so nothing does).
+# Parallel gates: [B] GATE_JOBS (env RUN_GATES_GATE_JOBS overrides; default 1 = one gate at a time,
+#   in the run-gates shell) gates run at once, each in a background worker of its own with its own
+#   process group, watchdog, log and retry. The result lines still print in registration order, each
+#   once every gate before it has printed, so the output, the SUMMARY, the record and the exit status
+#   are those of a GATE_JOBS=1 run; only the seconds differ. [B] SERIAL (env RUN_GATES_SERIAL) names
+#   gates, space-separated, that run alone: one starts once every running gate has ended, and no gate
+#   starts while it runs (a gate that binds a port or rebuilds a shared dir). A SERIAL name that is no
+#   gate exits 99. INT or TERM stops every running gate's group, as for one.
 # Admission: a FULL run only (a scoped run is never held), after the cache check and before the lock
 #   (so a run waiting on the machine holds no lock, and one waiting on the lock waits only for the
-#   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --top <repo top>` runs ([B]
-#   ADMIT, scripts/lib/admission.mjs: memory, disk and load). Its stdout is passed through once it
+#   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --holder <run-gates' pid> --top
+#   <repo top>` runs ([B] ADMIT, scripts/lib/admission.mjs: memory, disk, load and the host lease, one of
+#   LEASE_SLOTS slot files in ~/.harness/leases, HARNESS_LEASE_DIR overrides, printed `LEASE <path>`;
+#   with every slot held by a live run it waits as for memory). The EXIT trap removes the slot (the one
+#   printed and any naming this pid), and a run a wait turns scoped removes it then: a scoped run never
+#   holds one; a slot whose run died is taken over by the next. A run that then waits for this
+#   worktree's lock keeps its slot through the wait, so a FULL run in another worktree may wait on
+#   "lease held" meanwhile: the slots bound FULL runs admitted, not only those running gates. Its
+#   stdout is passed through once it
 #   ends (`ADMISSION ...`, after a wait `MACHINE WAIT <ISO> → <ISO> <reason>`; never part of a cache
 #   record); its stderr goes straight through. It runs in the background under `wait`, in a process
 #   group of its own (`set -m`), so INT or TERM ends the run at once: the group gets TERM (a compound
@@ -90,13 +136,19 @@
 #   included) is passed through. A non-zero exit prints "NOT ADMITTED (exit <n>)" and exits 97. After
 #   a wait the changed files, the mode, the variant and the tree are worked out again and the cache
 #   is read again, as after a lock wait. A cache hit never runs it. After a lock wait that is not a
-#   cache hit, a FULL run runs it once more, given `--wait 0 --top <repo top>`, while it holds the
+#   cache hit, a FULL run runs it once more, given `--wait 0 --holder <pid> --top <repo top>`, while it holds the
 #   lock: the machine may have gone short meanwhile; a refusal exits 97 (the EXIT trap releases the
 #   lock); it never waits for the machine holding the lock. So an ADMIT override must not fix its
 #   own --wait (the CLI refuses a repeated flag: exit 2, so 97).
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
-#   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
-#   the real index is never touched. A run with every gate PASS is recorded under that tree,
+#   .review-work/, the log dir and every path RECORDS matches) is hashed with `git write-tree` into a
+#   temporary index; the real index is never touched. [B] RECORDS (an extended regex, env
+#   RUN_GATES_RECORDS overrides, empty = off) names the run's own records, the state files and step
+#   ledgers a land commit adds: they leave the key, the scoped changed list and the paths diff, so the
+#   land commit and the merge after a FULL run print REUSED (not the run on the mainline after the
+#   merge when a `paths` gate skipped on the branch: the mainline's tip runs it, another variant, and
+#   every gate runs). Bind it only to files no gate's result depends on (the agent-docs gate's
+#   state-file budget only warns). A run with every gate PASS is recorded under that tree,
 #   the mode (full or scoped:<since-sha>), the bound gate list, the KEY_EXTRA output and
 #   NODE_OPTIONS (hashed, never stored; unset = empty: it changes what every node child runs).
 #   The next run for the same tree, mode, gates, extra and NODE_OPTIONS prints, instead of
@@ -107,7 +159,7 @@
 #   prints "NOT CACHED tree changed during the run" on stderr (a gate that writes files into
 #   the tree, or an edit made meanwhile: the result may describe neither tree). A FAIL is
 #   never recorded. Not a reusable state (no commit yet, no git index to hash): runs normally.
-#   A --snapshot run is keyed by the commit's tree, under a mode of its own (snapshot), and
+#   A --snapshot run is keyed by the commit's tree (minus RECORDS), under a mode of its own (snapshot), and
 #   is recorded only if no gate changed a tracked file in the snapshot.
 #   [B] Docs-only reuse is OFF unless the DOCS_ONLY pattern (an extended regex; env
 #   RUN_GATES_DOCS_ONLY overrides, empty = off) is set: a tree that differs from a recorded
@@ -153,7 +205,9 @@
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
 #      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
 #      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
-#      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline).
+#      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline, no paths skip and no
+#      flaky retry). RUN_GATES_PRODUCT_PATHS, RUN_GATES_RECORDS, RUN_GATES_RETRY_FLAKY,
+#      RUN_GATES_GATE_JOBS, RUN_GATES_SERIAL: above.
 #      HARNESS_ROLE=executor refuses a FULL run, a promoted one included (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -173,37 +227,45 @@ GATE_NAMES=()
 GATE_MODES=()
 GATE_CMDS=()
 GATE_RXS=()
-# gate <name> <always|full> '<command>' only registers; the runner executes after the block.
+# A gate's log, timeout mark and retry log are named after it, so a name is registered once.
+new_gate_name() {
+  local gn
+  [ "${#GATE_NAMES[@]}" -gt 0 ] || return 0
+  for gn in "${GATE_NAMES[@]}"; do [ "$gn" != "$1" ] || usage "gate '$1' is registered twice"; done
+}
+# gate <name> <always|full|paths> '<command>' only registers; the runner executes after the block.
 gate() {
-  [ "$#" -eq 3 ] && [ -n "$3" ] || usage "gate '${1:-}': expected exactly: gate <name> <always|full> '<command>' (quote the command, and do not leave it empty)"
+  [ "$#" -eq 3 ] && [ -n "$3" ] || usage "gate '${1:-}': expected exactly: gate <name> <always|full|paths> '<command>' (quote the command, and do not leave it empty)"
   case "${2:-}" in
-    always | full) ;;
-    *) usage "gate '${1:-}': mode must be always or full" ;;
+    always | full | paths) ;;
+    *) usage "gate '${1:-}': mode must be always, full or paths" ;;
   esac
+  new_gate_name "$1"
   GATE_NAMES+=("$1")
   GATE_MODES+=("$2")
   GATE_CMDS+=("$3")
   GATE_RXS+=("")
 }
-# gate_counted <name> <always|full> '<regex>' '<command>' registers a gate that passes only when
+# gate_counted <name> <always|full|paths> '<regex>' '<command>' registers a gate that passes only when
 # the command exits 0 AND its combined output, colour stripped, matches the extended regex
 # (with scripts/run-counted.mjs as the command: '^COUNTED vitest [1-9][0-9]* passed').
 gate_counted() {
-  [ "$#" -eq 4 ] && [ -n "$3" ] && [ -n "$4" ] || usage "gate '${1:-}': expected exactly: gate_counted <name> <always|full> '<regex>' '<command>' (quote both, and do not leave either empty)"
+  [ "$#" -eq 4 ] && [ -n "$3" ] && [ -n "$4" ] || usage "gate '${1:-}': expected exactly: gate_counted <name> <always|full|paths> '<regex>' '<command>' (quote both, and do not leave either empty)"
   case "${2:-}" in
-    always | full) ;;
-    *) usage "gate '${1:-}': mode must be always or full" ;;
+    always | full | paths) ;;
+    *) usage "gate '${1:-}': mode must be always, full or paths" ;;
   esac
   local rc=0
   printf '' | grep -Eq -- "$3" 2>/dev/null || rc=$?
   [ "$rc" -le 1 ] || usage "gate '$1': the count regex is not a valid extended regex: $3"
+  new_gate_name "$1"
   GATE_NAMES+=("$1")
   GATE_MODES+=("$2")
   GATE_CMDS+=("$4")
   GATE_RXS+=("$3")
 }
 
-# >>> harness:gates [B] — one line per gate: gate <name> <always|full> '<command>'
+# >>> harness:gates [B] — one line per gate: gate <name> <always|full|paths> '<command>'
 # Every example is commented out: bind the project's own gates here. With none bound the
 # runner exits 99 instead of reporting a green run of nothing.
 # gate typecheck always 'npm run -s typecheck'
@@ -214,7 +276,8 @@ gate_counted() {
 # A test gate counts what ran: run-counted fails on a skip, a filter that matched nothing or a
 # pass count under the floor (--min: today's count; it prints the raise when the count grows).
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run'
-# gate_counted harness full '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
+# the harness's own tests skip a FULL run whose every change is in PRODUCT_PATHS (see Paths mode)
+# gate_counted harness paths '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
 # a scoped run may run only the tests related to the changed files (vitest related, jest --findRelatedTests)
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'if [ "$RUN_GATES_MODE" = scoped ]; then node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest related --run $(cat "$RUN_GATES_CHANGED_FILE"); else node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run; fi'
 # <<< harness:gates
@@ -237,6 +300,17 @@ ADMIT='node scripts/lib/admission.mjs'
 GATE_TIMEOUT=3600
 # [B] the mainline branch whose clean FULL run records the known-red baseline (see Known reds above); empty = off.
 MAINLINE='main'
+# [B] paths mode: extended regex of the product's paths; a FULL run whose every change matches skips
+# the `paths` gates (see Paths mode above). Never a path a `paths` gate reads. Empty = off.
+PRODUCT_PATHS=''
+# [B] the run's own records, out of the cache key, the scoped list and the paths diff (see Reuse above).
+RECORDS='(^|/)[^/]+\.(state\.md|steps\.jsonl)$'
+# [B] 1 = a gate whose failing tests are all in files the branch did not touch runs once more (see Flaky retry above).
+RETRY_FLAKY=1
+# [B] how many gates run at once (see Parallel gates above); 1 = one at a time.
+GATE_JOBS=1
+# [B] gates, space-separated, that run alone when GATE_JOBS is above 1.
+SERIAL=''
 
 SINCE=""
 LIST=0
@@ -314,6 +388,42 @@ KEY_EXTRA_CMD="${RUN_GATES_KEY_EXTRA-$KEY_EXTRA}"
 ADMIT_CMD="${RUN_GATES_ADMIT-$ADMIT}"
 GATE_TIMEOUT_S=$(num_or "${RUN_GATES_GATE_TIMEOUT:-}" "$(num_or "$GATE_TIMEOUT" 3600)")
 MAINLINE_B="${RUN_GATES_MAINLINE-$MAINLINE}"
+PRODUCT_RX="${RUN_GATES_PRODUCT_PATHS-$PRODUCT_PATHS}"
+RECORDS_RX="${RUN_GATES_RECORDS-$RECORDS}"
+RETRY_ON=0
+[ "${RUN_GATES_RETRY_FLAKY-$RETRY_FLAKY}" = 1 ] && RETRY_ON=1
+# A pattern grep -E cannot read would match nothing: a paths gate would always run (safe), but the
+# records would silently stay in the key. One that matches an empty line ('.*', 'x?$') matches every
+# path: every tree would hash alike, every paths gate would skip. Both are usage errors instead.
+for rx_pair in "PRODUCT_PATHS:$PRODUCT_RX" "RECORDS:$RECORDS_RX"; do
+  rx_val=${rx_pair#*:}
+  [ -n "$rx_val" ] || continue
+  rx_rc=0
+  printf '' | grep -Eq -- "$rx_val" 2>/dev/null || rx_rc=$?
+  [ "$rx_rc" -le 1 ] || usage "${rx_pair%%:*} is not a valid extended regex: $rx_val"
+  if printf '\n' | grep -Eq -- "$rx_val" 2>/dev/null; then usage "${rx_pair%%:*} matches an empty path, so every path: $rx_val"; fi
+done
+HAS_PATHS=0
+for gm in "${GATE_MODES[@]}"; do [ "$gm" != paths ] || HAS_PATHS=1; done
+JOBS=$(num_or "${RUN_GATES_GATE_JOBS:-}" "$(num_or "$GATE_JOBS" 1)")
+[ "$JOBS" -ge 1 ] || JOBS=1
+# The SERIAL names, split on blanks and newlines (no globbing), each checked, kept as " a b " for is_serial.
+SERIAL_NAMES=" "
+set -f
+# shellcheck disable=SC2086 # the list is split on purpose
+for sn in ${RUN_GATES_SERIAL-$SERIAL}; do
+  sn_ok=0
+  for gn in "${GATE_NAMES[@]}"; do [ "$gn" != "$sn" ] || sn_ok=1; done
+  [ "$sn_ok" -eq 1 ] || usage "SERIAL names $sn, which is no gate"
+  SERIAL_NAMES="$SERIAL_NAMES$sn "
+done
+set +f
+RUN_PID=$$
+
+# Reads paths on stdin; drops the ones RECORDS matches (none when it is empty).
+drop_records() {
+  if [ -n "$RECORDS_RX" ]; then grep -vE -- "$RECORDS_RX" || true; else cat; fi
+}
 
 # Reads paths on stdin; drops blanks, .review-work/ and the log dir by LITERAL prefix
 # (never a regex built from a path).
@@ -349,7 +459,7 @@ compute_scope() {
     usage "git diff against $SINCE failed; cannot list the changed files"
   untracked_out=$(git -c core.quotePath=false ls-files --others --exclude-standard) ||
     usage "git ls-files failed; cannot list the untracked files"
-  CHANGED=$(printf '%s\n%s\n' "$diff_out" "$untracked_out" | filter_changed | sort -u)
+  CHANGED=$(printf '%s\n%s\n' "$diff_out" "$untracked_out" | filter_changed | drop_records | sort -u)
   if [ -z "$CHANGED" ]; then
     NOTE="SCOPED: nothing changed since $SINCE"
   else
@@ -394,6 +504,46 @@ if [ "$SNAPSHOT" -eq 1 ]; then
   done
   shopt -u nullglob
 fi
+
+# Sets PATHS_DECISION (off | run | skip) and PATHS_BASE, the commit a skip is measured from (see Paths
+# mode in the header). Every case it cannot decide, a failing git command included, is run. Called
+# from compute_variant (the decision joins the cache variant) and once more right before the gates.
+PATHS_DECISION=off
+PATHS_BASE=""
+compute_paths() {
+  local tip head mb d1 d2 list
+  PATHS_DECISION=off
+  PATHS_BASE=""
+  [ "$HAS_PATHS" -eq 1 ] && [ -n "$PRODUCT_RX" ] || return 0
+  PATHS_DECISION=run
+  if [ "$MODE" = scoped ]; then
+    mb=$(git rev-parse --verify --quiet "$SINCE^{commit}") || return 0
+    list=$CHANGED
+  else
+    [ -n "$MAINLINE_B" ] || return 0
+    tip=$(git rev-parse -q --verify "refs/heads/$MAINLINE_B^{commit}" 2>/dev/null) || return 0
+    if [ "$SNAPSHOT" -eq 1 ]; then head=$SNAP_COMMIT; else head=$(git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || return 0; fi
+    # the mainline's tip itself always runs every gate
+    [ -n "$head" ] && [ "$head" != "$tip" ] || return 0
+    mb=$(git merge-base "$tip" "$head" 2>/dev/null) || return 0
+    [ -n "$mb" ] || return 0
+    if [ "$SNAPSHOT" -eq 1 ]; then
+      d1=$(git -c core.quotePath=false diff --name-only --no-renames "$mb" "$head" --) || return 0
+      d2=""
+    else
+      d1=$(git -c core.quotePath=false diff --name-only --no-renames "$mb" --) || return 0
+      d2=$(git -c core.quotePath=false ls-files --others --exclude-standard) || return 0
+    fi
+    list=$(printf '%s\n%s\n' "$d1" "$d2" | filter_changed | drop_records | sort -u)
+    # nothing changed since the merge base: run
+    [ -n "$list" ] || return 0
+  fi
+  PATHS_BASE=$mb
+  # a scoped run with nothing changed has no path outside: skip (a FULL run with none ran above)
+  if [ -z "$list" ] || [ -z "$(printf '%s\n' "$list" | grep -vE -- "$PRODUCT_RX" | head -n 1)" ]; then
+    PATHS_DECISION=skip
+  fi
+}
 
 # -- result cache and single-flight lock ----------------------------------------
 
@@ -461,16 +611,20 @@ stop_admit() {
   ADMIT_OUT=""
   return 0
 }
-# Runs $ADMIT_CMD given "$@" and --top <repo top>, in the background under wait (a trap interrupts wait,
-# and the INT or TERM trap stops it), in a process group of its own (set -m: the group id is its pid).
-# Passes its stdout through once it ends and keeps it in ADMIT_TEXT; a non-zero exit prints NOT ADMITTED
-# (exit <n>) and exits 97. Its lines go through echo, never emit, so no record carries a wait.
+# Runs $ADMIT_CMD given "$@", --holder <this run's pid> and --top <repo top>, in the background under wait
+# (a trap interrupts wait, and the INT or TERM trap stops it), in a process group of its own (set -m: the
+# group id is its pid). Passes its stdout through once it ends and keeps it in ADMIT_TEXT, and the slot
+# its `LEASE <path>` line names in LEASE_PATH; a non-zero exit prints NOT ADMITTED (exit <n>) and exits 97.
+# Its lines go through echo, never emit, so no record carries a wait.
 ADMIT_TEXT=""
+LEASE_PATH=""
+LEASE_ASKED=0
 run_admission() {
-  local rc=0
+  local rc=0 l
   ADMIT_OUT=$(mktemp "${TMPDIR:-/tmp}/run-gates-admit.XXXXXX") || usage "cannot create a temp file for the admission output"
+  LEASE_ASKED=1
   set -m
-  bash -c "$ADMIT_CMD \"\$@\"" admit "$@" --top "$TOP" </dev/null >"$ADMIT_OUT" &
+  bash -c "$ADMIT_CMD \"\$@\"" admit "$@" --holder "$$" --top "$TOP" </dev/null >"$ADMIT_OUT" &
   ADMIT_PID=$!
   set +m
   wait "$ADMIT_PID" || rc=$?
@@ -479,6 +633,8 @@ run_admission() {
   rm -f "$ADMIT_OUT"
   ADMIT_OUT=""
   [ -z "$ADMIT_TEXT" ] || printf '%s\n' "$ADMIT_TEXT"
+  l=$(printf '%s\n' "$ADMIT_TEXT" | sed -n 's/^LEASE //p' | tail -n 1)
+  [ -z "$l" ] || LEASE_PATH=$l
   if [ "$rc" -ne 0 ]; then
     echo "NOT ADMITTED (exit $rc)"
     exit 97
@@ -492,18 +648,33 @@ WATCH_PID=""
 kill_gate() { kill -"$1" -- -"$GATE_PID" 2>/dev/null || kill -"$1" "$GATE_PID" 2>/dev/null; }
 alive_gate() { kill -0 -- -"$GATE_PID" 2>/dev/null || kill -0 "$GATE_PID" 2>/dev/null; }
 # The watchdog, started in the background in a group of its own: after GATE_TIMEOUT_S seconds it creates
-# the timeout mark ($1), sends the gate TERM and, 10 s later, KILL. TERM ends it at once, its sleep with it.
+# the timeout mark ($1), sends the gate TERM and, 10 s later, KILL. It sleeps a second at a time and
+# stops the gate the same way, with no mark, once run-gates ($RUN_PID) is gone (KILLed: no trap ran).
+# TERM ends it at once, its sleep with it: the trap kills the sleep it knows and flags the rest, so a
+# TERM that lands between a sleep's start and `s=$!` (an instant gate's end_gate) still ends that sleep.
 watch_gate() {
-  local s=""
-  trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
-  sleep "$GATE_TIMEOUT_S" &
-  s=$!
-  wait "$s" || exit 0
-  : >"$1"
+  local s="" stop="" left=$GATE_TIMEOUT_S
+  trap 'stop=1; [ -z "$s" ] || kill "$s" 2>/dev/null' TERM
+  while :; do
+    if [ "$left" -le 0 ]; then
+      : >"$1"
+      break
+    fi
+    sleep 1 &
+    s=$!
+    [ -z "$stop" ] || { kill "$s" 2>/dev/null; exit 0; }
+    wait "$s" || exit 0
+    [ -z "$stop" ] || exit 0
+    s=""
+    left=$((left - 1))
+    kill -0 "$RUN_PID" 2>/dev/null || break
+  done
   kill_gate TERM
   sleep 10 &
   s=$!
+  [ -z "$stop" ] || { kill "$s" 2>/dev/null; exit 0; }
   wait "$s" || exit 0
+  [ -z "$stop" ] || exit 0
   kill_gate KILL
 }
 # Ends the gate run: stops the watchdog, then sends whatever is left in the gate's group TERM, checks it
@@ -531,15 +702,79 @@ end_gate() {
   GATE_PID=""
   return 0
 }
-# INT or TERM: the admission and the running gate are stopped first, then the EXIT trap removes the
-# snapshot and releases the lock.
+# The parallel workers (see run_parallel): JOB_PIDS[i] is gate i's worker's pid ("" before its launch),
+# JOB_DONE[i] is set once it is reaped ("skip" for a gate this run skips), JOB_PG is a worker's file for
+# its gate's and watchdog's group ids.
+JOB_PG=""
+JOB_PIDS=()
+JOB_DONE=()
+# INT or TERM with workers running: each gets TERM (its trap ends its gate's group), they are checked
+# every 0.1 s, and after 120 checks (12 s: end_gate's own KILL comes at 10 s) the groups a worker
+# recorded and the worker itself get KILL. Then every worker is reaped.
+stop_jobs() {
+  local i n=${#JOB_PIDS[@]} k=0 alive g gp wp
+  [ "$n" -gt 0 ] || return 0
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ]; then kill -TERM "${JOB_PIDS[$i]}" 2>/dev/null; fi
+    i=$((i + 1))
+  done
+  while :; do
+    alive=0
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ] && kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; then alive=1; fi
+      i=$((i + 1))
+    done
+    [ "$alive" -eq 1 ] && [ "$k" -lt 120 ] || break
+    k=$((k + 1))
+    sleep 0.1
+  done
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ]; then
+      if kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; then
+        gp=""
+        wp=""
+        read -r gp wp <"$LOG/.job-$i.pg" 2>/dev/null
+        for g in "$gp" "$wp"; do
+          case "$g" in
+            '' | *[!0-9]*) ;;
+            *) kill -KILL -- -"$g" 2>/dev/null ;;
+          esac
+        done
+        kill -KILL "${JOB_PIDS[$i]}" 2>/dev/null
+      fi
+      wait "${JOB_PIDS[$i]}" 2>/dev/null
+      JOB_DONE[i]=run
+      rm -f "$LOG/.job-$i" "$LOG/.job-$i.tmp" "$LOG/.job-$i.pg"
+    fi
+    i=$((i + 1))
+  done
+}
+# INT or TERM: the admission, the running gate and any parallel workers are stopped first, then the
+# EXIT trap removes the snapshot, releases the lock and the lease.
 on_signal() {
   trap '' INT TERM
   stop_admit
   end_gate
+  stop_jobs
   exit "$1"
 }
-trap 'remove_snapshot; release_lock' EXIT
+# Removes the host lease slot this run holds: the one the admission named, and any slot in the lease dir
+# that names this run's pid (an admission stopped after it took one). A slot naming another pid is left.
+release_lease() {
+  local f
+  [ "$LEASE_ASKED" -eq 1 ] || return 0
+  for f in "$LEASE_PATH" "${HARNESS_LEASE_DIR:-${HOME:-/nonexistent}/.harness/leases}"/slot-*; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    if grep -Eq "\"pid\":$$[,}]" "$f" 2>/dev/null; then rm -f "$f"; fi
+  done
+  LEASE_PATH=""
+  return 0
+}
+# INT or TERM during the cleanup is ignored: on_signal's exit would end the trap before the lock and lease go.
+trap 'trap "" INT TERM; remove_snapshot; release_lock; release_lease' EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
@@ -555,7 +790,10 @@ compute_variant() {
     MODE_ID=snapshot
   fi
   if [ -n "$KEY_EXTRA_CMD" ]; then extra=$(bash -c "$KEY_EXTRA_CMD" 2>/dev/null </dev/null); fi
+  compute_paths
   VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")|$(hash_str "${NODE_OPTIONS:-}")")
+  # a run that skips its paths gates never answers one that runs them, nor the other way
+  [ "$HAS_PATHS" -eq 0 ] || VARIANT=$(hash_str "$VARIANT|paths:$PATHS_DECISION")
   REC_DIR="$CACHE_DIR/records/$VARIANT"
 }
 
@@ -597,6 +835,12 @@ fi
 # Sets KEY to the tree of the working tree (tracked, staged, unstaged and untracked files)
 # through a temporary index seeded from the real one for its stat cache (cp -p keeps the index
 # mtime, which git needs to spot an edit made in the same second); the real index is never written. Empty KEY (and return 1) when the tree cannot be hashed.
+# Drops every path RECORDS matches from the index GIT_INDEX_FILE names (nothing when RECORDS is
+# empty). A name git quotes (a control character, a quote) never matches and stays in the key.
+drop_record_entries() {
+  [ -n "$RECORDS_RX" ] || return 0
+  git -c core.quotePath=false ls-files | { grep -E -- "$RECORDS_RX" || true; } | git update-index --force-remove --stdin
+}
 compute_key() {
   local d src
   KEY=""
@@ -604,7 +848,17 @@ compute_key() {
     # The input is the commit. Once the snapshot exists, a tracked file a gate changed there
     # changed what the gates after it read: no key, so the result is not recorded.
     if [ -n "$SNAP_DIR" ] && [ -n "$(git -C "$SNAP_DIR/tree" status --porcelain --untracked-files=no 2>&1)" ]; then return 1; fi
-    KEY=$(git rev-parse --verify --quiet "$SNAP_COMMIT^{tree}")
+    if [ -z "$RECORDS_RX" ]; then
+      KEY=$(git rev-parse --verify --quiet "$SNAP_COMMIT^{tree}")
+    else
+      d=$(mktemp -d "${TMPDIR:-/tmp}/run-gates-key.XXXXXX" 2>/dev/null) || return 1
+      # shellcheck disable=SC2030 # the temporary index is meant to stay inside this subshell
+      KEY=$(
+        export GIT_INDEX_FILE="$d/index"
+        git read-tree "$SNAP_COMMIT" >/dev/null 2>&1 && drop_record_entries >/dev/null 2>&1 && git write-tree 2>/dev/null
+      )
+      rm -rf "${d:?}"
+    fi
     [ -n "$KEY" ]
     return
   fi
@@ -618,10 +872,12 @@ compute_key() {
       return 1
     }
   fi
+  # shellcheck disable=SC2031 # each temporary index stays inside its own subshell
   KEY=$(
     export GIT_INDEX_FILE="$d/index"
     git add -A >/dev/null 2>&1 &&
       git --literal-pathspecs rm -r -q --cached --ignore-unmatch -- "${KEY_EXCLUDES[@]}" >/dev/null 2>&1 &&
+      drop_record_entries >/dev/null 2>&1 &&
       git write-tree 2>/dev/null
   )
   rm -rf "${d:?}"
@@ -684,6 +940,8 @@ admit_full() {
   else
     compute_scope
   fi
+  # A scoped run never holds a lease: the wait may have turned this one scoped.
+  [ "$MODE" = full ] || release_lease
 }
 
 # Sets LOCK_DIR to the lock of MODE_ID, the mode the run is in now (unchanged when it cannot be hashed).
@@ -763,6 +1021,7 @@ if [ "$CACHE_ON" -eq 1 ]; then
         # The mode changed (a scoped run promoted to FULL, or back): the lock held is the other
         # mode's. Released; then admission (a FULL run's), the new mode's lock and these checks again.
         release_lock
+        [ "$MODE" = full ] || release_lease
         admit_full
         continue
       fi
@@ -940,64 +1199,299 @@ EOF
   printf '%s\n' "$ids" | grep -c .
 }
 
-passed=0
-failed=0
-skipped=0
-known=0
-i=0
-while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
-  name="${GATE_NAMES[$i]}"
-  gmode="${GATE_MODES[$i]}"
-  cmd="${GATE_CMDS[$i]}"
-  rx="${GATE_RXS[$i]}"
-  i=$((i + 1))
-  if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then
-    emit "SKIP $name (full only)"
-    skipped=$((skipped + 1))
-    continue
+# -- the flaky retry (see Flaky retry above) -------------------------------------------------------
+# TOUCHED: every file changed since the merge base with the mainline, committed, uncommitted or
+# untracked (the snapshot's commit against it, for --snapshot); TOUCHED_OK=1 once it is known. No
+# mainline, no merge base or a failing git: 0, and no gate is retried.
+TOUCHED=""
+TOUCHED_OK=0
+TOUCHED_MB=""
+if [ "$RETRY_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && r_tip=$(git rev-parse -q --verify "refs/heads/$MAINLINE_B^{commit}" 2>/dev/null) &&
+  r_head=$(if [ "$SNAPSHOT" -eq 1 ]; then echo "$SNAP_COMMIT"; else git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null; fi) &&
+  r_mb=$(git merge-base "$r_tip" "$r_head" 2>/dev/null) && [ -n "$r_mb" ]; then
+  if [ "$SNAPSHOT" -eq 1 ]; then
+    t1=$(git diff --name-only -z --no-renames "$r_mb" "$r_head" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") && t2="" && TOUCHED_OK=1
+  else
+    t1=$(git diff --name-only -z --no-renames "$r_mb" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") &&
+      t2=$(git ls-files -z --others --exclude-standard 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") && TOUCHED_OK=1
   fi
-  logfile="$LOG/$name.log"
-  mark="$logfile.timeout"
+  [ "$TOUCHED_OK" -eq 0 ] || TOUCHED=$(printf '%s\n%s\n' "$t1" "$t2" | LC_ALL=C sort -u)
+  TOUCHED_MB=$r_mb
+fi
+# $1 = why the gate failed, $2 = its log, $3 = its command, $4 = its seconds: prints the failing ids
+# and returns 0 when the gate may run once more (see Flaky retry above).
+flaky_ids() {
+  local ids id f needle
+  [ "$RETRY_ON" -eq 1 ] && [ "$TOUCHED_OK" -eq 1 ] && [ "${1#exit }" != "$1" ] && [ "$4" -ge "$INSTANT_SECS" ] && single_counted "$3" || return 1
+  ids=$(failed_ids "$2") || return 1
+  while IFS= read -r id; do
+    f=${id%% :: *}
+    case "$f" in '' | /* | ../* | */../*) return 1 ;; esac
+    [ "$f" != "$id" ] && [ -f "$GATE_DIR/$f" ] || return 1
+    # as for a known red: a file the merge base has (an ignored or generated file is in no diff) and
+    # that spells the test's title (a path printed against another root is no proof)
+    git cat-file -e "$TOUCHED_MB:$f" 2>/dev/null || return 1
+    if printf '%s\n' "$TOUCHED" | grep -Fxq -- "$f"; then return 1; fi
+    needle=$(title_needle "${id#* :: }")
+    [ -n "$needle" ] && grep -Fq -- "$needle" "$GATE_DIR/$f" || return 1
+  done <<EOF
+$ids
+EOF
+  printf '%s\n' "$ids"
+}
+# One JSON string: backslash, quote and tab escaped, every other control character dropped.
+json_str() {
+  printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e $'s/\t/\\\\t/g' | LC_ALL=C tr -d '\000-\037')"
+}
+FLAKES_FILE=""
+if [ -n "$CACHE_DIR" ]; then
+  case "$CACHE_DIR" in /*) FLAKES_FILE="$CACHE_DIR/flakes.jsonl" ;; *) FLAKES_FILE="$TOP/$CACHE_DIR/flakes.jsonl" ;; esac
+fi
+# $1 = gate, $2 = the ids its first run failed (a line each): one line in the flakes register.
+record_flake() {
+  local id ids="" tree
+  [ -n "$FLAKES_FILE" ] || return 0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    ids="$ids${ids:+,}$(json_str "$id")"
+  done <<EOF
+$2
+EOF
+  tree=$KEY
+  [ -n "$tree" ] || tree=$(git rev-parse -q --verify "${SNAP_COMMIT:-HEAD}^{tree}" 2>/dev/null)
+  mkdir -p "$(dirname "$FLAKES_FILE")" 2>/dev/null
+  printf '{"at":"%s","gate":%s,"ids":[%s],"tree":"%s","top":%s}\n' "$(iso_now)" "$(json_str "$1")" "$ids" "$tree" "$(json_str "$TOP")" >>"$FLAKES_FILE" 2>/dev/null ||
+    echo "run-gates: could not append to $FLAKES_FILE" >&2
+}
+
+# -- the gates ------------------------------------------------------------------------------------
+# Prints gate $1's SKIP line and returns 0 when this run skips it: a full-only gate in a scoped run,
+# or a paths gate the paths decision skips (with PRODUCT_PATHS empty a paths gate is a full one).
+skip_line() {
+  local gmode=${GATE_MODES[$1]}
+  if [ "$gmode" = paths ]; then
+    case "$PATHS_DECISION" in
+      skip)
+        echo "SKIP ${GATE_NAMES[$1]} (no path outside PRODUCT_PATHS changed since ${PATHS_BASE:0:12})"
+        return 0
+        ;;
+      off) gmode=full ;;
+    esac
+  fi
+  if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then
+    echo "SKIP ${GATE_NAMES[$1]} (full only)"
+    return 0
+  fi
+  return 1
+}
+# Runs gate $1 (its index) once, its output in log $2: the gate and its watchdog in a process group of
+# their own, under wait, so a trap can stop them. Sets G_SECS and G_WHY ("" = it passed).
+launch_gate() {
+  local logfile=$2 rx=${GATE_RXS[$1]} mark="$2.timeout" t0 rc=0
   rm -f "$mark"
-  start=$SECONDS
-  # The gate (and its watchdog) in a process group of its own, under wait, so a trap can stop it.
+  t0=$SECONDS
   set -m
   (cd "$GATE_DIR" && RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
-    RUN_GATES_TOP="$GATE_DIR" exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null &
+    RUN_GATES_TOP="$GATE_DIR" exec bash -c "${GATE_CMDS[$1]}") >"$2" 2>&1 </dev/null &
   GATE_PID=$!
   if [ "$GATE_TIMEOUT_S" -gt 0 ]; then
     watch_gate "$mark" </dev/null >/dev/null 2>&1 &
     WATCH_PID=$!
   fi
   set +m
-  rc=0
+  [ -z "$JOB_PG" ] || echo "$GATE_PID $WATCH_PID" >"$JOB_PG"
   wait "$GATE_PID" || rc=$?
   end_gate
-  secs=$((SECONDS - start))
-  why=""
+  G_SECS=$((SECONDS - t0))
+  G_WHY=""
   if [ -e "$mark" ]; then
     rm -f "$mark"
-    why="timeout after ${GATE_TIMEOUT_S}s"
+    G_WHY="timeout after ${GATE_TIMEOUT_S}s"
   elif [ "$rc" -ne 0 ]; then
-    why="exit $rc"
+    G_WHY="exit $rc"
   elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
-    why="no count line matched"
+    G_WHY="no count line matched"
   fi
-  [ "$BASE_REC" -eq 1 ] && record_base "$name" "$why" "$logfile"
-  if [ -z "$why" ]; then
-    emit "PASS $name ${secs}s $logfile"
-    passed=$((passed + 1))
-  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$why" "$logfile" "$cmd"); then
-    emit "KNOWN $name ${secs}s $logfile ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
-    known=$((known + 1))
+}
+# Runs gate $1 and decides its result: R_STATUS (PASS, KNOWN or FAIL), R_LINE (its result line), R_WHY
+# and R_LOG (the last run's, for the baseline record) and R_FLAKY (the ids a passing retry healed).
+run_gate_job() {
+  local name=${GATE_NAMES[$1]} cmd=${GATE_CMDS[$1]} log secs n ids instant
+  log="$LOG/$name.log"
+  R_FLAKY=""
+  launch_gate "$1" "$log"
+  secs=$G_SECS
+  if [ -z "$G_WHY" ]; then
+    R_STATUS=PASS
+    R_LINE="PASS $name ${secs}s $log"
+  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$G_WHY" "$log" "$cmd"); then
+    R_STATUS=KNOWN
+    R_LINE="KNOWN $name ${secs}s $log ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
   else
-    instant=""
-    # A timeout is never instant: the gate ran its whole allowance.
-    if [ "${why#timeout}" = "$why" ] && [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
-    emit "FAIL $name ${secs}s $logfile ($why)$instant"
-    failed=$((failed + 1))
+    R_STATUS=FAIL
+    if ids=$(flaky_ids "$G_WHY" "$log" "$cmd" "$secs"); then
+      log="$LOG/$name.retry.log"
+      launch_gate "$1" "$log"
+      secs=$((secs + G_SECS))
+      if [ -z "$G_WHY" ]; then
+        R_STATUS=PASS
+        R_FLAKY=$ids
+        R_LINE="PASS $name ${secs}s $log (flaky: $(printf '%s\n' "$ids" | awk 'NR > 1 { printf "; " } { printf "%s", $0 }'), retried)"
+      fi
+    fi
+    if [ "$R_STATUS" = FAIL ]; then
+      instant=""
+      # A timeout is never instant: the gate ran its whole allowance.
+      if [ "${G_WHY#timeout}" = "$G_WHY" ] && [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
+      R_LINE="FAIL $name ${secs}s $log ($G_WHY)$instant"
+    fi
   fi
-done
+  R_WHY=$G_WHY
+  R_LOG=$log
+}
+
+passed=0
+failed=0
+skipped=0
+known=0
+# The gates' result: the line, the counts, the baseline record and the flakes register.
+take_result() {
+  emit "$R_LINE"
+  case "$R_STATUS" in
+    PASS) passed=$((passed + 1)) ;;
+    KNOWN) known=$((known + 1)) ;;
+    *) failed=$((failed + 1)) ;;
+  esac
+  [ "$BASE_REC" -eq 0 ] || record_base "$1" "$R_WHY" "$R_LOG"
+  [ -z "$R_FLAKY" ] || record_flake "$1" "$R_FLAKY"
+}
+
+# GATE_JOBS above 1 (see Parallel gates in the header): gate $1's run_gate_job in a background worker,
+# started under set -m (a process group of its own, so INT is not ignored in it and in its gates), a
+# subshell, so no trap of run-gates runs there. It writes its R_* to $LOG/.job-<i> (a temp file moved into
+# place: a result is read whole) and its gate's and watchdog's group ids to $LOG/.job-<i>.pg (JOB_PG);
+# TERM ends its gate (end_gate) and then the worker. JOB_SKIPS[i] holds a skipped gate's line; RUNNING
+# counts the workers not reaped; SERIAL_ON = 1 while a SERIAL gate runs.
+JOB_SKIPS=()
+RUNNING=0
+SERIAL_ON=0
+is_serial() {
+  case "$SERIAL_NAMES" in
+    *" ${GATE_NAMES[$1]} "*) return 0 ;;
+  esac
+  return 1
+}
+start_job() {
+  local res="$LOG/.job-$1"
+  rm -f "$res" "$res.tmp" "$res.pg"
+  set -m
+  (
+    trap 'end_gate; exit 143' TERM
+    trap 'end_gate; exit 130' INT
+    JOB_PG="$res.pg"
+    run_gate_job "$1"
+    { printf '%s\n%s\n%s\n%s\n' "$R_STATUS" "$R_LINE" "$R_WHY" "$R_LOG" && printf '%s' "$R_FLAKY"; } >"$res.tmp" &&
+      mv -f "$res.tmp" "$res"
+  ) </dev/null &
+  JOB_PIDS[$1]=$!
+  set +m
+  RUNNING=$((RUNNING + 1))
+  if is_serial "$1"; then SERIAL_ON=1; fi
+}
+# Reaps every worker that wrote its result or is gone; 0 = at least one was reaped.
+collect_jobs() {
+  local i=0 rc=1
+  while [ "$i" -lt "${#JOB_PIDS[@]}" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ] &&
+      { [ -f "$LOG/.job-$i" ] || ! kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; }; then
+      wait "${JOB_PIDS[$i]}" 2>/dev/null
+      JOB_DONE[i]=run
+      RUNNING=$((RUNNING - 1))
+      if is_serial "$i"; then SERIAL_ON=0; fi
+      rc=0
+    fi
+    i=$((i + 1))
+  done
+  return "$rc"
+}
+# Sets R_* from gate $1's result file; a worker that ended without one is a FAIL.
+read_job() {
+  local res="$LOG/.job-$1"
+  if [ -f "$res" ]; then
+    {
+      IFS= read -r R_STATUS
+      IFS= read -r R_LINE
+      IFS= read -r R_WHY
+      IFS= read -r R_LOG
+      R_FLAKY=$(cat)
+    } <"$res"
+  else
+    R_STATUS=FAIL
+    R_WHY="no result"
+    R_LOG="$LOG/${GATE_NAMES[$1]}.log"
+    R_FLAKY=""
+    R_LINE="FAIL ${GATE_NAMES[$1]} 0s $R_LOG (its worker ended without a result)"
+  fi
+  rm -f "$res" "$res.pg"
+}
+# The gates, GATE_JOBS at a time: launches in registration order while a slot is free (a SERIAL gate
+# only once none runs, and none after it while it runs), and prints each result once every gate before
+# it has printed.
+run_parallel() {
+  local n=${#GATE_NAMES[@]} next=0 out=0 i=0 s moved
+  while [ "$i" -lt "$n" ]; do
+    JOB_PIDS[i]=""
+    JOB_DONE[i]=""
+    JOB_SKIPS[i]=""
+    i=$((i + 1))
+  done
+  while [ "$out" -lt "$n" ]; do
+    while [ "$next" -lt "$n" ] && [ "$SERIAL_ON" -eq 0 ]; do
+      if s=$(skip_line "$next"); then
+        JOB_SKIPS[next]=$s
+        JOB_DONE[next]=skip
+      elif is_serial "$next"; then
+        [ "$RUNNING" -eq 0 ] || break
+        start_job "$next"
+      else
+        [ "$RUNNING" -lt "$JOBS" ] || break
+        start_job "$next"
+      fi
+      next=$((next + 1))
+    done
+    moved=0
+    collect_jobs && moved=1
+    while [ "$out" -lt "$n" ] && [ -n "${JOB_DONE[$out]}" ]; do
+      if [ "${JOB_DONE[$out]}" = skip ]; then
+        emit "${JOB_SKIPS[$out]}"
+        skipped=$((skipped + 1))
+      else
+        read_job "$out"
+        take_result "${GATE_NAMES[$out]}"
+      fi
+      out=$((out + 1))
+      moved=1
+    done
+    [ "$moved" -eq 1 ] || sleep 0.1
+  done
+}
+
+compute_paths
+if [ "$JOBS" -gt 1 ]; then
+  run_parallel
+else
+  i=0
+  while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
+    if s=$(skip_line "$i"); then
+      emit "$s"
+      skipped=$((skipped + 1))
+    else
+      run_gate_job "$i"
+      take_result "${GATE_NAMES[$i]}"
+    fi
+    i=$((i + 1))
+  done
+fi
 
 [ "$BASE_REC" -eq 1 ] && commit_base
 known_part=""

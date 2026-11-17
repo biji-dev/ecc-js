@@ -20,6 +20,7 @@
  *                  adversarial pass reads, round 4 cuts the area
  *   --state <file> with --kind fix: the unit's state file. Its ## Ledger rows `8 fix r<N>` name the
  *                  highest round already run, and a lower --round is exit 2: rounds never restart.
+ *                  A file with no ## Ledger section is exit 2 too (it is no unit's state file).
  *                  Without it the line says the round was not checked against the ledger
  *   --writer       REQUIRED, never assumed: the ROLE that wrote the diff (for --kind fix: the fix),
  *                  on this host (harness-bootstrap's reference/gate-design.md › Model and effort):
@@ -375,6 +376,7 @@ function runDecision() {
       fail(`cannot read --state ${args.state}: ${e.code ?? e.message}`, false);
     }
     ledgerRound = ledgerFixRound(text);
+    if (ledgerRound === null) fail(`--state ${args.state} has no ## Ledger section: pass the unit's state file`, false);
     const below = roundBelowLedger(args.round, ledgerRound, args.state);
     if (below) fail(below, false);
   }

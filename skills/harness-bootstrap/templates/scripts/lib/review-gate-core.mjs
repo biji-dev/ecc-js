@@ -321,13 +321,16 @@ function checkLanding(a, given) {
 /**
  * A unit's state file → the highest fix round its `## Ledger` section records: a Step cell (the
  * column its table's header names Step, else the first) that starts `8 fix r<N>`. 0 when it records
- * none. Fenced examples are dropped first, so a sample row never counts. A header is the row above a
+ * none; null when the file has no `## Ledger` section (it is no unit's state file). `8 fix r3`, `8 fix
+ * round 3`, `8 fix 3`, `8 fixes (r3)` and `**8 fix r3**` all read 3. Fenced examples are dropped first,
+ * so a sample row never counts. A header is the row above a
  * `|---|` separator (else the section's first row), so a second table reads its own Step column.
  */
 export function ledgerFixRound(text) {
   let section = null;
   let stepCol = null;
   let highest = 0;
+  let seen = false;
   const lines = dropFences(text).split('\n');
   const cellsOf = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
   const isSep = (line) => line.trim().startsWith('|') && cellsOf(line).every((c) => /^:?-+:?$/.test(c));
@@ -338,16 +341,17 @@ export function ledgerFixRound(text) {
       stepCol = null;
       continue;
     }
+    if (/^ledger\b/.test(section ?? '')) seen = true;
     if (!/^ledger\b/.test(section ?? '') || !line.trim().startsWith('|') || isSep(line)) continue;
     const cells = cellsOf(line);
     if (stepCol === null || isSep(lines[i + 1] ?? '')) {
       stepCol = Math.max(0, cells.findIndex((c) => c.toLowerCase() === 'step'));
       continue;
     }
-    const m = /^8\s+fix\s+r(\d+)\b/i.exec((cells[stepCol] ?? '').replace(/`/g, ''));
+    const m = /^8\s+fix(?:es)?[\s(-]*(?:r|round\s*)?(\d+)\b/i.exec((cells[stepCol] ?? '').replace(/[`*_]/g, ''));
     if (m) highest = Math.max(highest, Number(m[1]));
   }
-  return highest;
+  return seen ? highest : null;
 }
 
 /**
@@ -746,7 +750,8 @@ function reachable(starts, edges) {
  * read only its own range, so it says nothing about the edits before it; and a merge can write
  * content no branch held. A path is reached when its result blob follows from a start through
  * changes some review read. A self-loop is a review that read no change to the path: it adds
- * nothing. A guard is checked first, so no agent judges its own edit to a gate. An unknown host
+ * nothing. A guard is the owner's, so no agent judges its own edit to a gate; its NONE also names the
+ * critical paths no review read, so the owner's click never stands in for that read unseen. An unknown host
  * counts no row, so only the base and the trusted tips reach, and a path left unreached is NONE: the
  * hook trusts the environment, which a process can strip, so an unidentified host fails closed.
  * On a known host an unreached path is RE-REVIEW, from the latest reviewed tree when a review read
@@ -769,7 +774,8 @@ export function landing({ result, base, trust = [], changed, blockChanged = {}, 
     host,
     reason,
   });
-  if (guards.length) return out('NONE', `a guard, a gate or a reviewed block changed (${name(guards)}): the owner merges`);
+  const guarded = `a guard, a gate or a reviewed block changed (${name(guards)}): the owner merges`;
+  if (guards.length && critical.length === 0) return out('NONE', guarded);
   if (critical.length === 0) return out('PASS', 'no critical path changed');
 
   // per path, what the starts reach; a path the CLI could not look up has no facts and is unreached.
@@ -780,6 +786,11 @@ export function landing({ result, base, trust = [], changed, blockChanged = {}, 
     if (facts) closure.set(p, reachable(facts.starts, facts.edges.filter((e) => e.from !== e.to)));
   }
   const unreached = critical.filter((p) => !closure.get(p)?.has(paths[p].result));
+  // a guard is the owner's, and the owner is told of the critical code no review read beside it
+  if (guards.length) {
+    if (!unreached.length) return out('NONE', guarded);
+    return out('NONE', `${guarded}, after a second-family-adversarial --base ${base} over the critical paths no review read: ${name(unreached)}`, { unreached });
+  }
   if (unreached.length === 0) return out('PASS', `every critical path is reviewed content (${rows.length} review rows)`);
   if (host === 'unknown') return out('NONE', NO_HOST, { unreached });
 

@@ -1323,7 +1323,14 @@ test('landing 11: an unknown host with no critical path changed passes; a guard 
   const cold = landing({ changed: [COLD, 'docs/a.md'], host: 'unknown' });
   assert.deepEqual([cold.verdict, cold.reason], ['PASS', 'no critical path changed']);
   const guard = landing({ changed: [HOT, '.githooks/pre-commit'], host: 'unknown' });
-  assert.deepEqual([guard.verdict, guard.reason], ['NONE', 'a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges']);
+  // the guard is the owner's, and the NONE names the critical path no review read beside it
+  assert.deepEqual([guard.verdict, guard.reason, guard.unreached], [
+    'NONE',
+    `a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges, after a second-family-adversarial --base ${guard.base} over the critical paths no review read: ${HOT}`,
+    [HOT],
+  ]);
+  const guardOnly = landing({ changed: [COLD, '.githooks/pre-commit'], host: 'claude' });
+  assert.deepEqual([guardOnly.verdict, guardOnly.reason, guardOnly.unreached], ['NONE', 'a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges', []]);
 });
 
 test('landing 12: an unknown host passes a critical path whose result is content a trusted tip holds', () => {
@@ -1355,7 +1362,8 @@ const STATE = (rows, extra = '') =>
 test('ledgerFixRound: the highest `8 fix r<N>` Step cell in ## Ledger; 0 with none', () => {
   assert.equal(ledgerFixRound(STATE(['| 8 review r1 | ran | x |', '| 8 fix r1 | ran | y |', '| 8 fix r3 | ran | z |', '| 8 fix r2 | ran | w |'])), 3);
   assert.equal(ledgerFixRound(STATE(['| 8 review r1 | ran | x |'])), 0);
-  assert.equal(ledgerFixRound(''), 0);
+  assert.equal(ledgerFixRound(''), null, 'no ## Ledger section: no state file');
+  assert.equal(ledgerFixRound('# README\n\n| 8 fix r3 | x |'), null);
   assert.equal(ledgerFixRound(STATE(['| `8 fix r4` · codex | ran | x |'])), 4, 'a backticked cell and a suffix');
   assert.equal(ledgerFixRound(STATE(['| 8 Fix R2 | ran | x |'])), 2, 'any case');
   // the Step column by name, wherever it stands
@@ -1364,6 +1372,9 @@ test('ledgerFixRound: the highest `8 fix r<N>` Step cell in ## Ledger; 0 with no
   assert.equal(ledgerFixRound(['## Notes', '| 8 fix r9 | x |', '## Ledger', '| Step | Status |', '|---|---|', '```', '| 8 fix r7 | ran |', '```', '| 18 fix r6 | ran |', '| 8 fixed r8 | ran |', '| 8 review r1 | 8 fix r9 |'].join('\n')), 0);
   // a `###` heading inside the ledger is not a new section
   assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '### round two', '| 8 fix r2 | ran |'].join('\n')), 2);
+  // the near-miss forms a hand-written row takes
+  for (const cell of ['8 fix round 3', '8 fix 3', '8 fixes r3', '8 fix (r3)', '8 fix-r3', '**8 fix r3**'])
+    assert.equal(ledgerFixRound(STATE([`| ${cell} | ran | x |`])), 3, cell);
   // a heading with a suffix, and a second table with its own header and column
   assert.equal(ledgerFixRound(['## Ledger (unit u1)', '| Step | Status |', '|---|---|', '| 8 fix r3 | ran |'].join('\n')), 3);
   assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '| 8 fix r1 | ran |', '', '| Status | Step |', '|---|---|', '| ran | 8 fix r3 |'].join('\n')), 3);
@@ -1713,6 +1724,10 @@ test('the wrapper: --state reads the ledger, a lower --round is exit 2 with no u
   res = gate('--round', '1', '--state', 'docs/plans/none.state.md');
   assert.equal(res.status, 2);
   assert.match(res.stderr, /^review-gate: cannot read --state docs\/plans\/none\.state\.md: ENOENT\n$/);
+  // a file with no ledger is no unit's state file: the check never looks done when it read nothing
+  res = gate('--round', '1', '--state', 'README.md');
+  assert.equal(res.status, 2);
+  assert.equal(res.stderr, "review-gate: --state README.md has no ## Ledger section: pass the unit's state file\n");
   res = spawnSync(process.execPath, [RUNNER, '--base', 'HEAD', '--kind', 'unit', '--writer', 'claude', '--state', 'docs/plans/u1.state.md'], { cwd: repo, env, encoding: 'utf8' });
   assert.equal(res.status, 2);
   assert.match(res.stderr, /--state goes with --kind fix/);

@@ -530,7 +530,7 @@ Runtime directories stay gitignored: `.review-work/`, `.codex-runs/`, `.claude-r
 | `scripts/unit-record.mjs` | Step 8b, step 9 | Record fields and the log row, from git, state and steps. `--trailer` prints the land commit's `Unit:` and `Never-auto:` trailers from the state file |
 | `scripts/deploy-list.mjs` + `lib/deploy-list-core.mjs` | Before each deploy | Lists the never-auto lands between the live commit and the one to deploy, each with its landing verdict, reviews and audit, and the critical paths for one adversarial pass ([§8](#the-deploy-list)). Read-only; a list is not a gate |
 | `scripts/unit-cost.mjs` | Step 8b, retro | The log's Cost cell; `--times` and `--by-step` show where time and money went |
-| `scripts/retro.mjs` | Weekly, or as a unit | The digest ([§14](#the-learning-loop)), with *Yield by step* from the kept verdicts, and a `FLAKY` line for a gate a retry keeps passing: a follow-up, never a unit |
+| `scripts/retro.mjs` | Weekly, or as a unit | The digest ([§14](#the-learning-loop)), with *Yield by step* from the kept verdicts, and a `FLAKY` line for each test a retry rescued 3 or more times in 7 days: a follow-up, never a unit |
 | `scripts/check-agent-docs.mjs` | A `full`-level gate | Eleven checks: import, budget (warns), hard-limit, rule-paths, rule-index, links, paths, frontmatter, secrets, base (warns), citations |
 | `scripts/codex-run.mjs`*, `scripts/claude-run.mjs`* | Whenever the second family runs | Fixed model, effort and sandbox per kind; budget guard; run ledger, whose review rows carry the reviewed `tree` and `branch` from `scripts/lib/snapshot-tree.mjs` ([§10](#wrappers)). The model runs in a process group of its own with `HARNESS_ROLE=executor`, and a timeout stops the whole group. A `--timeout-min` under 20 is raised to 20: one install's 9-minute foreground limit cut off 5 of its 22 builds. A pass the provider's safety filter turned down is `refused`, exit 5, and reruns on Opus, never on Codex. An `ok` run's verdict is copied to `.codex-runs/verdicts/`, named in the row's `verdictCopy`, so the retro can count it after the worktree is gone |
 
@@ -1565,7 +1565,7 @@ plugin kept 209 MB without producing one instinct (self-reported). So measuremen
 
 | Step | Runs | Does |
 |---|---|---|
-| **Retro** | Weekly per project, `REPORT retro` | A committed digest of at most 8 KB: KPIs against the four weeks before, owner touches, **outcomes**, **decisions by card kind**, outliers, money by step, **yield by step** (since v12: the second family's ok runs by kind and how many kept verdicts hold a P0 or P1), a `FLAKY` line for a gate a retry keeps passing (since v13), friction, Missed by harness, the queue, at most five candidates |
+| **Retro** | Weekly per project, `REPORT retro` | A committed digest of at most 8 KB: KPIs against the four weeks before, owner touches, **outcomes**, **decisions by card kind**, outliers, money by step, **yield by step** (since v12: the second family's ok runs by kind and how many kept verdicts hold a P0 or P1), a `FLAKY` line for each test a retry rescued 3 or more times in 7 days (since v13), friction, Missed by harness, the queue, at most five candidates |
 | **Retro review** | Weekly, machine-wide job | A fresh Opus, read-only, classes each candidate as rule, threshold, machinery fix, vendor trap or promote. It **routes, never asks and never makes a unit**: T becomes a line in `docs/harness/upstream-notes.md`, C stays in the weekly report |
 | **Rule audit** | Quarterly, in the project | Are the rules still true? |
 | **Phase F** | Monthly, or on a promote | Mechanism moves upstream into the skill; thresholds never do |
@@ -1600,7 +1600,7 @@ Listed under `skills.own` in `fork/slim.json`. There are no own agents or comman
 
 | Skill | Role | Size |
 |---|---|---|
-| [`harness-bootstrap`](../skills/harness-bootstrap/SKILL.md) | Assesses, derives, generates, upgrades | About 100 files; `SKILL.md` and its references are 441,151 bytes |
+| [`harness-bootstrap`](../skills/harness-bootstrap/SKILL.md) | Assesses, derives, generates, upgrades | About 100 files; `SKILL.md` and its references are about 445 KB (445,498 bytes at v13) |
 | [`delegate-tasks`](../skills/delegate-tasks/SKILL.md) | Dispatches behind command gates | `SKILL.md` and two references |
 | [`coordinate-sessions`](../skills/coordinate-sessions/SKILL.md) | Runs worker sessions behind one controller, since v12; its version 2 ships with v13 ([§11](#11-delegate-tasks)) | `SKILL.md`, one reference, `scripts/board-check.mjs` and `scripts/worktree-add.mjs` |
 | `skill-advisor` | Unrelated to the harness; recommends library items per project | |
@@ -1691,13 +1691,15 @@ plugin and installs nothing into a project.
 **v13 lands the same way: one owner-key merge, asked in chat first.** Every row is a replace, a keep or
 a clean merge, so there is no owner card. It replaces guard files (`run-gates.sh`, admission, the
 review-gate core, `codex-run.mjs`, the command guard, `session-resume.mjs`, the commit guard's hooks),
-so the landing check says `NONE`: the session runs the merge hook's checks first, asks in one chat
-line, and on the yes runs the owner-key merge itself. From v11, the v12 and v13 rows go together, as
+so the landing check says `NONE`: the session runs the merge hook's checks and the branch's own
+landing check first (its v13 line names the critical paths no review read, and their adversarial pass
+runs before the ask), asks in one chat line, and on the yes runs the owner-key merge itself. From v11, the v12 and v13 rows go together, as
 one upgrade and one merge. The bindings are read from the install: `SCOPE="checkout"`, with the
 registry's `Worktree` column added and any bad cell fixed first; `PRODUCT_PATHS`, `RECORDS`,
-`GATE_JOBS` and `SERIAL`, `LEASE_SLOTS`, `RETRY_FLAKY=1` and `DOCS_ONLY` in the gates; each gate's
+`GATE_JOBS` and `SERIAL`, `RETRY_FLAKY=1` and `DOCS_ONLY` in the gates, `LEASE_SLOTS` in admission and `WORKTREES` in `leftover-processes.mjs`; each gate's
 scoped command made scoped in fact; a merge-time suite pointed at `run-gates.sh`; the merge block's
-`Owner merges:` and `Owner at deploy:` lines; and `LIVE_REF` where the install has a deployed ref
+`Owner merges:` and `Owner at deploy:` lines; `NOTES`, the install's upstream-notes path, in the
+review-gate core; and `LIVE_REF` where the install has a deployed ref
 ([`reference/upgrade.md`](../skills/harness-bootstrap/reference/upgrade.md) › Upgrading to v13). Local
 rules that send a reversible kind to the owner, wait for the owner's go after low memory, wait on a
 FULL in the foreground or commit state at every step go, and an install's own builds that do the same
@@ -1717,6 +1719,9 @@ owner names it. The v13 rollout re-measures this table.
 | v11 | 13 |
 | v7 to v10 | 0 |
 | v6 | 1 |
+
+On 2026-11-17, the v12 study's check (*measured*): 5 installs at v12, 8 at v11 and one at v6, whose
+machine's plugin was at js.12.
 
 Claude Code's plugin, Codex's plugin and the ZCode copies have been at `2.2.3-js.15`, equal to main, since
 2026-11-14. One remote machine's plugin was last noted at js.12 (2026-11-13). The weekly job ran for weeks W44 to W46 with
@@ -1992,7 +1997,7 @@ not the owner's attention.
   shipped with no second review after its fix round, against its own rule that a fix commit is new code.
   v9 shipped a day after v8, with v8 unpiloted, v10 two days after v9, and v11 three days after v10, so the pilot measures the four together.
   v12 followed v11 by a day, and v13 followed v12 by three, after 54 hours of v12 in five installs.
-- **It is heavy.** 441 KB of skill text, about 100 files, and an always-loaded base that keeps pressing its budget.
+- **It is heavy.** About 445 KB of skill text, about 100 files, and an always-loaded base that keeps pressing its budget.
 - **It depends on one owner's patterns.** All of the evidence comes from one owner's projects. Those habits are in
   the numbers, and the design may not transfer.
 - **It is not validated outside Claude Code at the same depth.** ZCode transcripts are not read, and Kimi has no
@@ -2158,6 +2163,10 @@ From the weekly reviews, the v8 round and the v13 plan. None is decided.
 - Per-review worktrees, a padding check on state-file budgets, and write-once review returns.
 - A machine-wait field, so that a long build is not counted as work.
 - A nested-subagent coordinator, if the pilot shows the main thread's context staying high.
+- From the v13 upgrade dry run: `harness-status` does not list a template added since the manifest's
+  version as missing, its `lock-missing` text says "no registry, no guard" where the guard is installed,
+  and `run-counted.mjs` still resolves failing test files from `process.cwd()`, so a gate that runs it
+  inside a package directory prints no `KNOWN` (22 of 29 package gates in one install).
 
 ## Appendix A: the rules, one line each
 
@@ -2235,7 +2244,7 @@ origin. Rules ship into each project's `AGENTS.md` from `templates/agents-rules.
 12. Search, then read once; one slice per agent.
 13. Run the full verification once per unit, not once per slice. [39 runs, 8.4 hours]
 14. Stop processes by the PID you recorded, never by name; give a script's shell its own process group and kill the group. [96 orphaned shells]
-15. Asks are the run's last action, asked in chat, and product units go before harness units.
+15. Asks are the run's last action, asked in chat, and product units go before harness units (`runner.md` › Shape).
 
 **Documents**
 

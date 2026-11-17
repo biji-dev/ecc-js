@@ -187,6 +187,23 @@ the owner's call — visual identity, product copy, naming.
 > Origin: a task raised its own gate for exactly this reason, by judgment. The
 > rule exists so it is not judgment next time.
 
+**Never-auto product code merges when green; the owner reads it at deploy, and the
+owner key is for `GUARDS` only.** Money, stored-data formats, dependencies, shared
+contracts and migrations run every review their tier names and the landing check,
+merge by the policy, and reach the owner on the deploy list (`gate-design.md` › The
+deploy list). A merge that needs the owner key is asked in chat first, and the
+session raises the dialog itself while the owner is there.
+> Origin, the v12 study (5 installs, 54 h): about 60 owner-key dialogs froze
+> controllers for about 1,800 minutes; about 1 in 6 protected a harness file.
+
+**Decide the reversible; ask a card at most twice.** Copy within the glossary, UI
+inside the design system, ordering, internal names, demo data, a merged branch's
+deletion, a flaky gate's re-run and which reviewer runs are a `DEC … By: grant` line,
+never a card; a card unanswered after two asks is `OWED`, carried by the digest
+(`gate-design.md` › Who decides).
+> Origin, the v12 study: about 90 of 169 controller stops needed no owner, and one
+> unanswered card was listed 11 times.
+
 ### Sizing and measurement
 
 **Re-tier at both gates, not only at grounding.** Scope grows during review
@@ -248,6 +265,18 @@ second run of the same gates waits for the first.
 > always owed. No run repeated after a merge whose tree equalled the verified tip;
 > the merges were never the waste.
 
+**A FULL red after its retry is diagnosed from its log before any re-run.** A re-run
+on the same tree names its changed cause in one line; a flake (`run-gates.sh`
+retries it once, `RETRY_FLAKY`) never goes to the second family's `fix-cold`; and the
+owner is never asked whether to re-run.
+> Origin, the v12 study: about 30 FULL re-runs on an unchanged tree; in one install 0
+> of 21 reds came from a diff, and "may I restart the FULL?" cost another 61 minutes.
+
+**The unit review runs exactly what `review-gate.mjs` names.** An agent description
+that says "MUST BE USED" never adds a reviewer (`gate-design.md` › Review lineup).
+> Origin, the v12 study: about $150 of reviewer subagents beyond the gate's lineup
+> found no P0/P1.
+
 **A blocking card goes out as text, never a question tool.** The open cards go to the state file as `Q-n`
 rows first, and the turn ends once nothing else is ready (`gate-design.md` ›
 Parking a unit).
@@ -305,12 +334,28 @@ Shape); it stops only on a command's word.
 > instruction covered it. About 12 `/clear`s chained housekeeping units by hand —
 > sweep, hygiene, follow-ups — 0–9 minutes apart.
 
-**A run's turn ends on a state line: `RUNNING`, `WAITING ON YOU`, `DONE` or
-`BLOCKED`.** `RUNNING: <what>, nothing needed from you` · `WAITING ON YOU: <the
-inbox>` · `DONE: <units landed>` · `BLOCKED: <cause, what you must do>`.
+**A run's turn ends on a state line that names who is waiting.**
+`RUNNING — <what> (<task id>)` · `WAITING ON OWNER — <the one question>` ·
+`WAITING ON CONTROLLER <name> — <what>` (a worker under a controller) ·
+`DONE — <what landed>` (a worker adds `; nothing runs here, close this terminal`) ·
+`BLOCKED — <cause>; <who acts>`. A worker never says "you"; a controller's status
+line keeps its form (`A s2 12m · B READY q1 · C QUIET 41m`) and adds
+`owner: <n> open` when something waits on the owner.
 > Origin, the v8 session study: a turn that ended did not say whether the run was
 > done, waiting or still running; the owner asked "are we done / what's next" 33
-> times in 14 days.
+> times in 14 days. The v12 study: every project had a silent stall of an hour or more, the longest
+> 353 minutes.
+
+**Low memory is never an owner stop.** An admission refusal (exit 97) re-queues the
+run; two in a row go into the state line as a fact, never a question.
+> Origin, the v12 study: one install turned "tell me, don't just fail on low RAM" into
+> "stop and wait for the owner's go": 6 stops, 189 minutes; another waited 2h51 on
+> "free memory, tell me go".
+
+**State is written at every step boundary and committed at Gate 1, before the FULL
+verify and at land.** The file survives a compaction on disk, so a commit per step
+buys nothing.
+> Origin, the v12 study: 12–28 harness commits per unit.
 
 **Search, then read once; one slice per agent.** Grep first, then read what you
 need in one call — the file whole, or a range of 150 lines or more — never page it
@@ -323,7 +368,7 @@ round by area.
 > whole context.
 
 **Run the full verification once per unit, not once per slice.** Slices run their
-targeted tests; the full run belongs to step 8a and to the merge.
+targeted tests; the full run belongs to step 8d and to the merge.
 > Origin, the third project: one change request ran the full suite 39 times, 8.4
 > hours of wall time.
 
@@ -380,8 +425,9 @@ fixed or filed and counted under Defects.
 > Origin, twice in the second project: every fix pass produced a minor finding of
 > its own; the table had no arm for that, and the log said *"fix the machinery."*
 
-**A third or fourth round is not the tripwire.** `review-gate.mjs` runs it as the
-adversarial pass, then the redesign, never a third Opus review.
+**A third or fourth round is not the tripwire.** `review-gate.mjs` runs the third
+as the redesign the adversarial pass reads and the fourth as the cut, never a third
+Opus review.
 
 **Do not ship the thresholds.** *"3× the tier median"* is mechanism; *"90
 minutes"* is a number that project earned. Generate the slot empty. If you carry

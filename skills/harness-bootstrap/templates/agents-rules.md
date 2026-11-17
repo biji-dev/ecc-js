@@ -49,6 +49,8 @@ Each rule was produced by a failure in another project; the incident behind each
 - **An implementer may always raise a gate, never lower one.**
 - **Ask the owner only what only the owner can decide.** 81% of 373 owner questions were process or technical; 89% took the recommendation.
 - **Taste is not a risk tier.** Copy, naming and visual identity are the owner's call however clean every check is.
+- **Never-auto product code merges when green; the owner reads it at deploy, and the owner key is for `GUARDS` only.** About 60 owner-key dialogs froze controllers for about 1,800 minutes; about 1 in 6 protected a harness file.
+- **Decide the reversible; ask a card at most twice.** About 90 of 169 controller stops needed no owner; one unanswered card was listed 11 times.
 
 ### Sizing and measurement
 
@@ -64,6 +66,8 @@ Each rule was produced by a failure in another project; the incident behind each
 - **One turn, many tool calls.** 96% of agent turns made one tool call, each re-reading the whole context.
 - **Split a milestone that will not fit one session.** 50 slices in one session: 20 compactions, a 493 KB state file.
 - **Never re-run a gate on a tree it already passed.** 33 full-suite runs repeated on an unchanged tree in 14 days.
+- **A FULL red after its retry is diagnosed from its log before any re-run.** A re-run on the same tree names its changed cause in one line; a flake never goes to `fix-cold`; never ask the owner whether to re-run. About 30 re-runs on an unchanged tree; in one install 0 of 21 reds came from a diff.
+- **The unit review runs exactly what `review-gate.mjs` names.** About $150 of reviewers beyond its lineup found no P0/P1.
 - **A blocking card goes out as text, never a question tool.** An open question is never idle-compacted; rewrites after hour-long waits cost 9.6% of spend.
 - **Wait on a completion notice, never a sleep loop; shrink a screenshot before reading it.** Each poll re-read about 200K of context.
 
@@ -77,7 +81,9 @@ Each rule was produced by a failure in another project; the incident behind each
 - **Harness changes land between runs, never during one.**
 - **Never hand the context to the owner: no new session, hand-off, `/compact` or `/clear`.** 94 keep-lines and 38 clears in 14 days.
 - **Start the next ready unit; never make the owner say what is next.** Housekeeping units were chained by hand.
-- **A run's turn ends on a state line: `RUNNING`, `WAITING ON YOU`, `DONE` or `BLOCKED`.** The owner asked "what's next" 33 times.
+- **A run's turn ends on a state line that names who is waiting.** `RUNNING — <what> (<task id>)`, `WAITING ON OWNER — <question>`, `WAITING ON CONTROLLER <name> — <what>`, `DONE — <what landed>`, `BLOCKED — <cause>; <who acts>`; a worker never says "you". The owner asked "what's next" 33 times.
+- **Low memory is never an owner stop.** "Wait for the owner's go" after low memory cost one install 6 stops and 189 minutes.
+- **State is written at every step boundary and committed at Gate 1, before the FULL verify and at land.** Units made 12–28 harness commits each.
 - **Search, then read once; one slice per agent.** About 4,500 small `sed -n` reads each re-read the whole context.
 - **Run the full verification once per unit, not once per slice.** One change request ran the full suite 39 times: 8.4 hours.
 - **Stop processes by the PID you recorded, never by name** — a kill by pattern reaches every session's processes on the machine.

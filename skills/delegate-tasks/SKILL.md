@@ -4,7 +4,7 @@ description: "Use when a batch of well-specified work should go to subagents beh
 when_to_use: "Deliberate invocation, or a harness step that hands it a slicing table. Standalone: two or more well-specified tasks with disjoint files and command-decidable acceptance. Never auto-route an ordinary feature request, a single bug or a one-off task here — the spec-writing overhead only pays at volume."
 metadata:
   origin: ecc-js
-  version: 12
+  version: 13
 ---
 
 # delegate-tasks — architect on the judgment model, executors by risk
@@ -214,7 +214,7 @@ Templates for every kind are in `reference/spec-templates.md`.
    stderr**: type checkers and build orchestrators print errors to stdout. A finding
    is `verified` only when the gate is green. Count maps come from the spec. Still
    red after three: stop and report — in a harness, `review-gate.mjs` names round 3
-   the adversarial pass, round 4 the redesign and round 5 the cut, none asked.
+   the redesign the adversarial pass reads and round 4 the cut, none asked.
 8. Executors that share state (one test database, one port) run in sequence, or each
    gets its own resource. **Pin the repository root** in every command.
 9. **Another session may be working in the same clone.** A file outside every list
@@ -270,7 +270,7 @@ they stay in the session. Codex, ZCode and Kimi forms are in
   the accessibility snapshot against the spec's visual contract.
 - Blocked tasks: fix the **spec**, re-dispatch only that executor.
 - Run the project's strongest check once yourself — **standalone only.** Inside a
-  harness the runner's step 8a FULL verify is that check; run nothing extra on the
+  harness the runner's step 8d FULL verify is that check; run nothing extra on the
   same tree.
 - **Commit gate.** Standalone: present the diff summary and proposed conventional
   commit messages, and commit only when the user confirms. Inside a harness: the

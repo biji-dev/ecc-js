@@ -172,6 +172,7 @@ Unit: <id>
 Mode: <plan | change>
 Type: <type>
 Tier: <tier>
+Never-auto: <the claim line's never-auto categories, comma-separated, or none>
 Deliverable: <n of m — its one-line name>
 Deliverable started: <ISO time this deliverable's context began>
 Demo: <open · do · expect>
@@ -211,13 +212,15 @@ reviewer that first reported a finding (`codex-review`, `opus-code-reviewer`,
 project may add its own. A ledger row's Step cell starts with the step's id (`8b record`,
 `Gate 1`), so the record can put that step's time beside it.
 
-`[M]` **Committed on the unit branch at step boundaries**, never per fix.
+`[M]` **Written at every step boundary, committed on the unit branch at Gate 1,
+before the FULL verify and at land**, never per fix or per step: the file survives a
+compaction on disk.
 > Origin: one change request spent 49 commits on progress rows, state and
-> hand-off notes.
+> hand-off notes; in the v12 study units still made 12–28 harness commits each.
 
 `[M]` **Its steps file sits beside it:** `<unit>.steps.jsonl`, one JSON line per step
 start or end, appended by `unit-step.mjs` and never edited by hand (`runner.md` › Step
-markers). Committed when the state file is — where the project keeps its state files
+markers). Committed when the state file is, at the same three points — where the project keeps its state files
 out of git, both stay on this machine — and kept after the unit lands: it is the only
 record of which step spent the time. About 30 lines a unit, so no byte budget.
 

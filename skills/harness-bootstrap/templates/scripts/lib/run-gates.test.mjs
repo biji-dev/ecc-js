@@ -618,3 +618,267 @@ test('known reds: only a gate of one run-counted call, a file that spells the ti
   git(repo, 'checkout', '-q', 'unit');
   assert.match(runCopy(lines, [], shared).stdout, /^KNOWN t /m, 'a branch from the commit the record was made at');
 });
+
+/** git in `repo`, asserting it succeeds; returns stdout. */
+function gitOk(repo, ...a) {
+  const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: repo, encoding: 'utf8', env: ENV });
+  assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+  return r.stdout;
+}
+/** Writes `file` (relative to `repo`, directories made) and commits it. */
+function commitFile(repo, file, text) {
+  fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+  fs.writeFileSync(path.join(repo, file), text);
+  gitOk(repo, 'add', file);
+  gitOk(repo, 'commit', '-q', '-m', file);
+}
+const SKIP_PATHS_RX = /^SKIP h \(no path outside PRODUCT_PATHS changed since [0-9a-f]{12}\)$/;
+
+test('paths: a FULL run whose every change since the merge base is in PRODUCT_PATHS skips the paths gate, naming the merge base', () => {
+  const h = counter();
+  const lines = [h.gate('h', 'paths'), "gate ok always 'true'"];
+  const repo = newRepo();
+  const mb = gitOk(repo, 'rev-parse', 'HEAD').trim();
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/a.js', 'a\n');
+  fs.writeFileSync(path.join(repo, 'src', 'b.js'), 'untracked\n');
+  const r = runCopy(lines, [], { repo, env: { RUN_GATES_PRODUCT_PATHS: '^src/' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(r.lines.includes(`SKIP h (no path outside PRODUCT_PATHS changed since ${mb.slice(0, 12)})`), r.stdout);
+  assert.equal(r.lines.at(-1), 'SUMMARY 1 passed, 0 failed, 1 skipped (full)');
+  assert.equal(h.n(), 0, 'the paths gate ran');
+});
+
+test('paths: the gate runs on the mainline tip, with no merge base, with nothing changed and with one path outside PRODUCT_PATHS', () => {
+  const h = counter();
+  const lines = [h.gate('h', 'paths')];
+  const env = { RUN_GATES_PRODUCT_PATHS: '^src/' };
+  const runs = (why, repo, extra = {}) => {
+    const before = h.n();
+    const r = runCopy(lines, ['--no-cache'], { repo, env: { ...env, ...extra } });
+    assert.equal(r.status, 0, `${why}: ${r.stdout}${r.stderr}`);
+    assert.doesNotMatch(r.stdout, /^SKIP /m, why);
+    assert.equal(h.n(), before + 1, `${why}: the paths gate did not run`);
+  };
+  const repo = newRepo();
+  // on the mainline: HEAD at its tip, product edits included
+  commitFile(repo, 'src/a.js', 'a\n');
+  fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'edit\n');
+  runs('the mainline tip', repo);
+  gitOk(repo, 'checkout', '-q', '--', 'src/a.js');
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/b.js', 'b\n');
+  runs('no mainline', repo, { RUN_GATES_MAINLINE: '' });
+  runs('a mainline that does not exist', repo, { RUN_GATES_MAINLINE: 'trunk' });
+  const orphan = newRepo();
+  gitOk(orphan, 'checkout', '-q', '--orphan', 'other');
+  gitOk(orphan, 'rm', '-q', '-r', '--cached', '.');
+  commitFile(orphan, 'src/c.js', 'c\n');
+  runs('no merge base', orphan);
+  const empty = newRepo();
+  gitOk(empty, 'checkout', '-q', '-b', 'unit');
+  gitOk(empty, 'commit', '-q', '--allow-empty', '-m', 'nothing');
+  runs('nothing changed since the merge base', empty);
+  fs.writeFileSync(path.join(repo, 'harness.md'), 'outside\n');
+  runs('one path outside PRODUCT_PATHS', repo);
+});
+
+test('paths: PRODUCT_PATHS empty makes a paths gate a full one; a scoped run runs it only for a change outside PRODUCT_PATHS', () => {
+  const h = counter();
+  const lines = [h.gate('h', 'paths'), "gate ok always 'true'"];
+  const repo = newRepo();
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'a\n');
+  const off = runCopy(lines, ['--since', 'HEAD'], { repo, scoped: '.*' });
+  assert.ok(off.lines.includes('SKIP h (full only)'), `PRODUCT_PATHS off: not a full gate in a scoped run: ${off.stdout}`);
+  assert.equal(h.n(), 0);
+  const head = gitOk(repo, 'rev-parse', 'HEAD').trim();
+  const env = { RUN_GATES_PRODUCT_PATHS: '^src/' };
+  const inside = runCopy(lines, ['--since', 'HEAD'], { repo, scoped: '.*', env });
+  assert.ok(inside.lines.includes(`SKIP h (no path outside PRODUCT_PATHS changed since ${head.slice(0, 12)})`), inside.stdout);
+  assert.equal(h.n(), 0, 'a scoped run with product changes only ran the paths gate');
+  fs.writeFileSync(path.join(repo, 'tool.sh'), 'x\n');
+  const outside = runCopy(lines, ['--since', 'HEAD'], { repo, scoped: '.*', env });
+  assert.equal(outside.lines.at(-1), 'SUMMARY 2 passed, 0 failed, 0 skipped (scoped)', outside.stdout);
+  assert.equal(h.n(), 1, 'a scoped run with a change outside PRODUCT_PATHS did not run the paths gate');
+});
+
+test('paths: the run-or-skip decision joins the cache: a skip never answers a run of the same tree, nor a run a skip', () => {
+  const h = counter();
+  const lines = [h.gate('h', 'paths'), "gate ok always 'true'"];
+  const repo = newRepo();
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/a.js', 'a\n');
+  const cache = tmp('run-gates-cache-');
+  const go = (rx) => runCopy(lines, [], { repo, cache, env: { RUN_GATES_PRODUCT_PATHS: rx } });
+  const skip = go('^src/');
+  assert.ok(skip.lines.some((l) => SKIP_PATHS_RX.test(l)), skip.stdout);
+  assert.equal(h.n(), 0);
+  const run = go('^lib/');
+  assert.doesNotMatch(run.stdout, /^REUSED /m, `a skipped run answered one that must run the gate: ${run.stdout}`);
+  assert.equal(h.n(), 1, 'the run after a skip did not run the paths gate');
+  const skipAgain = go('^src/');
+  assert.match(skipAgain.lines[0], REUSED_RX, `the skip was not reused for the same tree and decision: ${skipAgain.stdout}`);
+  assert.ok(skipAgain.lines.some((l) => SKIP_PATHS_RX.test(l)), skipAgain.stdout);
+  const runAgain = go('^lib/');
+  assert.match(runAgain.lines[0], REUSED_RX, runAgain.stdout);
+  assert.equal(h.n(), 1);
+});
+
+test('RECORDS: a records-only change prints REUSED (untracked, committed, and in a snapshot); RUN_GATES_RECORDS empty runs again', () => {
+  const c = counter();
+  const repo = newRepo();
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/a.js', 'a\n');
+  const cache = tmp('run-gates-cache-');
+  const first = runCopy([c.gate()], [], { repo, cache });
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  fs.mkdirSync(path.join(repo, 'plans', 'unit'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plans', 'unit', 'u1.state.md'), '# state\n');
+  fs.writeFileSync(path.join(repo, 'plans', 'unit', 'u1.steps.jsonl'), '{}\n');
+  const untracked = runCopy([c.gate()], [], { repo, cache });
+  assert.match(untracked.lines[0], REUSED_RX, `untracked records were not reused: ${untracked.stdout}`);
+  gitOk(repo, 'add', 'plans');
+  gitOk(repo, 'commit', '-q', '-m', 'land');
+  const landed = runCopy([c.gate()], [], { repo, cache });
+  assert.match(landed.lines[0], REUSED_RX, `the land commit was not reused: ${landed.stdout}`);
+  const snap = runCopy([c.gate()], ['--snapshot'], { repo, cache });
+  assert.equal(snap.status, 0, snap.stdout + snap.stderr);
+  assert.equal(c.n(), 2, 'the snapshot did not run once for its own mode');
+  fs.appendFileSync(path.join(repo, 'plans', 'unit', 'u1.state.md'), 'more\n');
+  gitOk(repo, 'commit', '-q', '-am', 'state');
+  const snap2 = runCopy([c.gate()], ['--snapshot'], { repo, cache });
+  assert.match(snap2.lines[0], REUSED_RX, `a snapshot whose commit differs only in records was not reused: ${snap2.stdout}`);
+  assert.equal(c.n(), 2);
+  const off = runCopy([c.gate()], [], { repo, cache, env: { RUN_GATES_RECORDS: '' } });
+  assert.doesNotMatch(off.stdout, /^REUSED /m, `with RECORDS off a records change was reused: ${off.stdout}`);
+  assert.equal(c.n(), 3);
+  fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'product\n');
+  const product = runCopy([c.gate()], [], { repo, cache });
+  assert.doesNotMatch(product.stdout, /^REUSED /m, `a product edit was reused: ${product.stdout}`);
+  assert.equal(c.n(), 4);
+});
+
+test('RECORDS: a scoped run does not list records as changed, so they never promote it; an invalid RECORDS or PRODUCT_PATHS exits 99', () => {
+  const c = counter();
+  const repo = newRepo();
+  fs.writeFileSync(path.join(repo, 'x.state.md'), '# s\n');
+  const r = runCopy([c.gate()], ['--since', 'HEAD'], { repo, scoped: '^src/' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(r.lines.includes('SCOPED: nothing changed since HEAD'), r.stdout);
+  const bad = runCopy([c.gate()], [], { repo, env: { RUN_GATES_RECORDS: '(' } });
+  assert.equal(bad.status, 99, bad.stdout + bad.stderr);
+  assert.match(bad.stderr, /RECORDS is not a valid extended regex/);
+  const badPaths = runCopy([c.gate('h', 'paths')], [], { repo, env: { RUN_GATES_PRODUCT_PATHS: '(' } });
+  assert.equal(badPaths.status, 99, badPaths.stdout + badPaths.stderr);
+  assert.match(badPaths.stderr, /PRODUCT_PATHS is not a valid extended regex/);
+});
+
+/**
+ * A stand-in run-counted (`bash <dir>/run-counted.mjs`): each call is counted; while the count is at or
+ * under the number `setFails` wrote, a call ends as run-counted ends a failing run naming `ids` and
+ * exits 1, after `sleep` seconds. Later calls pass with a count line.
+ */
+function flaky(ids, { sleep = 0 } = {}) {
+  const dir = tmp('run-gates-flaky-');
+  const calls = path.join(dir, 'calls');
+  const fails = path.join(dir, 'fails');
+  const fake = path.join(dir, 'run-counted.mjs');
+  fs.writeFileSync(
+    fake,
+    [
+      `echo x >> ${calls}`,
+      `n=$(grep -c . ${calls})`,
+      `sleep ${sleep}`,
+      `if [ "$n" -le "$(cat ${fails} 2>/dev/null || echo 0)" ]; then`,
+      `  echo 'run-counted: FAIL ${ids.length} failed (must be 0)'`,
+      ...ids.map((id) => `  echo 'run-counted: FAILED ${id}'`),
+      '  exit 1',
+      'fi',
+      "echo 'COUNTED node 3 passed (min 1)'",
+      '',
+    ].join('\n'),
+  );
+  const setFails = (n) => fs.writeFileSync(fails, `${n}\n`);
+  const n = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean).length : 0);
+  const line = (name = 't') => `gate_counted ${name} always '^COUNTED node [1-9][0-9]* passed' 'bash ${fake}'`;
+  return { fake, setFails, n, line };
+}
+/** A repo on the mainline with a committed test file the ids name. */
+function flakyRepo() {
+  const repo = newRepo();
+  commitFile(repo, 'tests/a.test.mjs', "test('one')\ntest('two')\n");
+  return repo;
+}
+const FLAKY_ENV = { RUN_GATES_INSTANT_SECS: '0' };
+
+test('flaky retry: a failure in untouched test files runs once more; a pass prints the flaky PASS line, is registered and cached', () => {
+  const ids = ['tests/a.test.mjs :: one', 'tests/a.test.mjs :: two'];
+  const f = flaky(ids);
+  f.setFails(1);
+  const repo = flakyRepo();
+  gitOk(repo, 'checkout', '-q', '-b', 'unit');
+  commitFile(repo, 'src/x.js', 'x\n');
+  const cache = tmp('run-gates-cache-');
+  const r = runCopy([f.line()], [], { repo, cache, env: FLAKY_ENV });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^PASS t \d+s \S+\/t\.retry\.log \(flaky: tests\/a\.test\.mjs :: one; tests\/a\.test\.mjs :: two, retried\)$/m);
+  assert.equal(r.lines.at(-1), 'SUMMARY 1 passed, 0 failed, 0 skipped (full)');
+  assert.equal(f.n(), 2, 'the gate did not run exactly twice');
+  const reg = fs.readFileSync(path.join(cache, 'flakes.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(reg.length, 1);
+  assert.deepEqual(Object.keys(reg[0]), ['at', 'gate', 'ids', 'tree', 'top']);
+  assert.match(reg[0].at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+  assert.equal(reg[0].gate, 't');
+  assert.deepEqual(reg[0].ids, ids);
+  assert.match(reg[0].tree, /^[0-9a-f]{40,64}$/);
+  assert.equal(reg[0].top, repo);
+  const again = runCopy([f.line()], [], { repo, cache, env: FLAKY_ENV });
+  assert.match(again.lines[0], REUSED_RX, `a run healed by its retry was not cached: ${again.stdout}`);
+  assert.equal(f.n(), 2);
+});
+
+test('flaky retry: a second fail is a FAIL and registers nothing; RUN_GATES_RETRY_FLAKY=0 never retries', () => {
+  const f = flaky(['tests/a.test.mjs :: one']);
+  f.setFails(2);
+  const repo = flakyRepo();
+  const r = runCopy([f.line()], ['--no-cache'], { repo, env: FLAKY_ENV });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^FAIL t \d+s \S+\/t\.retry\.log \(exit 1\)$/m);
+  assert.equal(f.n(), 2);
+  assert.ok(!fs.existsSync(path.join(r.cache, 'flakes.jsonl')), 'a red that repeated was registered as a flake');
+  f.setFails(99);
+  const off = runCopy([f.line()], ['--no-cache'], { repo, env: { ...FLAKY_ENV, RUN_GATES_RETRY_FLAKY: '0' } });
+  assert.equal(off.status, 1, off.stdout + off.stderr);
+  assert.equal(f.n(), 3, 'RUN_GATES_RETRY_FLAKY=0 retried');
+});
+
+test('flaky retry: never on a timeout, an instant exit, a missing count line, a touched test file, a file not in the tree or no mainline', () => {
+  const once = (why, ids, opts, check) => {
+    const f = flaky(ids, opts.fake);
+    f.setFails(opts.fails ?? 1);
+    const repo = flakyRepo();
+    if (opts.prepare) opts.prepare(repo);
+    const r = runCopy([opts.line ? opts.line(f) : f.line()], ['--no-cache'], { repo, env: { ...FLAKY_ENV, ...opts.env } });
+    assert.equal(f.n(), 1, `${why}: the gate was retried: ${r.stdout}`);
+    assert.doesNotMatch(r.stdout, /flaky/, why);
+    if (check) check(r);
+  };
+  const ONE = ['tests/a.test.mjs :: one'];
+  once('a timeout', ONE, { fake: { sleep: 3 }, env: { RUN_GATES_GATE_TIMEOUT: '1' } }, (r) => assert.match(r.stdout, /\(timeout after 1s\)/));
+  once('an instant exit', ONE, { env: { RUN_GATES_INSTANT_SECS: '10' } }, (r) => assert.match(r.stdout, /\(instant: /));
+  once('a missing count line', ONE, { line: (f) => `gate_counted t always '^NEVER' 'bash ${f.fake}'`, fails: 0 }, (r) =>
+    assert.match(r.stdout, /\(no count line matched\)/),
+  );
+  once('an uncommitted edit to the test file', ONE, { prepare: (repo) => fs.appendFileSync(path.join(repo, 'tests', 'a.test.mjs'), 'edit\n') });
+  once('a committed edit on the branch', ONE, {
+    prepare: (repo) => {
+      gitOk(repo, 'checkout', '-q', '-b', 'unit');
+      commitFile(repo, 'tests/a.test.mjs', "test('one')\n");
+    },
+  });
+  once('a file not in the tree', ['tests/gone.test.mjs :: gone'], {});
+  once('a failure run-counted could not name', ['?'], {});
+  once('two commands in the gate', ONE, { line: (f) => `gate_counted t always '^COUNTED node [1-9][0-9]* passed' 'true && bash ${f.fake}'` });
+  once('no mainline', ONE, { env: { RUN_GATES_MAINLINE: '' } });
+});

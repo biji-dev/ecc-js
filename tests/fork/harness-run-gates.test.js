@@ -130,7 +130,7 @@ test('template has header, markers, SCOPED_PATHS and default gates', () => {
   const lines = SOURCE.split('\n');
   assert.strictEqual(lines[0], '#!/usr/bin/env bash');
   assert.ok(/^# harness-bootstrap run-gates \(generated YYYY-MM-DD\)$/.test(lines[1]), 'header line');
-  assert.ok(SOURCE.includes('# >>> harness:gates [B] — one line per gate: gate <name> <always|full> \'<command>\''));
+  assert.ok(SOURCE.includes('# >>> harness:gates [B] — one line per gate: gate <name> <always|full|paths> \'<command>\''));
   assert.ok(SOURCE.includes('# <<< harness:gates'));
   assert.ok(SOURCE.includes("SCOPED_PATHS='^(src|apps|packages|lib|docs|tests?)/|\\.md$'"));
   for (const g of [
@@ -578,9 +578,9 @@ test('gate_counted: colour codes are stripped before the regex is matched', () =
   const r = run(makeRepo(withGates(SOURCE, gates)), []);
   assert.strictEqual(r.status, 0, r.stdout + r.stderr);
   assert.ok(/^PASS t /.test(r.lines[1]), r.stdout);
-  const from = 'strip_csi <"$logfile" |';
+  const from = 'strip_csi <"$2" |';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
-  const m = run(makeRepo(withGates(SOURCE.replace(from, 'cat "$logfile" |'), gates)), []);
+  const m = run(makeRepo(withGates(SOURCE.replace(from, 'cat "$2" |'), gates)), []);
   assert.strictEqual(m.status, 1, 'the mutant matches against the escapes: ' + m.stdout);
 });
 
@@ -1432,8 +1432,8 @@ test('a non-bash shell (dash) exits 99 with a message instead of a syntax error'
 console.log('\nrun-gates.sh: mutation');
 
 test('mutant that stops after the first FAIL no longer runs later gates', () => {
-  const from = '    failed=$((failed + 1))\n  fi\ndone';
-  const to = '    failed=$((failed + 1))\n    break\n  fi\ndone';
+  const from = '    take_result "${GATE_NAMES[$i]}"\n';
+  const to = '    take_result "${GATE_NAMES[$i]}"\n    [ "$R_STATUS" != FAIL ] || break\n';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
   const mutant = SOURCE.replace(from, to);
   assert.notStrictEqual(mutant, SOURCE, 'mutation applied');
@@ -1448,7 +1448,7 @@ test('mutant that stops after the first FAIL no longer runs later gates', () => 
 });
 
 test('mutant that ignores the count regex lets a zero-test runner PASS', () => {
-  const from = '! strip_csi <"$logfile" | grep -Eq -- "$rx"';
+  const from = '! strip_csi <"$2" | grep -Eq -- "${GATE_RXS[$1]}"';
   assert.ok(SOURCE.includes(from), 'mutation anchor present in the shipped file');
   const mutant = SOURCE.replace(from, 'false');
   assert.notStrictEqual(mutant, SOURCE, 'mutation applied');

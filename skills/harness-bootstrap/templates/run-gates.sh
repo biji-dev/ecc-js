@@ -3,10 +3,11 @@
 # [M] mechanism, ship as-is: the never-bail loop, per-gate log files, the result-line
 #     format, exit status = number of failed gates, the --since scoped mode, the --snapshot
 #     commit mode, the result cache keyed by tree, the single-flight lock, the
-#     instant-failure note, the per-gate timeout, the admission step, the executor refusal and
-#     the known-red baseline.
+#     instant-failure note, the per-gate timeout, the admission step and its host lease, the
+#     executor refusal, the known-red baseline, the paths mode, the flaky retry and its register.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers,
-#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT and MAINLINE lines.
+#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT, MAINLINE, PRODUCT_PATHS, RECORDS and
+#     RETRY_FLAKY lines.
 #
 # Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
@@ -34,18 +35,32 @@
 #   the lock or a gate (and so does one promoted after a lock or machine wait), saying on stderr:
 #   "run-gates: PROMOTED to FULL by <path>, outside SCOPED_PATHS: FULL is the session's, once at
 #   landing; an executor stops and reports the path".
-# Gates: `gate <name> <always|full> '<command>'` passes when the command exits 0.
-#   `gate_counted <name> <always|full> '<regex>' '<command>'` also needs the command's
+# Gates: `gate <name> <always|full|paths> '<command>'` passes when the command exits 0.
+#   `gate_counted <name> <always|full|paths> '<regex>' '<command>'` also needs the command's
 #   combined output, colour codes stripped, to match the extended regex, so a runner that
 #   ran zero tests (or skipped them all) and exited 0 is a FAIL, not a PASS. Run a test
 #   runner through scripts/run-counted.mjs: it reads the runner's own summary and prints
 #   `COUNTED <kind> <n> passed (min <m>)` only when nothing failed, was skipped or went
 #   unrun, so the regex is '^COUNTED <kind> [1-9][0-9]* passed'.
+# Paths mode: a `paths` gate is for tests that read only the harness (or any part that is not the
+#   product), so a change that touches only the product need not run them. [B] PRODUCT_PATHS is an
+#   extended regex of the product's paths (env RUN_GATES_PRODUCT_PATHS overrides); empty = off, and a
+#   `paths` gate then runs as `full`. A FULL run prints
+#     SKIP <name> (no path outside PRODUCT_PATHS changed since <12-hex merge base>)
+#   only when the paths changed since merge-base(refs/heads/<MAINLINE>, HEAD) (committed, staged,
+#   unstaged and untracked; for --snapshot, the commit against merge-base(<MAINLINE>, <commit>)),
+#   minus .review-work/, the log dir and RECORDS, are not none and every one matches PRODUCT_PATHS. It
+#   runs the gate on the mainline's tip itself (HEAD there), with no mainline or no merge base, with
+#   nothing changed and when a git command fails. A scoped run runs it when a changed path is outside
+#   PRODUCT_PATHS, and prints the SKIP line with the --since commit otherwise (nothing changed too).
+#   The run-or-skip decision joins the cache variant, so a skipped run never answers one that runs it.
 # Output: one line per gate, in registration order, then a SUMMARY line:
 #   PASS <name> <secs>s <logpath> | FAIL <name> <secs>s <logpath> (exit <n>)
 #   | FAIL <name> <secs>s <logpath> (no count line matched)
 #   | FAIL <name> <secs>s <logpath> (timeout after <n>s) | SKIP <name> (full only)
+#   | SKIP <name> (no path outside PRODUCT_PATHS changed since <12-hex commit>)
 #   | KNOWN <name> <secs>s <logpath> (<n> failing test(s) in the <mainline> baseline, their files untouched)
+#   | PASS <name> <secs>s <retry logpath> (flaky: <id>[; <id>...], retried)
 #   SUMMARY <p> passed, <f> failed, <s> skipped[, <k> known] (<full|scoped>)
 #   A refused admission prints "NOT ADMITTED (exit <n>)" instead and exits 97: no gate ran, no SUMMARY.
 #   A FAIL in under RUN_GATES_INSTANT_SECS seconds (default 10) ends with
@@ -70,6 +85,16 @@
 #   count in the exit status and starts no fix round; a run with one is never cached. The
 #   mainline's own run prints its reds as FAIL. No record, no merge base, a timeout, a missed count
 #   line, output after the FAILED block or a `FAILED ?` line: FAIL.
+# Flaky retry: with [B] RETRY_FLAKY=1 (env RUN_GATES_RETRY_FLAKY overrides; 0 = off) a gate that
+#   FAILs, and is not KNOWN, runs once more when its command is one run-counted call, it exited
+#   non-zero (not a timeout, not a missed count line) after RUN_GATES_INSTANT_SECS or more, its log
+#   ends with a FAILED block naming every failure (no `FAILED ?`, one ` :: ` per id), and each failing
+#   test's file is a file of the tree (relative to the top) that did not change since the merge base
+#   with the mainline (committed, uncommitted or untracked; no mainline or no merge base: no retry).
+#   A pass on the retry prints the flaky PASS line above, with the retry's log and both runs' time,
+#   appends {"at","gate","ids","tree","top"} as one JSON line to <cache dir>/flakes.jsonl (shared by
+#   every worktree) and counts as a PASS, so the run can be cached. A second fail prints FAIL, as the
+#   first would have.
 # Timeout: each gate runs in a process group of its own (set -m around its launch; the group id is
 #   its pid). Past GATE_TIMEOUT seconds ([B], default 3600; env RUN_GATES_GATE_TIMEOUT overrides,
 #   0 = no limit) the group gets TERM, then KILL 10 s later, and the gate is a FAIL ending
@@ -95,8 +120,11 @@
 #   lock); it never waits for the machine holding the lock. So an ADMIT override must not fix its
 #   own --wait (the CLI refuses a repeated flag: exit 2, so 97).
 # Reuse: the working tree (tracked, staged, unstaged and untracked files, minus
-#   .review-work/ and the log dir) is hashed with `git write-tree` into a temporary index;
-#   the real index is never touched. A run with every gate PASS is recorded under that tree,
+#   .review-work/, the log dir and every path RECORDS matches) is hashed with `git write-tree` into a
+#   temporary index; the real index is never touched. [B] RECORDS (an extended regex, env
+#   RUN_GATES_RECORDS overrides, empty = off) names the run's own records, the state files and step
+#   ledgers a land commit adds: they leave the key, the scoped changed list and the paths diff, so the
+#   land commit and the merge after a FULL run print REUSED. Bind it only to files no gate reads. A run with every gate PASS is recorded under that tree,
 #   the mode (full or scoped:<since-sha>), the bound gate list, the KEY_EXTRA output and
 #   NODE_OPTIONS (hashed, never stored; unset = empty: it changes what every node child runs).
 #   The next run for the same tree, mode, gates, extra and NODE_OPTIONS prints, instead of
@@ -107,7 +135,7 @@
 #   prints "NOT CACHED tree changed during the run" on stderr (a gate that writes files into
 #   the tree, or an edit made meanwhile: the result may describe neither tree). A FAIL is
 #   never recorded. Not a reusable state (no commit yet, no git index to hash): runs normally.
-#   A --snapshot run is keyed by the commit's tree, under a mode of its own (snapshot), and
+#   A --snapshot run is keyed by the commit's tree (minus RECORDS), under a mode of its own (snapshot), and
 #   is recorded only if no gate changed a tracked file in the snapshot.
 #   [B] Docs-only reuse is OFF unless the DOCS_ONLY pattern (an extended regex; env
 #   RUN_GATES_DOCS_ONLY overrides, empty = off) is set: a tree that differs from a recorded
@@ -153,7 +181,8 @@
 #      RUN_GATES_DOCS_ONLY, RUN_GATES_KEY_EXTRA, RUN_GATES_LOCK_WAIT, RUN_GATES_LOCK_POLL,
 #      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
 #      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
-#      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline).
+#      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline, no paths skip and no
+#      flaky retry). RUN_GATES_PRODUCT_PATHS, RUN_GATES_RECORDS, RUN_GATES_RETRY_FLAKY: above.
 #      HARNESS_ROLE=executor refuses a FULL run, a promoted one included (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -173,26 +202,26 @@ GATE_NAMES=()
 GATE_MODES=()
 GATE_CMDS=()
 GATE_RXS=()
-# gate <name> <always|full> '<command>' only registers; the runner executes after the block.
+# gate <name> <always|full|paths> '<command>' only registers; the runner executes after the block.
 gate() {
-  [ "$#" -eq 3 ] && [ -n "$3" ] || usage "gate '${1:-}': expected exactly: gate <name> <always|full> '<command>' (quote the command, and do not leave it empty)"
+  [ "$#" -eq 3 ] && [ -n "$3" ] || usage "gate '${1:-}': expected exactly: gate <name> <always|full|paths> '<command>' (quote the command, and do not leave it empty)"
   case "${2:-}" in
-    always | full) ;;
-    *) usage "gate '${1:-}': mode must be always or full" ;;
+    always | full | paths) ;;
+    *) usage "gate '${1:-}': mode must be always, full or paths" ;;
   esac
   GATE_NAMES+=("$1")
   GATE_MODES+=("$2")
   GATE_CMDS+=("$3")
   GATE_RXS+=("")
 }
-# gate_counted <name> <always|full> '<regex>' '<command>' registers a gate that passes only when
+# gate_counted <name> <always|full|paths> '<regex>' '<command>' registers a gate that passes only when
 # the command exits 0 AND its combined output, colour stripped, matches the extended regex
 # (with scripts/run-counted.mjs as the command: '^COUNTED vitest [1-9][0-9]* passed').
 gate_counted() {
-  [ "$#" -eq 4 ] && [ -n "$3" ] && [ -n "$4" ] || usage "gate '${1:-}': expected exactly: gate_counted <name> <always|full> '<regex>' '<command>' (quote both, and do not leave either empty)"
+  [ "$#" -eq 4 ] && [ -n "$3" ] && [ -n "$4" ] || usage "gate '${1:-}': expected exactly: gate_counted <name> <always|full|paths> '<regex>' '<command>' (quote both, and do not leave either empty)"
   case "${2:-}" in
-    always | full) ;;
-    *) usage "gate '${1:-}': mode must be always or full" ;;
+    always | full | paths) ;;
+    *) usage "gate '${1:-}': mode must be always, full or paths" ;;
   esac
   local rc=0
   printf '' | grep -Eq -- "$3" 2>/dev/null || rc=$?
@@ -203,7 +232,7 @@ gate_counted() {
   GATE_RXS+=("$3")
 }
 
-# >>> harness:gates [B] — one line per gate: gate <name> <always|full> '<command>'
+# >>> harness:gates [B] — one line per gate: gate <name> <always|full|paths> '<command>'
 # Every example is commented out: bind the project's own gates here. With none bound the
 # runner exits 99 instead of reporting a green run of nothing.
 # gate typecheck always 'npm run -s typecheck'
@@ -214,7 +243,8 @@ gate_counted() {
 # A test gate counts what ran: run-counted fails on a skip, a filter that matched nothing or a
 # pass count under the floor (--min: today's count; it prints the raise when the count grows).
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run'
-# gate_counted harness full '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
+# the harness's own tests skip a FULL run whose every change is in PRODUCT_PATHS (see Paths mode)
+# gate_counted harness paths '^COUNTED node [1-9][0-9]* passed' 'node scripts/run-counted.mjs --kind node --min 1 -- node --test --test-reporter=tap scripts/lib/*.test.mjs'
 # a scoped run may run only the tests related to the changed files (vitest related, jest --findRelatedTests)
 # gate_counted test always '^COUNTED vitest [1-9][0-9]* passed' 'if [ "$RUN_GATES_MODE" = scoped ]; then node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest related --run $(cat "$RUN_GATES_CHANGED_FILE"); else node scripts/run-counted.mjs --kind vitest --min 1 -- npx vitest run; fi'
 # <<< harness:gates
@@ -237,6 +267,13 @@ ADMIT='node scripts/lib/admission.mjs'
 GATE_TIMEOUT=3600
 # [B] the mainline branch whose clean FULL run records the known-red baseline (see Known reds above); empty = off.
 MAINLINE='main'
+# [B] paths mode: extended regex of the product's paths; a FULL run whose every change matches skips
+# the `paths` gates (see Paths mode above). Never a path a `paths` gate reads. Empty = off.
+PRODUCT_PATHS=''
+# [B] the run's own records, out of the cache key, the scoped list and the paths diff (see Reuse above).
+RECORDS='(^|/)[^/]+\.(state\.md|steps\.jsonl)$'
+# [B] 1 = a gate whose failing tests are all in files the branch did not touch runs once more (see Flaky retry above).
+RETRY_FLAKY=1
 
 SINCE=""
 LIST=0
@@ -314,6 +351,26 @@ KEY_EXTRA_CMD="${RUN_GATES_KEY_EXTRA-$KEY_EXTRA}"
 ADMIT_CMD="${RUN_GATES_ADMIT-$ADMIT}"
 GATE_TIMEOUT_S=$(num_or "${RUN_GATES_GATE_TIMEOUT:-}" "$(num_or "$GATE_TIMEOUT" 3600)")
 MAINLINE_B="${RUN_GATES_MAINLINE-$MAINLINE}"
+PRODUCT_RX="${RUN_GATES_PRODUCT_PATHS-$PRODUCT_PATHS}"
+RECORDS_RX="${RUN_GATES_RECORDS-$RECORDS}"
+RETRY_ON=0
+[ "${RUN_GATES_RETRY_FLAKY-$RETRY_FLAKY}" = 1 ] && RETRY_ON=1
+# A pattern grep -E cannot read would match nothing: a paths gate would always run (safe), but the
+# records would silently stay in the key. Both are usage errors instead.
+for rx_pair in "PRODUCT_PATHS:$PRODUCT_RX" "RECORDS:$RECORDS_RX"; do
+  rx_val=${rx_pair#*:}
+  [ -n "$rx_val" ] || continue
+  rx_rc=0
+  printf '' | grep -Eq -- "$rx_val" 2>/dev/null || rx_rc=$?
+  [ "$rx_rc" -le 1 ] || usage "${rx_pair%%:*} is not a valid extended regex: $rx_val"
+done
+HAS_PATHS=0
+for gm in "${GATE_MODES[@]}"; do [ "$gm" != paths ] || HAS_PATHS=1; done
+
+# Reads paths on stdin; drops the ones RECORDS matches (none when it is empty).
+drop_records() {
+  if [ -n "$RECORDS_RX" ]; then grep -vE -- "$RECORDS_RX" || true; else cat; fi
+}
 
 # Reads paths on stdin; drops blanks, .review-work/ and the log dir by LITERAL prefix
 # (never a regex built from a path).
@@ -349,7 +406,7 @@ compute_scope() {
     usage "git diff against $SINCE failed; cannot list the changed files"
   untracked_out=$(git -c core.quotePath=false ls-files --others --exclude-standard) ||
     usage "git ls-files failed; cannot list the untracked files"
-  CHANGED=$(printf '%s\n%s\n' "$diff_out" "$untracked_out" | filter_changed | sort -u)
+  CHANGED=$(printf '%s\n%s\n' "$diff_out" "$untracked_out" | filter_changed | drop_records | sort -u)
   if [ -z "$CHANGED" ]; then
     NOTE="SCOPED: nothing changed since $SINCE"
   else
@@ -394,6 +451,46 @@ if [ "$SNAPSHOT" -eq 1 ]; then
   done
   shopt -u nullglob
 fi
+
+# Sets PATHS_DECISION (off | run | skip) and PATHS_BASE, the commit a skip is measured from (see Paths
+# mode in the header). Every case it cannot decide, a failing git command included, is run. Called
+# from compute_variant (the decision joins the cache variant) and once more right before the gates.
+PATHS_DECISION=off
+PATHS_BASE=""
+compute_paths() {
+  local tip head mb d1 d2 list
+  PATHS_DECISION=off
+  PATHS_BASE=""
+  [ "$HAS_PATHS" -eq 1 ] && [ -n "$PRODUCT_RX" ] || return 0
+  PATHS_DECISION=run
+  if [ "$MODE" = scoped ]; then
+    mb=$(git rev-parse --verify --quiet "$SINCE^{commit}") || return 0
+    list=$CHANGED
+  else
+    [ -n "$MAINLINE_B" ] || return 0
+    tip=$(git rev-parse -q --verify "refs/heads/$MAINLINE_B^{commit}" 2>/dev/null) || return 0
+    if [ "$SNAPSHOT" -eq 1 ]; then head=$SNAP_COMMIT; else head=$(git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || return 0; fi
+    # the mainline's tip itself always runs every gate
+    [ -n "$head" ] && [ "$head" != "$tip" ] || return 0
+    mb=$(git merge-base "$tip" "$head" 2>/dev/null) || return 0
+    [ -n "$mb" ] || return 0
+    if [ "$SNAPSHOT" -eq 1 ]; then
+      d1=$(git -c core.quotePath=false diff --name-only --no-renames "$mb" "$head" --) || return 0
+      d2=""
+    else
+      d1=$(git -c core.quotePath=false diff --name-only --no-renames "$mb" --) || return 0
+      d2=$(git -c core.quotePath=false ls-files --others --exclude-standard) || return 0
+    fi
+    list=$(printf '%s\n%s\n' "$d1" "$d2" | filter_changed | drop_records | sort -u)
+    # nothing changed since the merge base: run
+    [ -n "$list" ] || return 0
+  fi
+  PATHS_BASE=$mb
+  # a scoped run with nothing changed has no path outside: skip (a FULL run with none ran above)
+  if [ -z "$list" ] || [ -z "$(printf '%s\n' "$list" | grep -vE -- "$PRODUCT_RX" | head -n 1)" ]; then
+    PATHS_DECISION=skip
+  fi
+}
 
 # -- result cache and single-flight lock ----------------------------------------
 
@@ -555,7 +652,10 @@ compute_variant() {
     MODE_ID=snapshot
   fi
   if [ -n "$KEY_EXTRA_CMD" ]; then extra=$(bash -c "$KEY_EXTRA_CMD" 2>/dev/null </dev/null); fi
+  compute_paths
   VARIANT=$(hash_str "$MODE_ID|$(hash_str "$GATES_SIG")|$(hash_str "$extra")|$(hash_str "${NODE_OPTIONS:-}")")
+  # a run that skips its paths gates never answers one that runs them, nor the other way
+  [ "$HAS_PATHS" -eq 0 ] || VARIANT=$(hash_str "$VARIANT|paths:$PATHS_DECISION")
   REC_DIR="$CACHE_DIR/records/$VARIANT"
 }
 
@@ -597,6 +697,12 @@ fi
 # Sets KEY to the tree of the working tree (tracked, staged, unstaged and untracked files)
 # through a temporary index seeded from the real one for its stat cache (cp -p keeps the index
 # mtime, which git needs to spot an edit made in the same second); the real index is never written. Empty KEY (and return 1) when the tree cannot be hashed.
+# Drops every path RECORDS matches from the index GIT_INDEX_FILE names (nothing when RECORDS is
+# empty). A name git quotes (a control character, a quote) never matches and stays in the key.
+drop_record_entries() {
+  [ -n "$RECORDS_RX" ] || return 0
+  git -c core.quotePath=false ls-files | { grep -E -- "$RECORDS_RX" || true; } | git update-index --force-remove --stdin
+}
 compute_key() {
   local d src
   KEY=""
@@ -604,7 +710,17 @@ compute_key() {
     # The input is the commit. Once the snapshot exists, a tracked file a gate changed there
     # changed what the gates after it read: no key, so the result is not recorded.
     if [ -n "$SNAP_DIR" ] && [ -n "$(git -C "$SNAP_DIR/tree" status --porcelain --untracked-files=no 2>&1)" ]; then return 1; fi
-    KEY=$(git rev-parse --verify --quiet "$SNAP_COMMIT^{tree}")
+    if [ -z "$RECORDS_RX" ]; then
+      KEY=$(git rev-parse --verify --quiet "$SNAP_COMMIT^{tree}")
+    else
+      d=$(mktemp -d "${TMPDIR:-/tmp}/run-gates-key.XXXXXX" 2>/dev/null) || return 1
+      # shellcheck disable=SC2030 # the temporary index is meant to stay inside this subshell
+      KEY=$(
+        export GIT_INDEX_FILE="$d/index"
+        git read-tree "$SNAP_COMMIT" >/dev/null 2>&1 && drop_record_entries >/dev/null 2>&1 && git write-tree 2>/dev/null
+      )
+      rm -rf "${d:?}"
+    fi
     [ -n "$KEY" ]
     return
   fi
@@ -618,10 +734,12 @@ compute_key() {
       return 1
     }
   fi
+  # shellcheck disable=SC2031 # each temporary index stays inside its own subshell
   KEY=$(
     export GIT_INDEX_FILE="$d/index"
     git add -A >/dev/null 2>&1 &&
       git --literal-pathspecs rm -r -q --cached --ignore-unmatch -- "${KEY_EXCLUDES[@]}" >/dev/null 2>&1 &&
+      drop_record_entries >/dev/null 2>&1 &&
       git write-tree 2>/dev/null
   )
   rm -rf "${d:?}"
@@ -940,63 +1058,176 @@ EOF
   printf '%s\n' "$ids" | grep -c .
 }
 
-passed=0
-failed=0
-skipped=0
-known=0
-i=0
-while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
-  name="${GATE_NAMES[$i]}"
-  gmode="${GATE_MODES[$i]}"
-  cmd="${GATE_CMDS[$i]}"
-  rx="${GATE_RXS[$i]}"
-  i=$((i + 1))
-  if [ "$MODE" = scoped ] && [ "$gmode" = full ]; then
-    emit "SKIP $name (full only)"
-    skipped=$((skipped + 1))
-    continue
+# -- the flaky retry (see Flaky retry above) -------------------------------------------------------
+# TOUCHED: every file changed since the merge base with the mainline, committed, uncommitted or
+# untracked (the snapshot's commit against it, for --snapshot); TOUCHED_OK=1 once it is known. No
+# mainline, no merge base or a failing git: 0, and no gate is retried.
+TOUCHED=""
+TOUCHED_OK=0
+if [ "$RETRY_ON" -eq 1 ] && [ -n "$MAINLINE_B" ] && r_tip=$(git rev-parse -q --verify "refs/heads/$MAINLINE_B^{commit}" 2>/dev/null) &&
+  r_head=$(if [ "$SNAPSHOT" -eq 1 ]; then echo "$SNAP_COMMIT"; else git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null; fi) &&
+  r_mb=$(git merge-base "$r_tip" "$r_head" 2>/dev/null) && [ -n "$r_mb" ]; then
+  if [ "$SNAPSHOT" -eq 1 ]; then
+    t1=$(git diff --name-only -z --no-renames "$r_mb" "$r_head" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") && t2="" && TOUCHED_OK=1
+  else
+    t1=$(git diff --name-only -z --no-renames "$r_mb" -- 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") &&
+      t2=$(git ls-files -z --others --exclude-standard 2>/dev/null | tr '\000' '\n'; exit "${PIPESTATUS[0]}") && TOUCHED_OK=1
   fi
-  logfile="$LOG/$name.log"
-  mark="$logfile.timeout"
+  [ "$TOUCHED_OK" -eq 0 ] || TOUCHED=$(printf '%s\n%s\n' "$t1" "$t2" | LC_ALL=C sort -u)
+fi
+# $1 = why the gate failed, $2 = its log, $3 = its command, $4 = its seconds: prints the failing ids
+# and returns 0 when the gate may run once more (see Flaky retry above).
+flaky_ids() {
+  local ids id f
+  [ "$RETRY_ON" -eq 1 ] && [ "$TOUCHED_OK" -eq 1 ] && [ "${1#exit }" != "$1" ] && [ "$4" -ge "$INSTANT_SECS" ] && single_counted "$3" || return 1
+  ids=$(failed_ids "$2") || return 1
+  while IFS= read -r id; do
+    f=${id%% :: *}
+    case "$f" in '' | /* | ../* | */../*) return 1 ;; esac
+    [ "$f" != "$id" ] && [ -f "$GATE_DIR/$f" ] || return 1
+    if printf '%s\n' "$TOUCHED" | grep -Fxq -- "$f"; then return 1; fi
+  done <<EOF
+$ids
+EOF
+  printf '%s\n' "$ids"
+}
+# One JSON string: backslash, quote and tab escaped, every other control character dropped.
+json_str() {
+  printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e $'s/\t/\\\\t/g' | LC_ALL=C tr -d '\000-\037')"
+}
+FLAKES_FILE=""
+if [ -n "$CACHE_DIR" ]; then
+  case "$CACHE_DIR" in /*) FLAKES_FILE="$CACHE_DIR/flakes.jsonl" ;; *) FLAKES_FILE="$TOP/$CACHE_DIR/flakes.jsonl" ;; esac
+fi
+# $1 = gate, $2 = the ids its first run failed (a line each): one line in the flakes register.
+record_flake() {
+  local id ids="" tree
+  [ -n "$FLAKES_FILE" ] || return 0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    ids="$ids${ids:+,}$(json_str "$id")"
+  done <<EOF
+$2
+EOF
+  tree=$KEY
+  [ -n "$tree" ] || tree=$(git rev-parse -q --verify "${SNAP_COMMIT:-HEAD}^{tree}" 2>/dev/null)
+  mkdir -p "$(dirname "$FLAKES_FILE")" 2>/dev/null
+  printf '{"at":"%s","gate":%s,"ids":[%s],"tree":"%s","top":%s}\n' "$(iso_now)" "$(json_str "$1")" "$ids" "$tree" "$(json_str "$TOP")" >>"$FLAKES_FILE" 2>/dev/null ||
+    echo "run-gates: could not append to $FLAKES_FILE" >&2
+}
+
+# -- the gates ------------------------------------------------------------------------------------
+# Prints gate $1's SKIP line and returns 0 when this run skips it: a full-only gate in a scoped run,
+# or a paths gate the paths decision skips (with PRODUCT_PATHS empty a paths gate is a full one).
+skip_line() {
+  local gm=${GATE_MODES[$1]}
+  if [ "$gm" = paths ]; then
+    case "$PATHS_DECISION" in
+      skip)
+        echo "SKIP ${GATE_NAMES[$1]} (no path outside PRODUCT_PATHS changed since ${PATHS_BASE:0:12})"
+        return 0
+        ;;
+      off) gm=full ;;
+    esac
+  fi
+  if [ "$MODE" = scoped ] && [ "$gm" = full ]; then
+    echo "SKIP ${GATE_NAMES[$1]} (full only)"
+    return 0
+  fi
+  return 1
+}
+# Runs gate $1 (its index) once, its output in log $2: the gate and its watchdog in a process group of
+# their own, under wait, so a trap can stop them. Sets G_SECS and G_WHY ("" = it passed).
+launch_gate() {
+  local mark="$2.timeout" t0 rc=0
   rm -f "$mark"
-  start=$SECONDS
-  # The gate (and its watchdog) in a process group of its own, under wait, so a trap can stop it.
+  t0=$SECONDS
   set -m
   (cd "$GATE_DIR" && RUN_GATES_MODE="$MODE" RUN_GATES_SINCE="$SINCE" RUN_GATES_CHANGED_FILE="$CHANGED_FILE" \
-    RUN_GATES_TOP="$GATE_DIR" exec bash -c "$cmd") >"$logfile" 2>&1 </dev/null &
+    RUN_GATES_TOP="$GATE_DIR" exec bash -c "${GATE_CMDS[$1]}") >"$2" 2>&1 </dev/null &
   GATE_PID=$!
   if [ "$GATE_TIMEOUT_S" -gt 0 ]; then
     watch_gate "$mark" </dev/null >/dev/null 2>&1 &
     WATCH_PID=$!
   fi
   set +m
-  rc=0
   wait "$GATE_PID" || rc=$?
   end_gate
-  secs=$((SECONDS - start))
-  why=""
+  G_SECS=$((SECONDS - t0))
+  G_WHY=""
   if [ -e "$mark" ]; then
     rm -f "$mark"
-    why="timeout after ${GATE_TIMEOUT_S}s"
+    G_WHY="timeout after ${GATE_TIMEOUT_S}s"
   elif [ "$rc" -ne 0 ]; then
-    why="exit $rc"
-  elif [ -n "$rx" ] && ! strip_csi <"$logfile" | grep -Eq -- "$rx"; then
-    why="no count line matched"
+    G_WHY="exit $rc"
+  elif [ -n "${GATE_RXS[$1]}" ] && ! strip_csi <"$2" | grep -Eq -- "${GATE_RXS[$1]}"; then
+    G_WHY="no count line matched"
   fi
-  [ "$BASE_REC" -eq 1 ] && record_base "$name" "$why" "$logfile"
-  if [ -z "$why" ]; then
-    emit "PASS $name ${secs}s $logfile"
-    passed=$((passed + 1))
-  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$why" "$logfile" "$cmd"); then
-    emit "KNOWN $name ${secs}s $logfile ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
-    known=$((known + 1))
+}
+# Runs gate $1 and decides its result: R_STATUS (PASS, KNOWN or FAIL), R_LINE (its result line), R_WHY
+# and R_LOG (the last run's, for the baseline record) and R_FLAKY (the ids a passing retry healed).
+run_gate_job() {
+  local name=${GATE_NAMES[$1]} cmd=${GATE_CMDS[$1]} log secs n ids instant
+  log="$LOG/$name.log"
+  R_FLAKY=""
+  launch_gate "$1" "$log"
+  secs=$G_SECS
+  if [ -z "$G_WHY" ]; then
+    R_STATUS=PASS
+    R_LINE="PASS $name ${secs}s $log"
+  elif [ "$KNOWN_ON" -eq 1 ] && n=$(known_red "$name" "$G_WHY" "$log" "$cmd"); then
+    R_STATUS=KNOWN
+    R_LINE="KNOWN $name ${secs}s $log ($n failing test(s) in the $MAINLINE_B baseline, their files untouched)"
   else
-    instant=""
-    # A timeout is never instant: the gate ran its whole allowance.
-    if [ "${why#timeout}" = "$why" ] && [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
-    emit "FAIL $name ${secs}s $logfile ($why)$instant"
-    failed=$((failed + 1))
+    R_STATUS=FAIL
+    if ids=$(flaky_ids "$G_WHY" "$log" "$cmd" "$secs"); then
+      log="$LOG/$name.retry.log"
+      launch_gate "$1" "$log"
+      secs=$((secs + G_SECS))
+      if [ -z "$G_WHY" ]; then
+        R_STATUS=PASS
+        R_FLAKY=$ids
+        R_LINE="PASS $name ${secs}s $log (flaky: $(printf '%s\n' "$ids" | awk 'NR > 1 { printf "; " } { printf "%s", $0 }'), retried)"
+      fi
+    fi
+    if [ "$R_STATUS" = FAIL ]; then
+      instant=""
+      # A timeout is never instant: the gate ran its whole allowance.
+      if [ "${G_WHY#timeout}" = "$G_WHY" ] && [ "$secs" -lt "$INSTANT_SECS" ]; then instant=" (instant: if the log shows no real failure, check the command/env before re-running)"; fi
+      R_LINE="FAIL $name ${secs}s $log ($G_WHY)$instant"
+    fi
   fi
+  R_WHY=$G_WHY
+  R_LOG=$log
+}
+
+passed=0
+failed=0
+skipped=0
+known=0
+# The gates' result: the line, the counts, the baseline record and the flakes register.
+take_result() {
+  emit "$R_LINE"
+  case "$R_STATUS" in
+    PASS) passed=$((passed + 1)) ;;
+    KNOWN) known=$((known + 1)) ;;
+    *) failed=$((failed + 1)) ;;
+  esac
+  [ "$BASE_REC" -eq 0 ] || record_base "$1" "$R_WHY" "$R_LOG"
+  [ -z "$R_FLAKY" ] || record_flake "$1" "$R_FLAKY"
+}
+
+compute_paths
+i=0
+while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
+  if s=$(skip_line "$i"); then
+    emit "$s"
+    skipped=$((skipped + 1))
+  else
+    run_gate_job "$i"
+    take_result "${GATE_NAMES[$i]}"
+  fi
+  i=$((i + 1))
 done
 
 [ "$BASE_REC" -eq 1 ] && commit_base

@@ -6,8 +6,8 @@
 #     instant-failure note, the per-gate timeout, the admission step and its host lease, the
 #     executor refusal, the known-red baseline, the paths mode, the flaky retry and its register.
 # [B] binding, re-derived per project: the gate list between the harness:gates markers,
-#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT, MAINLINE, PRODUCT_PATHS, RECORDS and
-#     RETRY_FLAKY lines.
+#     the SCOPED_PATHS, SNAPSHOT_COPY, ADMIT, GATE_TIMEOUT, MAINLINE, PRODUCT_PATHS, RECORDS,
+#     RETRY_FLAKY, GATE_JOBS and SERIAL lines.
 #
 # Usage: bash scripts/run-gates.sh [--since <ref> | --snapshot] [--no-cache] | --list
 #   Invoke it with bash (`bash scripts/run-gates.sh`), not sh or dash: it uses arrays.
@@ -101,7 +101,17 @@
 #   "(timeout after <n>s)". When a gate ends, whatever it left running in its group gets TERM, and
 #   KILL after 10 s: a gate's children in its process group never outlive it. INT or TERM to run-gates stops the running
 #   gate's group the same way before the EXIT cleanup (snapshot, lock). With no group (set -m made
-#   none) the signals go to the gate's pid alone, never to run-gates' own group.
+#   none) the signals go to the gate's pid alone, never to run-gates' own group. A run-gates killed
+#   with KILL runs no trap: each gate's watchdog sees it gone within a second and stops the gate's
+#   group the same way (GATE_TIMEOUT 0 starts no watchdog, so nothing does).
+# Parallel gates: [B] GATE_JOBS (env RUN_GATES_GATE_JOBS overrides; default 1 = one gate at a time,
+#   in the run-gates shell) gates run at once, each in a background worker of its own with its own
+#   process group, watchdog, log and retry. The result lines still print in registration order, each
+#   once every gate before it has printed, so the output, the SUMMARY, the record and the exit status
+#   are those of a GATE_JOBS=1 run; only the seconds differ. [B] SERIAL (env RUN_GATES_SERIAL) names
+#   gates, space-separated, that run alone: one starts once every running gate has ended, and no gate
+#   starts while it runs (a gate that binds a port or rebuilds a shared dir). A SERIAL name that is no
+#   gate exits 99. INT or TERM stops every running gate's group, as for one.
 # Admission: a FULL run only (a scoped run is never held), after the cache check and before the lock
 #   (so a run waiting on the machine holds no lock, and one waiting on the lock waits only for the
 #   gates), the "logs:" line, the snapshot and the first gate, `$ADMIT --holder <run-gates' pid> --top
@@ -186,7 +196,8 @@
 #      RUN_GATES_INSTANT_SECS: above. RUN_GATES_ADMIT overrides ADMIT (empty = no admission).
 #      RUN_GATES_GATE_TIMEOUT overrides GATE_TIMEOUT (seconds; 0 = no limit).
 #      RUN_GATES_MAINLINE overrides MAINLINE (empty = no known-red baseline, no paths skip and no
-#      flaky retry). RUN_GATES_PRODUCT_PATHS, RUN_GATES_RECORDS, RUN_GATES_RETRY_FLAKY: above.
+#      flaky retry). RUN_GATES_PRODUCT_PATHS, RUN_GATES_RECORDS, RUN_GATES_RETRY_FLAKY,
+#      RUN_GATES_GATE_JOBS, RUN_GATES_SERIAL: above.
 #      HARNESS_ROLE=executor refuses a FULL run, a promoted one included (see Usage).
 
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -278,6 +289,10 @@ PRODUCT_PATHS=''
 RECORDS='(^|/)[^/]+\.(state\.md|steps\.jsonl)$'
 # [B] 1 = a gate whose failing tests are all in files the branch did not touch runs once more (see Flaky retry above).
 RETRY_FLAKY=1
+# [B] how many gates run at once (see Parallel gates above); 1 = one at a time.
+GATE_JOBS=1
+# [B] gates, space-separated, that run alone when GATE_JOBS is above 1.
+SERIAL=''
 
 SINCE=""
 LIST=0
@@ -370,6 +385,16 @@ for rx_pair in "PRODUCT_PATHS:$PRODUCT_RX" "RECORDS:$RECORDS_RX"; do
 done
 HAS_PATHS=0
 for gm in "${GATE_MODES[@]}"; do [ "$gm" != paths ] || HAS_PATHS=1; done
+JOBS=$(num_or "${RUN_GATES_GATE_JOBS:-}" "$(num_or "$GATE_JOBS" 1)")
+[ "$JOBS" -ge 1 ] || JOBS=1
+SERIAL_NAMES=" ${RUN_GATES_SERIAL-$SERIAL} "
+# shellcheck disable=SC2086 # the list is split on spaces on purpose
+for sn in ${RUN_GATES_SERIAL-$SERIAL}; do
+  sn_ok=0
+  for gn in "${GATE_NAMES[@]}"; do [ "$gn" != "$sn" ] || sn_ok=1; done
+  [ "$sn_ok" -eq 1 ] || usage "SERIAL names $sn, which is no gate"
+done
+RUN_PID=$$
 
 # Reads paths on stdin; drops the ones RECORDS matches (none when it is empty).
 drop_records() {
@@ -599,18 +624,33 @@ WATCH_PID=""
 kill_gate() { kill -"$1" -- -"$GATE_PID" 2>/dev/null || kill -"$1" "$GATE_PID" 2>/dev/null; }
 alive_gate() { kill -0 -- -"$GATE_PID" 2>/dev/null || kill -0 "$GATE_PID" 2>/dev/null; }
 # The watchdog, started in the background in a group of its own: after GATE_TIMEOUT_S seconds it creates
-# the timeout mark ($1), sends the gate TERM and, 10 s later, KILL. TERM ends it at once, its sleep with it.
+# the timeout mark ($1), sends the gate TERM and, 10 s later, KILL. It sleeps a second at a time and
+# stops the gate the same way, with no mark, once run-gates ($RUN_PID) is gone (KILLed: no trap ran).
+# TERM ends it at once, its sleep with it: the trap kills the sleep it knows and flags the rest, so a
+# TERM that lands between a sleep's start and `s=$!` (an instant gate's end_gate) still ends that sleep.
 watch_gate() {
-  local s=""
-  trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
-  sleep "$GATE_TIMEOUT_S" &
-  s=$!
-  wait "$s" || exit 0
-  : >"$1"
+  local s="" stop="" left=$GATE_TIMEOUT_S
+  trap 'stop=1; [ -z "$s" ] || kill "$s" 2>/dev/null' TERM
+  while :; do
+    if [ "$left" -le 0 ]; then
+      : >"$1"
+      break
+    fi
+    sleep 1 &
+    s=$!
+    [ -z "$stop" ] || { kill "$s" 2>/dev/null; exit 0; }
+    wait "$s" || exit 0
+    [ -z "$stop" ] || exit 0
+    s=""
+    left=$((left - 1))
+    kill -0 "$RUN_PID" 2>/dev/null || break
+  done
   kill_gate TERM
   sleep 10 &
   s=$!
+  [ -z "$stop" ] || { kill "$s" 2>/dev/null; exit 0; }
   wait "$s" || exit 0
+  [ -z "$stop" ] || exit 0
   kill_gate KILL
 }
 # Ends the gate run: stops the watchdog, then sends whatever is left in the gate's group TERM, checks it
@@ -638,12 +678,63 @@ end_gate() {
   GATE_PID=""
   return 0
 }
-# INT or TERM: the admission and the running gate are stopped first, then the EXIT trap removes the
-# snapshot and releases the lock.
+# The parallel workers (see run_parallel): JOB_PIDS[i] is gate i's worker's pid ("" before its launch),
+# JOB_DONE[i] is set once it is reaped ("skip" for a gate this run skips), JOB_PG is a worker's file for
+# its gate's and watchdog's group ids.
+JOB_PG=""
+JOB_PIDS=()
+JOB_DONE=()
+# INT or TERM with workers running: each gets TERM (its trap ends its gate's group), they are checked
+# every 0.1 s, and after 120 checks (12 s: end_gate's own KILL comes at 10 s) the groups a worker
+# recorded and the worker itself get KILL. Then every worker is reaped.
+stop_jobs() {
+  local i n=${#JOB_PIDS[@]} k=0 alive g gp wp
+  [ "$n" -gt 0 ] || return 0
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ]; then kill -TERM "${JOB_PIDS[$i]}" 2>/dev/null; fi
+    i=$((i + 1))
+  done
+  while :; do
+    alive=0
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ] && kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; then alive=1; fi
+      i=$((i + 1))
+    done
+    [ "$alive" -eq 1 ] && [ "$k" -lt 120 ] || break
+    k=$((k + 1))
+    sleep 0.1
+  done
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ]; then
+      if kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; then
+        gp=""
+        wp=""
+        read -r gp wp <"$LOG/.job-$i.pg" 2>/dev/null
+        for g in "$gp" "$wp"; do
+          case "$g" in
+            '' | *[!0-9]*) ;;
+            *) kill -KILL -- -"$g" 2>/dev/null ;;
+          esac
+        done
+        kill -KILL "${JOB_PIDS[$i]}" 2>/dev/null
+      fi
+      wait "${JOB_PIDS[$i]}" 2>/dev/null
+      JOB_DONE[i]=run
+      rm -f "$LOG/.job-$i" "$LOG/.job-$i.tmp" "$LOG/.job-$i.pg"
+    fi
+    i=$((i + 1))
+  done
+}
+# INT or TERM: the admission, the running gate and any parallel workers are stopped first, then the
+# EXIT trap removes the snapshot, releases the lock and the lease.
 on_signal() {
   trap '' INT TERM
   stop_admit
   end_gate
+  stop_jobs
   exit "$1"
 }
 # Removes the host lease slot this run holds: the one the admission named, and any slot in the lease dir
@@ -1176,6 +1267,7 @@ launch_gate() {
     WATCH_PID=$!
   fi
   set +m
+  [ -z "$JOB_PG" ] || echo "$GATE_PID $WATCH_PID" >"$JOB_PG"
   wait "$GATE_PID" || rc=$?
   end_gate
   G_SECS=$((SECONDS - t0))
@@ -1242,18 +1334,132 @@ take_result() {
   [ -z "$R_FLAKY" ] || record_flake "$1" "$R_FLAKY"
 }
 
-compute_paths
-i=0
-while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
-  if s=$(skip_line "$i"); then
-    emit "$s"
-    skipped=$((skipped + 1))
+# GATE_JOBS above 1 (see Parallel gates in the header): gate $1's run_gate_job in a background worker,
+# started under set -m (a process group of its own, so INT is not ignored in it and in its gates), a
+# subshell, so no trap of run-gates runs there. It writes its R_* to $LOG/.job-<i> (a temp file moved into
+# place: a result is read whole) and its gate's and watchdog's group ids to $LOG/.job-<i>.pg (JOB_PG);
+# TERM ends its gate (end_gate) and then the worker. JOB_SKIPS[i] holds a skipped gate's line; RUNNING
+# counts the workers not reaped; SERIAL_ON = 1 while a SERIAL gate runs.
+JOB_SKIPS=()
+RUNNING=0
+SERIAL_ON=0
+is_serial() {
+  case "$SERIAL_NAMES" in
+    *" ${GATE_NAMES[$1]} "*) return 0 ;;
+  esac
+  return 1
+}
+start_job() {
+  local res="$LOG/.job-$1"
+  rm -f "$res" "$res.tmp" "$res.pg"
+  set -m
+  (
+    trap 'end_gate; exit 143' TERM
+    trap 'end_gate; exit 130' INT
+    JOB_PG="$res.pg"
+    run_gate_job "$1"
+    { printf '%s\n%s\n%s\n%s\n' "$R_STATUS" "$R_LINE" "$R_WHY" "$R_LOG" && printf '%s' "$R_FLAKY"; } >"$res.tmp" &&
+      mv -f "$res.tmp" "$res"
+  ) </dev/null &
+  JOB_PIDS[$1]=$!
+  set +m
+  RUNNING=$((RUNNING + 1))
+  if is_serial "$1"; then SERIAL_ON=1; fi
+}
+# Reaps every worker that wrote its result or is gone; 0 = at least one was reaped.
+collect_jobs() {
+  local i=0 rc=1
+  while [ "$i" -lt "${#JOB_PIDS[@]}" ]; do
+    if [ -n "${JOB_PIDS[$i]}" ] && [ -z "${JOB_DONE[$i]}" ] &&
+      { [ -f "$LOG/.job-$i" ] || ! kill -0 "${JOB_PIDS[$i]}" 2>/dev/null; }; then
+      wait "${JOB_PIDS[$i]}" 2>/dev/null
+      JOB_DONE[i]=run
+      RUNNING=$((RUNNING - 1))
+      if is_serial "$i"; then SERIAL_ON=0; fi
+      rc=0
+    fi
+    i=$((i + 1))
+  done
+  return "$rc"
+}
+# Sets R_* from gate $1's result file; a worker that ended without one is a FAIL.
+read_job() {
+  local res="$LOG/.job-$1"
+  if [ -f "$res" ]; then
+    {
+      IFS= read -r R_STATUS
+      IFS= read -r R_LINE
+      IFS= read -r R_WHY
+      IFS= read -r R_LOG
+      R_FLAKY=$(cat)
+    } <"$res"
   else
-    run_gate_job "$i"
-    take_result "${GATE_NAMES[$i]}"
+    R_STATUS=FAIL
+    R_WHY="no result"
+    R_LOG="$LOG/${GATE_NAMES[$1]}.log"
+    R_FLAKY=""
+    R_LINE="FAIL ${GATE_NAMES[$1]} 0s $R_LOG (its worker ended without a result)"
   fi
-  i=$((i + 1))
-done
+  rm -f "$res" "$res.pg"
+}
+# The gates, GATE_JOBS at a time: launches in registration order while a slot is free (a SERIAL gate
+# only once none runs, and none after it while it runs), and prints each result once every gate before
+# it has printed.
+run_parallel() {
+  local n=${#GATE_NAMES[@]} next=0 out=0 i=0 s moved
+  while [ "$i" -lt "$n" ]; do
+    JOB_PIDS[i]=""
+    JOB_DONE[i]=""
+    JOB_SKIPS[i]=""
+    i=$((i + 1))
+  done
+  while [ "$out" -lt "$n" ]; do
+    while [ "$next" -lt "$n" ] && [ "$SERIAL_ON" -eq 0 ]; do
+      if s=$(skip_line "$next"); then
+        JOB_SKIPS[next]=$s
+        JOB_DONE[next]=skip
+      elif is_serial "$next"; then
+        [ "$RUNNING" -eq 0 ] || break
+        start_job "$next"
+      else
+        [ "$RUNNING" -lt "$JOBS" ] || break
+        start_job "$next"
+      fi
+      next=$((next + 1))
+    done
+    moved=0
+    collect_jobs && moved=1
+    while [ "$out" -lt "$n" ] && [ -n "${JOB_DONE[$out]}" ]; do
+      if [ "${JOB_DONE[$out]}" = skip ]; then
+        emit "${JOB_SKIPS[$out]}"
+        skipped=$((skipped + 1))
+      else
+        read_job "$out"
+        take_result "${GATE_NAMES[$out]}"
+      fi
+      out=$((out + 1))
+      moved=1
+    done
+    [ "$moved" -eq 1 ] || sleep 0.1
+  done
+}
+
+compute_paths
+if [ "$JOBS" -gt 1 ]; then
+  run_parallel
+else
+  i=0
+  while [ "$i" -lt "${#GATE_NAMES[@]}" ]; do
+    if s=$(skip_line "$i"); then
+      emit "$s"
+      skipped=$((skipped + 1))
+    else
+      run_gate_job "$i"
+      take_result "${GATE_NAMES[$i]}"
+    fi
+    i=$((i + 1))
+  done
+fi
 
 [ "$BASE_REC" -eq 1 ] && commit_base
 known_part=""

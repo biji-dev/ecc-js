@@ -955,3 +955,106 @@ test('flaky retry: never on a timeout, an instant exit, a missing count line, a 
   once('two commands in the gate', ONE, { line: (f) => `gate_counted t always '^COUNTED node [1-9][0-9]* passed' 'true && bash ${f.fake}'` });
   once('no mainline', ONE, { env: { RUN_GATES_MAINLINE: '' } });
 });
+
+/** The pids of `sleep <secs>` processes: each test below uses its own number, which nothing else starts. */
+function sleepersOf(secs) {
+  return spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' })
+    .stdout.split('\n')
+    .map((l) => (new RegExp(`^\\s*(\\d+)\\s+sleep ${secs}$`).exec(l) || [])[1])
+    .filter(Boolean)
+    .map(Number);
+}
+/** Waits up to 15 s for no `sleep <secs>` to be left. */
+function noSleepers(secs, why) {
+  const end = Date.now() + 15000;
+  while (sleepersOf(secs).length > 0 && Date.now() < end) sleepMs(100);
+  assert.deepEqual(sleepersOf(secs), [], why);
+}
+/** A result line with its seconds and log path dropped, so runs at different GATE_JOBS compare. */
+const shape = (l) => l.replace(/^(PASS|FAIL|KNOWN) (\S+) \d+s \S+/, '$1 $2').replace(/ \(instant: .*\)$/, '');
+
+test('parallel: GATE_JOBS runs gates at once and prints them in registration order, as GATE_JOBS=1 would', () => {
+  const dir = tmp('run-gates-par-');
+  const mark = path.join(dir, 'b-ran');
+  // a waits for b: one at a time, a would give up after 10 s and fail
+  const wait = `n=0; while [ ! -f ${mark} ]; do n=$((n + 1)); [ $n -lt 100 ] || exit 7; sleep 0.1; done`;
+  const lines = [`gate a always '${wait}'`, `gate b always 'touch ${mark}'`, "gate c always 'true'", "gate d full 'true'"];
+  const r = runCopy(lines, ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '3' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const gates = r.lines.filter((l) => /^(PASS|FAIL|SKIP) /.test(l));
+  assert.deepEqual(gates.map(shape), ['PASS a', 'PASS b', 'PASS c', 'PASS d']);
+  assert.equal(r.lines.at(-1), 'SUMMARY 4 passed, 0 failed, 0 skipped (full)');
+  const seq = runCopy(["gate a always 'true'", "gate b always 'exit 4'", "gate c always 'true'", "gate d full 'true'"], ['--since', 'HEAD', '--no-cache'], { scoped: '.*' });
+  const par = runCopy(["gate a always 'true'", "gate b always 'exit 4'", "gate c always 'true'", "gate d full 'true'"], ['--since', 'HEAD', '--no-cache'], {
+    repo: seq.repo,
+    scoped: '.*',
+    env: { RUN_GATES_GATE_JOBS: '2' },
+  });
+  assert.equal(par.status, seq.status, 'the exit status differs from a GATE_JOBS=1 run');
+  assert.equal(seq.status, 1);
+  assert.deepEqual(par.lines.slice(1).map(shape), seq.lines.slice(1).map(shape), `GATE_JOBS=2 printed other lines than 1:\n${par.stdout}\n${seq.stdout}`);
+  assert.deepEqual(seq.lines.slice(1).map(shape), ['SCOPED: nothing changed since HEAD', 'PASS a', 'FAIL b (exit 4)', 'PASS c', 'SKIP d (full only)', 'SUMMARY 2 passed, 1 failed, 1 skipped (scoped)']);
+});
+
+test('parallel: a timeout in one gate is its FAIL alone; its group is gone; the others print their own results', () => {
+  const lines = ["gate hang always 'sh -c \"sleep 66 & sleep 66\"'", "gate ok always 'true'", "gate bad always 'exit 3'"];
+  const r = runCopy(lines, ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '3', RUN_GATES_GATE_TIMEOUT: '1' } });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  const gates = r.lines.filter((l) => /^(PASS|FAIL) /.test(l));
+  assert.deepEqual(gates.map(shape), ['FAIL hang (timeout after 1s)', 'PASS ok', 'FAIL bad (exit 3)']);
+  assert.equal(r.lines.at(-1), 'SUMMARY 1 passed, 2 failed, 0 skipped (full)');
+  noSleepers(66, "the timed-out gate's group outlived it");
+  assert.deepEqual(
+    fs.readdirSync(r.lines[0].replace(/^logs: /, '')).filter((f) => f.startsWith('.job-')),
+    [],
+    'a worker result file was left in the log dir',
+  );
+});
+
+test('parallel: a SERIAL gate starts once the running gates end, and none starts while it runs; a SERIAL name that is no gate exits 99', () => {
+  const ev = path.join(tmp('run-gates-serial-'), 'events');
+  const g = (name) => `gate ${name} always 'echo start ${name} >> ${ev}; sleep 0.5; echo end ${name} >> ${ev}'`;
+  const r = runCopy([g('a'), g('s'), g('b'), g('c')], ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '4', RUN_GATES_SERIAL: 's' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const e = fs.readFileSync(ev, 'utf8').trim().split('\n');
+  const at = (x) => e.indexOf(x);
+  assert.ok(at('end a') < at('start s'), `s started while a ran: ${e.join(', ')}`);
+  assert.ok(at('end s') < at('start b') && at('end s') < at('start c'), `a gate started while s ran: ${e.join(', ')}`);
+  assert.ok(at('start c') < at('end b'), `b and c after s did not run at once: ${e.join(', ')}`);
+  assert.deepEqual(r.lines.filter((l) => /^PASS /.test(l)).map(shape), ['PASS a', 'PASS s', 'PASS b', 'PASS c']);
+  const bad = runCopy([g('a')], ['--no-cache'], { env: { RUN_GATES_SERIAL: 'a nope' } });
+  assert.equal(bad.status, 99, bad.stdout + bad.stderr);
+  assert.match(bad.stderr, /SERIAL names nope, which is no gate/);
+});
+
+test('parallel: TERM to run-gates stops every running gate group and exits 143', () => {
+  const dir = tmp('run-gates-par-term-');
+  const [s1, s2, out] = ['s1', 's2', 'out'].map((f) => path.join(dir, f));
+  const lines = [`gate x always 'touch ${s1}; sh -c "sleep 67 & sleep 67"'`, `gate y always 'touch ${s2}; sleep 67'`];
+  const r = runCopy(lines, ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: '2' }, out: [out, out] });
+  try {
+    waitFor(s1);
+    waitFor(s2);
+    const exited = new Promise((resolve) => r.child.on('exit', (code, sig) => resolve(code ?? sig)));
+    r.child.kill('SIGTERM');
+    noSleepers(67, 'TERM left a gate running');
+    return exited.then((code) => assert.equal(code, 143, fs.readFileSync(out, 'utf8')));
+  } finally {
+    setTimeout(() => r.child.kill('SIGKILL'), 20000).unref();
+  }
+});
+
+test('watchdog: a run-gates killed with KILL (no trap runs) still has its gate stopped within seconds', async () => {
+  const dir = tmp('run-gates-orphan-');
+  const [started, out] = ['started', 'out'].map((f) => path.join(dir, f));
+  for (const jobs of ['1', '2']) {
+    fs.rmSync(started, { force: true });
+    const r = runCopy([`gate x always 'touch ${started}; sleep 68'`], ['--no-cache'], { env: { RUN_GATES_GATE_JOBS: jobs, RUN_GATES_GATE_TIMEOUT: '600' }, out: [out, out] });
+    waitFor(started);
+    // awaited: until node reaps it, the KILLed run-gates is a zombie, and a zombie answers kill -0
+    const exited = new Promise((resolve) => r.child.on('exit', resolve));
+    r.child.kill('SIGKILL');
+    await exited;
+    noSleepers(68, `GATE_JOBS=${jobs}: the gate outlived a KILLed run-gates`);
+  }
+});

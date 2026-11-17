@@ -281,7 +281,9 @@ const elsewhereLine = (row) => `HELD ELSEWHERE ${[row.unit, row.step && `step ${
  * else null. `grant` is standingGrant's { grant, pushDeploys }; a grant line follows the first line.
  * `checkout` is the checkout the session started in (a realpath). Started in a linked worktree while a held
  * row names a linked worktree, the session's units are the held rows that name its checkout, and every other
- * held row is one HELD ELSEWHERE line. Anywhere else, or with no `checkout`, every held row is the session's.
+ * held row is one HELD ELSEWHERE line, and the first body line says the session is in its unit's worktree
+ * already (`in <checkout> (the unit's): do not re-enter`). Anywhere else, or with no `checkout`, every held
+ * row is the session's.
  */
 export function resumeText(source, rows, root, grant = null, { checkout } = {}) {
   if (!rows.length && source !== 'compact') return null;
@@ -296,6 +298,8 @@ export function resumeText(source, rows, root, grant = null, { checkout } = {}) 
     ...rows.filter((row) => row.kind !== 'held').flatMap((row) => unitLines(row, stateOf(row, root), standing)),
   ];
   if (standing !== null) body.unshift(`standing grant (AGENTS.md › merge): ${standing}; push deploys: ${grant.pushDeploys ?? '?'}`);
+  // The session already runs in its unit's worktree: entering it again would fail or nest. First, so the cap keeps it.
+  if (located && mine.length) body.unshift(`in ${checkout} (the unit's): do not re-enter`);
   let last = CLOSING.context;
   if (source === 'compact') {
     if (located) last = mine.length === 0 ? CLOSING.elsewhere : mine.length === 1 ? CLOSING.one(clip(mine[0].unit)) : CLOSING.several;

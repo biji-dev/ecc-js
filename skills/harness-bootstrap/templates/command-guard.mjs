@@ -36,8 +36,15 @@
 //   or drops a variable the landing check reads the host from: HARNESS_HOST, CLAUDECODE,
 //   CODEX_THREAD_ID, CODEX_SANDBOX or a ZCODE_* name, by an assignment, env -u, env -i or exec -c;
 //   or a declaration, assignment, `unset` or `export -n` of one on a line that runs a git command)
-//   and merge-ff-mainline (a `git merge` onto a MAINLINE
-//   branch without --no-ff, which may fast-forward and so run no hook, or a `git pull .` there).
+//   merge-ff-mainline (a `git merge` onto a MAINLINE
+//   branch without --no-ff, which may fast-forward and so run no hook, or a `git pull .` there)
+//   and credential-read (a read of a credential file under a home directory, ~/.npmrc, ~/.netrc,
+//   ~/.ssh/*, ~/.aws/credentials, ~/.config/gh/hosts.yml, ~/.docker/config.json, ~/.codex/auth.json
+//   or ~/.claude/.credentials.json: by a program that prints or copies a file (cat, head, grep, sed,
+//   awk, base64, cp, rsync and kin, also under find -exec or xargs), by an input redirection, or
+//   by an inline script, node -e, python -c, perl -e, ruby -e or bun -e, that names one; a
+//   recursive read of a directory that holds one; `~`, `~user`, $HOME, a variable the line set, a
+//   cd, a glob and a brace list are expanded; `test -s <file>` and a project's own .env pass).
 //   On a line that runs git (at any depth), a guarded name set or cleared in any form the guard
 //   does not read is refused: by a command that can set a variable (read, printf -v, for, select,
 //   mapfile, readarray, getopts, let, wait -p, coproc, a declaration with a nameref or another
@@ -117,10 +124,15 @@
 // a configured glob push destination is read as every mainline, so one that matches none is still asked;
 // a verdict script that starts a detached grandchild of its own can outlive the landing check's kill;
 // scripts nested deeper than the parser's depth cap (three `bash -c` / `eval` levels) are not read;
+// credential-read reads names, never files: a credential copied or linked under another name by an
+// earlier call, a script file that reads one, an inline script that builds the name from pieces, a
+// program outside its readers, and a home directory outside /Users, /home and /root are not refused,
+// and a line whose reader takes a value the guard cannot read (xargs, an unset $VAR, a substitution)
+// is refused when any of its words names one;
 // `'HARNESS_LANDING'=owner git …` is asked although bash runs it as a command name (it then fails).
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -853,6 +865,7 @@ function parse(command, cwd, quoted, depth, background) {
     let wrapped = false;
     let loop = false; // a while or until keyword starts this command
     let timed = false; // a timeout or gtimeout wrapper runs it
+    let xargs = false; // xargs runs it: its operands come from its input (credential-read)
     for (;;) {
       if (!words.length) break;
       const program = basename(words[0]);
@@ -863,6 +876,7 @@ function parse(command, cwd, quoted, depth, background) {
       } else if (unwrap(words, env, unq, hold, cleared)) {
         wrapped = true;
         if (program === 'timeout' || program === 'gtimeout') timed = true;
+        if (program === 'xargs') xargs = true;
       } else break;
     }
     // A guarded name a command that is not git sets, or names (every word it was handed, and those
@@ -873,6 +887,10 @@ function parse(command, cwd, quoted, depth, background) {
     const named = wrapped ? [...shellWords, ...env, ...words] : shellWords;
     if (basename(words[0] ?? '') !== 'git') collectForms(words, env, quoted, named, mention.names);
     const state = stateOf(segment.node);
+    // The plain values of the shell's variables, and the input redirections (`< file`) of the segment (credential-read).
+    const vars = new Map([...state.vars].map(([k, v]) => [k, unq(String(v))]));
+    for (const m of segment.text.replaceAll(OUT, ' ').matchAll(/(?<![\d<])\d*<(?![<&(>])\s*([^\s;&|()<>]+)/g))
+      line.inputs.push({ word: unq(m[1]), cwd: state.dir, lost: state.lost, vars });
     const given = new Map(); // the values the command's earlier assignment words gave
     for (let k = 0; k < env.length; k++) {
       env[k] = canonical(env[k], (n) => (given.has(n) ? given.get(n) : state.vars.get(n)), line);
@@ -928,6 +946,10 @@ function parse(command, cwd, quoted, depth, background) {
     Object.defineProperty(cmd, 'background', { value: bg, enumerable: false });
     Object.defineProperty(cmd, 'cleared', { value: cleared, enumerable: false });
     Object.defineProperty(cmd, 'lost', { value: state.lost, enumerable: false });
+    // What credential-read reads: every word the shell handed over, an xargs wrapper, the shell's variables.
+    Object.defineProperty(cmd, 'words', { value: shellWords, enumerable: false });
+    Object.defineProperty(cmd, 'xargs', { value: xargs, enumerable: false });
+    Object.defineProperty(cmd, 'vars', { value: vars, enumerable: false });
     // What unbounded-wait reads: the loop keyword, its own timeout wrapper, an enclosing one; and
     // what the owner form reads: the words before the program (null when a wrapper rewrote them).
     Object.defineProperty(cmd, 'wait', { value: { loop, timed, bound }, enumerable: false });
@@ -960,7 +982,7 @@ function parse(command, cwd, quoted, depth, background) {
 /** Simple commands of a shell command line: [{ argv, cwd }] (env, background and quoted not enumerable). Quoted text is an opaque word. */
 export function parseCommands(command, cwd = process.cwd()) {
   const quoted = [];
-  Object.assign(quoted, { expands: new Set(), line: { sets: new Set(), unsets: new Set(), forms: new Set(), named: new Set(), waits: [], moved: false }, inherited: [new Set(Object.keys(process.env))], bound: [false], lost: [false] });
+  Object.assign(quoted, { expands: new Set(), line: { sets: new Set(), unsets: new Set(), forms: new Set(), named: new Set(), waits: [], inputs: [], moved: false }, inherited: [new Set(Object.keys(process.env))], bound: [false], lost: [false] });
   const commands = parse(String(command ?? ''), cwd, quoted, 0, false);
   // check() needs the quoted values for git options like `-c "core.hooksPath=..."`.
   for (const c of commands) Object.defineProperty(c, 'quoted', { value: quoted, enumerable: false });
@@ -1819,6 +1841,228 @@ function envObject(cmd) {
  * no other rule refuses any command of the line. `background` is the host's run_in_background,
  * `agentId` the hook input's agent_id (set inside a host subagent).
  */
+// credential-read (v13 G1): a read of a credential file under a home directory prints its values into
+// the transcript. The files, relative to a home; `.ssh/` is everything under ~/.ssh.
+const CREDENTIALS = ['.npmrc', '.netrc', '.ssh/', '.aws/credentials', '.config/gh/hosts.yml', '.docker/config.json', '.codex/auth.json', '.claude/.credentials.json'];
+// The directories that hold one (the home itself among them): a recursive copy or search reads it too.
+const CREDENTIAL_DIRS = ['', '.ssh', '.aws', '.config', '.config/gh', '.docker', '.codex', '.claude'];
+// What a glob is matched against: each credential file, the usual files in ~/.ssh, each directory.
+const CREDENTIAL_SAMPLES = [...CREDENTIALS.filter((c) => !c.endsWith('/')), ...['id_rsa', 'id_ed25519', 'id_ecdsa', 'config', 'known_hosts', 'authorized_keys', 'id_rsa.pub'].map((f) => `.ssh/${f}`)];
+// The programs that print or copy a file named on their command line.
+const READERS = new Set(['cat', 'tac', 'nl', 'head', 'tail', 'less', 'more', 'bat', 'sed', 'gsed', 'awk', 'gawk', 'mawk', 'nawk', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'strings', 'xxd', 'od', 'hexdump', 'base64', 'base32', 'jq', 'yq', 'diff', 'dd', 'cp', 'scp', 'rsync']);
+// The interpreters whose inline script is read for a credential file's name: [program, inline option].
+const INLINE = [
+  [/^(?:node|nodejs|bun)$/, /^(?:-e|-p|-pe|--eval|--print)(?:=|$)/],
+  [/^python[0-9.]*$/, /^-[A-Za-z]*c/],
+  [/^(?:perl|ruby)$/, /^-[A-Za-z]*[eE]/],
+];
+// The names an inline script builds a credential file's path from: every part of one has to appear.
+const CREDENTIAL_NAMES = [['.npmrc'], ['.netrc'], ['.ssh'], ['.aws', 'credentials'], ['hosts.yml'], ['.docker', 'config.json'], ['.codex', 'auth.json'], ['.credentials.json']].map((parts) =>
+  parts.map((p) => new RegExp(`(?<![A-Za-z0-9_.-])${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`)),
+);
+// A home directory other than this user's: macOS, Linux and root's.
+const OTHER_HOME = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|\/var\/root|\/private\/var\/root)(?=\/|$)/;
+const CREDENTIAL_REASON = 'its values would land in the transcript; check presence with `test -s <file>`.';
+
+/** This user's home directories: $HOME and its real path. */
+function homes() {
+  const home = homedir();
+  try {
+    const real = realpathSync(home);
+    return real === home ? [home] : [home, real];
+  } catch {
+    return [home];
+  }
+}
+
+/** 'file' when `abs` is a credential file, 'dir' when it is a directory that holds one, else null. */
+function credentialAt(abs) {
+  let rel = null;
+  for (const h of homes()) if (abs === h || abs.startsWith(`${h}/`)) rel ??= abs.slice(h.length + 1);
+  if (rel === null) {
+    const other = OTHER_HOME.exec(abs);
+    if (!other) return null;
+    rel = abs.slice(other[0].length + 1);
+  }
+  if (CREDENTIALS.some((c) => (c.endsWith('/') ? rel.startsWith(c) && rel.length > c.length : rel === c))) return 'file';
+  return CREDENTIAL_DIRS.includes(rel) ? 'dir' : null;
+}
+
+/** A glob as a regex over a whole path: * and ? stay in one segment and, leading one, skip a dot file. */
+function globRegex(path) {
+  const segment = (s) => {
+    let re = /^[*?[]/.test(s) ? '(?!\\.)' : '';
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '*') re += s[i + 1] === '*' ? '.*' : '[^/]*';
+      else if (ch === '?') re += '[^/]';
+      else if (ch === '[' && s.indexOf(']', i + 2) !== -1) {
+        const end = s.indexOf(']', i + 2);
+        re += `[${s.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+        i = end;
+      } else re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (ch === '*' && s[i + 1] === '*') i++;
+    }
+    return re;
+  };
+  return new RegExp(`^${path.split('/').map(segment).join('/')}$`);
+}
+
+/** A word's brace lists expanded, as the shell does before it globs: at most 64 words. */
+function braces(word) {
+  const out = [];
+  const walk = (w) => {
+    if (out.length >= 64) return;
+    for (let i = w.indexOf('{'); i !== -1; i = w.indexOf('{', i + 1)) {
+      const commas = [];
+      let depth = 0;
+      for (let j = i; j < w.length; j++) {
+        if (w[j] === '{') depth++;
+        else if (w[j] === ',' && depth === 1) commas.push(j);
+        else if (w[j] === '}' && --depth === 0) {
+          if (!commas.length) break;
+          const cuts = [i, ...commas, j];
+          for (let k = 0; k + 1 < cuts.length; k++) walk(w.slice(0, i) + w.slice(cuts[k] + 1, cuts[k + 1]) + w.slice(j + 1));
+          return;
+        }
+      }
+    }
+    out.push(w);
+  };
+  walk(word);
+  return out;
+}
+
+/**
+ * What a word names as a path: 'file' (a credential file), 'dir' (a directory that holds one), 'vague'
+ * (a value the guard cannot read: a variable it was not given, a substitution) or null. `~`, `~user`,
+ * $HOME and the variables the line set are expanded; the value after an `=` and the path in an option
+ * cluster (-f/path) are read too; a glob is matched, an existing path also by its real path.
+ */
+function credentialWord(word, cwd, lost, vars) {
+  const w = word.replace(/\\(.)/g, '$1');
+  const forms = [w];
+  if (w.includes('=')) forms.push(w.slice(w.indexOf('=') + 1));
+  if (/^-[^-]/.test(w) && /[/~$]/.test(w.slice(2))) forms.push(w.slice(w.search(/[/~$]/)));
+  let found = null;
+  const rank = { file: 3, dir: 2, vague: 1 };
+  const note = (at) => {
+    if (at && (!found || rank[at] > rank[found])) found = at;
+  };
+  for (const form of forms.flatMap(braces)) {
+    let p = form.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (m, a, b) => {
+      const name = a ?? b;
+      if (vars?.has(name)) return vars.get(name);
+      return name === 'HOME' ? homedir() : m;
+    });
+    const tilde = /^~([A-Za-z0-9._-]*)(?=\/|$)/.exec(p);
+    if (tilde) p = (tilde[1] && tilde[1] !== userInfoName() ? `/home/${tilde[1]}` : homedir()) + p.slice(tilde[0].length);
+    if (/^[$`]/.test(p)) {
+      // a value the guard cannot read: as if it were a home, so `$X/.npmrc` is still a credential file
+      const rest = p.replace(/^(?:\$\{[^}]*\}|\$[A-Za-z0-9_]*|`[^`]*`)/, '');
+      note(rest.startsWith('/') && credentialAt(`/home/x${rest}`) === 'file' ? 'file' : 'vague');
+      continue;
+    }
+    if (/[$`]/.test(p)) note('vague');
+    const bases = isAbsolute(p) ? [''] : lost ? [cwd, homedir()] : [cwd];
+    for (const base of bases) {
+      const abs = base ? resolve(base, p) : resolve(p);
+      if (/[*?[]/.test(abs)) {
+        const re = globRegex(abs);
+        const roots = [...homes(), '/root', `/home/${userInfoName()}`, `/Users/${userInfoName()}`];
+        if (roots.some((h) => CREDENTIAL_SAMPLES.some((s) => re.test(`${h}/${s}`)))) note('file');
+        else if (roots.some((h) => CREDENTIAL_DIRS.some((d) => re.test(d ? `${h}/${d}` : h)))) note('dir');
+        continue;
+      }
+      note(credentialAt(abs));
+      try {
+        if (existsSync(abs)) note(credentialAt(realpathSync(abs)));
+      } catch {
+        // an unreadable path is read by its name only
+      }
+    }
+  }
+  return found;
+}
+
+function userInfoName() {
+  try {
+    return userInfo().username;
+  } catch {
+    return '';
+  }
+}
+
+/** Does a reader read the directories it is given: grep -r, cp -r / -a, scp -r, rsync, rg, ag. */
+function recursiveRead(name, words) {
+  if (name === 'rsync' || name === 'rg' || name === 'ag') return true;
+  const cluster = name === 'cp' || name === 'scp' ? /^-[A-Za-z]*[rRa]/ : /grep$/.test(name) ? /^-[A-Za-z]*[rR]/ : null;
+  if (!cluster) return false;
+  return words.some((w) => cluster.test(w) || /^--(?:recursive|dereference-recursive|archive|directories=recurse)$/.test(w));
+}
+
+/**
+ * { rule: 'credential-read', reason } when `cmd` reads a credential file, else null: a reader (READERS)
+ * given one as an argument, a directory holding one to a recursive reader, a find -exec reader started in
+ * such a directory, an inline script (node -e, python -c, perl -e, ruby -e, bun -e) that names one; and a
+ * reader whose input the guard cannot read on its own (under xargs, or given a variable or substitution
+ * it was not handed) when any word of the line names one. `commands` is the line's.
+ */
+function credentialHit(cmd, commands) {
+  const unq = (c, w) => w.replace(PH, (_, n) => c.quoted[Number(n)]);
+  const name = basename(unq(cmd, cmd.argv[0] ?? '').replace(/\\/g, ''));
+  const words = cmd.argv.slice(1).map((w) => unq(cmd, w));
+  const at = (w, c = cmd) => credentialWord(w, c.cwd, c.lost, c.vars);
+  const refuse = (what, dir) => ({
+    rule: 'credential-read',
+    reason: `${what} ${dir ? 'holds a credential file, and a recursive read reads it' : 'is a credential file'}: ${CREDENTIAL_REASON}`,
+  });
+  const lineWord = (deep) => {
+    for (const c of commands)
+      for (const w of (c.words ?? c.argv).slice(c === cmd ? 1 : 0)) {
+        const found = at(unq(c, w), c);
+        if (found === 'file' || (found === 'dir' && deep)) return { w: unq(c, w), dir: found === 'dir' };
+      }
+    return null;
+  };
+  const shown = (w) => `\`${clip(w)}\``;
+  let reader = READERS.has(name);
+  let deep = reader && recursiveRead(name, words);
+  if (name === 'find') {
+    const exec = words.findIndex((w) => /^-(?:exec|execdir|ok|okdir)$/.test(w));
+    reader = exec !== -1 && READERS.has(basename(words[exec + 1] ?? ''));
+    deep = true;
+  }
+  const inline = INLINE.find(([program]) => program.test(name));
+  if (inline && words.some((w) => inline[1].test(w))) {
+    const script = words.join(' ');
+    if (CREDENTIAL_NAMES.some((parts) => parts.every((re) => re.test(script)))) return refuse(`the \`${name}\` inline script names a file that`, false);
+  }
+  if (!reader && !inline) return null;
+  let vague = cmd.xargs === true;
+  for (const w of words) {
+    const found = at(w);
+    if (found === 'file' || (found === 'dir' && deep)) return refuse(shown(w), found === 'dir');
+    if (found === 'vague') vague = true;
+  }
+  if (vague) {
+    const hit = lineWord(deep || cmd.xargs === true);
+    if (hit) return refuse(`${shown(hit.w)} (read through ${cmd.xargs ? 'xargs' : 'a value the guard cannot read'})`, hit.dir);
+  }
+  return null;
+}
+
+/** credential-read for an input redirection (`< file`, `$(< file)`) on any command of the line. */
+function credentialInputHit(inputs) {
+  for (const input of inputs) {
+    if (credentialWord(input.word, input.cwd, input.lost, input.vars) === 'file')
+      return { rule: 'credential-read', reason: `\`< ${clip(input.word)}\` reads a credential file: ${CREDENTIAL_REASON}` };
+  }
+  return null;
+}
+
+const clip = (w) => (w.length > 80 ? `${w.slice(0, 79)}...` : w);
+
 export function check(command, { cwd = process.cwd(), currentBranch, background = false, agentId = null } = {}) {
   branchCache.clear();
   pathTops.clear();
@@ -1831,12 +2075,23 @@ export function check(command, { cwd = process.cwd(), currentBranch, background 
   const homeSet = commands.line.sets.has('HOME') || commands.line.unsets.has('HOME');
   let owner = ownerCmd ? landingHit(ownerCmd, currentBranch) : null;
   for (const cmd of commands) {
-    const hit = backgroundHit(cmd) ?? waitHit(cmd, background || cmd.background) ?? fullVerifyHit(cmd, agentId) ?? builtinRule(cmd, { currentBranch, homeSet, hookDir: cwd });
+    const hit =
+      backgroundHit(cmd) ??
+      waitHit(cmd, background || cmd.background) ??
+      fullVerifyHit(cmd, agentId) ??
+      credentialHit(cmd, commands) ??
+      builtinRule(cmd, { currentBranch, homeSet, hookDir: cwd });
     if (hit?.owner) owner ??= hit;
     else if (hit) return hit;
     const extra = extraHit(cmd);
     if (extra) return extra;
   }
+  // The input redirections of the line, and a `$(< file)` the parser leaves in a quoted string.
+  const inputs = [...commands.line.inputs];
+  for (const m of String(command).matchAll(/\$\(\s*<\s*("[^"]*"|'[^']*'|[^\s;&|()<>"']+)/g))
+    inputs.push({ word: m[1].replace(/^(["'])(.*)\1$/, '$2'), cwd, lost: false, vars: null });
+  const input = credentialInputHit(inputs);
+  if (input) return input;
   // The loops whose condition only changes the shell (parse's line.waits).
   for (const w of commands.line.waits) {
     const hit = waitHit(w, background || w.background);

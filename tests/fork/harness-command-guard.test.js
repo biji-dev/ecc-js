@@ -902,6 +902,33 @@ async function main() {
     assert.strictEqual(runHook(GUARD, '').status, 0);
   });
 
+  console.log('\ncommand-guard: credential-read');
+  const credentialBlocked = [
+    'cat ~/.npmrc', 'head -n 3 ~/.netrc', 'cat ~/.ssh/id_ed25519', 'grep token ~/.aws/credentials', 'base64 ~/.config/gh/hosts.yml',
+    'cp ~/.docker/config.json /tmp/x', 'jq . ~/.codex/auth.json', 'tail ~/.claude/.credentials.json', 'cat $HOME/.npmrc', 'cat "${HOME}/.netrc"',
+    'cat ~root/.ssh/id_rsa', 'cat /home/someone/.npmrc', 'cd ~ && cat .npmrc', 'F=~/.npmrc; cat "$F"', 'cat < ~/.npmrc', 'echo "$(< ~/.npmrc)"',
+    'cat ~/.np*', 'cat ~/.ssh/*', 'cat ~/.{npmrc,bashrc}', 'echo ~/.npmrc | xargs cat', 'find ~/.ssh -type f -exec cat {} +', 'grep -r token ~',
+    'cp -r ~/.ssh /tmp/keys', 'bash -c "cat ~/.npmrc"', 'sudo cat ~/.npmrc', '/bin/cat ~/.npmrc', 'grep -f$HOME/.npmrc x',
+    "python3 -c \"print(open('/root/.aws/credentials').read())\"", "node -e \"require('fs').readFileSync(process.env.HOME + '/.npmrc')\"",
+  ];
+  for (const command of credentialBlocked) {
+    test(`blocks (credential-read): ${command}`, () => {
+      const hit = check(command, { currentBranch: 'feature/x' });
+      assert.strictEqual(hit?.rule, 'credential-read', JSON.stringify(hit));
+      assert.ok(hit.reason.endsWith('its values would land in the transcript; check presence with `test -s <file>`.'), hit.reason);
+    });
+  }
+  const credentialAllowed = [
+    'test -s ~/.npmrc', '[ -s ~/.npmrc ] && echo set', 'ls -la ~/.ssh', 'stat ~/.aws/credentials', 'ssh-add ~/.ssh/id_ed25519', 'echo ~/.npmrc',
+    'cat .env', 'cat .npmrc', 'cat ~/.bashrc', 'cat ~/.aws/config', 'cat ~/.claude/settings.json', 'grep -r todo ~/.claude/skills', 'cat ~/*rc',
+    'cat ~/.npmrc.example', 'git ls-files | xargs grep foo', 'find . -name "*.md" -exec cat {} \\;', 'cat "$f"', "node -e \"console.log(1)\"",
+  ];
+  for (const command of credentialAllowed) {
+    test(`allows (credential-read): ${command}`, () => {
+      assert.strictEqual(check(command, { currentBranch: 'feature/x' }), null);
+    });
+  }
+
   console.log('\ncommand-guard: [B] binding and mutation');
   const original = fs.readFileSync(GUARD, 'utf8');
   const work = tmp('command-guard-copy-');
@@ -1100,6 +1127,15 @@ async function main() {
     ['ask-mode', 'return ASK_MODES.has(input?.permission_mode);', 'return true;'],
     ['owner-single', 'commands.length !== 1 || /[;&|()', 'false && /[;&|()'],
     ['wait-timeout', 'if (bounded) return null;', ''],
+    // v13 G1: credential-read
+    ["cred-readers", "const READERS = new Set(['cat', ", "const READERS = new Set(['cat-x', "],
+    ["cred-input", "  const input = credentialInputHit(inputs);\n  if (input) return input;\n", ""],
+    ["cred-xargs", "        if (program === 'xargs') xargs = true;\n", ""],
+    ["cred-glob", "      if (/[*?[]/.test(abs)) {", "      if (false) {"],
+    ["cred-dot-glob", "    let re = /^[*?[]/.test(s) ? '(?!\\\\.)' : '';", "    let re = '';"],
+    ["cred-inline", "if (CREDENTIAL_NAMES.some((parts) => parts.every((re) => re.test(script)))) return refuse(", "if (false) return refuse("],
+    ["cred-recursive", "const cluster = name === 'cp' || name === 'scp' ? /^-[A-Za-z]*[rRa]/ : /grep$/.test(name) ? /^-[A-Za-z]*[rR]/ : null;", "const cluster = null;"],
+    ["cred-tilde", "const tilde = /^~([A-Za-z0-9._-]*)(?=\\/|$)/.exec(p);", "const tilde = null;"],
   ];
   for (const [label, needle, replacement] of specs) await mutate(label, needle, replacement);
 
@@ -1218,6 +1254,7 @@ async function main() {
     ['install-substitution', 'the install command with the top-level substitution is allowed', 'git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"'],
     ['install-absolute', 'the install command with the repository\'s real path is allowed', `git config core.hooksPath ${installRepo}/.githooks`, { cwd: installRepo, currentBranch: 'feature/x' }],
     ['unset-git', 'an unset of a host variable on a line with no git is allowed', 'unset CLAUDECODE; claude -p "summarise"'],
+    ['cred-dot-glob', 'a leading * skips dot files, as the shell does', 'cat ~/*rc'],
     ['path-compose', 'a PATH superseded on the line is not the PATH git runs with', 'export PATH=./node_modules/.bin:$PATH; export PATH=/usr/bin:/bin; git status --short'],
   ];
   for (const [label, title, command, o = opts] of allowedOnlyByShipped) {
@@ -1238,6 +1275,13 @@ async function main() {
     ['fd-dup', 'splitting `2>&1` on & hides the refspec after it', 'git push -f 2>&1 origin main'],
     ['heredoc-trim', 'an indented <<- terminator is found', 'cat <<-EOF\n\tbody\n\tEOF\ngit commit -n -m x'],
     ['install-expands', 'a single-quoted substitution is a literal path, not the install path', "git config core.hooksPath '$(git rev-parse --show-toplevel)/.githooks'"],
+    ['cred-readers', 'an empty reader list lets cat ~/.npmrc through', 'cat ~/.npmrc'],
+    ['cred-input', 'not reading input redirections lets cat < ~/.npmrc through', 'cat < ~/.npmrc'],
+    ['cred-xargs', 'not marking xargs lets echo ~/.npmrc | xargs cat through', 'echo ~/.npmrc | xargs cat'],
+    ['cred-glob', 'not matching globs lets cat ~/.np* through', 'cat ~/.np*'],
+    ['cred-inline', 'not reading inline scripts lets python -c open(...credentials) through', "python3 -c \"print(open('/root/.aws/credentials').read())\""],
+    ['cred-recursive', 'no recursive readers lets cp -r ~/.ssh through', 'cp -r ~/.ssh /tmp/keys'],
+    ['cred-tilde', 'not expanding ~ lets cat ~/.npmrc through', 'cat ~/.npmrc'],
   ];
   for (const [label, title, command, o = opts] of blockedOnlyByShipped) {
     test(`mutation (${label}): ${title}`, () => surviving(label, command, o));

@@ -2128,6 +2128,13 @@ Both versions are shown here rather than one being picked.
   needs by its relative imports, and by the `scripts/…mjs` paths a shell template runs; a path an `.mjs` template
   hands to a child process is not read. Today those name only the optional lanes (codex-run, claude-run), which each
   install picks. The first core `.mjs` template that runs a script by path needs the closure to read them.
+- **A repository on two machines has two registries.** Git carries the code, the plans and the step ledgers, but
+  the registry (git ignores it in most installs), the wrapper ledgers, the gate cache, the FULL lease and the
+  worktrees stay on the machine that wrote them, and nothing records which machine is a repository's home. A unit
+  can be claimed on both, and a held row on one is invisible to the other. Today the owner keeps one home per
+  repository and moves it with a handoff (no held row, everything pushed, then the registry and the ledgers' rows
+  copied one way). For v14: a home machine the commit guard enforces, the machine in each held row, and a retro
+  that reads every machine's sessions.
 - **Least-validated component:** the segment runner, with 2 runs and one halt. It is not installed by default.
 
 ### What v13 must show

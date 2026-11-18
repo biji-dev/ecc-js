@@ -696,7 +696,8 @@ together, as one upgrade and one merge.
 its core (the host-wide lease), the review-gate core and its golden matrix
 (`review-gate.golden.json`), `review-gate.mjs`, `codex-run.mjs` and its core (a refusal
 sent as an item error is refused), `run-counted.mjs` and its core (a test path a workspace
-runner prints from inside a package names the repo's file), the command guard (`credential-read`), `session-resume.mjs`, `harness-guard.sh` and its
+runner prints from inside a package names the repo's file: vitest's by the root its
+`RUN` line names, another by the one listed file it is the tail of), the command guard (`credential-read`), `session-resume.mjs`, `harness-guard.sh` and its
 hook copies, `unit-record.mjs` and its core (`--trailer`), `harness-due.mjs` and its
 core (the undeployed line), `retro-core.mjs` (the flake line), the new
 `deploy-list.mjs` and its core, each with its test; the rules block (`templates/agents-rules.md`).

@@ -83,7 +83,11 @@
 #   made at the merge base with the mainline or after it (an older one would hide a fix made since),
 #   every failing test it names is in that record, and each of their files is a file of the tree
 #   (the path relative to the top) that the merge base has, that did not change since it
-#   (committed, uncommitted or untracked) and that holds the test's title. A KNOWN gate does not
+#   (committed, uncommitted or untracked) and that holds the test's title. A path printed from
+#   inside a package names its file by vitest's RUN root; another runner's names the one file git
+#   lists that it is the tail of, where an ignored test file is not listed (so one the runner runs
+#   can be taken for a listed file of the same tail) and a tree with a submodule or nested
+#   repository is not searched (idFile in run-counted-core.mjs). A KNOWN gate does not
 #   count in the exit status and starts no fix round; a run with one is never cached. The
 #   mainline's own run prints its reds as FAIL. No record, no merge base, a timeout, a missed count
 #   line, output after the FAILED block or a `FAILED ?` line: FAIL.

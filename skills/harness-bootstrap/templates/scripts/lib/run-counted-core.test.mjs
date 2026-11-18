@@ -1025,8 +1025,8 @@ test('the wrapper: a path a workspace runner prints from inside a package is the
     }
   };
   const gitIn = (d, ...args) => assert.equal(spawnSync('git', ['-C', d, ...args], { env: wrapEnv() }).status, 0, `git ${args.join(' ')}`);
-  const failing = (d) => {
-    const r = wrap(['--kind', 'vitest', '--min', '1', '--', ...fakeRunner(d, ' FAIL  test/keys.test.ts > signs\n      Tests  1 failed | 1 passed (2)\n', { code: 1 })], { RUN_GATES_TOP: d }, d);
+  const failing = (d, env = {}, banner = '') => {
+    const r = wrap(['--kind', 'vitest', '--min', '1', '--', ...fakeRunner(d, `${banner} FAIL  test/keys.test.ts > signs\n      Tests  1 failed | 1 passed (2)\n`, { code: 1 })], { RUN_GATES_TOP: d, ...env }, d);
     assert.equal(r.status, 1, r.stdout + r.stderr);
     return r.stdout.trim().split('\n').at(-1);
   };
@@ -1040,11 +1040,40 @@ test('the wrapper: a path a workspace runner prints from inside a package is the
   gitIn(nested, 'init', '-q');
   gitIn(path.join(nested, 'packages', 'keys'), 'init', '-q');
   assert.equal(failing(nested), 'run-counted: FAILED test/keys.test.ts :: signs');
+  // vitest's RUN line names the root its paths are relative to: no search is needed
+  assert.equal(failing(nested, {}, ` RUN  v3.2.7 ${path.join(fs.realpathSync(nested), 'packages', 'keys')}\n\n`), 'run-counted: FAILED packages/keys/test/keys.test.ts :: signs');
   const sub = tmp();
   touch(sub, ['packages/wallet/test/keys.test.ts']);
   gitIn(sub, 'init', '-q');
   gitIn(sub, 'update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},packages/keys`);
   assert.equal(failing(sub), 'run-counted: FAILED test/keys.test.ts :: signs');
+  // a hook's GIT_INDEX_FILE names another repository's index: the wrapper lists the gate's tree
+  assert.equal(failing(d, { GIT_INDEX_FILE: path.join(sub, '.git', 'index') }), 'run-counted: FAILED packages/keys/test/keys.test.ts :: signs');
+});
+
+test('failingTests: a vitest path is relative to the root its RUN line names; a |project| path is not', () => {
+  const run = (root, body) => ` RUN  v3.2.7 ${root}\n\n${body}`;
+  const signs = ' FAIL  test/keys.test.ts > signs\n';
+  // a file at the top with that path, a sibling package with that tail, the run's own file unlisted
+  const files = new Set(['test/keys.test.ts', 'packages/wallet/test/keys.test.ts']);
+  assert.deepEqual(failingTests('vitest', run('/repo/packages/keys', signs), { cwd: '/repo', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs']);
+  // the file list is not read when every path has its root
+  const unread = () => assert.fail('the file list was read');
+  assert.deepEqual(failingTests('vitest', run('/repo/packages/keys', signs), { cwd: '/repo', top: '/repo', files: unread }), ['packages/keys/test/keys.test.ts :: signs']);
+  const banner = `${ESC}[1m${ESC}[7m${ESC}[36m RUN ${ESC}[39m${ESC}[27m${ESC}[22m ${ESC}[36mv3.2.7 ${ESC}[39m${ESC}[90m/repo/packages/keys${ESC}[39m\n`;
+  assert.deepEqual(failingTests('vitest', banner + signs, { cwd: '/repo', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs']);
+  // each run's paths follow its own RUN line
+  assert.deepEqual(failingTests('vitest', run('/repo/packages/keys', signs) + run('/repo/packages/wallet', signs), { cwd: '/repo', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs', 'packages/wallet/test/keys.test.ts :: signs']);
+  // a |project| path is relative to that project's root, which the RUN line does not name
+  assert.deepEqual(failingTests('vitest', run('/repo', ' FAIL  |keys| test/keys.test.ts > signs\n'), { cwd: '/repo', top: '/repo', files: new Set(['packages/keys/test/keys.test.ts']) }), ['packages/keys/test/keys.test.ts :: signs']);
+  // a root outside the top is read as before; without a top the id is relative to cwd
+  assert.deepEqual(failingTests('vitest', run('/elsewhere', signs), { cwd: '/repo/packages/keys', top: '/repo' }), ['packages/keys/test/keys.test.ts :: signs']);
+  assert.deepEqual(failingTests('vitest', run('/repo/packages/keys', signs), { cwd: '/repo' }), ['packages/keys/test/keys.test.ts :: signs']);
+  // paths with no root take the list once, when the first needs it
+  let calls = 0;
+  const once = () => (calls++, new Set(['packages/keys/test/keys.test.ts']));
+  assert.deepEqual(failingTests('vitest', `${signs} FAIL  test/keys.test.ts > verifies\n`, { cwd: '/repo', top: '/repo', files: once }), ['packages/keys/test/keys.test.ts :: signs', 'packages/keys/test/keys.test.ts :: verifies']);
+  assert.equal(calls, 1);
 });
 
 test("the wrapper: a failure it cannot put down to named tests ends with `FAILED ?` -- a missing binary, a count the names do not cover", () => {

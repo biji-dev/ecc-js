@@ -1254,7 +1254,8 @@ prompt, not checked.
   the v12 study, 0 of 21 FULL reds came from the diff (classified).
 - **A known red is not a fix round, and code says which reds are known.** `run-gates.sh` keeps, per gate,
   the failing tests of the last FULL run at the mainline's tip from a clean tree, read from the `run-counted:
-  FAILED <file> :: <test>` lines, with the commit it ran on; a mainline pass clears them, and a run whose
+  FAILED <file> :: <test>` lines (the file relative to the repo top, also when a workspace runner prints it
+  from inside a package), with the commit it ran on; a mainline pass clears them, and a run whose
   tree moved records nothing. On a branch whose merge base that commit contains, a gate that is one
   run-counted call and fails naming only tests in that record, each in a file the merge base has, the diff
   and the untracked files leave alone and that spells the test's title, prints `KNOWN`

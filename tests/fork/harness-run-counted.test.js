@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'run-counted-core.mjs');
 const CLI_REL = 'run-counted.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 37;
+const EXPECTED_TESTS = 38;
 
 let passed = 0;
 let failed = 0;
@@ -135,7 +135,10 @@ mutantFails('naming the ids whole when they are fewer than the failed count', ' 
 mutantFails('naming the ids whole after the command died of a signal', '    !signal &&\n', '');
 mutantFails("reading bun's failing tests past its summary list", 'if (BUN_FAILED_LIST.test(l)) break;', '');
 mutantFails('naming ids relative to the cwd, not the gate tree', 'const top = realTop(process.env.RUN_GATES_TOP);', 'const top = null;', CLI_REL);
-mutantFails('ignoring the files git lists under the gate tree', 'files: topFiles(top)', 'files: null', CLI_REL);
+mutantFails('ignoring the files git lists under the gate tree', 'files: () => topFiles(top)', 'files: null', CLI_REL);
+mutantFails("ignoring vitest's RUN root", "root: m[1] ? null : root }", 'root: null }');
+mutantFails("reading a |project| path against the RUN root", "root: m[1] ? null : root }", 'root }');
+mutantFails("keeping a hook's GIT_INDEX_FILE for the file list", "  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR']) delete env[k];\n", '', CLI_REL);
 mutantFails('guessing between two package files with one tail', '    if (hit !== null) return null;\n', '');
 mutantFails('matching a tail inside a directory name', "tailMatch(files, `/${path.posix.normalize(local.split(path.sep).join('/'))}`)", "tailMatch(files, path.posix.normalize(local.split(path.sep).join('/')))");
 mutantFails('searching a tree with a nested repository', "    if (f.endsWith('/')) return null; // a nested repository\n", '', CLI_REL);
@@ -160,7 +163,7 @@ test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) lea
   fs.writeFileSync(path.join(decoy, 'f.txt'), 'x\n');
   git('add', '.');
   git('commit', '-q', '-m', 'base');
-  const snapshot = () => [git('log', '--all', '--format=%H'), git('status', '--porcelain'), git('ls-files', '-s'), fs.readdirSync(path.join(decoy, '.git')).sort().join(',')].join('\n');
+  const snapshot = () => [git('log', '--all', '--format=%H'), git('status', '--porcelain'), git('ls-files', '-s'), fs.readdirSync(path.join(decoy, '.git')).sort().join(','), fs.readFileSync(path.join(decoy, '.git', 'config'), 'utf8')].join('\n');
   const before = snapshot();
   const env = { ...hermeticEnv(cleanup), GIT_DIR: path.join(decoy, '.git'), GIT_WORK_TREE: decoy, GIT_INDEX_FILE: path.join(decoy, '.git', 'index') };
   const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(SCRIPTS, TEST_REL)], { encoding: 'utf8', env, timeout: 120_000 });

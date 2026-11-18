@@ -23,9 +23,10 @@
  * 3. A newline, then the verdict lines, so `COUNTED` always starts a line of the gate's log. A
  *    failing run then names its failing tests, `run-counted: FAILED <file> :: <title>` each, and
  *    `run-counted: FAILED ?` when they are not its whole failure (run-counted-core.mjs › FAILING
- *    TESTS); files are relative to RUN_GATES_TOP, which run-gates.sh sets to the gate's repo top,
- *    and a path a workspace runner prints from inside a package is the one file git lists under the
- *    top that it is the tail of (run-counted-core.mjs › idFile).
+ *    TESTS); files are relative to RUN_GATES_TOP, which run-gates.sh sets to the gate's repo top.
+ *    A vitest path is read against the root vitest's RUN line names; another path a workspace
+ *    runner prints from inside a package, which is no file at the top, is the one file git lists
+ *    under the top that it is the tail of (run-counted-core.mjs › idFile).
  *
  * exit: 0 when the command exited 0 and its one summary has no failed, errors, skipped, todo,
  * flaky, interrupted, not-run, cancelled, filtered-out, deselected, xfailed or xpassed count, no
@@ -165,7 +166,7 @@ async function main() {
   process.stdout.write('\n');
   for (const l of v.lines) console.log(l);
   const top = realTop(process.env.RUN_GATES_TOP);
-  const ids = v.ok || res.spawnError ? [] : failingTests(a.kind, `${res.stdout}\n${res.stderr}`, { cwd: process.cwd(), top, files: topFiles(top) });
+  const ids = v.ok || res.spawnError ? [] : failingTests(a.kind, `${res.stdout}\n${res.stderr}`, { cwd: process.cwd(), top, files: () => topFiles(top) });
   for (const l of failedLines({ ok: v.ok, min: a.min, summary, ids, signal: res.signal, spawnError: res.spawnError, interrupted: res.interrupted })) console.log(l);
   if (res.interrupted) return res.exitCode || 128 + os.constants.signals[res.signal ?? res.interrupted];
   return v.ok ? EXIT.ok : EXIT.failed;

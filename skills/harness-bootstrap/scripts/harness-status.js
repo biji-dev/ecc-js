@@ -1235,7 +1235,9 @@ function shippedTemplates() {
     try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
     return names.flatMap(d => (d.isDirectory() ? walk(path.join(dir, d.name)) : d.isFile() ? [path.join(dir, d.name)] : []));
   };
-  return walk(path.join(SKILL_DIR, 'templates')).map(f => path.relative(SKILL_DIR, f).split(path.sep).join('/')).sort();
+  // a dotfile (.DS_Store) or an editor's or a merge's leftover is no template
+  const stray = (f) => /^\./.test(path.basename(f)) || /(\.(orig|rej|bak|swp)|~)$/.test(f);
+  return walk(path.join(SKILL_DIR, 'templates')).filter(f => !stray(f)).map(f => path.relative(SKILL_DIR, f).split(path.sep).join('/')).sort();
 }
 
 /** The Component and From cells of SKILL.md's optional table (below its `**Optional` line), or ''. */
@@ -1254,7 +1256,8 @@ function optionalCells() {
  *  file the project wrote in place of them): optional when the optional table names their stem
  *  (`claude-run-core` for its test too), else core, which every install takes (SKILL.md › Core). */
 function templatesNotInstalled(rawEntries) {
-  const named = (e) => (e && typeof e === 'object' ? [e.template, ...(Array.isArray(e.replaces) ? e.replaces : [e.replaces])] : []);
+  // `replaces` counts on a file the project wrote itself: a reviewed entry with no template
+  const named = (e) => (e && typeof e === 'object' ? [e.template, ...(e.kind === 'reviewed' && e.template === undefined ? [e.replaces].flat() : [])] : []);
   const recorded = new Set(rawEntries.flatMap(named).map(safeRel).filter(Boolean));
   const optional = optionalCells();
   const out = { core: [], optional: [] };

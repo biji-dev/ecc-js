@@ -2131,6 +2131,19 @@ test('template-not-installed (v13): a file the project wrote in place of a templ
   manifest.entries[manifest.entries.length - 1].replaces = ['templates/new-core.mjs', 'templates/extra.mjs'];
   write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest));
   assert.deepStrictEqual(report(repo, script).notInstalled, { core: [], optional: ['templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'] });
+  // on a generated entry, or one that records a template, `replaces` names nothing
+  for (const extra of [{ kind: 'generated' }, { template: 'templates/demo.mjs' }]) {
+    Object.assign(manifest.entries[manifest.entries.length - 1], extra);
+    write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest));
+    assert.ok(report(repo, script).notInstalled.core.includes('templates/new-core.mjs'), JSON.stringify(extra));
+  }
+});
+
+test('template-not-installed (v13): a dotfile or a leftover under templates/ is no template', () => {
+  const script = skillWithOptional();
+  const tpl = path.join(path.dirname(path.dirname(script)), 'templates');
+  for (const f of ['.DS_Store', 'new-core.mjs.orig', 'demo.mjs~']) fs.writeFileSync(path.join(tpl, f), 'x\n');
+  assert.deepStrictEqual(report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), script).notInstalled.core, []);
 });
 
 test('template-not-installed (v13): mutants that read the Needs cell, or count a named template, are noticed', () => {

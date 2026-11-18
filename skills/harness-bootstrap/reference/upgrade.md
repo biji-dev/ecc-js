@@ -255,8 +255,9 @@ hashed fresh.
 place of a template (its own agent-docs lint, its own runner) is a `reviewed` entry
 with no `template`: an upgrade proposes section-level changes and never merges into
 it. The entry names the templates it stands in for in `replaces` (one path or a
-list, for example `"replaces": "templates/scripts/check-agent-docs.mjs"`), so
-`harness-status` does not report them as not installed. An entry whose file the project deleted reads `missing`: ask whether to generate
+list, for example `"replaces": ["templates/scripts/check-agent-docs.mjs",
+"templates/scripts/lib/check-agent-docs.test.mjs"]`), so `harness-status` does not
+report them as not installed; it reads `replaces` only on such an entry. An entry whose file the project deleted reads `missing`: ask whether to generate
 it again or drop the entry. A renamed file moves its entry, `template` and
 `templateSha256` included, to the new path.
 

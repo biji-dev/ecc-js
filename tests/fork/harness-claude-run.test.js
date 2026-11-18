@@ -18,7 +18,7 @@ const CORE_REL = path.join('lib', 'claude-run-core.mjs');
 const CLI_REL = 'claude-run.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 17;
+const EXPECTED_TESTS = 20;
 
 let passed = 0;
 let failed = 0;
@@ -108,6 +108,10 @@ mutantFails('a dry run that goes on to run', '    console.log(JSON.stringify(sho
 mutantFails('a review with no diff file', '    const problem = writeDiff(a, run.diffFile);', '    const problem = null;', CLI_REL);
 mutantFails('spawning the model without its own process group', 'detached: GROUP,', 'detached: false,', CLI_REL);
 mutantFails('dropping HARNESS_ROLE=executor from the model env', "HARNESS_ROLE: 'executor'", "HARNESS_ROLE: 'session'", CLI_REL);
+mutantFails('a records-only move that drops the review row', '  return changed.some((p) => !records.test(p));', '  return changed.length > 0;');
+mutantFails('a code edit mid-run that keeps the review row', '  return changed.some((p) => !records.test(p));', '  return false;');
+mutantFails('a tree diff git could not list that keeps the review row', '  if (!Array.isArray(changed)) return true;', '  if (!Array.isArray(changed)) return false;');
+mutantFails('a wrapper that never sets treeMoved', '  return movedBeyondRecords(changed) ? { treeAfter, treeMoved: true } : { treeAfter };', '  return { treeAfter };', CLI_REL);
 mutantFails('sending an adversarial pass with a base no range', "const stdin = run.brief + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');", 'const stdin = run.brief;', CLI_REL);
 
 test('demo: a dry run from a Codex host prints the read-only command and writes nothing', () => {

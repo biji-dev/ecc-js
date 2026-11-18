@@ -5,11 +5,13 @@
 // matching the core. Only the [B] tests read the core's bound values (and one shape test each);
 // every behaviour test runs under INJECTED, the tests' own copy of the template's bindings, with
 // CRITICAL set per call, so a project's bindings never change what they assert. FIX_LINES is read
-// relatively (FIX_LINES, FIX_LINES + 1), which holds for any value.
+// relatively (FIX_LINES, FIX_LINES + 1) and NOTES by name, which holds for any value.
 // Hermetic: the one wrapper test runs in a temp git repo with GIT_* variables stripped and no
-// global git config; no network, no real repository.
+// global git config; no network, no real repository. The golden matrix reads review-gate.golden.json
+// beside this file, and REVIEW_GATE_GOLDEN=write rewrites it from the core.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,9 +25,11 @@ import {
   INSTRUCTIONS,
   LANDING_KINDS,
   NON_PRODUCTION,
+  NOTES,
   ROLES,
   STAKES,
   TESTS,
+  TIERS,
   TRIGGERS,
   WRITERS,
   decide as decideCore,
@@ -36,13 +40,16 @@ import {
   isGuard,
   isHarness,
   isInstruction,
+  isLandingCritical,
   isProduction,
   isTest,
   landing as landingCore,
+  ledgerFixRound,
   parseArgs,
   parseNumstat,
   qualifyingRows,
   readStakes,
+  roundBelowLedger,
   writerRole,
 } from './review-gate-core.mjs';
 
@@ -188,6 +195,7 @@ for (const [name, value, ok, what] of [
     'a plain object of reviewer name to a non-empty array of RegExp',
   ],
   ['FIX_LINES', FIX_LINES, Number.isInteger(FIX_LINES) && FIX_LINES > 0, 'a positive integer'],
+  ['NOTES', NOTES, typeof NOTES === 'string' && NOTES.trim() !== '', 'a non-empty path'],
 ])
   test(`the bound ${name} is ${what}`, () => {
     const shown = Array.isArray(value) || typeof value !== 'object' ? String(value) : Object.keys(value).join(', ');
@@ -239,7 +247,7 @@ test('parseNumstat reads the -z form, where git never quotes a path', () => {
   const r = bound(() =>
     decide({ files: parseNumstat('2\t1\tsrc/core/odd\tname.ts\0'), kind: 'fix', maxFixed: 'P1', round: 3 }),
   );
-  assert.equal(r.decision, 'adversarial');
+  assert.equal(r.decision, 'redesign');
 });
 
 test('parseNumstat keeps added, deleted and binary apart: a pure addition, a deletion, a binary', () => {
@@ -283,12 +291,16 @@ test('slice 3: critical code written by the second family gets a Claude reviewer
   assert.deepEqual(r.critical, [HOT]);
 });
 
-test('slice 4: otherwise the slice review goes to the second family, cold or critical', () => {
-  for (const file of [COLD, HOT]) {
-    const r = bound(() => decide({ files: [f(file, 30)], kind: 'slice' }));
-    assert.equal(r.decision, 'second-family', file);
-    assert.deepEqual(r.reviewers, ['second-family-review'], file);
-  }
+test('slice 4: a cold slice by Opus is deferred to the unit review; a critical one goes to the second family now', () => {
+  const cold = bound(() => decide({ files: [f(COLD, 30)], kind: 'slice' }));
+  assert.deepEqual([cold.decision, cold.reviewers, cold.reason], ['defer', [], 'cold slice written by Opus: the unit review covers it']);
+  // with CRITICAL unbound every path is cold, so every slice waits for the unit review
+  assert.equal(decide({ files: [f(HOT, 30)], kind: 'slice' }).decision, 'defer');
+  const hot = bound(() => decide({ files: [f(HOT, 30)], kind: 'slice' }));
+  assert.equal(hot.decision, 'second-family');
+  assert.deepEqual(hot.reviewers, ['second-family-review']);
+  // a cold file beside a critical one: the slice holds critical code, so it is reviewed now
+  assert.equal(bound(() => decide({ files: [f(COLD, 30), f(HOT, 1)], kind: 'slice' })).decision, 'second-family');
 });
 
 // ---- kind unit
@@ -306,7 +318,7 @@ test('a binary or mode-only production file (0 lines) is still a change to revie
   assert.equal(bound(() => decide({ files: bin, kind: 'slice' })).decision, 'second-family');
   assert.equal(bound(() => decide({ files: bin, kind: 'unit' })).decision, 'review');
   const r = bound(() => decide({ files: bin, kind: 'fix', maxFixed: 'P1', round: 3 }));
-  assert.equal(r.decision, 'adversarial');
+  assert.equal(r.decision, 'redesign');
   assert.equal(r.prodFiles, 1);
   assert.equal(r.prodLines, 0);
 });
@@ -520,7 +532,7 @@ test('fix 9: the harness lane has one fix round, re-read by the other family; a 
     assert.equal(r.decision, 'drop', `round ${round}`);
     assert.deepEqual(r.reviewers, [], `round ${round}`);
     assert.match(r.reason, new RegExp(`^harness lane, fix round ${round}: drop the change`));
-    assert.match(r.reason, /docs\/harness\/upstream-notes\.md/);
+    assert.ok(r.reason.includes(`one line in ${NOTES};`), r.reason);
     assert.doesNotMatch(r.reason, /owner/);
   }
   // P3s stay the P3 batch; a stray path takes the ordinary fix rules
@@ -529,21 +541,16 @@ test('fix 9: the harness lane has one fix round, re-read by the other family; a 
   assert.equal(stray.decision, 'skip');
 });
 
-test('fix 4: on critical code round 3 is an adversarial pass, round 4 a redesign, round 5 and later a cut; a round that closed only P2s is deferred from round 3', () => {
+test('fix 4: on critical code round 3 is a redesign the adversarial pass reads, round 4 and later a cut; a round that closed only P2s is deferred from round 3', () => {
   for (const [writer, reviewer] of [['claude', 'second-family-adversarial'], ['sonnet', 'opus-adversarial']]) {
     for (const maxFixed of ['P1', 'P0']) {
       const r3 = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed, round: 3, writer }));
-      assert.equal(r3.decision, 'adversarial', `${writer} ${maxFixed} round 3`);
+      assert.equal(r3.decision, 'redesign', `${writer} ${maxFixed} round 3`);
       assert.deepEqual(r3.reviewers, [reviewer], `${writer} ${maxFixed} round 3`);
-      assert.match(r3.reason, /an adversarial pass over the fix diff/);
-      assert.match(r3.reason, /run without asking/);
-      const r4 = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed, round: 4, writer }));
-      assert.equal(r4.decision, 'redesign', `${writer} ${maxFixed} round 4`);
-      assert.deepEqual(r4.reviewers, [reviewer], `${writer} ${maxFixed} round 4`);
-      assert.match(r4.reason, /the judgment model re-plans this area once/);
-      assert.match(r4.reason, /reviews the new approach/);
+      assert.match(r3.reason, /^fix round 3 on critical code: two fix rounds did not hold -- the judgment model re-plans this area once/);
+      assert.match(r3.reason, /reviews the new approach, run without asking$/);
     }
-    for (const round of [5, 6, 9]) {
+    for (const round of [4, 5, 6, 9]) {
       const r = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round, writer }));
       assert.equal(r.decision, 'cut', `${writer} round ${round}`);
       assert.deepEqual(r.reviewers, [], `${writer} round ${round}`);
@@ -569,9 +576,9 @@ test('fix 4: on critical code round 3 is an adversarial pass, round 4 a redesign
     for (const writer of ['claude', 'sonnet', 'codex', 'mixed'])
       assert.doesNotMatch(bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round, writer })).reason, /owner/);
   // a cut has no reviewer, so a triggered specialist does not join it either
-  const cut = withCritical([/^src\/auth\//], () => decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P1', round: 5 }));
+  const cut = withCritical([/^src\/auth\//], () => decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P1', round: 4 }));
   assert.deepEqual([cut.decision, cut.reviewers], ['cut', []]);
-  const redesign = withCritical([/^src\/auth\//], () => decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P1', round: 4 }));
+  const redesign = withCritical([/^src\/auth\//], () => decide({ files: [f('src/auth/login.ts', 5)], kind: 'fix', maxFixed: 'P1', round: 3 }));
   assert.deepEqual(redesign.reviewers, ['second-family-adversarial', 'security-reviewer']);
 });
 
@@ -654,8 +661,8 @@ test('fix codex 5: critical P1 fixed in more than FIX_LINES lines is re-read by 
   assert.match(r.reason, /at most two Opus rounds/);
 });
 
-test('fix codex 6: critical rounds 3 and 4 by the second family are read by an Opus adversarial pass', () => {
-  for (const [round, decision] of [[3, 'adversarial'], [4, 'redesign']]) {
+test('fix codex 6: a critical round 3 by the second family is a redesign read by an Opus adversarial pass', () => {
+  for (const [round, decision] of [[3, 'redesign']]) {
     const r = codexFix([f(HOT, 5)], 'P1', round);
     assert.equal(r.decision, decision, `round ${round}`);
     assert.deepEqual(r.reviewers, ['opus-adversarial']);
@@ -665,7 +672,7 @@ test('fix codex 6: critical rounds 3 and 4 by the second family are read by an O
     assert.deepEqual(claude.reviewers, ['second-family-adversarial']);
     assert.match(claude.reason, /the adversarial pass by the second family/);
   }
-  assert.equal(codexFix([f(HOT, 5)], 'P1', 5).decision, 'cut');
+  for (const round of [4, 5]) assert.equal(codexFix([f(HOT, 5)], 'P1', round).decision, 'cut', `round ${round}`);
 });
 
 test('fix codex 7: triggered specialists still join a codex fix re-review', () => {
@@ -1081,9 +1088,9 @@ test('tier by diff 1: a test-only diff with nothing deleted under a critical pat
   assert.deepEqual(unit.critical, [TEST_FILE]);
   assert.match(unit.reason, COLD_TESTS);
   assert.doesNotMatch(unit.reason, /re-tier/);
-  // a slice by Sonnet is no longer critical code not written by Opus
+  // a slice by Sonnet is no longer critical code not written by Opus: a cold slice, deferred to the unit review
   const slice = bound(() => decide({ files: added, kind: 'slice', writer: 'sonnet' }));
-  assert.deepEqual([slice.decision, slice.reviewers], ['second-family', ['second-family-review']]);
+  assert.deepEqual([slice.decision, slice.reviewers], ['defer', []]);
   // a fix round 2 is proven by its tests, as a cold one is
   const fix = bound(() => decide({ files: added, kind: 'fix', maxFixed: 'P1', round: 2 }));
   assert.equal(fix.decision, 'skip');
@@ -1125,13 +1132,14 @@ const landing = (o) => bound(() => landingCore({ result: RESULT, base: BASE, tru
 const RE_REVIEW = (from, paths, named = paths[0]) =>
   `critical paths changed beyond the reviewed content: ${named} → second-family-adversarial --base ${from} over git diff ${from} ${RESULT} -- ${paths.join(' ')}, on the branch with the mainline merged in`;
 
-test('landing 1: an empty review (a self-loop edge) reaches nothing: NONE, the owner merges', () => {
+test('landing 1: an empty review (a self-loop edge) reaches nothing: RE-REVIEW from the base, never the owner', () => {
   // `review --base HEAD` over the tip: the reviewer read no diff, so its row is B → B
   const row = reviewRow({ baseTree: T1, tree: T1 });
   const r = landing({ rows: [row], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [edge('B', 'B', row)] } } });
-  assert.equal(r.verdict, 'NONE');
-  assert.deepEqual([r.critical, r.unreached, r.from], [[HOT], [HOT], null]);
-  assert.equal(r.reason, `no recorded cross-family review of ${HOT}: the owner merges`);
+  assert.equal(r.verdict, 'RE-REVIEW');
+  assert.deepEqual([r.critical, r.unreached, r.from], [[HOT], [HOT], BASE]);
+  assert.equal(r.reason, RE_REVIEW(BASE, [HOT]));
+  assert.doesNotMatch(r.reason, /owner/);
 });
 
 test('landing 2: a two-round chain reaches: the unit review A → B, the fix review B → C, result C', () => {
@@ -1204,16 +1212,38 @@ test('landing 6: a --trust commit is a start: a pull of what the remote holds re
   const row = reviewRow();
   const onTop = landing({ trust: [T2], rows: [row], paths: { [HOT]: { starts: ['A', 'X'], result: 'Y', edges: [edge('X', 'Y', row)] } } });
   assert.equal(onTop.verdict, 'PASS');
-  // without the trusted start the same content is no recorded review
-  assert.equal(landing({ paths: { [HOT]: { starts: ['A'], result: 'X', edges: [] } } }).verdict, 'NONE');
+  // without the trusted start the same content is no recorded review: the whole change is re-reviewed
+  const unread = landing({ paths: { [HOT]: { starts: ['A'], result: 'X', edges: [] } } });
+  assert.deepEqual([unread.verdict, unread.from], ['RE-REVIEW', BASE]);
 });
 
-test('landing 7: no critical path changed is PASS; a critical path with no qualifying row is NONE', () => {
+test('landing 7: no critical path changed is PASS; a critical path with no qualifying row is RE-REVIEW from the base', () => {
   const pass = landing({ changed: [COLD, 'docs/a.md', 'src/core/README.md'] });
   assert.deepEqual([pass.verdict, pass.critical, pass.reason], ['PASS', [], 'no critical path changed']);
-  const none = landing({ changed: [HOT, TEST_FILE, COLD], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [] }, [TEST_FILE]: { starts: ['A'], result: 'B', edges: [] } } });
-  assert.deepEqual([none.verdict, none.critical, none.unreached, none.rows], ['NONE', [HOT, TEST_FILE], [HOT, TEST_FILE], []]);
-  assert.equal(none.reason, `no recorded cross-family review of ${HOT} +1: the owner merges`);
+  const unread = landing({ changed: [HOT, TEST_FILE, COLD], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [] }, [TEST_FILE]: { starts: ['A'], result: 'B', edges: [] } } });
+  assert.deepEqual([unread.verdict, unread.critical, unread.unreached, unread.from, unread.rows], ['RE-REVIEW', [HOT, TEST_FILE], [HOT, TEST_FILE], BASE, []]);
+  assert.equal(unread.reason, RE_REVIEW(BASE, [HOT, TEST_FILE], `${HOT} +1`));
+  // one path read in part and one never read: one re-review from the base reads both
+  const row = reviewRow();
+  const mixed = landing({ changed: [HOT, TEST_FILE], rows: [row], paths: { [HOT]: { starts: ['A'], result: 'C', edges: [edge('A', 'B', row)] }, [TEST_FILE]: { starts: ['A'], result: 'B', edges: [] } } });
+  assert.deepEqual([mixed.verdict, mixed.unreached, mixed.from], ['RE-REVIEW', [HOT, TEST_FILE], BASE]);
+  // a path the CLI could not look up stays NONE beside an unread one: no review could reach it
+  const odd = 'src/core/odd\nname.ts';
+  const none = landing({ changed: [HOT, odd], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [] } } });
+  assert.deepEqual([none.verdict, none.unreached], ['NONE', [HOT, odd]]);
+  assert.equal(none.reason, `no recorded cross-family review of ${odd}: the owner merges`);
+});
+
+test('landing 7b: after the re-review RE-REVIEW names, the same facts plus its row PASS', () => {
+  // nothing read: RE-REVIEW from the base; the adversarial pass over base → result records that edge
+  const before = landing({ paths: { [HOT]: { starts: ['A'], result: 'B', edges: [] } } });
+  assert.deepEqual([before.verdict, before.from], ['RE-REVIEW', BASE]);
+  const pass = reviewRow({ kind: 'adversarial', baseTree: T0, tree: T2 });
+  const after = landing({ rows: [pass], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [edge('A', 'B', pass)] } } });
+  assert.equal(after.verdict, 'PASS');
+  // the same row on an unknown host counts for nothing: NONE, the owner's
+  const unknown = landing({ host: 'unknown', rows: [pass], paths: { [HOT]: { starts: ['A'], result: 'B', edges: [edge('A', 'B', pass)] } } });
+  assert.deepEqual([unknown.verdict, unknown.reason], ['NONE', NO_HOST]);
 });
 
 test('landing 8: a GUARDS path is NONE, before the critical check', () => {
@@ -1295,7 +1325,14 @@ test('landing 11: an unknown host with no critical path changed passes; a guard 
   const cold = landing({ changed: [COLD, 'docs/a.md'], host: 'unknown' });
   assert.deepEqual([cold.verdict, cold.reason], ['PASS', 'no critical path changed']);
   const guard = landing({ changed: [HOT, '.githooks/pre-commit'], host: 'unknown' });
-  assert.deepEqual([guard.verdict, guard.reason], ['NONE', 'a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges']);
+  // the guard is the owner's, and the NONE names the critical path no review read beside it
+  assert.deepEqual([guard.verdict, guard.reason, guard.unreached], [
+    'NONE',
+    `a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges, after a second-family-adversarial --base ${guard.base} over the critical paths no review read: ${HOT}`,
+    [HOT],
+  ]);
+  const guardOnly = landing({ changed: [COLD, '.githooks/pre-commit'], host: 'claude' });
+  assert.deepEqual([guardOnly.verdict, guardOnly.reason, guardOnly.unreached], ['NONE', 'a guard, a gate or a reviewed block changed (.githooks/pre-commit): the owner merges', []]);
 });
 
 test('landing 12: an unknown host passes a critical path whose result is content a trusted tip holds', () => {
@@ -1317,6 +1354,235 @@ test('formatLine prints one line: decision, reason, reviewers, facts, what was n
   );
   assert.match(formatLine(decide({ files: [], kind: 'slice' })), /→ none \[0 production files, 0 lines;/);
   assert.match(formatLine(decide({ files: [f(COLD, 1)], kind: 'unit', stakes: 'none' })), /\[1 production files, 1 lines; stakes none; not checked: /);
+});
+
+// ---- fix rounds counted from the unit's ledger (--state)
+
+const STATE = (rows, extra = '') =>
+  ['# U-1 state', 'Tier: full', '', '## Ledger', '', '| Step | Status | Evidence |', '|---|---|---|', ...rows, '', '## Findings', '', '| ID | Sev | Source | Status |', '|---|---|---|---|', '| F1 | P1 | codex-review | fixed abc1234 |', extra].join('\n');
+
+test('ledgerFixRound: the highest `8 fix r<N>` Step cell in ## Ledger; 0 with none', () => {
+  assert.equal(ledgerFixRound(STATE(['| 8 review r1 | ran | x |', '| 8 fix r1 | ran | y |', '| 8 fix r3 | ran | z |', '| 8 fix r2 | ran | w |'])), 3);
+  assert.equal(ledgerFixRound(STATE(['| 8 review r1 | ran | x |'])), 0);
+  assert.equal(ledgerFixRound(''), null, 'no ## Ledger section: no state file');
+  assert.equal(ledgerFixRound('# README\n\n| 8 fix r3 | x |'), null);
+  assert.equal(ledgerFixRound(STATE(['| `8 fix r4` · codex | ran | x |'])), 4, 'a backticked cell and a suffix');
+  assert.equal(ledgerFixRound(STATE(['| 8 Fix R2 | ran | x |'])), 2, 'any case');
+  // the Step column by name, wherever it stands
+  assert.equal(ledgerFixRound(['## Ledger', '| Status | Step |', '|---|---|', '| ran | 8 fix r5 |'].join('\n')), 5);
+  // never another section, a fenced sample, another step id, or an evidence cell
+  assert.equal(ledgerFixRound(['## Notes', '| 8 fix r9 | x |', '## Ledger', '| Step | Status |', '|---|---|', '```', '| 8 fix r7 | ran |', '```', '| 18 fix r6 | ran |', '| 8 fixed r8 | ran |', '| 8 review r1 | 8 fix r9 |'].join('\n')), 0);
+  // a `###` heading inside the ledger is not a new section
+  assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '### round two', '| 8 fix r2 | ran |'].join('\n')), 2);
+  // the near-miss forms a hand-written row takes
+  for (const cell of ['8 fix round 3', '8 fix 3', '8 fixes r3', '8 fix (r3)', '8 fix-r3', '**8 fix r3**'])
+    assert.equal(ledgerFixRound(STATE([`| ${cell} | ran | x |`])), 3, cell);
+  // a heading with a suffix, and a second table with its own header and column
+  assert.equal(ledgerFixRound(['## Ledger (unit u1)', '| Step | Status |', '|---|---|', '| 8 fix r3 | ran |'].join('\n')), 3);
+  assert.equal(ledgerFixRound(['## Ledger', '| Step | Status |', '|---|---|', '| 8 fix r1 | ran |', '', '| Status | Step |', '|---|---|', '| ran | 8 fix r3 |'].join('\n')), 3);
+});
+
+test('roundBelowLedger: a round below the recorded one is refused, the same or a later one runs', () => {
+  assert.equal(roundBelowLedger(3, 3, 'docs/plans/u1.state.md'), null);
+  assert.equal(roundBelowLedger(4, 3, 'docs/plans/u1.state.md'), null);
+  assert.equal(roundBelowLedger(1, 0), null);
+  assert.equal(roundBelowLedger(Number('x'), 3), null, "a --round that is no integer is decide()'s to refuse");
+  assert.equal(
+    roundBelowLedger(1, 3, 'docs/plans/u1.state.md'),
+    '--round 1 is below r3, the highest fix round the ledger in docs/plans/u1.state.md records: fix rounds count on and never restart; pass --round 3 or higher',
+  );
+  // decide() refuses it too, and names no file
+  assert.throws(() => bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round: 2, ledgerRound: 3 })), /--round 2 is below r3, the highest fix round the ledger in the unit's state file records/);
+  assert.throws(() => decide({ files: [f(HOT, 5)], kind: 'unit', ledgerRound: 1 }), /--state goes with --kind fix/);
+  assert.throws(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', ledgerRound: -1 }), /the ledger round must be an integer >= 0/);
+});
+
+test('decide: a fix without --state says its round was not checked against the ledger; with it, it does not', () => {
+  const without = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round: 3 }));
+  assert.ok(without.notChecked.includes('the round against the ledger (no --state)'));
+  const withState = bound(() => decide({ files: [f(HOT, 5)], kind: 'fix', maxFixed: 'P1', round: 3, ledgerRound: 2 }));
+  assert.equal(withState.notChecked.includes('the round against the ledger (no --state)'), false);
+  assert.equal(withState.decision, without.decision);
+  for (const kind of ['slice', 'unit'])
+    assert.equal(bound(() => decide({ files: [f(HOT, 5)], kind })).notChecked.includes('the round against the ledger (no --state)'), false, kind);
+});
+
+test('parseArgs: --state takes a file, with --kind fix only, and never beside --landing', () => {
+  assert.equal(parseArgs(['--base', 'a', '--kind', 'fix', '--max-fixed', 'P1', '--state', 'docs/plans/u1.state.md']).state, 'docs/plans/u1.state.md');
+  assert.equal(parseArgs(['--base', 'a', '--kind', 'fix']).state, undefined);
+  assert.throws(() => parseArgs(['--base', 'a', '--kind', 'unit', '--state', 's.md']), /--state goes with --kind fix/);
+  assert.throws(() => parseArgs(['--base', 'a', '--state', 's.md']), /--state goes with --kind fix/);
+  assert.throws(() => parseArgs(['--base', 'a', '--kind', 'fix', '--state']), /--state needs a value/);
+  assert.throws(() => parseArgs(['--base', 'a', '--landing', 'b', '--state', 's.md']), /--landing takes only --base, --trust and --json, not --state/);
+});
+
+// ---- the golden matrix: decide() and landing() over every input class, pinned in a file
+//
+// Every cell is one input combination; its value names an outcome (decision, reviewers, reason) in
+// the file's `outcomes` table. A routing change shows as changed cells: the test lists them in words.
+// After a deliberate change, regenerate with REVIEW_GATE_GOLDEN=write and read the file's diff: a
+// cell that changed beyond the change's intent is a finding. Runs under INJECTED with CRITICAL bound
+// to src/core/, the line counts are FIX_LINES-relative and the notes path is <notes>, so a project's
+// bindings never change it.
+
+const GOLDEN = fileURLToPath(new URL('./review-gate.golden.json', import.meta.url));
+const GOLDEN_ROUNDS = [1, 2, 3, 4, 5];
+const GOLDEN_FIXED = ['P1', 'P2', 'P3']; // P0 counts as P1: the test checks that apart
+// the file archetypes: cold and critical production, tests under a critical path, docs, an
+// instruction file, a guard and a harness script; FIX_LINES lines unless named large
+const GOLDEN_FILES = {
+  cold: () => [ns(COLD, FIX_LINES, 0)],
+  critical: () => [ns(HOT, FIX_LINES, 0)],
+  'critical-large': () => [ns(HOT, FIX_LINES + 1, 0)],
+  'critical-money': () => [ns('src/core/payment.ts', FIX_LINES, 0)],
+  'tests-added-critical': () => [ns(TEST_FILE, 30, 0)],
+  'tests-edited-critical': () => [ns(TEST_FILE, 20, 4)],
+  docs: () => [ns('docs/a.md', 5, 1)],
+  instruction: () => [ns('.claude/rules/x.md', 6, 2)],
+  guard: () => [ns('.githooks/pre-commit', 4, 1)],
+  harness: () => [ns('scripts/retro.mjs', 9, 3)],
+  'cold-and-critical': () => [ns(COLD, 3, 0), ns(HOT, 3, 0)],
+};
+const G_BASE = 'b'.repeat(40);
+const G_RESULT = 'c'.repeat(40);
+const G_TREES = ['0', '1', '2', '3'].map((c) => c.repeat(40));
+// the landing archetypes: what the merge changed, the guard and block facts beside it
+const GOLDEN_LANDS = {
+  cold: { changed: [COLD] },
+  critical: { changed: [HOT] },
+  'tests-critical': { changed: [TEST_FILE] },
+  docs: { changed: ['docs/a.md'] },
+  instruction: { changed: ['.claude/rules/x.md'] },
+  guard: { changed: ['.githooks/pre-commit'] },
+  'guard-and-critical': { changed: [HOT, 'scripts/review-gate.mjs'] },
+  harness: { changed: ['scripts/retro.mjs'] },
+  'agents-prose': { changed: ['AGENTS.md', HOT], blockChanged: { 'AGENTS.md': false } },
+};
+// what the ledgers hold for each critical path: the base blob is A, the result blob B
+const goldenRow = (k, from, to, at) => ({ kind: k, outcome: 'ok', at, ledger: '/r/.codex-runs/ledger.jsonl', family: 'codex', baseTree: G_TREES[from], tree: G_TREES[to] });
+const GOLDEN_STATES = {
+  unreviewed: () => ({ rows: [], facts: () => ({ starts: ['A'], result: 'B', edges: [] }) }),
+  'empty-review': () => {
+    const row = goldenRow('review', 1, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('B', 'B', row)] }) };
+  },
+  reviewed: () => {
+    const row = goldenRow('review', 0, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'B', row)] }) };
+  },
+  partial: () => {
+    const row = goldenRow('review', 0, 1, '2026-11-09T10:00:00.000Z');
+    return { rows: [row], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'X', row)] }) };
+  },
+  'chain-gap': () => {
+    const unit = goldenRow('review', 0, 1, '2026-11-09T09:00:00.000Z');
+    const fix = goldenRow('adversarial', 2, 3, '2026-11-09T10:00:00.000Z');
+    return { rows: [unit, fix], facts: () => ({ starts: ['A'], result: 'B', edges: [edge('A', 'X', unit), edge('Y', 'B', fix)] }) };
+  },
+  trusted: () => ({ rows: [], trust: [G_TREES[2]], facts: () => ({ starts: ['A', 'B'], result: 'B', edges: [] }) }),
+  'no-facts': () => ({ rows: [], facts: () => undefined }),
+};
+const GOLDEN_HOSTS = ['claude', 'codex', 'unknown'];
+
+/** A reason with its line counts and the notes path named, so FIX_LINES's and NOTES's bound values never show in the file. */
+const goldenReason = (r) =>
+  r.reason
+    .replaceAll(`in ${r.prodLines} `, 'in <lines> ')
+    .replaceAll(`${FIX_LINES} production lines`, 'FIX_LINES production lines')
+    .replaceAll(NOTES, '<notes>');
+const goldenLandingReason = (reason) => {
+  let s = reason.replaceAll(G_BASE, '<base>').replaceAll(G_RESULT, '<result>');
+  G_TREES.forEach((t, i) => {
+    s = s.replaceAll(t, `<T${i}>`);
+  });
+  return s;
+};
+
+/** The matrix the core computes now: { outcomes, decide, landing }, cells naming outcome ids. */
+function goldenMatrix() {
+  const outcomes = {};
+  const id = (text) => {
+    const key = createHash('sha256').update(text).digest('hex').slice(0, 8);
+    assert.ok(outcomes[key] === undefined || outcomes[key] === text, `outcome id ${key} collides`);
+    outcomes[key] = text;
+    return key;
+  };
+  const decideCell = (o) => {
+    try {
+      const r = decideCore(o);
+      return id(`${r.decision} | ${r.reviewers.join(' + ') || 'none'} | ${goldenReason(r)}`);
+    } catch (e) {
+      return id(`throws | ${e.message}`);
+    }
+  };
+  const cells = {};
+  const lands = {};
+  bound(() => {
+    for (const tier of TIERS)
+      for (const kind of ['slice', 'unit', 'fix'])
+        for (const writer of WRITERS)
+          for (const stakes of STAKES)
+            for (const [arch, files] of Object.entries(GOLDEN_FILES)) {
+              const at = `${tier} ${kind} ${writer} ${stakes} ${arch}`;
+              if (kind !== 'fix') {
+                cells[at] = decideCell({ files: files(), kind, tier, writer, stakes });
+                continue;
+              }
+              for (const maxFixed of GOLDEN_FIXED) {
+                const ids = GOLDEN_ROUNDS.map((round) => decideCell({ files: files(), kind, tier, writer, stakes, maxFixed, round }));
+                cells[`${at} ${maxFixed}`] = new Set(ids).size === 1 ? ids[0] : ids.join(' ');
+              }
+            }
+    for (const [arch, land] of Object.entries(GOLDEN_LANDS))
+      for (const [state, make] of Object.entries(GOLDEN_STATES))
+        for (const host of GOLDEN_HOSTS) {
+          const s = make();
+          const paths = {};
+          for (const p of land.changed.filter(isLandingCritical)) {
+            const facts = s.facts();
+            if (facts) paths[p] = facts;
+          }
+          const r = landingCore({ result: G_RESULT, base: G_BASE, trust: s.trust ?? [], changed: land.changed, blockChanged: land.blockChanged ?? {}, rows: s.rows, paths, host });
+          const from = r.from === null ? '-' : goldenLandingReason(r.from);
+          lands[`${arch} ${state} ${host}`] = id(`${r.verdict} | from ${from} | unreached ${r.unreached.join(', ') || '-'} | ${goldenLandingReason(r.reason)}`);
+        }
+  });
+  const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return { outcomes: sorted(outcomes), decide: cells, landing: lands };
+}
+
+const GOLDEN_ABOUT =
+  'review-gate golden matrix: decide() over tier x kind x writer x stakes x file archetype (fix: x max-fixed, rounds 1-5 left to right, one id when all agree) and landing() over archetype x ledger state x host. Each cell names an outcome: decision | reviewers | reason. Regenerate: REVIEW_GATE_GOLDEN=write node --test scripts/lib/review-gate-core.test.mjs';
+
+test('golden: decide() and landing() match review-gate.golden.json, cell for cell', () => {
+  const now = goldenMatrix();
+  if (process.env.REVIEW_GATE_GOLDEN === 'write') {
+    fs.writeFileSync(GOLDEN, `${JSON.stringify({ about: GOLDEN_ABOUT, ...now }, null, 2)}\n`);
+    return;
+  }
+  const pinned = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
+  const words = (table, cell) => (cell === undefined ? '(absent)' : cell.split(' ').map((k) => table[k] ?? `?${k}`).join(' || '));
+  const changed = [];
+  for (const part of ['decide', 'landing'])
+    for (const key of new Set([...Object.keys(pinned[part]), ...Object.keys(now[part])]))
+      if (pinned[part][key] !== now[part][key])
+        changed.push(`${part} ${key}:\n    was ${words(pinned.outcomes, pinned[part][key])}\n    now ${words(now.outcomes, now[part][key])}`);
+  assert.equal(changed.length, 0, `${changed.length} golden cells changed (first 20):\n${changed.slice(0, 20).join('\n')}`);
+  assert.deepEqual(Object.keys(pinned.outcomes).sort(), Object.keys(now.outcomes).sort(), 'the outcomes table holds exactly the outcomes the cells name');
+});
+
+test('golden: a P0 fixed routes as a P1 fixed, in every fix cell of the matrix', () => {
+  bound(() => {
+    for (const tier of TIERS)
+      for (const writer of WRITERS)
+        for (const stakes of STAKES)
+          for (const [arch, files] of Object.entries(GOLDEN_FILES))
+            for (const round of GOLDEN_ROUNDS) {
+              const o = { files: files(), kind: 'fix', tier, writer, stakes, round };
+              const strip = (r) => ({ ...r, maxFixed: null });
+              assert.deepEqual(strip(decideCore({ ...o, maxFixed: 'P0' })), strip(decideCore({ ...o, maxFixed: 'P1' })), `${tier} ${writer} ${stakes} ${arch} r${round}`);
+            }
+  });
 });
 
 // ---- the wrapper, end to end, in a temp repo
@@ -1433,6 +1699,46 @@ test('the wrapper: one line and exit 0 for a decision, exit 2 for a usage error 
   assert.equal(res.status, 2);
 });
 
+test('the wrapper: --state reads the ledger, a lower --round is exit 2 with no usage, an unreadable file exit 2', (t) => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'review-gate-state-')));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const env = cleanEnv();
+  const git = (...a) => assert.equal(spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd: repo, env }).status, 0);
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'README.md'), 'x\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src/a.ts'), 'a\n');
+  fs.mkdirSync(path.join(repo, 'docs/plans'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'docs/plans/u1.state.md'), STATE(['| 8 fix r1 | ran | a |', '| 8 fix r2 | ran | b |']));
+  const gate = (...args) => spawnSync(process.execPath, [RUNNER, '--base', 'HEAD', '--kind', 'fix', '--max-fixed', 'P1', '--writer', 'claude', ...args], { cwd: repo, env, encoding: 'utf8' });
+  let res = gate('--round', '1', '--state', 'docs/plans/u1.state.md');
+  assert.equal(res.status, 2);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, 'review-gate: --round 1 is below r2, the highest fix round the ledger in docs/plans/u1.state.md records: fix rounds count on and never restart; pass --round 2 or higher\n');
+  for (const round of ['2', '3']) {
+    res = gate('--round', round, '--state', 'docs/plans/u1.state.md', '--json');
+    assert.equal(res.status, 0, res.stderr);
+    const json = JSON.parse(res.stdout);
+    assert.deepEqual([json.round, json.ledgerRound, json.notChecked.includes('the round against the ledger (no --state)')], [Number(round), 2, false]);
+  }
+  // without --state the line says the round was not checked
+  res = gate('--round', '1');
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /not checked: .*the round against the ledger \(no --state\)\]$/m);
+  res = gate('--round', '1', '--state', 'docs/plans/none.state.md');
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /^review-gate: cannot read --state docs\/plans\/none\.state\.md: ENOENT\n$/);
+  // a file with no ledger is no unit's state file: the check never looks done when it read nothing
+  res = gate('--round', '1', '--state', 'README.md');
+  assert.equal(res.status, 2);
+  assert.equal(res.stderr, "review-gate: --state README.md has no ## Ledger section: pass the unit's state file\n");
+  res = spawnSync(process.execPath, [RUNNER, '--base', 'HEAD', '--kind', 'unit', '--writer', 'claude', '--state', 'docs/plans/u1.state.md'], { cwd: repo, env, encoding: 'utf8' });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /--state goes with --kind fix/);
+});
+
 // ---- the writer is never assumed; sonnet and mixed are writers too
 
 test('writer: it has no default -- missing, empty or unknown is an error for every kind', () => {
@@ -1456,10 +1762,10 @@ test('writer sonnet 1: a critical slice written by Sonnet gets an Opus reviewer 
   assert.ok(r.reason.endsWith(`now (${HOT})`), r.reason);
 });
 
-test('writer sonnet 2: a cold slice written by Sonnet goes to the second family, a different family', () => {
+test('writer sonnet 2: a cold slice written by Sonnet is deferred to the unit review, which a different family reads', () => {
   const r = bound(() => decide({ files: [f(COLD, 80)], kind: 'slice', writer: 'sonnet' }));
-  assert.equal(r.decision, 'second-family');
-  assert.deepEqual(r.reviewers, ['second-family-review']);
+  assert.deepEqual([r.decision, r.reviewers, r.reason], ['defer', [], 'cold slice written by Sonnet: the unit review covers it']);
+  assert.deepEqual(decide({ files: [f(COLD, 80)], kind: 'unit', tier: 'small', writer: 'sonnet' }).reviewers, ['second-family-review']);
 });
 
 test('writer sonnet 3: a small unit by Sonnet is read by the second family; critical fixes are re-read by Opus', () => {
@@ -1505,7 +1811,7 @@ test('writer bounded: Opus and Sonnet together are bounded (sonnet on Claude Cod
   const smallUnit = (writer) => decide({ files: [f(COLD, 20)], kind: 'unit', tier: 'small', writer });
   const hotSlice = (writer) => bound(() => decide({ files: [f(HOT, 20)], kind: 'slice', writer }));
   for (const writer of [writerRole('bounded', 'codex'), writerRole('sonnet', 'claude')]) {
-    assert.deepEqual(coldSlice(writer).reviewers, ['second-family-review'], `a cold slice by ${writer}`);
+    assert.deepEqual([coldSlice(writer).decision, coldSlice(writer).reviewers], ['defer', []], `a cold slice by ${writer}`);
     assert.deepEqual(smallUnit(writer).reviewers, ['second-family-review'], `a small unit by ${writer}`);
     const hot = hotSlice(writer);
     assert.equal(hot.decision, 'required', `a critical slice by ${writer}`);

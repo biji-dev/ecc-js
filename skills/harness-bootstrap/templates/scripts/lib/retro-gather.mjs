@@ -5,7 +5,7 @@
  * Reads what retro-core turns into a digest: the log and the follow-ups doc with each line's commit
  * time (git blame), the state and steps files, earlier digests and exports, the Claude Code
  * transcripts and a Codex host's threads that ran in the repository or one of its worktrees, and the
- * two run ledgers, codex-run's (with the verdicts it kept) and claude-run's, and the mainline's merges and fix commits around the
+ * two run ledgers, codex-run's (with the verdicts it kept) and claude-run's, the gate runner's flakes register, and the mainline's merges and fix commits around the
  * window (the files each changed), so a granted decision can be linked to a fix on its unit's files.
  * Read-only: it never writes, and its git is `blame`, `log`, `diff`, `diff-tree`, `rev-parse` and
  * `worktree list`.
@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { MAIN } from './harness-due-core.mjs'; // the one [B] binding of the mainline (retro-core binds none)
-import { DEFECT_DAYS, FIX_SUBJECT, contextCommands, markerUnits, mergedBranch, previousData } from './retro-core.mjs';
+import { DEFECT_DAYS, FIX_SUBJECT, contextCommands, markerUnits, mergedBranch, parseFlakes, previousData } from './retro-core.mjs';
 import {
   CLAUDE_LEDGER_DIR,
   codexProjectSessions,
@@ -139,7 +139,7 @@ export function readFollowUps(top, specs, blame = blameDates) {
 export function lastCommitTimes(top, dirs) {
   let out;
   try {
-    out = gitRead(['log', '-z', '-M', '--format=%x01%ct', '--name-status', '--', ...dirs], top);
+    out = gitRead(['log', '--no-show-signature', '-z', '-M', '--format=%x01%ct', '--name-status', '--', ...dirs], top);
   } catch {
     return new Map();
   }
@@ -225,7 +225,7 @@ export function mainlineHistory(top, { sinceMs, untilMs, ref = null }) {
   try {
     const since = new Date(sinceMs - DEFECT_DAYS * DAY).toISOString();
     const until = new Date(untilMs).toISOString();
-    log = gitRead(['log', '--first-parent', '--no-color', `--since=${since}`, `--until=${until}`, '--format=%x1e%H%x1f%ct%x1f%P%x1f%s', from, '--'], top);
+    log = gitRead(['log', '--first-parent', '--no-show-signature', '--no-color', `--since=${since}`, `--until=${until}`, '--format=%x1e%H%x1f%ct%x1f%P%x1f%s', from, '--'], top);
   } catch {
     return out;
   }
@@ -332,6 +332,28 @@ function addSteps(steps, markers, fallback) {
 }
 
 /**
+ * The gate runner's flakes register -> its rows (retro-core's parseFlakes), or null when there is none.
+ * It lives at `<cache dir>/flakes.jsonl`, the cache dir being $RUN_GATES_CACHE_DIR when set (a relative one is the repository top's, as in run-gates.sh), else
+ * `run-gates-cache` inside the git common dir (the same resolution as run-gates.sh), so every worktree
+ * reads the one register. An unreadable register is none; a bad line is skipped by the parser.
+ */
+export function readFlakes(top, env = process.env) {
+  let dir = env.RUN_GATES_CACHE_DIR ? path.resolve(top, env.RUN_GATES_CACHE_DIR) : '';
+  if (!dir) {
+    try {
+      dir = path.join(gitRead(['rev-parse', '--path-format=absolute', '--git-common-dir'], top).trim(), 'run-gates-cache');
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return parseFlakes(fs.readFileSync(path.join(dir, 'flakes.jsonl'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Everything retro-core's buildRetro reads, but `previous`. `log`, `followUps` (a path or a list, see
  * readFollowUps) and `plansDirs` are relative to `top`; a missing follow-ups doc is null, a missing log is an error, and `log: null` (a
  * repository the weekly job reads that keeps none) is an empty one. Transcripts are the sessions of
@@ -360,6 +382,7 @@ export function gather({ top, log, followUps = null, plansDirs = [], projectsDir
     verdicts: new Map(),
     codex: [],
     claudeRuns: null,
+    flakes: readFlakes(top),
     merges: null,
     fixes: null,
   };

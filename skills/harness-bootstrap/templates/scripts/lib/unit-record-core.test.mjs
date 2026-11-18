@@ -21,8 +21,11 @@ import {
   MAX_COMMITS,
   buildRecord,
   formatElapsed,
+  landTrailer,
   lastSummary,
   normalizeSeverity,
+  neverAutoCategories,
+  neverAutoUnreadable,
   normalizeStatus,
   parseArgs,
   parseDuration,
@@ -141,6 +144,7 @@ test('parseState reads the header, the ledger and the findings', () => {
     claimed: '2026-10-24T03:10:00Z',
     deliverableStarted: '',
     ownerWait: '1h20m',
+    neverAuto: '',
   });
   assert.deepEqual(s.ledger, [{ step: '8 review — code-reviewer', status: 'ran', evidence: '3 findings' }]);
   assert.deepEqual(
@@ -227,6 +231,7 @@ test('parseState reads a two-column header table as key/value rows, any column n
     claimed: '2026-10-24T00:55:49Z',
     deliverableStarted: '',
     ownerWait: 'Gate 1 asked | answered',
+    neverAuto: '',
   });
   assert.equal(parseState(TABLE_STATE).ledger.length, 1);
   assert.equal(parseState('| Name | Meaning |\n|:--|--|\n| Base | abc |\n').header.base, 'abc');
@@ -567,6 +572,82 @@ const COMMITS = [
   { sha: 'bbbbbbb', subject: 'fix: two' },
 ];
 
+test('neverAutoCategories: a comma list, lower-cased, in order, once each; `-`, none and empty name none', () => {
+  assert.deepEqual(neverAutoCategories('Money, migration'), ['money', 'migration']);
+  assert.deepEqual(neverAutoCategories('money,Money , data-format'), ['money', 'data-format']);
+  assert.deepEqual(neverAutoCategories('`money`'), ['money']);
+  for (const none of ['', '-', '\u2014', 'none', 'None', undefined, null, ' , ']) assert.deepEqual(neverAutoCategories(none), [], String(none));
+});
+
+test('neverAutoUnreadable: a value that is there but names no category and is not none, n/a or a dash (`(money)`, a note alone); none and empty are not', () => {
+  for (const v of ['(money)', '(money, refunds)', '( )', '`(money)`']) assert.equal(neverAutoUnreadable(v), true, v);
+  for (const v of ['', '  ', '-', 'none', 'None.', 'n/a', 'N/A', 'none (docs only)', '(none)', 'nothing', undefined, null, 'money', 'money (refunds)', 'Money, migration']) assert.equal(neverAutoUnreadable(v), false, String(v));
+});
+
+test('neverAutoCategories: `none (docs only)`, `None.` and `n/a` are none; a comma inside a note is no split and the note is no part of the name', () => {
+  for (const none of ['none (docs only)', 'None.', 'n/a', 'N/A', 'nothing', 'none (no money, no data)', '\u2013', 'none; (docs only)']) {
+    assert.deepEqual(neverAutoCategories(none), [], none);
+  }
+  assert.deepEqual(neverAutoCategories('money (refunds, tips)'), ['money']);
+  assert.deepEqual(neverAutoCategories('Money (refunds, tips), migration (db 12, 13), money'), ['money', 'migration']);
+  assert.deepEqual(neverAutoCategories('money (a (nested, note)), data-format'), ['money', 'data-format']);
+  assert.deepEqual(neverAutoCategories('money (unclosed, migration'), ['money'], 'an unclosed note runs to the end of the value');
+  assert.deepEqual(neverAutoCategories('money, none (not migration)'), ['money'], 'a none entry among others adds nothing');
+});
+
+test('the Never-auto header is its own `Never-auto: <categories, comma-separated, or none>` line; none by default; never the third value of a combined line', () => {
+  assert.equal(parseState('Unit: U-1\nNever-auto: money, migration\n').header.neverAuto, 'money, migration');
+  assert.equal(parseState('Unit: U-1\nNever auto: money\n').header.neverAuto, 'money');
+  assert.equal(parseState('| K | V |\n|-|-|\n| Never-auto | money |\n').header.neverAuto, 'money');
+  assert.equal(parseState(STATE).header.neverAuto, '');
+  // one form is the contract: a combined `Type / Tier / Never-auto` line carries type and tier, and no category
+  const c = parseState('Unit: U-1\nType \u00b7 Tier \u00b7 Never-auto: Feature \u00b7 Full \u00b7 money, migration\n').header;
+  assert.deepEqual([c.type, c.tier, c.neverAuto], ['Feature', 'Full', '']);
+});
+
+// The state file's documented header: one line per key, in this order (the claim writes Never-auto from the claim line).
+const CLAIM_HEADER = (neverAuto) =>
+  [
+    '# EP-5 state',
+    'Unit: EP-5',
+    'Mode: build',
+    'Type: Feature',
+    'Tier: Full',
+    `Never-auto: ${neverAuto}`,
+    'Deliverable: a refund endpoint',
+    'Branch: task/ep-5',
+    'Worktree: .worktrees/ep-5',
+    'Base: abc1234',
+    'Claimed: 2026-11-17T10:00:00Z',
+    '',
+  ].join('\n');
+
+test('the documented claim header (Unit, Mode, Type, Tier, Never-auto, Deliverable, Branch, Worktree, Base, Claimed): the categories and every other key are read', () => {
+  const h = parseState(CLAIM_HEADER('money, migration')).header;
+  assert.deepEqual(
+    [h.unit, h.mode, h.type, h.tier, h.neverAuto, h.deliverable, h.branch, h.base, h.claimed],
+    ['EP-5', 'build', 'Feature', 'Full', 'money, migration', 'a refund endpoint', 'task/ep-5', 'abc1234', '2026-11-17T10:00:00Z'],
+  );
+  assert.deepEqual(landTrailer(h), ['Unit: EP-5', 'Never-auto: money, migration']);
+  assert.deepEqual(landTrailer(parseState(CLAIM_HEADER('none')).header), ['Unit: EP-5']);
+  assert.deepEqual(landTrailer(parseState(CLAIM_HEADER('none (docs only)')).header), ['Unit: EP-5']);
+});
+
+test('landTrailer: the unit, and the categories on one line when set', () => {
+  assert.deepEqual(landTrailer({ unit: 'EP-1', neverAuto: '' }), ['Unit: EP-1']);
+  assert.deepEqual(landTrailer({ unit: 'EP-1', neverAuto: 'none' }), ['Unit: EP-1']);
+  assert.deepEqual(landTrailer({ unit: 'EP-1', neverAuto: 'Money, migration, money' }), ['Unit: EP-1', 'Never-auto: money, migration']);
+});
+
+test('buildRecord shows the land commit trailer once, right after Gates, only when never-auto categories are set', () => {
+  const build = (text) => buildRecord({ state: parseState(text), commits: COMMITS, diffstat: '', gatesSummary: SUMMARY_EXAMPLES[1], now: NOW, columns: DRAFT_COLUMNS });
+  assert.doesNotMatch(build(STATE), /Land commit trailer/);
+  assert.doesNotMatch(build(STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto: none')), /Land commit trailer/);
+  const lines = build(STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto: Money, migration')).split('\n');
+  assert.equal(lines.filter((l) => l.startsWith('- Land commit trailer')).length, 1);
+  assert.equal(lines[lines.indexOf(`- Gates: ${SUMMARY_EXAMPLES[1]}`) + 1], '- Land commit trailer: Never-auto: money, migration');
+});
+
 test('buildRecord prints every field with its exact label, in order', () => {
   const rec = buildRecord({
     state: parseState(STATE),
@@ -693,16 +774,21 @@ test('buildRecord escapes a pipe inside a ledger cell, a source name and the uni
 });
 
 test('parseArgs needs --state and rejects unknown options and valueless flags', () => {
-  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, cost: null, steps: null, json: false });
+  assert.deepEqual(parseArgs(['--state', 's.md']), { state: 's.md', base: null, gates: null, cost: null, steps: null, json: false, trailer: false });
   assert.deepEqual(
     parseArgs(['--json', '--state', 's.md', '--base', 'abc', '--gates', 'g.out', '--cost', 'Cost $1.00 · Claude 1%', '--steps', 'U.steps.jsonl']),
-    { state: 's.md', base: 'abc', gates: 'g.out', cost: 'Cost $1.00 · Claude 1%', steps: 'U.steps.jsonl', json: true },
+    { state: 's.md', base: 'abc', gates: 'g.out', cost: 'Cost $1.00 \u00b7 Claude 1%', steps: 'U.steps.jsonl', json: true, trailer: false },
   );
   assert.throws(() => parseArgs(['--state', 's.md', '--steps']), /--steps needs a value/);
   assert.throws(() => parseArgs(['--state', 's.md', '--cost']), /--cost needs a value/);
   assert.throws(() => parseArgs([]), /--state <file> is required/);
   assert.throws(() => parseArgs(['--state']), /--state needs a value/);
   assert.throws(() => parseArgs(['--state', '--json']), /--state needs a value/);
+  assert.equal(parseArgs(['--state', 's.md', '--trailer']).trailer, true);
+  for (const other of [['--json'], ['--base', 'abc'], ['--gates', 'g.out'], ['--cost', 'c'], ['--steps', 's.jsonl']]) {
+    assert.throws(() => parseArgs(['--state', 's.md', '--trailer', ...other]), /--trailer prints the land commit trailer only/, other[0]);
+  }
+  assert.throws(() => parseArgs(['--trailer']), /--state <file> is required/);
   assert.throws(() => parseArgs(['--state', 's.md', '--frobnicate']), /unknown option --frobnicate/);
 });
 
@@ -780,14 +866,43 @@ test('the wrapper: --json prints header, summary, commits, diffstat, gates and t
   const res = run(f, ['--state', f.stateFile, '--gates', f.gates, '--json']);
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
-  assert.deepEqual(Object.keys(out), ['header', 'summary', 'commits', 'diffstat', 'gates', 'record']);
+  assert.deepEqual(Object.keys(out), ['header', 'summary', 'commits', 'diffstat', 'gates', 'trailer', 'record']);
   assert.equal(out.header.unit, 'EP-27.04');
   assert.equal(out.summary.defects, '0/1');
   assert.equal(out.commits.length, 2);
   assert.deepEqual(out.commits[1], { sha: f.head, subject: 'fix: two | with a pipe' });
   assert.equal(out.gates, SUMMARY_EXAMPLES[1]);
+  assert.deepEqual(out.trailer, ['Unit: EP-27.04']);
   assert.match(out.record, /^## Record — EP-27\.04 /);
   assert.equal(JSON.parse(run(f, ['--state', f.stateFile, '--json']).stdout).gates, null);
+});
+
+test('the wrapper: --trailer prints the Unit line and the Never-auto line and nothing else, from the state file alone', () => {
+  const f = fixture();
+  fs.writeFileSync(f.stateFile, STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto: none'));
+  const plain = run(f, ['--state', f.stateFile, '--trailer']);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stdout, 'Unit: EP-27.04\n');
+  fs.writeFileSync(f.stateFile, STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto: Money, migration, money'));
+  assert.equal(run(f, ['--state', f.stateFile, '--trailer']).stdout, 'Unit: EP-27.04\nNever-auto: money, migration\n');
+  fs.writeFileSync(f.stateFile, 'Unit: U-3\nNever-auto: data-format\n');
+  assert.equal(run(f, ['--state', f.stateFile, '--trailer']).stdout, 'Unit: U-3\nNever-auto: data-format\n');
+  // no git is read: it works outside a repository
+  assert.equal(run(f, ['--state', f.stateFile, '--trailer'], tmpDir('unit-record-bare-')).stdout, 'Unit: U-3\nNever-auto: data-format\n');
+  const record = run(f, ['--state', f.stateFile, '--base', f.base]);
+  assert.match(record.stdout, /^- Land commit trailer: Never-auto: data-format$/m);
+  fs.writeFileSync(f.stateFile, CLAIM_HEADER('Money (refunds, tips), migration'));
+  assert.equal(run(f, ['--state', f.stateFile, '--trailer']).stdout, 'Unit: EP-5\nNever-auto: money, migration\n', 'the documented claim header');
+  fs.writeFileSync(f.stateFile, CLAIM_HEADER('none'));
+  assert.equal(run(f, ['--state', f.stateFile, '--trailer']).stdout, 'Unit: EP-5\n', 'Never-auto: none prints the Unit line only');
+  fs.writeFileSync(f.stateFile, 'Mode: plan\n');
+  const noUnit = run(f, ['--state', f.stateFile, '--trailer']);
+  assert.equal(noUnit.status, 2);
+  assert.equal(noUnit.stdout, '');
+  assert.match(noUnit.stderr, /^unit-record: no unit: add a `Unit:` line to the state file\nusage: /);
+  const mixed = run(f, ['--state', f.stateFile, '--trailer', '--json']);
+  assert.equal(mixed.status, 2);
+  assert.match(mixed.stderr, /--trailer prints the land commit trailer only/);
 });
 
 test('the wrapper exits 2 with a usage line: no base, no --state, unknown flag, unreadable files, bad base', () => {
@@ -950,4 +1065,45 @@ test('the wrapper: --steps reads the steps file into the record; an empty one ad
   const missing = run(f, ['--state', f.stateFile, '--steps', path.join(f.repo, 'nope.steps.jsonl')]);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /cannot read steps file .*nope\.steps\.jsonl: ENOENT/);
+});
+
+test('the wrapper: --trailer on a Never-auto value that names no category (`(money)`) exits 2 and says so; none and a real category do not', () => {
+  const f = fixture();
+  const withValue = (v) => STATE.replace('Owner wait: 1h20m', `Owner wait: 1h20m\nNever-auto: ${v}`);
+  fs.writeFileSync(f.stateFile, withValue('(money)'));
+  const res = run(f, ['--state', f.stateFile, '--trailer']);
+  assert.equal(res.status, 2, res.stdout);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, `unit-record: ${f.stateFile} has a Never-auto: value that names no category (write none when there are none)\n`);
+  for (const [v, out] of [['none', 'Unit: EP-27.04\n'], ['n/a', 'Unit: EP-27.04\n'], ['none (docs only)', 'Unit: EP-27.04\n'], ['money (refunds)', 'Unit: EP-27.04\nNever-auto: money\n']]) {
+    fs.writeFileSync(f.stateFile, withValue(v));
+    const ok = run(f, ['--state', f.stateFile, '--trailer']);
+    assert.equal(ok.status, 0, `${v}: ${ok.stderr}`);
+    assert.equal(ok.stdout, out, v);
+  }
+});
+
+test('the wrapper: --trailer on a state with no Never-auto line, or an empty one, exits 2 and names the file: missing is not `none`', () => {
+  const f = fixture();
+  const expected = `unit-record: ${f.stateFile} has no Never-auto: line (write none when there are none)\n`;
+  for (const [what, text] of [
+    ['no line', STATE],
+    ['an empty value', STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto:')],
+    ['a bold line, which no header key accepts', STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\n**Never-auto:** money')],
+    ['a bulleted line', STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\n- Never-auto: money')],
+    ['the combined form', STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nType \u00b7 Tier \u00b7 Never-auto: Feature \u00b7 Full \u00b7 money')],
+  ]) {
+    fs.writeFileSync(f.stateFile, text);
+    const res = run(f, ['--state', f.stateFile, '--trailer']);
+    assert.equal(res.status, 2, `${what}: ${res.stdout}`);
+    assert.equal(res.stdout, '', what);
+    assert.equal(res.stderr, expected, what);
+  }
+  fs.writeFileSync(f.stateFile, STATE.replace('Owner wait: 1h20m', 'Owner wait: 1h20m\nNever-auto: none'));
+  const none = run(f, ['--state', f.stateFile, '--trailer']);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(none.stdout, 'Unit: EP-27.04\n');
+  // the record, which is no trailer, reads the same file without the line
+  fs.writeFileSync(f.stateFile, STATE);
+  assert.equal(run(f, ['--state', f.stateFile, '--base', f.base]).status, 0);
 });

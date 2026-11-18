@@ -26,18 +26,24 @@ data and the branch name matches any cell — so give the table a header:
 
 ## Two scopes
 
-`[M]` **`SCOPE=repo`** — one lock for the whole clone. Right when runs share the main
-checkout and branch in it, as plan mode usually does: a second session on the
-mainline must not commit while any run holds a row.
+`[M]` **`SCOPE=checkout`, the default** — one lock per checkout. With one checkout
+it behaves as `repo`: every row locks the main checkout, so a second session on the
+mainline must not commit while any run holds a row. With worktrees each holds its
+own lock: a docs fix on the main checkout is not refused because a worktree
+elsewhere holds a row, while a commit in the checkout a row locks still is. The
+`Worktree` column of the active table names the checkout; its first word is `main`
+(or `.`, empty, or a placeholder such as `-` or `n/a`) for the main checkout, else a
+path relative to the main checkout root. Paths are compared physically (`pwd -P`).
+A registry without the column locks the main checkout with every row, and **a cell
+that does not resolve, or names a directory that is no checkout `git worktree list`
+shows, refuses every commit**, naming it: a guard that cannot tell which checkout a
+row means fails closed, never open.
+> Origin, v12: two installs flipped `repo` to `checkout` by hand once their units
+> ran in worktrees, and one closed a fail-open: a cell that did not resolve locked
+> no checkout.
 
-`[M]` **`SCOPE=checkout`** — one lock per checkout. Right when every unit runs in its
-own linked worktree, as change mode often does: a docs fix on the main checkout must
-not be refused because a worktree elsewhere holds a row, while a commit in the
-checkout a row locks still is. Add a `Worktree` column to the active table; its
-first word is `main` (or `.`, empty, or a placeholder such as `-` or `n/a`) for the
-main checkout, else a path relative to the main checkout root. Paths are compared
-physically (`pwd -P`). A registry without the column locks the main checkout with
-every row — a guard that cannot tell which checkout a row means fails closed.
+`[M]` **`SCOPE=repo`** — one lock for the whole clone, whichever checkout commits.
+Kept for an install whose owner asks for it; nothing in the harness needs it.
 
 `[M]` **Branch-cell matching** lets a unit whose branch carries no task id — a
 change branch like `fix/login` — claim a row by writing the branch name in its
@@ -61,7 +67,11 @@ typo cannot disable the guard.
   `git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"`. Each
   clone runs that config once — put it in the project's setup script or `prepare`
   step so a fresh clone is guarded, and say in the harness file that a clone is
-  unguarded until it has run.
+  unguarded until it has run. **It names the main checkout:** the config is shared
+  by every worktree, and run in a linked worktree `--show-toplevel` is that
+  worktree, whose removal leaves no hook running. A `prepare` step runs in each
+  worktree's install, so coordinate-sessions' worktree script puts the main
+  checkout's value back after it.
 - **husky:** keep the script at `.githooks/harness-guard.sh` (executable) and call
   it first in `.husky/pre-commit`, `.husky/pre-merge-commit` and
   `.husky/reference-transaction`, as the first line
@@ -203,8 +213,8 @@ no circularity at land.
 <!-- /harness:active -->
 ```
 
-The `Worktree` column is needed only with `SCOPE=checkout`; under `SCOPE=repo` it
-is harmless.
+The `Worktree` column is read under `SCOPE=checkout`; under `SCOPE=repo` it is
+harmless. The upgrade to v13 adds it where an install's table lacks it.
 
 `[M]` **The parked table follows the active one** (`gate-design.md` › Parking a
 unit): a unit waiting on the owner moves its row there, so it holds nothing. The
@@ -230,7 +240,7 @@ slot range, the floor and what a slot owns (its block).
 `[M]` An older registry without markers (`harness-status.js` reports
 `registry-no-markers`) is migrated by **adding** the two marker lines around the
 active table and nothing else, while no row is held. Keep its columns; add
-`Worktree` only when switching to `SCOPE=checkout`. A legacy column that holds the
+`Worktree` where it is missing (`SCOPE=checkout` reads it). A legacy column that holds the
 branch inside another cell (`main · task/p2-20` under `Worktree`) is never matched
 by that branch name — the guard reads a Worktree cell as a path. The row still
 matches through the task id the branch carries; a branch without an id needs a
@@ -291,15 +301,28 @@ than to read it (`host-override`), and a fast-forward merge onto the mainline
 > lived only in prose.
 
 `[M]` **The owner key.** `HARNESS_LANDING=owner` is the owner's override of the
-refusal, which never names it. On Claude Code the agent runs
-`HARNESS_LANDING=owner git merge --no-ff <branch>` itself, alone, as one line; the
-command guard turns it into a permission prompt (`ask`) that shows the landing
-verdict, and the owner approves with one key. A deploying push (`Push deploys:
+refusal, which never names it. It is for a diff to `GUARDS` and for a harness
+upgrade; never-auto product code merges by the policy (`gate-design.md` › Merge
+policy). **Ask in chat first, then raise the dialog while the owner is there:**
+
+1. The session runs everything the merge hook will run — the landing check and any
+   merge-time suite — on a branch that already holds the mainline tip.
+2. It asks in one chat line (`2 guard merges ready: <branch>, <branch> — merge?`) and
+   ends its turn; a controller keeps serving its workers.
+3. On the owner's yes it runs `HARNESS_LANDING=owner git merge --no-ff <branch>`
+   itself, alone, as one line, one merge at a time. The command guard turns the line
+   into a permission prompt (`ask`) that shows the landing verdict, so each dialog
+   appears while the owner is looking, and the owner approves with one key.
+
+It never prints a command for the owner to type. A deploying push (`Push deploys:
 yes`) asks the same way. In `bypassPermissions` or `dontAsk` mode, and on Codex,
-ZCode and Kimi, the guard refuses both, and the owner types `! <the command>`. Any
-other line that sets `HARNESS_LANDING` is refused (`landing-override`), naming the
+ZCode and Kimi, there is no dialog: the guard refuses both, and the owner's yes is
+the owner typing `! <the command>`, the one line the session then gives. Any other
+line that sets `HARNESS_LANDING` is refused (`landing-override`), naming the
 one-line form: the agent never sets it another way.
-> Origin: 30 owner-typed landing merges in 3 days, 96% approved as proposed, none changed.
+> Origin: 30 owner-typed landing merges in 3 days, 96% approved as proposed, none
+> changed. The v12 study: dialogs raised while the owner was away froze controllers
+> for about 1,800 minutes.
 
 `[M]` **Its limits.** A remote-tracking mainline ref moved by hand is trusted, and
 so is a `HARNESS_LANDING` or a host variable set in an earlier call of a shell that

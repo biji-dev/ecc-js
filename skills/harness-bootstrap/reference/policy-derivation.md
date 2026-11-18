@@ -115,7 +115,8 @@ maps it). A broken one silently allows everything:
 
 The runner skill, the auditors and the harness docs are standard. Leaving the
 critical ones off is how a later session finds them unplaced and has to file it.
-Critical here sets the gate, not the review: the owner merges a change to these, and
+Critical here sets the gate, not the review: the owner merges a change to these
+(`Owner merges: GUARDS`), and
 a diff of harness paths alone — these, the instruction files, the harness scripts
 and records, `HARNESS` in `review-gate-core.mjs` — runs the harness lane
 (`runner.md`).
@@ -123,8 +124,10 @@ and records, `HARNESS` in `review-gate-core.mjs` — runs the harness lane
 ## The merge policy
 
 Draft the default from `gate-design.md` — merge when green for every tier, the
-never-auto categories the owner's, and the standing grant with `Push deploys:` read
-from the workflows (› The standing grant) — and state any tightening the documents
+standing grant with `Push deploys:` read from the workflows, and two lines in place
+of one never-auto line: `Owner merges: GUARDS` and `Owner at deploy: <the never-auto
+product categories>`, which merge when green and reach the owner on the deploy list
+(› The standing grant, › The deploy list) — and state any tightening the documents
 imply (a regulated project may want no auto-merge at all: `Grant: none`). An
 upgrade sheet never recommends narrowing the grant without citing an incident.
 

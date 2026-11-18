@@ -18,6 +18,8 @@ import {
   CARD_KINDS,
   EXTRA_COLUMNS,
   FILED_AT,
+  FLAKE_DAYS,
+  FLAKE_MIN,
   FOLLOW_UPS,
   LOG,
   MAX_BYTES,
@@ -45,6 +47,7 @@ import {
   decisionRows,
   dispatchOwners,
   fitDigest,
+  flakyIds,
   followUpsSummary,
   formatDigest,
   frictionThemes,
@@ -56,6 +59,7 @@ import {
   ownerKpis,
   parseArgs,
   parseDefects,
+  parseFlakes,
   previousData,
   previousKpis,
   productKpis,
@@ -73,7 +77,7 @@ import {
 } from './retro-core.mjs';
 import { COLUMNS, TIER_WORDS, fmtMinutes } from './estimate-core.mjs';
 import { MAIN } from './harness-due-core.mjs';
-import { blameDates, gather, lastCommitTimes, mainlineHistory, readFollowUps, readVerdicts } from './retro-gather.mjs';
+import { blameDates, gather, lastCommitTimes, mainlineHistory, readFlakes, readFollowUps, readVerdicts } from './retro-gather.mjs';
 import { parseCodexSession } from './unit-cost-core.mjs';
 import { FINDINGS_HEADING } from './unit-record-core.mjs';
 import { stepIntervals, stepLine } from './unit-step-core.mjs';
@@ -438,6 +442,17 @@ test('stepOfDescription: the tag of this unit wins, another unit\'s tag is not o
   assert.equal(stepOfDescription('EP-27.04 8b record writer', 'EP-27.0'), null);
   assert.equal(stepOfDescription('EP-27.04. record', 'EP-27.04'), '8b');
   assert.equal(stepOfDescription('general search', 'EP-27.04'), null);
+});
+
+test('8d full verify: a dispatch described so is step 8d, not the generic verify step, and the listing puts it after 8c', () => {
+  assert.equal(stepOfDescription('EP-7 8d full verify', 'EP-7'), '8d');
+  assert.equal(stepOfDescription('EP-7 full verify r1', 'EP-7'), '8d');
+  assert.equal(stepOfDescription('EP-7 verify the claims', 'EP-7'), '8c');
+  const t = at('20T10:00:00');
+  const rows = ['8d full verify', '8c claims audit', '8b record', 'code review'].map((desc, i) =>
+    row({ ts: t + i, kind: 'sub', agentId: `a${i}`, desc: `EP-7 ${desc}`, cost: 1 }),
+  );
+  assert.deepEqual(unitSteps('EP-7', { rows }).steps.map((x) => x.step), ['8', '8b', '8c', '8d']);
 });
 
 test('unitSteps without markers: subagent dollars by dispatch description, shares of the unit; null when none names it', () => {
@@ -1894,4 +1909,120 @@ test('readVerdicts and gather: the copies of the ledger rows since sinceMs, only
   assert.equal(none.verdicts.size, 0);
   const d = buildRetro({ ...g, previous: [] }, { project: 'demo', now: NOW, since: iso('19T12:00:00'), until: iso('26T12:00:00') });
   assert.deepEqual(d.stepYield.find((s) => s.kind === 'review'), { kind: 'review', runs: 9, kept: 1, hits: 1, p0p1: 1, rate: 100 });
+});
+
+// ---- the gate runner's flakes register: a test id that keeps flaking is a follow-up line, never a unit
+
+const flake = (when, gate, ids, extra = {}) => JSON.stringify({ at: `2026-10-${when}Z`, gate, ids, tree: 'ab12', top: '/r', ...extra });
+
+test('parseFlakes reads the register line by line and skips what is no flake: torn JSON, no time, no gate, no id', () => {
+  const text = [
+    flake('24T10:00:00', 'unit', ['t > a', 't > a', 'b']),
+    '{"at":"2026-10-24T10:00:00Z","gate":"unit","ids":["torn"',
+    'not json',
+    '[1,2]',
+    'null',
+    JSON.stringify({ at: 'yesterday', gate: 'unit', ids: ['x'] }),
+    JSON.stringify({ at: '2026-10-24T10:00:00Z', gate: '', ids: ['x'] }),
+    JSON.stringify({ at: '2026-10-24T10:00:00Z', gate: 'unit', ids: [] }),
+    JSON.stringify({ at: '2026-10-24T10:00:00Z', gate: 'unit', ids: [7, '', null] }),
+    JSON.stringify({ at: '2026-10-24T10:00:00Z', gate: 'unit' }),
+    '',
+    flake('25T10:00:00', 'e2e', ['c']),
+  ].join('\n');
+  assert.deepEqual(parseFlakes(text), [
+    { at: at('24T10:00:00'), gate: 'unit', ids: ['t > a', 'b'] },
+    { at: at('25T10:00:00'), gate: 'e2e', ids: ['c'] },
+  ]);
+  assert.deepEqual(parseFlakes(''), []);
+  assert.deepEqual(parseFlakes(null), []);
+});
+
+test('flakyIds: an id that flaked FLAKE_MIN times in the FLAKE_DAYS before the window end, per gate, the most often first', () => {
+  assert.ok(Number.isInteger(FLAKE_MIN) && FLAKE_MIN >= 2 && Number.isInteger(FLAKE_DAYS) && FLAKE_DAYS >= 1);
+  const until = '2026-10-26T12:00:00.000Z';
+  const rows = parseFlakes(
+    [
+      flake('20T00:00:00', 'unit', ['slow']), // inside: 6.5 days back
+      flake('22T00:00:00', 'unit', ['slow', 'twice']),
+      flake('25T00:00:00', 'unit', ['slow', 'twice']),
+      flake('18T00:00:00', 'unit', ['stale', 'twice']), // older than 7 days: not counted
+      flake('19T00:00:00', 'unit', ['stale']),
+      flake('20T01:00:00', 'unit', ['stale']),
+      flake('23T00:00:00', 'e2e', ['slow']), // another gate: its own count
+      flake('24T00:00:00', 'e2e', ['slow']),
+      flake('25T00:00:00', 'e2e', ['slow']),
+      flake('25T06:00:00', 'e2e', ['slow']),
+      flake('27T00:00:00', 'unit', ['slow']), // after the window end: not counted
+    ].join('\n'),
+  );
+  assert.deepEqual(flakyIds(rows, { until, days: 7, min: 3 }), [
+    { gate: 'e2e', id: 'slow', n: 4, last: '2026-10-25T06:00:00.000Z' },
+    { gate: 'unit', id: 'slow', n: 3, last: '2026-10-25T00:00:00.000Z' },
+  ]);
+  assert.deepEqual(flakyIds(rows, { until, days: 7, min: 2 }).map((f) => `${f.gate} ${f.id} ${f.n}`), ['e2e slow 4', 'unit slow 3', 'unit twice 2']);
+  assert.deepEqual(flakyIds(rows, { until, days: 30, min: 3 }).map((f) => `${f.gate} ${f.id} ${f.n}`), ['e2e slow 4', 'unit slow 3', 'unit stale 3', 'unit twice 3'], 'a longer span counts the older ones; ties go by gate, then id');
+  assert.deepEqual(flakyIds([], { until, days: 7, min: 3 }), []);
+});
+
+test('buildRetro and formatDigest: a flaky id is one FLAKY line under the queue, never a unit, a step or a candidate; no register prints nothing', () => {
+  const times = (n, ids) => Array.from({ length: n }, (_, i) => flake(`2${(i % 5) + 1}T00:00:00`, 'unit', ids));
+  const rows = parseFlakes([...times(FLAKE_MIN, ['cart > total | tax']), ...times(1, ['once'])].join('\n'));
+  const g = gatherOf({ flakes: rows });
+  const d = buildRetro(g, { project: 'demo', now: NOW });
+  assert.deepEqual(d.flakes.map((f) => [f.gate, f.id, f.n]), [['unit', 'cart > total | tax', FLAKE_MIN]]);
+  const text = formatDigest(d);
+  assert.equal(text.split('\n').filter((l) => l.startsWith('- FLAKY ')).join('\n'), `- FLAKY unit cart > total \\| tax ${FLAKE_MIN}x in ${FLAKE_DAYS}d: follow-up, never a unit`);
+  assert.ok(text.indexOf('\n- FLAKY ') > text.indexOf('\n## Queue\n') && text.indexOf('\n- FLAKY ') < text.indexOf('\n## Candidates'), 'in the Queue section');
+  assert.equal(d.kpis.log.units, 0);
+  assert.deepEqual(d.steps, []);
+  assert.deepEqual(d.candidates, []);
+  assert.equal(buildRetro(gatherOf(), { project: 'demo', now: NOW }).flakes, null);
+  assert.ok(!formatDigest(buildRetro(gatherOf(), { project: 'demo', now: NOW })).includes('FLAKY'));
+  assert.ok(!formatDigest(buildRetro(gatherOf({ flakes: rows.slice(0, FLAKE_MIN - 1) }), { project: 'demo', now: NOW })).includes('FLAKY'), 'one flake short is below the bar');
+  const many = parseFlakes(Array.from({ length: 12 }, (_, i) => times(FLAKE_MIN, [`t${String(i).padStart(2, '0')}`]).join('\n')).join('\n'));
+  const capped = formatDigest(buildRetro(gatherOf({ flakes: many }), { project: 'demo', now: NOW }), { items: 3 });
+  assert.equal(capped.split('\n').filter((l) => l.startsWith('- FLAKY ')).length, 3);
+  assert.match(capped, /^- \.\.\. 9 more flaky ids$/m);
+});
+
+test('readFlakes: $RUN_GATES_CACHE_DIR/flakes.jsonl when set, else run-gates-cache in the git common dir; none is null', () => {
+  const top = tmpDir('retro-flakes-');
+  const git = (...args) => spawnSync('git', args, { cwd: top, env: cleanEnv(), encoding: 'utf8' });
+  assert.equal(git('init', '-q', '-b', 'main').status, 0);
+  assert.equal(readFlakes(top, {}), null, 'no register yet');
+  const line = `${flake('25T00:00:00', 'unit', ['a'])}\nbad line\n`;
+  const common = path.join(top, '.git', 'run-gates-cache');
+  fs.mkdirSync(common);
+  fs.writeFileSync(path.join(common, 'flakes.jsonl'), line);
+  assert.deepEqual(readFlakes(top, {}), [{ at: at('25T00:00:00'), gate: 'unit', ids: ['a'] }]);
+  const own = tmpDir('retro-flakes-dir-');
+  assert.equal(readFlakes(top, { RUN_GATES_CACHE_DIR: own }), null, 'the override dir is read, not the common dir');
+  fs.writeFileSync(path.join(own, 'flakes.jsonl'), flake('24T00:00:00', 'e2e', ['b']));
+  assert.deepEqual(readFlakes(top, { RUN_GATES_CACHE_DIR: own }), [{ at: at('24T00:00:00'), gate: 'e2e', ids: ['b'] }]);
+  assert.equal(readFlakes(path.join(top, 'nowhere'), {}), null, 'not a repository, no override');
+  // a relative override is the repository top's, as run-gates.sh reads it against $TOP, not the process's cwd
+  fs.mkdirSync(path.join(top, 'rel', 'cache'), { recursive: true });
+  fs.writeFileSync(path.join(top, 'rel', 'cache', 'flakes.jsonl'), flake('23T00:00:00', 'unit', ['rel']));
+  assert.notEqual(path.resolve('.'), top);
+  assert.deepEqual(readFlakes(top, { RUN_GATES_CACHE_DIR: path.join('rel', 'cache') }), [{ at: at('23T00:00:00'), gate: 'unit', ids: ['rel'] }]);
+});
+
+test('the wrapper prints a FLAKY follow-up line from a temp RUN_GATES_CACHE_DIR, and none without a register or below the bar', () => {
+  const f = fixture();
+  const cache = tmpDir('retro-cache-');
+  const args = [...WINDOW, '--projects-dir', f.projects, '--dry-run'];
+  const flaky = (n) => Array.from({ length: n }, (_, i) => flake(`2${(i % 5) + 1}T09:00:00`, 'unit', ['checkout > rounds up'])).join('\n');
+  fs.writeFileSync(path.join(cache, 'flakes.jsonl'), `${flaky(FLAKE_MIN)}\nnot a line\n`);
+  const res = run(f, args, f.repo, { RUN_GATES_CACHE_DIR: cache });
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(res.stdout.split('\n').includes(`- FLAKY unit checkout > rounds up ${FLAKE_MIN}x in ${FLAKE_DAYS}d: follow-up, never a unit`), res.stdout.slice(-800));
+  assert.match(res.stdout, /^\| Units landed \| 2 \|/m, 'the units are the log\'s, not the flakes\'');
+  const json = JSON.parse(run(f, [...WINDOW, '--projects-dir', f.projects, '--json'], f.repo, { RUN_GATES_CACHE_DIR: cache }).stdout);
+  assert.deepEqual(json.flakes.map((x) => [x.gate, x.id, x.n]), [['unit', 'checkout > rounds up', FLAKE_MIN]]);
+  fs.writeFileSync(path.join(cache, 'flakes.jsonl'), flaky(FLAKE_MIN - 1));
+  assert.ok(!run(f, args, f.repo, { RUN_GATES_CACHE_DIR: cache }).stdout.includes('FLAKY'), 'one short of the bar');
+  const empty = tmpDir('retro-cache-empty-');
+  assert.ok(!run(f, args, f.repo, { RUN_GATES_CACHE_DIR: empty }).stdout.includes('FLAKY'), 'no register');
+  assert.equal(JSON.parse(run(f, [...WINDOW, '--projects-dir', f.projects, '--json'], f.repo, { RUN_GATES_CACHE_DIR: empty }).stdout).flakes, null);
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // harness-bootstrap review-gate (generated YYYY-MM-DD). Which review is this diff owed?
 // [M] mechanism (ships as-is): this whole file; the bindings [B] live at the top of
-// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS, TRIGGERS, FIX_LINES, GUARDS).
+// scripts/lib/review-gate-core.mjs (CRITICAL, NON_PRODUCTION, TESTS, INSTRUCTIONS, HARNESS, TRIGGERS, FIX_LINES, NOTES, GUARDS).
 /**
  * Decides from facts (paths, production lines, what a fix round fixed) which reviewers a diff is
  * owed, so the main thread does not guess: nothing, the second model family, one Opus
@@ -9,14 +9,19 @@
  *
  *   node scripts/review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed
  *        [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full|harness] [--max-fixed P0|P1|P2|P3]
- *        [--round N] [--stakes none|live] [--json]
+ *        [--round N] [--state <state file>] [--stakes none|live] [--json]
  *   node scripts/review-gate.mjs --landing <result> --base <mainline-commit> [--trust <commit>]... [--json]
  *
  *   --kind slice   after a slice passes its gate, before the next builds on it
  *   --kind unit    step 8, once, over the whole unit diff from the merge base
  *   --kind fix     once per fix round, over <sha-before-the-fixes>.. (pass the whole round once,
  *                  after its last fix group); --max-fixed is the highest severity it fixed (required),
- *                  --round counts fix rounds on this area (1, 2, 3 ...)
+ *                  --round counts fix rounds on this area (1, 2, 3 ...); round 3 is the redesign the
+ *                  adversarial pass reads, round 4 cuts the area
+ *   --state <file> with --kind fix: the unit's state file. Its ## Ledger rows `8 fix r<N>` name the
+ *                  highest round already run, and a lower --round is exit 2: rounds never restart.
+ *                  A file with no ## Ledger section is exit 2 too (it is no unit's state file).
+ *                  Without it the line says the round was not checked against the ledger
  *   --writer       REQUIRED, never assumed: the ROLE that wrote the diff (for --kind fix: the fix),
  *                  on this host (harness-bootstrap's reference/gate-design.md › Model and effort):
  *                  main = the judgment model (Opus
@@ -40,8 +45,8 @@
  *                  blob in <result> follows from its blob at --base (or at a --trust commit, content
  *                  the remote mainline already holds) through the `baseTree -> tree` changes their
  *                  ledger rows recorded. A changed guard, gate or reviewed harness block is the
- *                  owner's to merge. It takes only --base, --trust and --json; a decision option
- *                  beside it is a usage error
+ *                  owner's to merge; a critical path no review read is RE-REVIEW from --base. It
+ *                  takes only --base, --trust and --json; a decision option beside it is a usage error
  *
  * Prints exactly one line (`--json`: the result object, with `host` and `role` -- the --writer given):
  *   review-gate: <decision> — <reason> → <reviewers joined by ' + ' or 'none'> [<n> production files, <n> lines; stakes <none|live>; not checked: ...]
@@ -67,16 +72,18 @@ import {
   isGuard,
   isLandingCritical,
   landing,
+  ledgerFixRound,
   parseArgs,
   parseNumstat,
   qualifyingRows,
   readStakes,
+  roundBelowLedger,
   writerRole,
 } from './lib/review-gate-core.mjs';
 import { CLAUDE_LEDGER_DIR, LEDGER_DIR, defaultLedger } from './lib/run-sources.mjs';
 
 const USAGE = [
-  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed (on Claude Code also claude|sonnet|codex) [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full|harness] [--max-fixed P0|P1|P2|P3] [--round N] [--stakes none|live] [--json]',
+  'usage: review-gate.mjs --base <sha> --kind slice|unit|fix --writer main|bounded|second|mixed (on Claude Code also claude|sonnet|codex) [--host claude|codex|zcode|kimi] [--head <ref>] [--tier small|full|harness] [--max-fixed P0|P1|P2|P3] [--round N] [--state <state file>] [--stakes none|live] [--json]',
   '       review-gate.mjs --landing <result> --base <mainline-commit> [--trust <commit>]... [--json]',
 ].join('\n');
 
@@ -359,6 +366,21 @@ function runDecision() {
     fail(gitFailure(e), false);
   }
 
+  // --state: the unit's ledger says which fix round it is on, so a round is never numbered lower
+  let ledgerRound = null;
+  if (args.state !== undefined) {
+    let text;
+    try {
+      text = readFileSync(args.state, 'utf8');
+    } catch (e) {
+      fail(`cannot read --state ${args.state}: ${e.code ?? e.message}`, false);
+    }
+    ledgerRound = ledgerFixRound(text);
+    if (ledgerRound === null) fail(`--state ${args.state} has no ## Ledger section: pass the unit's state file`, false);
+    const below = roundBelowLedger(args.round, ledgerRound, args.state);
+    if (below) fail(below, false);
+  }
+
   let result;
   try {
     result = decide({
@@ -369,12 +391,13 @@ function runDecision() {
       maxFixed: args.maxFixed,
       round: args.round,
       stakes,
+      ledgerRound,
     });
   } catch (e) {
     fail(e.message, true);
   }
 
-  console.log(args.json ? JSON.stringify({ ...result, host, role: args.writer }, null, 2) : formatLine(result));
+  console.log(args.json ? JSON.stringify({ ...result, host, role: args.writer, ...(ledgerRound === null ? {} : { ledgerRound }) }, null, 2) : formatLine(result));
 }
 
 if (args.landing !== undefined) runLanding();

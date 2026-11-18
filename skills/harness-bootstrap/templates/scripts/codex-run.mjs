@@ -65,7 +65,8 @@
  * at dispatch) and `branch` (the checked-out branch, null when detached), taken before the model
  * starts. A review, adversarial or adversarial-frontier row adds `baseTree` (the tree its diff
  * starts from: review's merge base with --base, else the adversarial --base, else null) and
- * `treeAfter` (the same snapshot once the model exits, with `treeMoved: true` when it differs). The
+ * `treeAfter` (the same snapshot once the model exits, with `treeMoved: true` when it differs
+ * beyond RECORDS, the state file and the step ledger the harness writes meanwhile). The
  * landing check (review-gate.mjs --landing) follows each critical file from the mainline through the
  * reviewed `baseTree -> tree` changes. Each tree is null when git fails. An `ok` run's verdict is
  * also copied to <ledger dir>/verdicts/<run>-<kind>.md, and its row records that path (relative to
@@ -91,6 +92,7 @@ import {
   formatTokens,
   freshestLimits,
   lastRateLimits,
+  movedBeyondRecords,
   parseArgs,
   parseEvents,
   parsePorcelainZ,
@@ -365,10 +367,30 @@ function landingBase(a, route) {
   return a.base ? baseTreeOf(a.cwd, a.base) : null;
 }
 
-/** The reviewer read the live working tree: an edit during the run detaches the row from `tree`. */
+/**
+ * The reviewer read the live working tree: an edit during the run detaches the row from `tree`.
+ * An edit to the harness's own records alone (RECORDS: the state file, the step ledger) does not.
+ */
 function treeAfterRun(cwd, tree) {
   const treeAfter = snapshotTree(cwd);
-  return treeAfter === tree ? { treeAfter } : { treeAfter, treeMoved: true };
+  if (treeAfter === tree) return { treeAfter };
+  const changed = tree && treeAfter ? treeDiff(cwd, tree, treeAfter) : null;
+  return movedBeyondRecords(changed) ? { treeAfter, treeMoved: true } : { treeAfter };
+}
+
+/** The paths that differ between two trees, or null when git cannot list them. */
+function treeDiff(cwd, from, to) {
+  try {
+    const out = execFileSync('git', ['diff-tree', '-r', '-z', '--name-only', '--no-renames', from, to], {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.split('\0').filter(Boolean);
+  } catch {
+    return null;
+  }
 }
 
 /** `--status`: each run in flight beside this checkout's ledger, or the ledger's word on --out. */

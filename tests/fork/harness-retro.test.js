@@ -19,7 +19,7 @@ const GATHER_REL = path.join('lib', 'retro-gather.mjs');
 const CLI_REL = 'retro.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 75;
+const EXPECTED_TESTS = 81;
 
 let passed = 0;
 let failed = 0;
@@ -140,6 +140,8 @@ const INSTALL = [
   [RETRO_CORE, 'export const MIN_SHARE = 5;', 'export const MIN_SHARE = 8;'],
   [RETRO_CORE, 'export const REWRITE_ALERT_PERCENT = 5;', 'export const REWRITE_ALERT_PERCENT = 10;'],
   [RETRO_CORE, 'export const QUEUE_ALERT_DAYS = 14;', 'export const QUEUE_ALERT_DAYS = 21;'],
+  [RETRO_CORE, 'export const FLAKE_DAYS = 7;', 'export const FLAKE_DAYS = 10;'],
+  [RETRO_CORE, 'export const FLAKE_MIN = 3;', 'export const FLAKE_MIN = 4;'],
   [RETRO_CORE, "  [/\\blive\\b|\\bwalk\\b/i, '5'],", "  [/\\bsmoke\\b/i, '5'],\n  [/\\blive\\b|\\bwalk\\b/i, '5'],"],
   // harness-due-core
   [DUE_CORE, "export const MAIN = 'main';", "export const MAIN = 'trunk';"],
@@ -269,6 +271,16 @@ mutantFails('taking the rate over runs, lost copies included', 'Math.round((s.hi
 mutantFails("reading a verdict copy outside the ledger's verdicts/", 'if (path.dirname(file) !== dir) continue;', '', GATHER_REL);
 mutantFails('reading the copies of rows before the window', 'if (!(Date.parse(e.at) >= sinceMs)) continue;', '', GATHER_REL);
 mutantFails('reading an oversized verdict copy', 'st.size > MAX_VERDICT_BYTES', 'false', GATHER_REL);
+// Flaky ids: the register's parser, the count over the span and the register's place.
+mutantFails('counting a flake older than the span', 'if (!inWindow(r.at, new Date(end - days * DAY).toISOString(), until)) continue;', 'if (!(r.at <= end)) continue;');
+mutantFails('counting a flake after the window end', 'if (!inWindow(r.at, new Date(end - days * DAY).toISOString(), until)) continue;', 'if (r.at < end - days * DAY) continue;');
+mutantFails('listing an id below the flake bar', '.filter((f) => f.n >= min)', '.filter((f) => f.n >= 1)');
+mutantFails('counting one register line twice for an id', '[...new Set(r.ids.filter(', '[...(r.ids.filter(');
+mutantFails("merging two gates' flakes of one id", 'const key = `${r.gate}\\0${id}`;', 'const key = id;');
+mutantFails('letting a torn register line end the read', '    } catch {\n      continue;\n    }\n    const at = Date.parse(r?.at);', '    } catch {\n      break;\n    }\n    const at = Date.parse(r?.at);');
+mutantFails('ignoring the cache dir override', "let dir = env.RUN_GATES_CACHE_DIR ? path.resolve(top, env.RUN_GATES_CACHE_DIR) : '';", "let dir = '';", GATHER_REL);
+mutantFails("reading a relative cache dir against the process's cwd", 'path.resolve(top, env.RUN_GATES_CACHE_DIR)', 'env.RUN_GATES_CACHE_DIR', GATHER_REL);
+mutantFails('leaving the flakes register unread', 'flakes: readFlakes(top),', 'flakes: null,', GATHER_REL);
 
 /** What the shipped suite no longer pins: it builds its fixtures from the bound values, so the template's own are read here. */
 function checkDefaults(scriptsDir) {
@@ -278,7 +290,7 @@ console.log(JSON.stringify({
   paths: [c.REPORTS_DIR, c.LOG, c.FOLLOW_UPS, c.PLANS_DIR],
   follow: [c.STATUS_COLUMNS, c.STATUS_WORDS, c.SEVERITY_COLUMNS, c.FILED_AT],
   extra: c.EXTRA_COLUMNS,
-  levels: [c.OUTLIER_X, c.MIN_COHORT, c.MIN_SHARE, c.REWRITE_ALERT_PERCENT, c.QUEUE_ALERT_DAYS],
+  levels: [c.OUTLIER_X, c.MIN_COHORT, c.MIN_SHARE, c.REWRITE_ALERT_PERCENT, c.QUEUE_ALERT_DAYS, c.FLAKE_DAYS, c.FLAKE_MIN],
   steps: ['EP-1 8c claims audit', 'EP-1 lane A conformance', 'EP-1 live walk', 'EP-1 integration', 'EP-1 screenshots', 'EP-1 code review', 'EP-1 slice 2', 'EP-1 grounding', 'EP-1 8b record', 'EP-1 8a docs sweep'].map((d) => c.stepOfDescription(d, 'EP-1')),
 }));`;
   const res = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env: hermeticEnv(cleanup) });
@@ -287,7 +299,7 @@ console.log(JSON.stringify({
   assert.deepStrictEqual(got.paths, ['docs/harness/reports', 'docs/harness/log.md', 'docs/harness/follow-ups.md', 'docs/plans'], 'the template paths');
   assert.deepStrictEqual(got.follow, [['status'], { open: ['open'], scheduled: ['scheduled'], fixed: ['fixed'], dropped: ['dropped'] }, ['sev', 'priority'], null], 'the template follow-ups shape (the filing date binding is off)');
   assert.deepStrictEqual(got.extra, { defects: 'defects', missed: 'missed by harness', friction: 'friction', deliverable: 'deliverable' }, 'the template EXTRA_COLUMNS');
-  assert.deepStrictEqual(got.levels, [2, 3, 5, 5, 14], `OUTLIER_X, MIN_COHORT, MIN_SHARE, REWRITE_ALERT_PERCENT and QUEUE_ALERT_DAYS: ${got.levels.join(', ')}`);
+  assert.deepStrictEqual(got.levels, [2, 3, 5, 5, 14, 7, 3], `OUTLIER_X, MIN_COHORT, MIN_SHARE, REWRITE_ALERT_PERCENT, QUEUE_ALERT_DAYS, FLAKE_DAYS and FLAKE_MIN: ${got.levels.join(', ')}`);
   assert.deepStrictEqual(got.steps, ['8c', '4', '5', '6', '7', '8', '2', '1', '8b', '8a'], 'the template STEP_WORDS');
 }
 

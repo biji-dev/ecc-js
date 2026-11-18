@@ -427,8 +427,10 @@ function nodeFailing(text) {
 
 // vitest: ` FAIL  src/a.test.ts > group > title` (` FAIL  |project| src/a.test.ts > …` in a workspace),
 // under a `⎯⎯ Failed Tests 3 ⎯⎯` rule; a file that did not load or a suite whose hook threw is under
-// `⎯⎯ Failed Suites 1 ⎯⎯` and is not in the Tests count
-const VITEST_FAIL = /^\s*FAIL\s+(?:\|[^|]*\|\s+)?(\S+) > (.+?)\s*$/;
+// `⎯⎯ Failed Suites 1 ⎯⎯` and is not in the Tests count. Each run starts with ` RUN  v3.2.7 <root>`:
+// a path without `|project|` is relative to that root, one with it to the project's own root.
+const VITEST_RUN = /^\s*RUN\s+v\d\S*\s+(\S.*?)\s*$/;
+const VITEST_FAIL = /^\s*FAIL\s+(\|[^|]*\|\s+)?(\S+) > (.+?)\s*$/;
 const VITEST_FAIL_ANY = /^\s*FAIL\s/;
 const VITEST_SECTION = /^\s*⎯*\s*Failed (Suites|Tests) \d+\s*⎯*\s*$/;
 // pytest's short summary (its default -rfE): `FAILED tests/test_a.py::test_b[p] - AssertionError: …`
@@ -470,7 +472,14 @@ function textFailing(kind, text) {
   const out = [];
   if (kind === 'vitest') {
     let section = null;
+    let root = null;
     for (const l of ls) {
+      const run = VITEST_RUN.exec(l);
+      if (run) {
+        root = path.isAbsolute(run[1]) ? run[1] : null;
+        section = null;
+        continue;
+      }
       const sec = VITEST_SECTION.exec(l);
       if (sec) {
         section = sec[1];
@@ -480,7 +489,7 @@ function textFailing(kind, text) {
       }
       if (section === 'Suites' || !VITEST_FAIL_ANY.test(l)) continue;
       const m = VITEST_FAIL.exec(l);
-      out.push(m ? { file: m[1], title: m[2] } : { file: '?', title: l.trim() });
+      out.push(m ? { file: m[2], title: m[3], root: m[1] ? null : root } : { file: '?', title: l.trim() });
     }
   } else if (kind === 'pytest') {
     for (const l of ls) if (PYTEST_FAILED.test(l.trim())) out.push(pytestFailed(l.trim()));
@@ -506,18 +515,53 @@ function textFailing(kind, text) {
   return out;
 }
 
-/** A test file as the id names it: relative to `top` when inside it, else as resolved against `cwd`; `?` stays. */
-function idFile(file, cwd, top) {
+/** The one file of `files` that ends with `tail`, or null when none or several do. */
+function tailMatch(files, tail) {
+  let hit = null;
+  for (const f of files) {
+    if (!f.endsWith(tail)) continue;
+    if (hit !== null) return null;
+    hit = f;
+  }
+  return hit;
+}
+
+/**
+ * A test file as the id names it: relative to `top` when inside it, else as resolved against `cwd`; `?`
+ * stays. A path the runner gave a root for (vitest's RUN line) is resolved against that root, exactly,
+ * when that lands inside `top` (or `cwd`). Otherwise a relative path that resolves to none of the
+ * files `getFiles()` returns (top's files, top-relative) but is the tail of exactly one of them is
+ * that one: a workspace runner (`pnpm --filter`, a script that enters the package) runs a package's
+ * tests there and prints their paths from there. No match, or several, keeps the path as resolved.
+ * The search's limits: the files must hold every test file the runner can name, since a file git
+ * does not list (an ignored one) could otherwise stand for a listed one in a sibling package, and a
+ * file at the top with the printed path is taken over one in the package. `memo` keeps each printed
+ * path's match for the call.
+ */
+function idFile({ file, root }, cwd, top, getFiles, memo) {
   if (file === '?') return file;
-  const abs = path.resolve(cwd, file.startsWith('file://') ? fileURLToPath(file) : file);
-  const rel = path.relative(top ?? cwd, abs);
-  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : abs;
+  const local = file.startsWith('file://') ? fileURLToPath(file) : file;
+  const underTop = (abs) => {
+    const rel = path.relative(top ?? cwd, abs);
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : null;
+  };
+  const exact = root ? underTop(path.resolve(root, local)) : null;
+  if (exact) return exact;
+  const abs = path.resolve(cwd, local);
+  const id = underTop(abs) ?? abs;
+  if (!top || id === abs || path.isAbsolute(local)) return id;
+  const files = getFiles();
+  if (!files || files.has(id)) return id;
+  if (!memo.has(local)) memo.set(local, tailMatch(files, `/${path.posix.normalize(local.split(path.sep).join('/'))}`));
+  return memo.get(local) ?? id;
 }
 
 /**
  * The failing tests `text` names, as `<file> :: <title>` ids, each once, in output order. The file
- * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`; a
- * file the output does not name is `?`.
+ * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`; vitest's
+ * against the root its RUN line names, or the one file of `files` (a Set of top-relative paths, or a
+ * function that returns one, called at most once and only when a path needs it) it is the tail of
+ * (idFile); a file the output does not name is `?`.
  * - node: each `not ok` result line, at any indent, whose YAML block is not a suite's and that has
  *   no directive; its `# Subtest:` parents joined with ` > `, the file its `location:`. A suite that
  *   failed for itself (a hook, its describe body: failureType not subtestsFailed) is a `?`.
@@ -529,11 +573,14 @@ function idFile(file, cwd, top) {
  *   at bun's closing `<n> tests failed:` list, which repeats them without their files.
  * - playwright: each line four spaces in under `  <n> failed`, `[<project>] › <file>:<l>:<c> › <title>`.
  */
-export function failingTests(kind, text, { cwd = '.', top = null } = {}) {
+export function failingTests(kind, text, { cwd = '.', top = null, files = null } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`unknown kind: ${kind}`);
   const ids = [];
-  for (const { file, title } of kind === 'node' ? nodeFailing(text) : textFailing(kind, text)) {
-    const id = `${idFile(file, cwd, top)} :: ${title}`;
+  const memo = new Map();
+  let fileSet = typeof files === 'function' ? undefined : files;
+  const getFiles = () => (fileSet === undefined ? (fileSet = files()) : fileSet);
+  for (const t of kind === 'node' ? nodeFailing(text) : textFailing(kind, text)) {
+    const id = `${idFile(t, cwd, top, getFiles, memo)} :: ${t.title}`;
     if (!ids.includes(id)) ids.push(id);
   }
   return ids;

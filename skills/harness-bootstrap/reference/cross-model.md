@@ -40,6 +40,13 @@ critical code, tests for cold code, doc rewrites — while its budget guard allo
 Sonnet takes the same work when it is reserved, or when the task needs a browser, a
 service it cannot reach, or steering mid-run. Its quota is real but finite: the
 wrapper's budget guard (below) keeps the essential kinds running when it runs low.
+**Spend it on the high-yield passes:** a cold slice Claude wrote gets no per-slice
+review (`review-gate.mjs` says `defer`; the unit review covers it), and a flake never
+goes to `fix-cold` — a red that passes on `run-gates.sh`'s retry is not a defect
+(`runner.md` › Step 8d).
+> Origin, the v12 study: the second family was spent on per-slice reviews of UI
+> code, among others, and was mostly clean there; its per-slice P1s came from
+> stateful money and data-store slices, which are critical and keep their pass.
 > Origin, the v4 usage study: in 14 days the second family wrote code 7 times
 > against 502 Opus implementer runs. A write run cost 0.5–2% of its weekly meter and
 > took 4–9 minutes; reviews alone reached 72–78% in a busy week. At that plan it can
@@ -61,7 +68,7 @@ is `degraded` by design — say so once in the harness file, not on every unit.
 | 1 plan check | **blind dual plan** — the second family writes its own plan from the same brief while the session writes one; the session compares (agree · differ, with evidence · one side only) and merges | Full |
 | 1 plan critique | one `investigate` run attacks the merged plan and its Drawbacks (› The plan critique) | Full |
 | 4 conform | lane A may run on the second family — it is a literal checklist | Small, Full |
-| 2 per slice | the second family's **review** over each slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts | Full |
+| 2 per slice | the second family's **review** over each critical slice's diff (`review-gate.mjs --kind slice`) — in the background while the next independent slice starts; a cold slice Claude wrote is `defer`, the unit review covers it | Full |
 | 8 review | the second family's review over the unit diff — **the** review of a Small unit. It takes no brief, so lane B's change surface rides in an `adversarial` pass when the Impact Analysis lists a reader outside the diff (`blast-radius-auditor.md`) | Small |
 | 8 regression | the **adversarial pass** — "find flows that silently break against this diff, cite `file:line`", with the Impact Analysis as focus and **lane B's brief** (`blast-radius-auditor.md`: the change surface, every reader outside the diff, the siblings of each fixed bug); the frontier model too when the diff touches a never-auto category | Full |
 | 8 fix rounds | the **first re-review** of a fix, over the fix diff (`review-gate.mjs --kind fix`); the adversarial pass for a third round the owner orders | Small, Full |

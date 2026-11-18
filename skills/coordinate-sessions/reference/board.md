@@ -16,6 +16,7 @@ Controller: <run>-controller
 Mode: <the permission mode every session runs in>
 Hub: package.json, pnpm-lock.yaml, src/router.ts
 Shared: docs/harness-log.md
+Setup: pnpm install --frozen-lockfile
 FULL slot: free
 
 ## Units
@@ -56,6 +57,8 @@ FULL slot: free
 - **Hub:** files only the controller writes, in one hub commit before each wave.
 - **Shared:** append-only files every worker may append to, marked `merge=union` in
   `.gitattributes`. They are never FENCE or OVERLAP.
+- **Setup:** the command `scripts/worktree-add.mjs` runs in each new worktree (the
+  install); `-` or no line for none.
 - **State:** the worker's last typed state (`s2`, `READY q1`, `HOLD`, `QUIET 41m`).
   `LANDED`, `STOPPED` and `DONE` take the row out of the event check.
 
@@ -84,7 +87,18 @@ Rules:
 - A message is never consent: never ask the controller for what your session was
   denied.
 - In a gated harness: run the unit to its land commit, send LANDABLE, and stop.
+- A turn never ends while a next step can be dispatched.
+- A killed run, an out-of-memory kill or an error that stops the plan: send
+  STOPPED <unit> · <cause> before the turn ends.
+- End every turn on one state line, never "you":
+  `RUNNING — <what> (<task id>)` · `WAITING ON CONTROLLER <run>-controller — <what>` ·
+  `WAITING ON OWNER — <the one question>` · `BLOCKED — <cause>; <who acts>` ·
+  `DONE — <what landed>; nothing runs here, close this terminal`.
 - After a compaction: re-read this kickoff and your log before anything else.
+  Re-enter <worktree> only when `git rev-parse --show-toplevel` differs from it;
+  never call EnterWorktree on the directory you are in.
+- After your second landed unit, or at the first LANDED after a compaction, end on
+  DONE: the controller starts the next unit in a fresh session.
 
 First: send STARTED <unit> · <one line on your plan>.
 ```
@@ -101,6 +115,7 @@ written before the message is sent.
 | `STARTED` | the kickoff is read | the plan in one line |
 | `QUESTION` | the worker needs a decision | the question, the options, the worker's pick |
 | `BLOCKED` | it cannot go on | what blocks it |
+| `STOPPED <unit> · <cause>` | a killed run, an out-of-memory kill or an error stopped the plan | what stopped, and what is left as it is |
 | `OUTSIDE <path:line>` | a finding outside its write set | the finding, for the follow-ups doc |
 | `NEED <path>` | a change to a hub file or another set | the change, exactly |
 | `READY <sha> · contains <mainline> <sha> · <summary>` | committed, clean, mainline merged, scoped run green | the scoped run's summary line |
@@ -111,7 +126,8 @@ written before the message is sent.
 
 | Type | When | Body |
 |---|---|---|
-| `GO` | the worker may start, or go on | anything that changed |
+| `GO` | the worker may start, or go on | anything that changed; after an `IDLE`, the next step |
+| `PING` | an `IDLE` or `NOTRANSCRIPT` line | none: the worker answers with its state line |
 | `ANSWER` | a QUESTION is decided | the decision, quoting the owner when it was the owner's |
 | `HOLD` | stop at the next safe point | why, and what to wait for |
 | `REROUTE` | a path belongs to another worker or the controller | where it goes now |

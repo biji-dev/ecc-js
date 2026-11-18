@@ -16,8 +16,16 @@
  * `MemAvailable`. Disk: `statfs(top)`, bavail x bsize, the space this user may write. Load: the
  * 1-minute average against LOAD_PER_CPU x the CPU count. A reading that cannot be read is admitted
  * and noted (`ADMISSION unread <what>`): admission then falls back to the old behaviour, visibly. A
- * reading under its floor never admits. This is check-time admission, not a hold: a machine that
- * turns short mid-run still runs short, and two worktrees can be admitted in the same second.
+ * reading under its floor never admits. This is check-time admission: a machine that turns short
+ * mid-run still runs short.
+ *
+ * THE LEASE. Given `--holder <pid>` (run-gates passes its own), an admitted run also holds one of the
+ * host's LEASE_SLOTS slots, files in ~/.harness/leases (HARNESS_LEASE_DIR overrides), until run-gates'
+ * EXIT trap removes it: two worktrees admitted in the same second no longer both run, whatever the
+ * memory read. The slot is taken only once the machine reads ok; with every slot held by a live run the
+ * machine counts as short (`lease held by <top> since <at>`) and the wait and the bound are the same as
+ * for memory. A dead holder's slot is taken over. A lease that cannot be read or written is noted
+ * (`ADMISSION unread lease`) and the run is admitted without one.
  */
 
 // ---- [B] project bindings
@@ -33,6 +41,9 @@ export const WAIT_S = 3600;
 export const POLL_S = 30;
 // [B] What a refusal tells the owner to run: the sweep's read-only report.
 export const FREE_COMMAND = 'node ~/.agents/harness/machine-sweep/machine-sweep.mjs --report';
+// [B] How many FULL verifies may run on this host at once (the lease slots); null is
+// max(1, min(2, floor(memory GB / 8))) of the machine's total memory.
+export const LEASE_SLOTS = null;
 // ---- end [B]
 
 export const FLOORS = { mem: MEM_RESERVE_GB, disk: DISK_FLOOR_GB, load: LOAD_PER_CPU };
@@ -42,14 +53,18 @@ const GB = 1e9;
 const NUMBER = /^\d+(?:\.\d+)?$/;
 const NUMBER_FLAGS = { '--mem-gb': 'mem', '--disk-gb': 'disk', '--load-per-cpu': 'load', '--wait': 'wait', '--poll': 'poll' };
 const PATH_FLAGS = { '--top': 'top', '--reading': 'reading' };
+const COUNT_FLAGS = { '--holder': 'holder', '--lease-slots': 'leaseSlots' };
 
-/** Reject an unknown flag, a repeated one, a value missing or not a plain number of 0 or more, before anything is read. */
+/**
+ * Reject an unknown flag, a repeated one, a value missing or not a plain number of 0 or more (a whole number of
+ * 1 or more for --holder and --lease-slots), before anything is read.
+ */
 export function parseArgs(argv) {
-  const a = { mem: MEM_RESERVE_GB, disk: DISK_FLOOR_GB, load: LOAD_PER_CPU, wait: WAIT_S, poll: POLL_S, top: null, reading: null };
+  const a = { mem: MEM_RESERVE_GB, disk: DISK_FLOOR_GB, load: LOAD_PER_CPU, wait: WAIT_S, poll: POLL_S, top: null, reading: null, holder: null, leaseSlots: null };
   const given = new Set();
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
-    if (!(t in NUMBER_FLAGS) && !(t in PATH_FLAGS)) throw new Error(t.startsWith('--') ? `unknown option ${t}` : `unexpected argument "${t}"`);
+    if (!(t in NUMBER_FLAGS) && !(t in PATH_FLAGS) && !(t in COUNT_FLAGS)) throw new Error(t.startsWith('--') ? `unknown option ${t}` : `unexpected argument "${t}"`);
     if (given.has(t)) throw new Error(`${t} is given twice; give it once`);
     given.add(t);
     const v = argv[++i];
@@ -57,6 +72,9 @@ export function parseArgs(argv) {
     if (t in NUMBER_FLAGS) {
       if (!NUMBER.test(v)) throw new Error(`${t} takes a number of 0 or more, not "${v}"`);
       a[NUMBER_FLAGS[t]] = Number(v);
+    } else if (t in COUNT_FLAGS) {
+      if (!/^[1-9]\d*$/.test(v)) throw new Error(`${t} takes a whole number of 1 or more, not "${v}"`);
+      a[COUNT_FLAGS[t]] = Number(v);
     } else a[PATH_FLAGS[t]] = v;
   }
   return a;
@@ -155,6 +173,98 @@ export function decide(reading, floors = FLOORS) {
 
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
+/** The lease slot count: `slots` (LEASE_SLOTS) when set, else max(1, min(2, floor(total memory GB / 8))). */
+export function leaseSlots(totalBytes, slots = LEASE_SLOTS) {
+  if (slots !== null) return slots;
+  const eighths = Number.isFinite(totalBytes) && totalBytes > 0 ? Math.floor(totalBytes / GB / 8) : 0;
+  return Math.max(1, Math.min(2, eighths));
+}
+
+/**
+ * Takes a host lease slot for `holder` (the pid of the run that holds it) in `dir` (made 0700): the files
+ * slot-1 .. slot-<slots>, each one JSON line {"pid","top","at"} (mode 0600), written to a temp file and
+ * linked into place, so a slot is never seen half-written and two takers never share one. A slot that
+ * already names `holder` is its own (a second admission of the same run). A slot whose pid is dead
+ * (`alive(pid)` false), or that is not a lease line, is taken over under a `slot-<i>.reap` mutex
+ * directory: re-read, removed only when unchanged, then linked like a free one; a mutex older than
+ * `reapMs` is a dead reaper's and is removed. Returns { path } or, every slot held by a live pid,
+ * { held: 'lease held by <top> since <at>' } naming the oldest holder. Throws on an I/O error. `fs` is
+ * node:fs or a stand-in, `now()` wall ms. The run releases its slot itself (run-gates' EXIT trap); a
+ * pid reused by another process after its run died keeps the slot held until that process ends.
+ */
+export function takeLease({ dir, slots, holder, top, now, fs, alive, reapMs = 60_000 }) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const slot = (i) => `${dir}/slot-${i}`;
+  const read = (p) => {
+    try {
+      return fs.readFileSync(p, 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    }
+  };
+  const parse = (text) => {
+    try {
+      const o = JSON.parse(text);
+      return o !== null && typeof o === 'object' && Number.isInteger(o.pid) && o.pid > 0 ? o : null;
+    } catch {
+      return null;
+    }
+  };
+  const ids = Array.from({ length: slots }, (_, k) => k + 1);
+  const seen = ids.map((i) => read(slot(i)));
+  const own = ids.find((i, k) => seen[k] !== null && parse(seen[k])?.pid === holder);
+  if (own !== undefined) return { path: slot(own) };
+  // A dead holder's slot: removed under the mutex when it still holds what was read; false = leave it.
+  const reap = (i, text) => {
+    const mutex = `${slot(i)}.reap`;
+    try {
+      fs.mkdirSync(mutex);
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const st = attempt(() => fs.statSync(mutex));
+      if (st === null || now() - st.mtimeMs < reapMs) return false;
+      attempt(() => fs.rmdirSync(mutex));
+      if (attempt(() => fs.mkdirSync(mutex) ?? true) === null) return false;
+    }
+    try {
+      if (read(slot(i)) !== text) return false;
+      try {
+        fs.unlinkSync(slot(i));
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+      return true;
+    } finally {
+      attempt(() => fs.rmdirSync(mutex));
+    }
+  };
+  const tmp = `${dir}/.take-${holder}-${Math.random().toString(36).slice(2)}`;
+  fs.writeFileSync(tmp, `${JSON.stringify({ pid: holder, top: top ?? null, at: iso(now()) })}\n`, { mode: 0o600 });
+  try {
+    for (const [k, i] of ids.entries()) {
+      if (seen[k] !== null) {
+        const o = parse(seen[k]);
+        if ((o !== null && alive(o.pid)) || !reap(i, seen[k])) continue;
+      }
+      try {
+        fs.linkSync(tmp, slot(i));
+        return { path: slot(i) };
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+      }
+    }
+  } finally {
+    attempt(() => fs.unlinkSync(tmp));
+  }
+  const holders = ids
+    .map((i) => parse(read(slot(i)) ?? ''))
+    .filter((o) => o !== null)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const oldest = holders[0];
+  return { held: oldest ? `lease held by ${oldest.top} since ${oldest.at}` : 'lease slots taken while read' };
+}
+
 /** `MACHINE WAIT <ISO> → <ISO> <reason>`: one wait episode, the pair unit-record subtracts from Work. */
 export const formatWait = (startMs, endMs, reason) => `MACHINE WAIT ${iso(startMs)} → ${iso(endMs)} ${reason}`;
 
@@ -174,9 +284,11 @@ const formatAdmitted = (d) => `ADMISSION admitted — ${d.detail || 'nothing rea
  * The bound and every span are on `clock`, a monotonic ms clock (a wall clock stepped back would stretch
  * the wait); `now` (wall ms) only places the pair: it starts at the wall time of the first short read and
  * ends the monotonic span later. `read`, `now`, `clock` (default `now`), `sleep(ms, signal)` (a promise),
- * `write(line)` and `note(line)` are injected.
+ * `write(line)` and `note(line)` are injected. `lease` (null: none) is called on a read that is ok, and
+ * gives takeLease's answer: { path } admits with `LEASE <path>` after the pair, before the admitted line;
+ * { held } makes the read short with that reason; a throw is noted `ADMISSION unread lease` and admits.
  */
-export async function admit({ read, now, clock = now, sleep, write, note = () => {}, signal, floors = FLOORS, waitS = WAIT_S, pollS = POLL_S }) {
+export async function admit({ read, now, clock = now, sleep, write, note = () => {}, signal, floors = FLOORS, waitS = WAIT_S, pollS = POLL_S, lease = null }) {
   const start = clock();
   const bound = start + waitS * 1000;
   const noted = new Set();
@@ -190,13 +302,26 @@ export async function admit({ read, now, clock = now, sleep, write, note = () =>
       if (first !== null) write(pair(t, `${reason} (interrupted)`));
       return EXIT.interrupted;
     }
-    const d = decide(read(), floors);
+    let d = decide(read(), floors);
     for (const what of d.unread) {
       if (!noted.has(what)) write(`ADMISSION unread ${what}`);
       noted.add(what);
     }
+    let leased = null;
+    if (d.ok && lease) {
+      let l = null;
+      try {
+        l = lease();
+      } catch {
+        if (!noted.has('lease')) write('ADMISSION unread lease');
+        noted.add('lease');
+      }
+      if (l?.held) d = { ...d, ok: false, short: [...d.short, 'lease'], reason: l.held };
+      else leased = l?.path ?? null;
+    }
     if (d.ok) {
       if (first !== null) write(pair(t, reason));
+      if (leased) write(`LEASE ${leased}`);
       write(formatAdmitted(d));
       return EXIT.admitted;
     }

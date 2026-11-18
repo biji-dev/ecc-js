@@ -22,7 +22,7 @@ REGISTRY=".claude/registry.md"             # [B] the lock file, relative to the 
 # a plan id P2-20 owns task/p2-20; keep the pattern uppercase (letters after the digits
 # may be either case).
 ID_PATTERN='[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]+[A-Za-z]?'  # [B] the task-id shape; '' = no id matching
-SCOPE="repo"                               # [B] repo = one lock for the whole clone; checkout = one lock per checkout (worktree)
+SCOPE="checkout"                           # [B] checkout = one lock per checkout (worktree), the default; repo = one lock for the whole clone
 MAINLINE="main"                            # [B] the branch lands merge into
 LABEL="harness guard"
 
@@ -303,14 +303,27 @@ rows() {
 held=$(rows "$branch" "$id")
 
 # Which checkout does a Worktree cell lock? Empty, main and . mean the main checkout;
-# anything else is a path relative to it (or absolute). Sets $res.
+# anything else is a path relative to it (or absolute). Sets $res; fails when the path
+# does not resolve. The caller then checks $res is a checkout git lists, so a cell that
+# names no checkout refuses rather than locking nothing.
 resolve() {
   case "$1" in
     ''|main|.) p=$root ;;
     /*) p=$1 ;;
     *) p=$root/$1 ;;
   esac
-  res=$(cd "$p" 2>/dev/null && pwd -P) || res=$p
+  res=$(cd "$p" 2>/dev/null && pwd -P)
+}
+
+# The checkouts of this repository, physical paths one per line, read once when a row needs them.
+checkouts=""
+is_checkout() {
+  if [ -z "$checkouts" ]; then
+    checkouts=$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | while IFS= read -r w; do
+      (cd "$w" 2>/dev/null && pwd -P)
+    done)
+  fi
+  printf '%s\n' "$checkouts" | grep -Fqx -- "$1"
 }
 
 is_here() { [ "$1" = "$curp" ]; }
@@ -321,7 +334,10 @@ lock_here=0
 own=" "   # the row indexes of the rows this checkout owns: they match its branch and lock it
 if [ -n "$held" ]; then
   while IFS='|' read -r tok wt br j; do
-    if [ "$SCOPE" = "checkout" ]; then resolve "$wt"; else res=$curp; fi
+    if [ "$SCOPE" = "checkout" ]; then
+      resolve "$wt" || refuse "row for ${tok:-${br:-a held unit}} names Worktree '$wt', which does not resolve: fix the cell in $REGISTRY"
+      is_checkout "$res" || refuse "row for ${tok:-${br:-a held unit}} names Worktree '$wt', which is no checkout of this repository (git worktree list): fix the cell in $REGISTRY"
+    else res=$curp; fi
     if is_here "$res"; then lock_here=1; fi
     if [ -n "$tok" ]; then
       if is_here "$res"; then match_here=1; own="$own$j "; else match_other="row for $tok locks $res, not this checkout"; fi

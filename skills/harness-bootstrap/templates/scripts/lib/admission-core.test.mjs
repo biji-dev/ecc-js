@@ -15,6 +15,7 @@ import {
   EXIT,
   FLOORS,
   FREE_COMMAND,
+  LEASE_SLOTS,
   LOAD_PER_CPU,
   MEM_RESERVE_GB,
   POLL_S,
@@ -25,9 +26,11 @@ import {
   diskFree,
   formatRefusal,
   formatWait,
+  leaseSlots,
   linuxMem,
   parseArgs,
   readMachine,
+  takeLease,
 } from './admission-core.mjs';
 import { parseOwnerWait } from './unit-record-core.mjs';
 
@@ -87,7 +90,8 @@ const waits = (lines) => lines.filter((l) => l.startsWith('MACHINE WAIT '));
 
 // ---- the bindings
 
-test('the bindings: a 4 GB memory reserve, a 5 GB disk floor, load 3.0 per CPU, a 60-minute wait at 30 s polls', () => {
+test('the bindings: a 4 GB memory reserve, a 5 GB disk floor, load 3.0 per CPU, a 60-minute wait at 30 s polls, lease slots from memory', () => {
+  assert.equal(LEASE_SLOTS, null);
   assert.equal(MEM_RESERVE_GB, 4);
   assert.equal(DISK_FLOOR_GB, 5);
   assert.equal(LOAD_PER_CPU, 3);
@@ -406,8 +410,9 @@ test('aborted during a sleep, admit writes the closing pair (interrupted) up to 
 // ---- parseArgs
 
 test('parseArgs: the defaults are the bindings; each flag reads a number of 0 or more, or a path', () => {
-  assert.deepEqual(parseArgs([]), { mem: 4, disk: 5, load: 3, wait: 3600, poll: 30, top: null, reading: null });
-  assert.deepEqual(parseArgs(['--mem-gb', '999', '--disk-gb', '0', '--load-per-cpu', '2.5', '--wait', '5', '--poll', '0.2', '--top', '/x', '--reading', 'r.json']), {
+  assert.deepEqual(parseArgs([]), { mem: 4, disk: 5, load: 3, wait: 3600, poll: 30, top: null, reading: null, holder: null, leaseSlots: null });
+  const all = ['--mem-gb', '999', '--disk-gb', '0', '--load-per-cpu', '2.5', '--wait', '5', '--poll', '0.2', '--top', '/x', '--reading', 'r.json'];
+  assert.deepEqual(parseArgs([...all, '--holder', '4242', '--lease-slots', '3']), {
     mem: 999,
     disk: 0,
     load: 2.5,
@@ -415,8 +420,26 @@ test('parseArgs: the defaults are the bindings; each flag reads a number of 0 or
     poll: 0.2,
     top: '/x',
     reading: 'r.json',
+    holder: 4242,
+    leaseSlots: 3,
   });
-  for (const argv of [['--bogus'], ['stray'], ['--wait'], ['--wait', '--poll', '1'], ['--wait', 'abc'], ['--wait', '-1'], ['--mem-gb', ''], ['--mem-gb', '1e3'], ['--top', ''], ['--wait', '1', '--wait', '2']]) {
+  for (const argv of [
+    ['--bogus'],
+    ['stray'],
+    ['--wait'],
+    ['--wait', '--poll', '1'],
+    ['--wait', 'abc'],
+    ['--wait', '-1'],
+    ['--mem-gb', ''],
+    ['--mem-gb', '1e3'],
+    ['--top', ''],
+    ['--wait', '1', '--wait', '2'],
+    ['--holder', '0'],
+    ['--holder', '1.5'],
+    ['--holder', '012'],
+    ['--lease-slots', '0'],
+    ['--holder', '1', '--holder', '2'],
+  ]) {
     assert.throws(() => parseArgs(argv), Error, JSON.stringify(argv));
   }
 });
@@ -563,5 +586,164 @@ test('CLI: SIGTERM or SIGINT during a wait prints the closing MACHINE WAIT pair 
     } finally {
       run.child.kill('SIGKILL');
     }
+  }
+});
+
+// ---- the host lease
+
+const alivePids = (...pids) => (pid) => pids.includes(pid);
+const slotText = (pid, top, at) => `${JSON.stringify({ pid, top, at })}\n`;
+const lease = (dir, holder, opts = {}) =>
+  takeLease({ dir, slots: 2, holder, top: `/repo/${holder}`, now: () => T0, fs, alive: alivePids(holder), ...opts });
+
+test('leaseSlots: LEASE_SLOTS when set; null is max(1, min(2, floor(memory GB / 8)))', () => {
+  assert.equal(LEASE_SLOTS, null);
+  assert.equal(leaseSlots(7.9e9, null), 1);
+  assert.equal(leaseSlots(15.9e9, null), 1);
+  assert.equal(leaseSlots(16e9, null), 2);
+  assert.equal(leaseSlots(17179869184, null), 2, 'a 16 GiB machine');
+  assert.equal(leaseSlots(128e9, null), 2);
+  assert.equal(leaseSlots(0, null), 1);
+  assert.equal(leaseSlots(Number.NaN, null), 1);
+  assert.equal(leaseSlots(128e9, 3), 3);
+  assert.equal(leaseSlots(1e9, 1), 1);
+});
+
+test('takeLease: the first free slot, one JSON line {pid, top, at}, mode 0600 in a 0700 dir; the same holder gets it back', () => {
+  const dir = path.join(tmpDir(), 'leases');
+  const a = lease(dir, 101);
+  assert.deepEqual(a, { path: path.join(dir, 'slot-1') });
+  assert.equal(fs.readFileSync(a.path, 'utf8'), slotText(101, '/repo/101', '2026-01-15T10:00:00Z'));
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(a.path).mode & 0o777, 0o600);
+  assert.deepEqual(lease(dir, 101, { alive: alivePids(101) }), a, 'a second admission of the same run reuses its slot');
+  assert.deepEqual(fs.readdirSync(dir), ['slot-1'], 'no temp file is left');
+});
+
+test('takeLease: two holders take two slots; a third, with both live, is held and named by the oldest', () => {
+  const dir = path.join(tmpDir(), 'leases');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'slot-1'), slotText(201, '/repo/shop', '2026-01-15T09:30:00Z'));
+  const b = lease(dir, 202, { alive: alivePids(201, 202) });
+  assert.deepEqual(b, { path: path.join(dir, 'slot-2') });
+  const c = lease(dir, 203, { alive: alivePids(201, 202, 203) });
+  assert.deepEqual(c, { held: 'lease held by /repo/shop since 2026-01-15T09:30:00Z' });
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['slot-1', 'slot-2']);
+  const one = lease(dir, 203, { slots: 1, alive: alivePids(201, 202, 203) });
+  assert.ok(one.held, 'slots past the count are never taken');
+});
+
+test('takeLease: a slot whose holder is dead is taken over; a live one never is; a held reap mutex is waited out until stale', () => {
+  const dir = path.join(tmpDir(), 'leases');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'slot-1'), slotText(301, '/repo/ledger', '2026-01-15T09:00:00Z'));
+  fs.writeFileSync(path.join(dir, 'slot-2'), slotText(302, '/repo/shop', '2026-01-15T09:10:00Z'));
+  const taken = lease(dir, 303, { alive: alivePids(302, 303) });
+  assert.deepEqual(taken, { path: path.join(dir, 'slot-1') });
+  assert.match(fs.readFileSync(taken.path, 'utf8'), /^\{"pid":303,/);
+  assert.match(fs.readFileSync(path.join(dir, 'slot-2'), 'utf8'), /^\{"pid":302,/, 'the live holder kept its slot');
+  // a reaper that is still at work (its mutex is fresh) is left to it; a mutex older than a minute is stale
+  fs.writeFileSync(path.join(dir, 'slot-1'), slotText(301, '/repo/ledger', '2026-01-15T09:00:00Z'));
+  fs.mkdirSync(path.join(dir, 'slot-1.reap'));
+  const fresh = fs.statSync(path.join(dir, 'slot-1.reap')).mtimeMs;
+  assert.ok(lease(dir, 304, { alive: alivePids(302, 304), now: () => fresh + 1000 }).held);
+  assert.deepEqual(lease(dir, 304, { alive: alivePids(302, 304), now: () => fresh + 61_000 }), { path: path.join(dir, 'slot-1') });
+  assert.ok(!fs.existsSync(path.join(dir, 'slot-1.reap')), 'the mutex is removed');
+  // a slot that is not a lease line is no live holder
+  fs.writeFileSync(path.join(dir, 'slot-2'), 'not json\n');
+  assert.deepEqual(lease(dir, 305, { alive: alivePids(304, 305) }), { path: path.join(dir, 'slot-2') });
+});
+
+test('takeLease: an I/O error throws (the caller notes it); a free slot raced away is skipped, never overwritten', () => {
+  const file = path.join(tmpDir(), 'a-file');
+  fs.writeFileSync(file, '');
+  assert.throws(() => lease(path.join(file, 'leases'), 401));
+  const dir = path.join(tmpDir(), 'leases');
+  const racing = {
+    ...fs,
+    linkSync: (from, to) => {
+      if (to.endsWith('slot-1') && !fs.existsSync(to)) fs.writeFileSync(to, slotText(402, '/repo/shop', '2026-01-15T09:59:00Z'));
+      return fs.linkSync(from, to);
+    },
+  };
+  assert.deepEqual(lease(dir, 401, { fs: racing, alive: alivePids(401, 402) }), { path: path.join(dir, 'slot-2') });
+  assert.match(fs.readFileSync(path.join(dir, 'slot-1'), 'utf8'), /^\{"pid":402,/);
+});
+
+test('admit with a lease: taken only once the machine is ok; LEASE <path> after the pair and before the admitted line', async () => {
+  const takes = [];
+  const r = await fakeRun([SHORT, OK], {
+    floors: F,
+    lease: () => {
+      takes.push(1);
+      return { path: '/leases/slot-1' };
+    },
+  });
+  assert.equal(r.code, EXIT.admitted);
+  assert.equal(takes.length, 1, 'a short machine holds no slot while it waits');
+  assert.equal(r.lines.length, 3);
+  assert.match(r.lines[0], /^MACHINE WAIT /);
+  assert.equal(r.lines[1], 'LEASE /leases/slot-1');
+  assert.match(r.lines[2], /^ADMISSION admitted — /);
+});
+
+test('admit with every slot held: it waits as for a short machine, the pair names the holder, and at the bound NOT ADMITTED', async () => {
+  const held = { held: 'lease held by /repo/shop since 2026-01-15T09:30:00Z' };
+  const later = await fakeRun([OK], { floors: F, lease: (n => () => (++n < 3 ? held : { path: '/leases/slot-2' }))(0) });
+  assert.equal(later.code, EXIT.admitted);
+  assert.deepEqual(later.notes, [`ADMISSION waiting ${held.held}`]);
+  assert.deepEqual(waits(later.lines), [`MACHINE WAIT 2026-01-15T10:00:00Z → 2026-01-15T10:01:00Z ${held.held}`]);
+  assert.equal(later.lines[1], 'LEASE /leases/slot-2');
+  const never = await fakeRun([OK], { floors: F, lease: () => held });
+  assert.equal(never.code, EXIT.refused);
+  assert.equal(never.elapsed, 60 * MIN);
+  assert.deepEqual(never.lines, [`MACHINE WAIT 2026-01-15T10:00:00Z → 2026-01-15T11:00:00Z ${held.held}`, formatRefusal(held.held)]);
+});
+
+test('admit with a lease that cannot be read: noted `ADMISSION unread lease`, admitted without a LEASE line', async () => {
+  const r = await fakeRun([OK], {
+    floors: F,
+    lease: () => {
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    },
+  });
+  assert.equal(r.code, EXIT.admitted);
+  assert.equal(r.lines[0], 'ADMISSION unread lease');
+  assert.match(r.lines[1], /^ADMISSION admitted — /);
+  assert.equal(r.lines.length, 2);
+});
+
+function readingFile(readings) {
+  const file = path.join(tmpDir(), 'reading.json');
+  fs.writeFileSync(file, JSON.stringify(readings));
+  return file;
+}
+
+test('CLI --holder takes a slot in HARNESS_LEASE_DIR and prints LEASE; without --holder no lease is taken', () => {
+  const dir = path.join(tmpDir(), 'leases');
+  const env = { ...process.env, HARNESS_LEASE_DIR: dir };
+  const run = (args) =>
+    spawnSync(process.execPath, [CLI, '--reading', readingFile([OK]), ...args], { encoding: 'utf8', timeout: 30_000, env });
+  const none = run(['--wait', '0']);
+  assert.equal(none.status, 0, none.stderr);
+  assert.ok(!fs.existsSync(dir), 'no --holder, no lease dir');
+  const one = run(['--wait', '0', '--holder', String(process.pid), '--lease-slots', '1', '--top', '/repo/shop']);
+  assert.equal(one.status, 0, one.stderr);
+  assert.deepEqual(one.stdout.trim().split('\n').slice(0, 1), [`LEASE ${path.join(dir, 'slot-1')}`]);
+  const slot = JSON.parse(fs.readFileSync(path.join(dir, 'slot-1'), 'utf8'));
+  assert.equal(slot.pid, process.pid);
+  assert.equal(slot.top, '/repo/shop');
+  const again = run(['--wait', '0', '--holder', String(process.pid), '--lease-slots', '1']);
+  assert.equal(again.status, 0, 'the same holder is admitted again on its own slot');
+  const other = spawn('sleep', ['30']);
+  try {
+    const refused = run(['--wait', '0', '--holder', String(other.pid), '--lease-slots', '1']);
+    assert.equal(refused.status, 1, refused.stdout);
+    assert.equal(refused.stdout.trim().split('\n').at(-1), formatRefusal(`lease held by /repo/shop since ${slot.at}`));
+  } finally {
+    other.kill();
+  }
+  for (const args of [['--holder', '0'], ['--holder', '1.5'], ['--lease-slots', '0'], ['--holder', 'x']]) {
+    assert.equal(run(['--wait', '0', ...args]).status, 2, JSON.stringify(args));
   }
 });

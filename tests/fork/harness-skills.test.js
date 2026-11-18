@@ -197,15 +197,13 @@ function guardedRepo(guardText = fs.readFileSync(GUARD, 'utf8'), { trackRegistry
   return dir;
 }
 
-function setRegistry(dir, rows) {
+function setRegistry(dir, rows, header = ['| # | Task | Step | Branch | Claimed (UTC) |', '|---|---|---|---|---|', '| 0 | mainline | | | |']) {
   fs.writeFileSync(
     path.join(dir, '.claude', 'registry.md'),
     [
       '# Registry',
       '<!-- harness:active -->',
-      '| # | Task | Step | Branch | Claimed (UTC) |',
-      '|---|---|---|---|---|',
-      '| 0 | mainline | | | |',
+      ...header,
       rows,
       '<!-- /harness:active -->',
       '',
@@ -261,7 +259,9 @@ if (!hasGit) {
     assert.strictEqual(git(dir, ['worktree', 'add', '-q', wt, '-b', 'task/T-QQ-1-wt']).status, 0);
     try {
       assert.notStrictEqual(tryCommit(wt).status, 0, 'refused before its row is claimed');
-      setRegistry(dir, '| 1 | `T-QQ-1` | 1 | task/T-QQ-1-wt | 2026-10-09T11:00Z |');
+      // the shipped scope is checkout: the row names the checkout it locks
+      setRegistry(dir, `| 1 | \`T-QQ-1\` | 1 | task/T-QQ-1-wt | ${wt} | 2026-10-09T11:00Z |`,
+        ['| # | Task | Step | Branch | Worktree | Claimed (UTC) |', '|---|---|---|---|---|---|', '| 0 | mainline | | | main | |']);
       const allowed = tryCommit(wt);
       assert.strictEqual(allowed.status, 0, allowed.stderr);
     } finally {
@@ -763,26 +763,27 @@ test('a template citation reference/<file> › <heading> names a heading that fi
   assert.deepStrictEqual(missing, [], `a citation names no heading of its reference: ${missing.join('; ')}`);
 });
 
-test('the FULL verify runs once, at the end of step 8a after the doc sweep: the sequence, the tier table, the steps and every reference that names it', () => {
+test('v13: the FULL verify runs once, at step 8d after the record and the claims: the sequence, the tier table, the steps and every reference that names it', () => {
   const runner = squashed('reference/runner.md');
-  assert.ok(runner.includes('8a docs the doc sweep · then the FULL verify run'), "runner.md's sequence does not end step 8a with the FULL verify");
-  assert.ok(!runner.includes('bounded fix rounds · the FULL verify run'), "runner.md's sequence still runs the FULL verify in step 8");
-  assert.ok(runner.includes('| 8a verify | scoped | FULL once before merge | FULL |') && !runner.includes('| 8 verify |'), "runner.md's tier table does not give the verify to step 8a");
-  const at8 = runner.indexOf('**Step 8 — review.**');
-  const at8a = runner.indexOf('**Step 8a — docs, then the FULL verify.**');
-  assert.ok(at8 >= 0 && at8a > at8, 'runner.md has no step 8 heading followed by "Step 8a — docs, then the FULL verify."');
-  assert.ok(!runner.slice(at8, at8a).includes('FULL'), 'step 8 still holds the FULL verify');
-  const step8a = runner.slice(at8a, runner.indexOf('**Step 8b', at8a));
-  const sweepAt = step8a.indexOf('**The doc sweep**');
-  assert.ok(sweepAt >= 0 && step8a.indexOf("Then the **FULL verify** (`context.md`), after the sweep's edits and every test a step added") > sweepAt, 'step 8a does not run the doc sweep, then the FULL verify');
-  assert.ok(runner.includes('verify once, at the end of step 8a — **never once per slice**'), 'step 2 does not place the one FULL verify at the end of step 8a');
-  assert.ok(runner.includes("since step 8a's verify") && runner.includes('reuses the step 8a result'), 'step 9 does not re-verify against the step 8a result');
-  assert.ok(runner.includes('a tests step after regression → before the FULL verify · doc sweep → 8a, then the FULL verify · ship → 9'), 'the eleven-step correspondence does not place a tests step before the FULL verify');
-  assert.ok(squashed('reference/rules.md').includes('the full run belongs to step 8a and to the merge'), 'rules.md does not give the full run to step 8a');
+  assert.ok(runner.includes('8a docs the doc sweep 8b record') && runner.includes('8d verify the FULL verify, once, over the tree that lands'), "runner.md's sequence does not run the FULL verify at 8d, after 8a-8c");
+  assert.ok(!runner.includes('the doc sweep · then the FULL verify run'), "runner.md's sequence still ends step 8a with the FULL verify");
+  assert.ok(runner.includes('| 8d verify | scoped | FULL once before merge | FULL once before merge |') && !runner.includes('| 8a verify |'), "runner.md's tier table does not give the verify to step 8d");
+  const at8a = runner.indexOf('**Step 8a — docs.**');
+  const at8b = runner.indexOf('**Step 8b — write the record');
+  const at8c = runner.indexOf('**Step 8c — claim audit.**');
+  const at8d = runner.indexOf('**Step 8d — the FULL verify.**');
+  const atG2 = runner.indexOf('**Gate 2.**');
+  assert.ok(at8a >= 0 && at8a < at8b && at8b < at8c && at8c < at8d && at8d < atG2, 'runner.md does not order the steps 8a, 8b, 8c, 8d, Gate 2');
+  assert.ok(!runner.slice(at8a, at8d).includes('**FULL verify**'), 'a step before 8d still holds the FULL verify');
+  assert.ok(runner.includes('verify once, at step 8d — **never once per slice**'), 'step 2 does not place the one FULL verify at step 8d');
+  assert.ok(runner.includes("since step 8d's verify") && runner.includes('reuses the step 8d result'), 'step 9 does not re-verify against the step 8d result');
+  assert.ok(runner.includes('doc sweep → 8a · the FULL verify → 8d, after cross-check C · ship → 9'), 'the eleven-step correspondence does not place the FULL verify after cross-check C');
+  assert.ok(runner.includes('and it holds `RECORDS` paths alone'), 'runner.md does not keep the land commit to records');
+  assert.ok(squashed('reference/rules.md').includes('the full run belongs to step 8d and to the merge'), 'rules.md does not give the full run to step 8d');
   const context = squashed('reference/context.md');
-  assert.ok(context.includes('| 8a verify FULL | ran |') && !context.includes('| 8 verify FULL |'), "context.md's ledger example does not name the FULL verify 8a");
+  assert.ok(context.includes('| 8d verify FULL | ran |') && !context.includes('| 8a verify FULL |'), "context.md's ledger example does not name the FULL verify 8d");
   const delegate = fs.readFileSync(path.join(DELEGATE, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(delegate.includes("the runner's step 8a FULL verify is that check"), "delegate-tasks' SKILL.md does not name step 8a's FULL verify");
+  assert.ok(delegate.includes("the runner's step 8d FULL verify is that check"), "delegate-tasks' SKILL.md does not name step 8d's FULL verify");
 });
 
 test("the record and Gate 2 measure a deliverable from its own start, and Gate 2 also shows the unit's total since the claim", () => {
@@ -874,7 +875,7 @@ test('a copy stands in for the skill link where a project refuses committed syml
 });
 
 test('scope-guard.md: the steps file is committed when the state file is, and stays on the machine where state files stay out of git', () => {
-  assert.ok(squashed('reference/scope-guard.md').includes('Committed when the state file is — where the project keeps its state files out of git, both stay on this machine — and kept after the unit lands'), 'scope-guard.md commits the steps file whatever the state file does');
+  assert.ok(squashed('reference/scope-guard.md').includes('Committed when the state file is, at the same three points — where the project keeps its state files out of git, both stay on this machine — and kept after the unit lands'), 'scope-guard.md commits the steps file whatever the state file does');
 });
 
 test("learning.md: the digest is committed as written, and a row is dated by git blame -w with only the repository's ignore file, as retro-gather runs it", () => {
@@ -915,7 +916,7 @@ function exported(rel, names) {
 }
 const cleanGit = { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } };
 
-test("upgrade.md has a version row 12 for 2.2.3-js.15, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
+test("upgrade.md has a version row 13 for 2.2.3-js.16, and both skills, the manifest example and the upgrade's last step name its newest row", () => {
   const text = upgradeMd();
   assert.match(text, /^\| 6 \| 2\.2\.3-js\.8 \| /m, 'the version table has no row 6 for 2.2.3-js.8');
   assert.match(text, /^\| 7 \| 2\.2\.3-js\.10 \| /m, 'the version table has no row 7 for 2.2.3-js.10');
@@ -924,6 +925,7 @@ test("upgrade.md has a version row 12 for 2.2.3-js.15, and both skills, the mani
   assert.match(text, /^\| 10 \| 2\.2\.3-js\.13 \| /m, 'the version table has no row 10 for 2.2.3-js.13');
   assert.match(text, /^\| 11 \| 2\.2\.3-js\.14 \| /m, 'the version table has no row 11 for 2.2.3-js.14');
   assert.match(text, /^\| 12 \| 2\.2\.3-js\.15 \| /m, 'the version table has no row 12 for 2.2.3-js.15');
+  assert.match(text, /^\| 13 \| 2\.2\.3-js\.16 \| /m, 'the version table has no row 13 for 2.2.3-js.16');
   const table = text.slice(text.indexOf('## Version table'));
   const newest = Math.max(...[...table.matchAll(/^\| (\d+) \| /gm)].map(m => Number(m[1])));
   for (const dir of [BOOTSTRAP, DELEGATE]) {
@@ -932,15 +934,17 @@ test("upgrade.md has a version row 12 for 2.2.3-js.15, and both skills, the mani
   assert.ok(text.includes(`"skillVersion": ${newest},`), 'the manifest example is not at the newest version');
   const flat = squashed('reference/upgrade.md');
   assert.ok(flat.includes(`and the manifest written at \`skillVersion\` ${newest}.`), 'the upgrade does not end at the newest version');
-  assert.ok(flat.includes('a v11 install the v12 row, a v10 install the v11 and v12 rows, a v3 install the v4 to v12 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v11, v10 or v3 install to v12');
+  assert.ok(flat.includes('a v12 install the v13 row, a v11 install the v12 and v13 rows, a v10 install the v11 to v13 rows, a v3 install the v4 to v13 rows, a v2 install the v3 row as well'), 'Skipping versions does not route a v12, v11, v10 or v3 install to v13');
 });
 
 test('v11: the owner key asks on Claude Code, a claim hears only what blocks it, and FULL is the session\'s, its known reds no fix round', () => {
   const guard = squashed('reference/commit-guard.md');
   for (const part of [
     '`[M]` **The owner key.**',
-    'On Claude Code the agent runs `HARNESS_LANDING=owner git merge --no-ff <branch>` itself, alone, as one line; the command guard turns it into a permission prompt (`ask`) that shows the landing verdict, and the owner approves with one key.',
-    'and on Codex, ZCode and Kimi, the guard refuses both, and the owner types `! <the command>`.',
+    '**Ask in chat first, then raise the dialog while the owner is there:**',
+    "3. On the owner's yes it runs `HARNESS_LANDING=owner git merge --no-ff <branch>` itself, alone, as one line, one merge at a time. The command guard turns the line into a permission prompt (`ask`) that shows the landing verdict, so each dialog appears while the owner is looking, and the owner approves with one key.",
+    'It never prints a command for the owner to type.',
+    "and on Codex, ZCode and Kimi, there is no dialog: the guard refuses both, and the owner's yes is the owner typing `! <the command>`, the one line the session then gives.",
   ]) assert.ok(guard.includes(part), `commit-guard.md lacks: ${part}`);
   assert.ok(squashed('reference/harness-targets.md').includes('it refuses, ending `` The owner runs it: `! <the command>` ``'), "harness-targets.md does not give the owner key's refusal");
   const runner = squashed('reference/runner.md');
@@ -988,7 +992,7 @@ test('v12: P2-only fix rounds defer, Small carries the claim checklist, Opus rea
   const up = squashed('reference/upgrade.md');
   for (const part of [
     '### Upgrading to v12',
-    'so the landing check says `NONE` and the merge is the owner\'s: `! HARNESS_LANDING=owner git merge --no-ff <branch>`',
+    "so the landing check says `NONE` and the merge is the owner's, asked in chat first and run by the session on the yes: one owner key on Claude Code (`commit-guard.md` › The owner key).",
     '**New binding:** `MAINLINE` in `run-gates.sh`',
   ]) assert.ok(up.includes(part), `upgrade.md lacks: ${part}`);
   const delegate = fs.readFileSync(path.join(DELEGATE, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
@@ -1285,7 +1289,7 @@ test('v9: the claim audit reads behaviour claims in one round, and record prose 
     assert.ok(auditor.includes(part), `claim-auditor.md lacks: ${part}`);
   }
   assert.ok(!auditor.includes('## The two-round rule'), 'claim-auditor.md still has the two-round rule');
-  assert.ok(squashed('reference/runner.md').includes('| blocking, **behaviour claims**, one round |'), "the runner's 8c row is not one round over behaviour claims");
+  assert.ok(squashed('reference/runner.md').includes('with critical code: blocking, the "Done when" **behaviour claims**, Sonnet, one round'), "the runner's 8c row is not one round over behaviour claims");
 });
 
 test('v9: batched rows carry a Rows: line, and the run\'s blocks live in process.md outside the base', () => {
@@ -1315,6 +1319,82 @@ test("upgrade.md's v9 section moves the run's blocks, asks the stakes and the re
   for (const hazard of ['stakes-line-missing', 'block-in-base']) {
     assert.ok(text.includes(`| \`${hazard}\` |`), `upgrade.md has no fix row for ${hazard}`);
   }
+});
+
+// ── RECORDS: one pattern in the gates and both review wrappers ───────────────
+
+/** The RECORDS pattern each file binds, as regex source text. */
+function recordsPatterns(gates, codexCore, claudeCore) {
+  const shell = gates.match(/^RECORDS='([^']*)'$/m);
+  const js = text => (text.match(/^export const RECORDS = \/(.*)\/;$/m) || [])[1];
+  return { gates: shell && shell[1], codex: js(codexCore), claude: js(claudeCore) };
+}
+
+test('RECORDS: run-gates.sh, codex-run-core.mjs and claude-run-core.mjs bind one pattern', () => {
+  const read = rel => fs.readFileSync(path.join(BOOTSTRAP, 'templates', rel), 'utf8');
+  const gates = read('run-gates.sh');
+  const codex = read('scripts/lib/codex-run-core.mjs');
+  const claude = read('scripts/lib/claude-run-core.mjs');
+  const seen = recordsPatterns(gates, codex, claude);
+  for (const [file, source] of Object.entries(seen)) assert.ok(source, `no RECORDS binding found in the ${file} file`);
+  // the shell copy is an ERE; a JS literal escapes the slashes it needs to
+  const plain = source => source.replace(/\\\//g, '/');
+  assert.strictEqual(plain(seen.codex), seen.gates, 'codex-run-core RECORDS differs from run-gates.sh');
+  assert.strictEqual(seen.claude, seen.codex, 'claude-run-core RECORDS differs from codex-run-core');
+  // mutant: a wrapper that widens its copy must fail the check
+  const wider = recordsPatterns(gates, codex.replace('steps\\.jsonl)', 'steps\\.jsonl|log\\.md)'), claude);
+  assert.notStrictEqual(wider.codex, seen.codex, 'mutation did not apply');
+  assert.notStrictEqual(plain(wider.codex), seen.gates, 'a widened codex-run RECORDS still matches');
+});
+
+// ── the shipped run-gates test: an install's bindings never reach it ──────────
+
+/** run-gates.sh's [B] bindings, each name to the value its line assigns, quotes dropped. */
+function gateBindings(gates) {
+  const lines = gates.matchAll(/^# \[B\][^\n]*\n(?:#[^\n]*\n)*([A-Z_]+)=(?:'([^']*)'|(\S*))$/gm);
+  return new Map([...lines].map(m => [m[1], m[2] ?? m[3]]));
+}
+
+/** What runCopy gives each binding: its RUN_GATES_ env value, or SCOPED_PATHS's template constant. */
+function runCopyValues(runTest) {
+  const start = runTest.indexOf('function runCopy(');
+  const body = start < 0 ? '' : runTest.slice(start, runTest.indexOf('\n}\n', start));
+  const values = new Map();
+  for (const m of body.matchAll(/RUN_GATES_([A-Z_]+): (?:'([^']*)'|String\.raw`([^`]*)`)/g)) values.set(m[1], m[2] ?? m[3]);
+  const scoped = runTest.match(/^const TEMPLATE_SCOPED = String\.raw`([^`]*)`;$/m);
+  if (scoped && body.includes('o.scoped ?? TEMPLATE_SCOPED')) values.set('SCOPED_PATHS', scoped[1]);
+  return values;
+}
+
+// bindings the shipped tests keep off; a test that needs one sets it
+const OFF_IN_TESTS = ['DOCS_ONLY', 'KEY_EXTRA', 'SNAPSHOT_COPY', 'ADMIT'];
+
+/** Each binding runCopy leaves to the install, or gives a value other than the template's. */
+function bindingMismatches(gates, runTest) {
+  const have = runCopyValues(runTest);
+  const out = [];
+  for (const [name, value] of gateBindings(gates)) {
+    if (!have.has(name)) out.push(`unset: ${name}`);
+    else if (have.get(name) !== value && !(OFF_IN_TESTS.includes(name) && have.get(name) === '')) out.push(`${name}: ${have.get(name)}, not ${value}`);
+  }
+  return out;
+}
+
+test('run-gates.test.mjs: runCopy gives every [B] binding the template value (or off), so an install never reaches it', () => {
+  const gates = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'run-gates.sh'), 'utf8');
+  const runTest = fs.readFileSync(path.join(BOOTSTRAP, 'templates', 'scripts', 'lib', 'run-gates.test.mjs'), 'utf8');
+  assert.ok(gateBindings(gates).size >= 12, `too few bindings found: ${[...gateBindings(gates).keys()]}`);
+  assert.deepStrictEqual(bindingMismatches(gates, runTest), []);
+  // mutants: a runCopy that drops SERIAL, or runs two gates at once, must fail the check
+  const dropped = runTest.replace(/^ {4}RUN_GATES_SERIAL: '',\n/m, '');
+  assert.notStrictEqual(dropped, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, dropped), ['unset: SERIAL']);
+  const two = runTest.replace(/^ {4}RUN_GATES_GATE_JOBS: '1',$/m, "    RUN_GATES_GATE_JOBS: '2',");
+  assert.notStrictEqual(two, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, two), ['GATE_JOBS: 2, not 1']);
+  const scopedOnly = runTest.replace('o.scoped ?? TEMPLATE_SCOPED', 'o.scoped');
+  assert.notStrictEqual(scopedOnly, runTest, 'mutation did not apply');
+  assert.deepStrictEqual(bindingMismatches(gates, scopedOnly), ['unset: SCOPED_PATHS']);
 });
 
 console.log(`\nPassed: ${passed}`);

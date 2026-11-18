@@ -81,9 +81,14 @@ export const MIN_SHARE = 5;
 // older than this many days.
 export const REWRITE_ALERT_PERCENT = 5;
 export const QUEUE_ALERT_DAYS = 14;
+// [B] A test id that flaked at least FLAKE_MIN times in the FLAKE_DAYS days before the window's end (the
+// gate runner's flakes register, retro-gather's readFlakes) is a follow-up line in the digest, never a unit.
+export const FLAKE_DAYS = 7;
+export const FLAKE_MIN = 3;
 // [B] An untagged dispatch's step, from words in its description; the first match wins. Units from
 // before the step tag carry none, so this is how their subagent cost finds its step.
 export const STEP_WORDS = [
+  [/\b8d\b|full verify/i, '8d'],
   [/\b8c\b|claim/i, '8c'],
   [/\b8b\b|\brecord\b/i, '8b'],
   [/\b8a\b|docs? (?:sweep|update)/i, '8a'],
@@ -115,7 +120,7 @@ export const OWNER_WAIT_CAP_MIN = 24 * 60;
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 // The runner's steps in sequence order (harness-bootstrap's reference/runner.md › The sequence), for listing.
-const STEP_ORDER = ['0a', '0', '1', 'g1', '2', '3', '4', '5', '6', '7', '8', '8a', '8b', '8c', 'g2', '9', '10'];
+const STEP_ORDER = ['0a', '0', '1', 'g1', '2', '3', '4', '5', '6', '7', '8', '8a', '8b', '8c', '8d', 'g2', '9', '10'];
 // An empty cell, however it says so: ``, `—`, `none`, `none (owner, Gate 2)`, `— (none named)`.
 const EMPTY = /^(?:|none|nothing|n\/a|-|—|–)(?:[\s.,;:]*\(.*\))?[\s.]*$/i;
 const VALUE_FLAGS = {
@@ -981,6 +986,53 @@ export function countFindings(text) {
 }
 
 /**
+ * The gate runner's flakes register (`flakes.jsonl`, one JSON object per line: `{"at":"<ISO>","gate":"<name>",
+ * "ids":["<test id>",...],"tree":"<hex>","top":"<repo top>"}`) -> [{ at (ms), gate, ids }]. A line that is
+ * not JSON, not an object, has no readable `at`, no gate name or no id is skipped; so is a non-string id.
+ */
+export function parseFlakes(text) {
+  const out = [];
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const at = Date.parse(r?.at);
+    const ids = Array.isArray(r?.ids) ? [...new Set(r.ids.filter((x) => typeof x === 'string' && x.trim() !== ''))] : [];
+    if (!Number.isFinite(at) || typeof r.gate !== 'string' || r.gate.trim() === '' || ids.length === 0) continue;
+    out.push({ at, gate: r.gate.trim(), ids });
+  }
+  return out;
+}
+
+/**
+ * The test ids that flaked at least `min` times in the `days` before `until` (an ISO time): one entry per
+ * gate and id -> [{ gate, id, n, last }], the most often first, then by gate and id. A register line counts
+ * once for an id, and one dated after `until` not at all.
+ */
+export function flakyIds(rows, { until, days = FLAKE_DAYS, min = FLAKE_MIN }) {
+  const end = Date.parse(until);
+  const by = new Map();
+  for (const r of rows ?? []) {
+    if (!inWindow(r.at, new Date(end - days * DAY).toISOString(), until)) continue;
+    for (const id of r.ids) {
+      const key = `${r.gate}\0${id}`;
+      const f = by.get(key) ?? { gate: r.gate, id, n: 0, last: r.at };
+      f.n += 1;
+      f.last = Math.max(f.last, r.at);
+      by.set(key, f);
+    }
+  }
+  return [...by.values()]
+    .filter((f) => f.n >= min)
+    .sort((x, y) => y.n - x.n || (x.gate < y.gate ? -1 : x.gate > y.gate ? 1 : 0) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+    .map((f) => ({ ...f, last: iso(f.last) }));
+}
+
+/**
  * Yield by step: codex-run's ok runs in the window by kind (its step), the verdicts kept for them
  * (`verdictCopy`, read into `verdicts`: copy path -> text), how many of those list a P0 or P1, and
  * the P0/P1 lines they list. A run whose copy is missing counts in `runs`, not `kept`; the rate is
@@ -1241,7 +1293,7 @@ const unitOfPath = (p) => (p ? String(p).replace(/^.*\//, '').replace(/\.state\.
  * dates }, followUps: { text, dates } | null, states: [{ text, changed, path? }], steps: Map unit -> markers,
  * rows, events (each tagged with its session), commands (contextCommands, tagged the same), sessionUnits:
  * Map session -> Set of units, sessions, ledger: entries | null, codex: [parsed Codex threads],
- * claudeRuns: entries | null, merges and fixes: the mainline's (retro-gather's mainlineHistory) | absent,
+ * claudeRuns: entries | null, flakes: [parseFlakes rows] | null, merges and fixes: the mainline's (retro-gather's mainlineHistory) | absent,
  * previous: [data] }; `columns` as for logRecords.
  */
 export function buildRetro(g, { project, now, since = null, until = null, columns = undefined }) {
@@ -1324,6 +1376,7 @@ export function buildRetro(g, { project, now, since = null, until = null, column
     friction: frictionThemes(records, win),
     frictionCells: records.filter((r) => r.friction && inWin(r.landed)).map((r) => ({ unit: r.id, friction: r.friction })),
     missed: records.filter((r) => r.missed && inWin(r.landed)).map((r) => ({ unit: r.id, missed: r.missed })),
+    flakes: g.flakes ? flakyIds(g.flakes, { until: win.until }) : null,
     queue: {
       followUps: g.followUps ? followUpsSummary(g.followUps.text, g.followUps.dates, now) : null,
       stateP3: states.reduce((n, s) => n + s.p3, 0),
@@ -1496,6 +1549,10 @@ export function formatDigest(d, { items = 8, width = 160 } = {}) {
       : '- Follow-ups: no doc',
     `- P3 findings still to do in state files: ${d.queue.stateP3}`,
   );
+  // a flaky test is a follow-up line, never a unit (the gate runner re-ran it once and it passed)
+  const flaky = d.flakes ?? [];
+  L.push(...flaky.slice(0, items).map((f) => `- FLAKY ${cell(f.gate)} ${clip(cell(f.id), width)} ${f.n}x in ${FLAKE_DAYS}d: follow-up, never a unit`));
+  if (flaky.length > items) L.push(`- ... ${flaky.length - items} more flaky ids`);
   const dc = d.decisions;
   if (dc.units) {
     const cl = dc.classes;

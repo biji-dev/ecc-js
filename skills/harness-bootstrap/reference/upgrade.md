@@ -180,7 +180,7 @@ same upgrade, or do not install the hook yet.
 the imports of every core the sheet changes. Two sets do today: `unit-step-core`,
 `unit-record-core`, `estimate-core`, `retro-core`, `retro-gather`,
 `harness-due-core`, `unit-cost-core`, `run-sources`, `harness-host-core`,
-`review-gate-core` and `claude-run-core`; and `admission` and `admission-core`. Applied one by one, a script run in
+`review-gate-core`, `claude-run-core` and `deploy-list-core`; and `admission` and `admission-core`. Applied one by one, a script run in
 between fails on a name the newer core imports.
 
 `[M]` **A scaffold gains a column in place.** A column the newer format adds goes
@@ -215,7 +215,7 @@ change (then register the repository for the weekly job, `learning.md` › The w
 job):
 
 ```json
-{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 12, "generated": "<date>",
+{ "schema": 1, "skill": "harness-bootstrap", "skillVersion": 13, "generated": "<date>",
   "modes": ["change"], "targets": ["claude", "codex"],
   "roles": { "runner": "task-runner" },
   "entries": [
@@ -254,7 +254,10 @@ hashed fresh.
 `[M]` **Entries no template covers.** A harness file the project wrote itself in
 place of a template (its own agent-docs lint, its own runner) is a `reviewed` entry
 with no `template`: an upgrade proposes section-level changes and never merges into
-it. An entry whose file the project deleted reads `missing`: ask whether to generate
+it. The entry names the templates it stands in for in `replaces` (one path or a
+list, for example `"replaces": ["templates/scripts/check-agent-docs.mjs",
+"templates/scripts/lib/check-agent-docs.test.mjs"]`), so `harness-status` does not
+report them as not installed; it reads `replaces` only on such an entry. An entry whose file the project deleted reads `missing`: ask whether to generate
 it again or drop the entry. A renamed file moves its entry, `template` and
 `templateSha256` included, to the new path.
 
@@ -308,6 +311,9 @@ a `SKILL.md`: frontmatter must be the first line.
 | `keyword-commit-hook` | remove it: a hook that checks for tags the agent writes itself is keyword matching (`rules.md` §3) |
 | `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
 | `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
+| `template-not-installed` | each template it names is a core one newer than the install's `skillVersion`, or an older or optional one that a new file, or one the install keeps, imports (or a kept shell template runs): install it (`SKILL.md` › Core, the row that names it), with its manifest entry; where a reviewed entry the line names is the project's own file in its place, name the template in that entry's `replaces` and install nothing |
+| `template-never-installed` | each core template it names shipped at the install's own `skillVersion` or before, the install never took it, and nothing it keeps or this upgrade installs imports it: not this upgrade's work. Install nothing, add one follow-up row naming the files for the owner (install them as a unit of their own, or name them in `replaces` on the project's own file), and do not stop. A block the upgrade regenerates leaves out the steps that run them (for `intake.mjs`, the Intake type and its Gate 1 line) |
+| `template-unrecorded` | an entry that is not `reviewed` holds the template's file and records no `template` (a rules block from before templates were recorded): record `template` on that entry, and `templateSha256` when the upgrade regenerates it from the current template; nothing to install |
 | `agent-effort-unpinned` | add `effort: high` to the agent file's frontmatter: without it the agent inherits the session's level, and a session at `max` reaches every reviewer |
 | `agent-model-unpinned` | add `model:` to the agent file's frontmatter (`opus` for judgment, `sonnet` for bounded work): one dispatch in ten names no model, and without a pin those run on the session's Opus |
 | `effort-above-high` | lower it to `high` — an agent file at `xhigh` or `max`, or `CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel` above `high` in the project's settings; raise effort per question, never per session (`gate-design.md`) |
@@ -346,11 +352,12 @@ entry is stale, and the sheet's list of what the owner reviews again.
 | 10 | 2.2.3-js.13 | the run waits on the owner only where the owner must decide: the **standing grant** and the digest (`gate-design.md` › The standing grant), the decision rows' `By` and `Card kind`; **`production: none \| live`** on the stakes line; the **landing check** (`review-gate.mjs --landing`, `lib/snapshot-tree.mjs`, the guard's refusal, the guard also as `reference-transaction`); rounds 3 to 5 as adversarial, redesign and cut; the **relevance test** and the **harness freeze**, reports never units (`runner.md`); `harness-due.mjs`'s new lines; budgets that warn; an absolute `core.hooksPath`; a landing whose host names itself nowhere counts no review row; hazards `grant-line-missing`, `push-deploys-missing`, `production-missing`, `grant-without-machine-gates`, `ref-unguarded`, `hooks-path-relative` and `hooks-path-missing`. The rest is in *Upgrading to v10* below |
 | 11 | 2.2.3-js.14 | the owner is asked last and once: the **owner key** (`commit-guard.md`; the command guard asks for `HARNESS_LANDING=owner git merge --no-ff` and a deploying push, refuses any other form, and adds `unbounded-wait` and `full-verify-executor`); **asks are the run's last action**; **task first** (`harness-due.mjs --claim` prints only `DUE preflight` and `WAIT`, the plain run once at the end of the run, reports only once the product queue is empty; the `HOLD` valve goes); unsure → the grant on reversible C cards; the local dev stack is the agent's; **act, don't warn** (the leftover hook reaps and reports on every Claude Code install, the memory notice goes; admission and a gate timeout in `run-gates.sh`, FULL only by the session; `DISK_MIN_GB` 10); known reds; session-resume on UserPromptSubmit; `.gitattributes` union merges for record docs; cleanup on the owner's word. The rest is in *Upgrading to v11* below |
 | 12 | 2.2.3-js.15 | pay only for the steps that find: a round that fixed only P2s is **`defer`** on cold code and on critical code from round 3 (`gate-design.md` › the fix-round table); Small's lane A carries the **claim checklist** and the claim audit is Full only; the **Opus `code-reviewer`** reads what the second family wrote, a Sonnet one only when the second family is unavailable; lane B's Opus auditor only when a reader sits outside the diff; **known reds in code** (`run-gates.sh` prints `KNOWN`, run-counted prints the failing tests); codex-run's **`refused`** (exit 5, that pass on Opus) and **verdict copies**, the retro's *Yield by step*; session-resume names only this checkout's row, and an executor's run that would be FULL exits 99; the guard trusts a fetch into the mainline on git before 2.50; the own skill **coordinate-sessions**. The rest is in *Upgrading to v12* below |
+| 13 | 2.2.3-js.16 | the owner at deploy, not at every merge: never-auto product code **merges when green** with a `Never-auto:` trailer and reaches the owner on the **deploy list** (`deploy-list.mjs`, `gate-design.md` › The deploy list); the **owner key for `GUARDS` only**, asked in chat first and raised by the session; `NONE` becomes **`RE-REVIEW`** where a critical path was never read; reversible kinds decided, a card asked at most twice then `OWED`; **state lines that name who waits**; **one FULL per unit, last** (8a docs, 8b record, 8c claims on Sonnet for critical code, 8d FULL verify), `RECORDS` reused at the land and the merge; the `paths` gate mode, `GATE_JOBS`, `RETRY_FLAKY`, the host-wide FULL lease; `SCOPE=checkout` by default; per-slice review only on critical slices and fix rounds counted and capped; `credential-read`; state committed at three points; regenerated from `runner.md`, `gate-design.md`, `context.md`, `scope-guard.md` and `claim-auditor.md` |
 | 2 · foundation | 2.2.1-js.11 | the foundation stage for repositories that are documents only (`foundation.md`): manifest `stage` and `flipAfter`, hazard `foundation-stage-has-tests`; the rules block copied from `templates/agents-rules.md`; Phase C fits the project's tooling, lets project rules tighten tiers, and ends with a fresh-agent review of the install. Additive — `skillVersion` stays 2 |
 
 `[M]` **Skipping versions.** An install takes every row above its manifest's
-`skillVersion` in one upgrade — a v11 install the v12 row, a v10 install the v11 and v12
-rows, a v3 install the v4 to v12 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
+`skillVersion` in one upgrade — a v12 install the v13 row, a v11 install the v12 and v13
+rows, a v10 install the v11 to v13 rows, a v3 install the v4 to v13 rows, a v2 install the v3 row as well — on one sheet, never one upgrade per version. A component more than
 one row changed gets one sheet row, proposed from the current template; its older
 form is never installed on the way. What a skipped row changes in a block the
 manifest records as `reviewed` (the policy; the gate table where the owner reviewed
@@ -361,7 +368,7 @@ with no manifest starts from the fingerprints (Step 1): its entries are `legacy`
 and the current core table names what is `missing`. The upgrade ends as an install
 does: the repository registered for the weekly job (`learning.md` › The weekly job),
 `harness-due.mjs` and `harness-host.mjs` run once, and the manifest written at
-`skillVersion` 12.
+`skillVersion` 13.
 
 `[M]` **The upgrade cadence.** An install upgrades only between units, and only
 when a defect in its version costs product work or the owner asks; a new version
@@ -618,11 +625,12 @@ pilot. **Land it between runs**, with no row held or parked.
 `[M]` **Lands by the grant, between units.** Every v11 row is a replace, a keep or a
 clean merge, so there is no owner card. The guard files it replaces
 (`command-guard.mjs`, `leftover-processes.mjs`, `session-resume.mjs`, `run-gates.sh`)
-make the landing check say `NONE`. This once the owner types
-`! HARNESS_LANDING=owner git merge --no-ff <branch>`: the command guard that reads
-the line is still the mainline's older one, which has no owner key (from v9 or
-older it does not refuse the override either, so the agent never sets it). From
-v11 on, such a merge is one owner key on Claude Code (`commit-guard.md`). An
+make the landing check say `NONE`. The session asks in chat first
+(`commit-guard.md` › The owner key). This once the owner's yes is the owner typing
+the one line the session gives: the command guard that reads the line is still the
+mainline's older one, which has no owner key (from v9 or older it does not refuse
+the override either, so the agent never sets it). From v11 on, such a merge is
+asked in chat and run by the session, one owner key on Claude Code. An
 install upgrades only between units, never pausing one. **A
 version whose rows are all replace, keep or clean merge has no owner card**, in this
 upgrade and every later one (`SKILL.md` › Phase 0).
@@ -652,8 +660,8 @@ code. An install's feedback goes to its `docs/harness/upstream-notes.md`, never 
 replace, a keep or a clean merge, so there is no owner card. The files it replaces
 include guards (`run-gates.sh`, `run-counted.mjs`, `codex-run.mjs`, the review-gate
 core, the commit guard's hooks), so the landing check says `NONE` and the merge is
-the owner's: `! HARNESS_LANDING=owner git merge --no-ff <branch>`, one owner key on
-Claude Code (`commit-guard.md`).
+the owner's, asked in chat first and run by the session on the yes: one owner key on
+Claude Code (`commit-guard.md` › The owner key).
 
 `[M]` **What regenerates.** `run-gates.sh`, `run-counted.mjs` and its core,
 `codex-run.mjs` and its core, `claude-run.mjs`, `lib/snapshot-tree.mjs`, the review-gate core, `retro-core.mjs` and
@@ -670,3 +678,133 @@ the second family wrote to a Sonnet reviewer goes: `review-gate.mjs` names the O
 (a whole `db/` or repository folder) narrows to the template's (`\.sql$`, the
 migrations folder, the schema file). A runbook that retries a `failed` Codex pass
 reads the outcome first: `refused` reruns on Opus, never on Codex.
+
+### Upgrading to v13
+
+`[M]` **One merge, asked in chat first.** Every v13 row is a replace, a keep or a clean
+merge, plus the bindings below, so there is no owner card. The files it replaces
+include guards (`run-gates.sh`, `run-counted.mjs`, `admission.mjs` and its core, the
+review-gate core, `codex-run.mjs` and its core, the command guard, `session-resume.mjs`, the commit
+guard's hooks), so the landing check says `NONE`: the session runs the merge hook's
+checks first, and the branch's own `node scripts/review-gate.mjs --landing <branch>
+--base <mainline>` too, since
+the merge hook still runs the old copy: the v13 line names the critical paths no review
+read, and their adversarial pass runs before the ask. It asks in one chat line and, on
+the yes, runs the owner-key merge itself (`commit-guard.md` › The owner key). **From v11**, the v12 rows and the v13 rows go
+together, as one upgrade and one merge.
+
+`[M]` **What regenerates.** `run-gates.sh` and its test (the `paths` gate mode,
+`RECORDS`, `RETRY_FLAKY`, `GATE_JOBS` and `SERIAL`, the lease), `admission.mjs` and
+its core (the host-wide lease), the review-gate core and its golden matrix
+(`review-gate.golden.json`), `review-gate.mjs`, `codex-run.mjs` and its core (a refusal
+sent as an item error is refused), `run-counted.mjs` and its core (a test path a workspace
+runner prints from inside a package names the repo's file: vitest's by the root its
+`RUN` line names, another by the one listed file it is the tail of), the command guard (`credential-read`), `session-resume.mjs`, `harness-guard.sh` and its
+hook copies, `unit-record.mjs` and its core (`--trailer`), `harness-due.mjs` and its
+core (the undeployed line), `retro-core.mjs` (the flake line), the new
+`deploy-list.mjs` and its core, each with its test; the rules block (`templates/agents-rules.md`).
+The blocks generated from the references row 13 names regenerate too: the runner skill
+and its process blocks (tiers, gates, scope, context) and the claim auditor.
+`harness-status` reads them `unchanged` or `edited`, never `newer`, so they regenerate
+by the row (Step 2's table), not by its count of templates. The golden matrix is the
+template's file as it is: no binding changes it (the notes path is `<notes>`).
+`harness-status` names each core template the manifest records nowhere and the install's
+version did not ship (`template-not-installed`): from v11 or v12 that is `deploy-list.mjs`,
+its core and test, and the golden matrix, the new files of this upgrade, with any older or
+optional template that they or a file the install keeps import and the install lacks. A core template the install's own version
+shipped, that it never took and that nothing it keeps or installs imports, is
+`template-never-installed`: a follow-up row, not an install or a stop. An entry that is not
+`reviewed` and holds a template's file with no `template` recorded is `template-unrecorded`:
+a manifest edit. A known-red record written before v13
+names a package's failing tests by the package's own path, so it matches nothing until the
+first FULL at the mainline's tip after the merge writes it again; until then those reds
+fail, as they did.
+
+`[M]` **Bindings, each read from the install.** A binding a shipped test pins changes
+with its pin: `EXPECTED_SCOPE` (the guard's test), `EXPECTED_CRITICAL` (the review-gate
+core's), `LEASE_SLOTS` and the admission floors (`MEM_RESERVE_GB`, `DISK_FLOOR_GB`,
+`LOAD_PER_CPU`, `WAIT_S`, `POLL_S`, `FREE_COMMAND`, and the `FLOORS` object built from
+them: admission-core's bindings tests and its `parseArgs` defaults) and `RECORDS` (codex-run-core's and
+claude-run-core's). The run-gates test runs every binding at the template's value, or
+off for `DOCS_ONLY`, `KEY_EXTRA`, `SNAPSHOT_COPY` and `ADMIT`.
+- `SCOPE="checkout"` in `harness-guard.sh`, in every install, and the same value in
+  its test's `EXPECTED_SCOPE`: with one checkout it behaves as `repo` did, and with
+  worktrees each holds its own lock. The registry's active table gains a `Worktree`
+  column where it has none (`main` on every row the main checkout holds), and a cell
+  that does not name a checkout `git worktree list` shows (a placeholder such as
+  `TBD`, a gone worktree, the worktrees' parent directory) is fixed first: the v13
+  guard refuses every commit over it.
+- `WORKTREES` (`leftover-processes.mjs`): where coordinate-sessions' worktree script puts the lane
+  worktrees, when that is not the default.
+- `PRODUCT_PATHS` (`run-gates.sh`): the fail-closed allowlist of product paths whose
+  change alone skips a `paths` gate in FULL. Bound from the install's layout, and it
+  never holds a path a harness test reads: grep the shipped tests for every path
+  first. Empty keeps the gate `full`. The example harness gate becomes
+  `gate_counted harness paths …`. A `paths` gate also runs in a scoped run when a
+  change falls outside `PRODUCT_PATHS`, which a `full` gate never did. `grep -E` has
+  no lookahead, so a file type is left out by naming the directories that hold
+  product code; check the value with `git ls-files | grep -cE '<value>'`, and with
+  the test files alone, before binding it.
+- `RECORDS` (`run-gates.sh`, and the same pattern in `codex-run-core.mjs` and
+  `claude-run-core.mjs`, as a JavaScript regex literal with `\/` for `/`): widened to
+  the install's ledger files when no gate reads them.
+- `GATE_JOBS` and `SERIAL` (`run-gates.sh`): 2 where admission's memory reserve fits
+  two gates at once, else 1; `SERIAL` names the gates that share a database or a port,
+  and stays empty at 1, where every gate already runs alone.
+- `LEASE_SLOTS` (admission): the template default, `max(1, min(2, memory GB ÷ 8))`,
+  unless the host's FULL peak says otherwise; the same value in every install on the
+  host, since they share its lease directory.
+- `RETRY_FLAKY=1` (`run-gates.sh`).
+- `DOCS_ONLY` (`run-gates.sh`), only where no gate reads the matched `.md` files.
+- **The scoped commands:** each gate's scoped line made scoped in fact — a workspace
+  loop over `RUN_GATES_CHANGED_FILE` that tests each changed package once, `vitest
+  related` — with the file-reading guard tests, repository-wide scanners and a
+  whole-repository typecheck in an `always` gate of their own. A turbo
+  `--filter=...[<since>]` misses uncommitted edits, so it suits a snapshot run only. A
+  loop that prints more than one test summary is not counted, so known reds do not
+  apply to it. Target: a one-file scoped run under 3 minutes, measured during the
+  upgrade and quoted on the sheet; where scoped runs are already under it, change only
+  a line that runs a package the change did not touch.
+- **A merge-time suite** (a merge hook that runs the tests) points at `run-gates.sh`,
+  which prints `REUSED` for a tree the unit verified.
+- **The merge block's** never-auto line becomes two, `Owner merges: GUARDS` and
+  `Owner at deploy: <the never-auto product categories>` (`gate-design.md` › The
+  standing grant), the categories copied from the reviewed policy. A policy sentence or
+  bullet that still has the owner merge never-auto product code is a proposal on the
+  sheet, since the block is reviewed.
+- **`LIVE_REF`** (`harness-due-core.mjs`): the ref or tag of what is deployed, where
+  the install has one; null keeps the undeployed line off. `deploy-list.mjs -` means
+  nothing is live: where production is live with no ref, the owner names the deployed
+  commit and the list runs from it.
+- **`NOTES`** (the review-gate core): the install's upstream-notes file, where it is
+  not `docs/harness/upstream-notes.md`.
+
+`[M]` **Local rules v13 removes.**
+- A line that sends a reversible kind to the owner (copy, UI inside the design
+  system, ordering, internal names, demo data, a branch deletion, a flaky re-run,
+  which reviewer runs) goes, unless a decision row of the owner's names it.
+- "Wait for the owner's go" after low memory goes: an admission refusal re-queues.
+- A foreground wait on a FULL goes: the FULL runs in the background and its notice
+  wakes the session.
+- A local `GUARDS` entry that is product code (a contract or adapter file, not a
+  guard, a gate, a hook or a reviewed-block file) moves to `CRITICAL`, unless a
+  decision row of the owner's put it there.
+- A local per-step state commit goes: the state file is committed at Gate 1, before
+  the FULL verify and at land.
+
+`[M]` **Local builds v13 subsumes.** An install's own `SCOPE=checkout` fix, its own
+lean `paths` lane for the harness tests, and its own parallel-gate, flake-retry or
+FULL-lease work are replaced by the template's when they do the same job; their
+values carry over as bindings, and a branch still open for one closes as superseded.
+The owner's own decision rows stay local policy.
+
+`[M]` **The budgets.** Read `check-agent-docs.mjs --base` before and after the rules
+block and the merge lines: a file pushed past its budget goes in the one list as a move
+or a raise.
+
+`[M]` **What the sheet reports.** The share of product files the install's
+`CRITICAL` covers (the tracked production files it matches over all tracked production
+files), measured, with no change proposed: narrowing it is a later
+version's call, with data. The one-file scoped run's time, before and after. The FULL
+verify moves from step 8a to 8d, so compare steps 8a to 8d together across the
+upgrade in the by-step figures.

@@ -19,21 +19,29 @@ queue; `/task-runner <unit>` runs that unit, then the queue; `/task-runner <unit
 only`, that unit alone. It runs under the standing grant (`gate-design.md` › The
 standing grant); a kickoff only narrows it. After a land, announce the next unit in
 one line and start it, in this order: a unit that can land; answered parked units;
-the next ready **original plan row**; follow-ups the owner scheduled. Stop only on
-a command's word — all left waiting on the owner (`gate-design.md` › Parking a
-unit), a `Stop:` line, the host's own usage limit — or when nothing passes the
-relevance test: then end on `DONE — waiting on you:`, the `OWED` lines first
-(› Due-checks). Never invent work. A memory refusal at a live step parks its unit;
-a second family out of quota is `degraded`, never a stop, and a pass its safety
-filter refused reruns on Opus (`refused`).
+the next ready **original plan row**; follow-ups the owner scheduled, one at a time
+and only when no plan row is ready. Stop only on a command's word — all left
+waiting on the owner (`gate-design.md` › Parking a unit), a `Stop:` line, the host's
+own usage limit — or when nothing passes the relevance test: then end on
+`DONE — <what landed>`, adding `owner: <n> open` when something waits on the owner
+(the `OWED` lines go to the digest, › Due-checks). Never invent work. An admission
+refusal for memory (exit 97) re-queues the run with no owner message, and two in a
+row go into the state line as a fact, never a question; a second family out of
+quota is `degraded`, never a stop, and a pass its safety filter refused reruns on
+Opus (`refused`).
 > Origin: 28 of 118 sessions in the third project ended in a hand-off, about 90%
 > forced by a "start a new session" budget rule; v7's offers drew 94 keep-lines, 38
 > `/clear`s and 33 "what's next" prompts in 14 days (`rules.md` §3).
 
-`[M]` **Asks are the run's last action.** A unit whose landing needs the owner key
-(`commit-guard.md`) parks with its merge line ready and the run goes on; at its end
-the owner-key merges run one after another, and its owner-fact cards go out in one
-message. The end message adds one `Later (harness): …` line, the digest and, with
+`[M]` **Asks are the run's last action.** A unit whose landing needs the owner key (a
+`GUARDS` diff or an upgrade, `commit-guard.md`) parks with its merge ready and the
+run goes on. Before asking, the session runs everything the merge hook will run —
+the landing check and any merge-time suite — on a branch that already holds the
+mainline's tip. At the run's end it asks in one chat line ("2 guard merges ready: …
+— merge?") and ends its turn; on the owner's yes it runs each
+`HARNESS_LANDING=owner git merge --no-ff <branch>` itself, one at a time, so each
+dialog appears while the owner is looking. **It never prints a command for the
+owner to type.** The owner-fact cards go out in the same message. The end message adds one `Later (harness): …` line, the digest and, with
 the product queue dry, the `cleanup available:` line (`hygiene.md`).
 
 `[M]` **The relevance test.** Anything that is not a plan row or the owner's own
@@ -87,6 +95,13 @@ that a test reads a doc. The harness's own files — `AGENTS.md`, `CLAUDE.md`, t
 skills and agents — are read by the agent-docs lint, so a change to them is
 **Code**, never Docs; a diff of harness paths alone runs the harness lane (below).
 
+`[M]` **Under a controller, a Docs-light or records-only diff takes no FULL slot.**
+It merges when its own checks pass: `run-gates.sh` prints `REUSED` for it through
+`DOCS_ONLY` (prose no gate reads) or `RECORDS` (state and steps files), so the
+mainline's check costs nothing. **A records-only diff never runs FULL.**
+> Origin, the v12 study: one install spent four FULL starts on a change request's
+> text edits.
+
 `[M]` **Docs units still go through the lock and the merge policy.** They take no
 Scope block, but they claim a registry row, branch and land like a Small change —
 the guard refuses an unclaimed commit while a run holds the lock on this checkout, and where the
@@ -108,11 +123,12 @@ merge policy sends every tier to the owner, a docs change waits for the owner to
 7  visual      UI only — structure before pixels
 8  review      routed reviewers + the second family · lane B blast radius · adversarial (Full)
                · bounded fix rounds
-8a docs        the doc sweep · then the FULL verify run
-8b record      written last, from the diff, as fields
-8c claims      lane C — the claim auditor (claims, test honesty, fix commits)
+8a docs        the doc sweep
+8b record      from the diff, as fields
+8c claims      lane C — the claim auditor (behaviour claims, Full with critical code)
+8d verify      the FULL verify, once, over the tree that lands
                                                           ══ GATE 2 ══  merge when green
-9  land        guard → landing check → land commit → release the lock → merge → push by the grant
+9  land        guard → landing check → land commit (records only) → release the lock → merge → push by the grant
 10 teardown    stop what was started; close the state file; start the next ready unit
 ```
 
@@ -126,8 +142,19 @@ numbers are their step ids: in the markers, the dispatch tags and the ledger. Th
 correspondence is: investigate, plan, plan check → 1 · decision sheet → Gate 1 ·
 implement and tests → 2 · diff review → 8 · cross-check A/B/C → 4, 8, 8c ·
 regression → 5–8 · a tests step after regression → before the FULL verify · doc
-sweep → 8a, then the FULL verify · ship → 9. Such an install reads this file's step
-numbers through the correspondence: "step 9" is its ship step.
+sweep → 8a · the FULL verify → 8d, after cross-check C · ship → 9. Such an install
+reads this file's step numbers through the correspondence: "step 9" is its ship
+step.
+
+`[M]` **One FULL per unit, last.** The closing steps run before the verify, so after
+the FULL only the land commit follows, and it holds `RECORDS` paths alone (the state
+and steps files; `RECORDS` in `run-gates.sh`). Those paths leave the gate cache's
+key, so the land commit and the merge print `REUSED`. Ledgers from before v13 keep
+their ids: `8c` is still the claim audit.
+> Origin, the v12 study: 2–3 FULL runs per landed unit and about 30 re-runs on an
+> unchanged tree. The claim audit, comment fixes and doc sweeps changed the tree after
+> the pass, and state and steps files sat in the cache key: one install logged
+> `REUSED` 0 times.
 
 ## Step markers
 
@@ -136,7 +163,7 @@ numbers through the correspondence: "step 9" is its ship step.
 start && node scripts/review-gate.mjs …`) so a marker costs no turn of its own. A start
 closes the step before it, so `done` (`node scripts/unit-step.mjs <unit> <step> done`) is
 needed only after the last step and before a stop.
-Step ids are the sequence's own (`0a`, `0`, `1` … `8a`, `8b`, `8c`, `9`, `10`), `g1` and
+Step ids are the sequence's own (`0a`, `0`, `1` … `8a`, `8b`, `8c`, `8d`, `9`, `10`), `g1` and
 `g2` for the gates; a step's second round passes `--round 2`. review-gate counts fix
 rounds, not step rounds, so its `--round 1` runs inside step 8's round 2. The steps file
 sits beside the state file (`scope-guard.md`); `--list` prints what it holds. Small and
@@ -171,13 +198,14 @@ prints one line for each thing the harness owes, the digest capped at `DIGEST_LI
 
 | Line | The runner |
 |---|---|
-| `OWED <id> since <date> — <what>`: an owner input older than 3 days (`Owner supplies:`, `Owner decides:`) | leads every `WAITING ON YOU:` and `DONE` line |
+| `OWED <id> since <date> — <what>`: an owner input older than 3 days (`Owner supplies:`, `Owner decides:`), or a card asked twice (`gate-design.md` › Who decides) | goes in the digest, once a day; the end line carries only `owner: <n> open` |
 | `INBOX <unit> <gate> since <time> · <cards>`: a parked unit (`gate-design.md` › Parking a unit) | runs on with the next ready unit; once answered (its Cards cell), it is the next unit claimed |
 | `WAIT <unit> — …`, exit 1 with `--claim`: a harness unit while a product unit is held or parked | **stops the claim**; the product units go first (› The harness freeze). `--owner` skips it, on the owner's word only |
 | `SPLIT <unit> — …`: a held branch past the deliverable's line cap | lands the green slices, flag-off where unfinished; the rest is the next unit. No question |
 | `DUE preflight <phase>`, exit 1: the claimed row opens a phase with no report | **stops the claim** and runs the phase preflight (`preflight.md`); its escalations become Gate 1 cards. A phase already under way is named, never stopped |
 | `REPORT sweep\|retro\|hygiene — <why> — <command>` | runs the command in the background only once the product queue is empty, or on the owner's word; the report rides in the next land commit. **Never a unit, never mid-unit, never the reason to pause one.** Cadences count product landings only; before the flip they print `HELD …` |
 | `ASK <kinds> — <why>` | the card kinds that ask the owner (`gate-design.md` › The standing grant) |
+| `<n> lands not deployed (oldest <d> days)`: the mainline's merges past `LIVE_REF` (what production runs), printed only when it is bound and behind | goes in the end message; the owner's deploy reads them (`gate-design.md` › The deploy list). Never a stop |
 | `DIGEST …` | goes to the owner in the end message; `--digest-read` only marks it read. `DIGEST disk` starts the approved machine-sweep categories (`machine.md`); `DIGEST worktrees` removes each one no row names and no process runs in (`git worktree remove`, never `--force`) |
 
 `[M]` **No queue is stored.** The checks re-read the files each time, so a report
@@ -202,15 +230,15 @@ next check.
 | 1 ground | — | light: cause or reuse noted in the plan | full: root cause, Impact Analysis, plan check |
 | Gate 1 | — | **auto** unless the risk map or the policy is hit | the grant (the gate table) — unit 1 of an approved intake: `intake.mjs --gate1` |
 | 2 implement | the session | the session or one executor | one executor per slice |
-| 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family |
+| 2 per-slice review | — | — | `review-gate.mjs --kind slice`: the second family on a critical slice; a cold slice is `defer` |
 | 4 conform | — | against the Scope block, carrying the claim checklist | against plan + Scope block, once; a scoped re-audit only when a fix touches a plan item |
 | 5–7 live | if it changes behaviour | **yes — never dropped** | yes |
 | 8 review | — | `review-gate.mjs --kind unit --tier small`: the second family's review | `--kind unit --tier full`: one Opus code-reviewer + the adversarial pass (lane B) + triggered specialists + `pr-test-analyzer` (Sonnet) |
 | 8 fix rounds | — | `review-gate.mjs --kind fix`; P3s ride along | the same (`gate-design.md`) |
 | 8a docs | in the same commit | `docs-drift.mjs`, in the same commit | `docs-drift.mjs`, then a separate sweep |
-| 8a verify | scoped | FULL once before merge | FULL |
 | 8b record | ledger line | `unit-record.mjs` | `unit-record.mjs` + the deviations |
-| 8c claims | — | **skipped; the record is generated**, lane A carries the checklist | blocking, **behaviour claims**, one round |
+| 8c claims | — | **skipped; the record is generated**, lane A carries the checklist | with critical code: blocking, the "Done when" **behaviour claims**, Sonnet, one round; without, skipped as Small |
+| 8d verify | scoped | FULL once before merge | FULL once before merge |
 | Gate 2 | merge when green | merge when green | merge when green, the landing check passed |
 
 `[M]` **At `production: none`** critical code runs Small's column plus the adversarial
@@ -274,7 +302,8 @@ as its own commit. Never reclaim a row you do not own.
   each `HAZARD` line goes to the owner (`gate-design.md` › Model and effort).
 - `[M]` **State the claim line:** unit, type, tier, whether it touches the risk map's
   critical code or a never-auto category, both gate decisions, the model for each
-  role, and on Small the Scope block.
+  role, and on Small the Scope block. The state file's `Never-auto:` line copies the
+  categories (`none` when there are none); the land commit's trailer is read from it.
 - `[M]` **Decision first.** A change that hangs on a P or C decision nobody has taken
   (an `Owner decides:` follow-up row, an open card) asks it as one card, before
   any step 1 work that depends on it. Until it is answered the claim carries the
@@ -394,11 +423,14 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
   > the four no brief named once (2026-10-05 to 26).
 - `[M]` **After each slice:** read its report and `git diff --stat`, run the drift
   check, then `node scripts/review-gate.mjs --base <slice base> --kind slice
-  --writer <role>` (the role that wrote it) and dispatch what it names — the
-  **second family's review** over
-  that slice's diff before the next slice builds on it (`codex-run review`); a cold
-  slice the second family wrote is deferred to the unit review. **Never an Opus
-  code-reviewer per slice.** The review runs in the background while the next
+  --writer <role>` (the role that wrote it) and dispatch what it names — for a
+  slice under a critical path, the **second family's review** over that slice's
+  diff before the next slice builds on it (`codex-run review`); a cold slice,
+  whoever wrote it, is `defer`: the unit review covers it. **Never an Opus
+  code-reviewer per slice.**
+  > Origin, the v12 study: per-slice review found its P1s in stateful money and
+  > data-store slices, which are critical, and was mostly clean elsewhere — UI code
+  > among it. The review runs in the background while the next
   independent slice starts. A follow-up goes to the same agent while its context is
   small. Update the state file.
 - `[M]` **Independent twins run in parallel** — a web and a mobile screen over a
@@ -413,8 +445,8 @@ ledger's Gate 1 row; `Gate 1: owner — …` opens the sheet with that line
   FULL: the command guard refuses it in a subagent (`full-verify-executor`) and
   `run-gates.sh` under `HARNESS_ROLE=executor`, which the wrappers set. The
   session runs a scoped verify after a slice that crossed packages, and the FULL
-  verify once, at the end of step 8a — **never once per slice**. Tests a later step
-  adds (a doc-sweep test, a parity test) land **before** that FULL run, not after it.
+  verify once, at step 8d — **never once per slice**. Tests a later step adds (a
+  doc-sweep test, a parity test) land **before** that FULL run, not after it.
   > Origin: one change request ran the full suite 39 times, 8.4 hours; implementers
   > ran 3,758 single-file test runs (18.6 h) in 14 days (the v4 usage study).
 - `[M]` Commit at every meaningful step, naming paths, never `git add -A`.
@@ -465,29 +497,72 @@ listening one at 6 hours or once its directory is gone.
   critical code go to Opus; the rest to the second family's `fix-cold` while its
   budget allows, else Sonnet. After the round, `review-gate.mjs --kind fix
   --max-fixed <P> --round <n> --writer <role>` names the re-review, which reads the
-  fix diff only; `--writer` is the role that wrote the fix, as for the unit. Round 3
-  is the adversarial pass, round 4 the redesign, round 5 the cut; none asks. P2s go
-  in one batch round: a round that closed only P2s is `defer`, no re-review of its
-  own, on cold code and on critical code from round 3 (the landing check reads it).
+  fix diff only; `--writer` is the role that wrote the fix, as for the unit. With
+  `--state <the state file>` it reads the ledger's `8 fix rN` rows and refuses a
+  `--round` below the highest (exit 2): rounds count on, never restart. Write the
+  `8 fix rN` row when round N opens; a state file with no `## Ledger` exits 2. On critical
+  code round 3 is the redesign the adversarial pass reads, round 4 the cut; none
+  asks. P2s go in one batch round: a round that closed only P2s is `defer`, no
+  re-review of its own, on cold code and on critical code from round 3 (the landing
+  check reads it). **A new P2 a re-review finds is a follow-up, never a round.**
 - `[M]` **The P3 batch**, at `production: live` only, runs once per slice set after
   the fix rounds: one Sonnet fixer (or the second family's `fix-cold`) over every P3
   still IN scope, its targeted tests, no re-review (`review-gate.mjs` says
   `p3-batch`) — except a batch over critical code that Opus did not write, which the
   Opus `code-reviewer` reads. A P3 is never deferred to a later batch.
 
-**Step 8a — docs, then the FULL verify.**
+**Step 8a — docs.**
 - `[M]` **The doc sweep**, only when the diff changes a public behaviour, a named
   invariant, a module description or user-visible output. List stale docs with
   `node scripts/docs-drift.mjs --since <merge base>` — a script, not an Opus lane —
   and hand the candidates to a Sonnet runner or the second family's `docs` kind to
   rewrite the stale sections, never append. A change to a rule file updates every
   document that repeats the rule (`rules.md` §1).
-- `[M]` Then the **FULL verify** (`context.md`), after the sweep's edits and every
-  test a step added, so the one run reads what lands: every gate, one line each, each red
+
+**Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
+not from memory, and before the FULL verify, so the verify reads the record that
+lands. **Generate the fields:** `node scripts/unit-record.mjs --state
+<state file> --steps <steps file> --gates <the last scoped verify's output> --cost "$(node scripts/unit-cost.mjs
+--line --session <every session id since the start, comma-separated> --since <start>)"` prints commits, diffstat, the gate
+SUMMARY line, finding counts by severity and by source, elapsed, each step's time, the ledger and the
+draft log row from git, the state file and the steps file, never retyped. `<start>` is the state
+file's `Deliverable started:`, else the claim: the row's own window, as for Elapsed
+(`log-format.md`). On a Codex host the session ids are its thread ids
+(`$CODEX_THREAD_ID`). The git-derived fields
+are true by construction; the ledger and findings rows are copied as the session
+wrote them.
+The session writes only what no command knows: the deviations, the controls
+evidence, the `<fill: …>` cells of the log row. **Quote-or-delete** every prose
+claim in the record, the state file and the commit messages: it inlines its
+evidence or goes; nothing re-audits it. **The record has a byte budget** like the
+state file (`scope-guard.md`). The record, the log row and the plan row's status are
+committed here, before the verify: the land commit after it holds `RECORDS` paths
+only.
+> Origin: two tasks took three and five claim-audit rounds; every false claim was
+> in the record or a commit message, not the code.
+
+**Step 8c — claim audit.** `[M]` **Full units with critical code only**, before the
+FULL verify. Dispatch `claim-auditor` on the bounded model (`model: "sonnet"`,
+`effort: "high"`, `claim-auditor.md`) over the **behaviour claims** of each "Done
+when" line — its evidence, the test titles and counts that back it, the `Demo:`
+line, the controls. Blocking, **one round**: a `FALSE CLAIMS` is fixed and that
+claim's command re-run. A Full unit with no critical code skips it, as Small does.
+> Origin, the cost study: 79 of the claim auditor's 105 P1s were about record
+> prose, not product code; one install's audits then ran 7 rounds for 35 findings.
+> The v11 study: 170 claim-audit runs, 23.5 h, 1 P1; in the v12 window it found 1
+> real defect, and a comment fix it asked for after the FULL turned a mainline red.
+
+**Step 8d — the FULL verify.** It runs after 8b and 8c, so the one run reads
+what lands.
+- `[M]` The **FULL verify** (`context.md`), after the sweep's edits, the record, the
+  claim fixes and every test a step added: every gate, one line each, each red
   attributed against the merge base, working tree included. Only the session runs it,
   here and in step 9's re-verify. Admission holds it until the machine has room
-  (`machine.md`), else `NOT ADMITTED` and exit 97; a gate past `GATE_TIMEOUT` (3600 s)
-  is `FAIL <name> … (timeout after <n>s)`. Where the project bound
+  (`machine.md`), else `NOT ADMITTED` and exit 97, which re-queues the run (the
+  board's queue or the state file) with no owner message; a gate past `GATE_TIMEOUT`
+  (3600 s) is `FAIL <name> … (timeout after <n>s)`. A FULL red is diagnosed from its
+  log before any re-run, and a re-run on the same tree names its changed cause in one
+  line. Where the project bound
   `SNAPSHOT_COPY`, it is `bash scripts/run-gates.sh --snapshot` once the unit's work
   is committed: the gates read what lands, and no scratch file or note reaches them.
   `run-gates.sh` reuses an
@@ -510,7 +585,16 @@ listening one at 6 hours or once its directory is gone.
   instead of `FAIL`: it counts as no failure, is never a fix round,
   never a reason to re-run FULL and never cached. Quote the `KNOWN` line in the
   state file; each gets one follow-up row. A failure it cannot name (`FAILED ?`, a
-  timeout, a missing count line) stays `FAIL`. **No record yet:** when a FULL gate
+  timeout, a missing count line) stays `FAIL`. **A flake retries once** (`[B]
+  RETRY_FLAKY=1`): a gate that failed by its exit status (not a timeout, an instant
+  exit or a missing count line), whose command is one run-counted call and whose
+  every failing test sits in a file the merge base has, the diff leaves alone and
+  that spells its title, runs again. A pass prints `PASS <name> … (flaky: <ids>,
+  retried)`, is cached, and appends a line to the flakes register
+  (`<git common dir>/run-gates-cache/flakes.jsonl`, shared by the worktrees); a second
+  failure is `FAIL`. The retro turns a test that flaked 3 times in 7 days into one
+  follow-up line, never a unit. A FULL red after its retry is diagnosed from its log
+  before any re-run, and a flake never goes to `fix-cold`. **No record yet:** when a FULL gate
   fails only on tests in files the diff left alone and nothing printed `KNOWN`, run
   `bash scripts/run-gates.sh --snapshot` once in a checkout at the mainline's tip
   (detached is fine), then the branch's FULL again; branches cut at or before that
@@ -519,33 +603,6 @@ listening one at 6 hours or once its directory is gone.
   > Origin: 324 FULL runs, 37 hours, for 102 merges; known reds re-run each time.
   > The v12 study: 28 of 179 FULL reds were pre-existing or flaky, and v11's rule,
   > text the session applied by hand, caught few of them.
-
-**Step 8b — write the record, from the diff.** `[M]` Now — not during the run and
-not from memory. **Generate the fields:** `node scripts/unit-record.mjs --state
-<state file> --steps <steps file> --gates <the FULL verify output> --cost "$(node scripts/unit-cost.mjs
---line --session <every session id since the start, comma-separated> --since <start>)"` prints commits, diffstat, the gate
-SUMMARY line, finding counts by severity and by source, elapsed, each step's time, the ledger and the
-draft log row from git, the state file and the steps file, never retyped. `<start>` is the state
-file's `Deliverable started:`, else the claim: the row's own window, as for Elapsed
-(`log-format.md`). On a Codex host the session ids are its thread ids
-(`$CODEX_THREAD_ID`). The git-derived fields
-are true by construction; the ledger and findings rows are copied as the session
-wrote them.
-The session writes only what no command knows: the deviations, the controls
-evidence, the `<fill: …>` cells of the log row. **Quote-or-delete** every prose
-claim in the record, the state file and the commit messages: it inlines its
-evidence or goes; nothing re-audits it. **The record has a byte budget** like the
-state file (`scope-guard.md`).
-> Origin: two tasks took three and five claim-audit rounds; every false claim was
-> in the record or a commit message, not the code.
-
-**Step 8c — claim audit.** `[M]` Dispatch `claim-auditor` with `model: "opus"`,
-`effort: "high"` (`claim-auditor.md`), over **behaviour claims** — code comments,
-docstrings, test titles, each "Done when" line's evidence, test counts, the `Demo:`
-line, the controls. Blocking
-on Full, **one round**: a `FALSE CLAIMS` is fixed and that claim's command re-run.
-> Origin, the cost study: 79 of the claim auditor's 105 P1s were about record
-> prose, not product code; one install's audits then ran 7 rounds for 35 findings.
 
 **Gate 2.** `[M]` Brief: **the deliverable's demo evidence** — its `Demo:` line,
 the screenshot, the named tests or the live-walk transcript that shows it ·
@@ -560,15 +617,27 @@ brief goes to the digest; one that waits on the owner parks the unit.
 **Step 9 — land.**
 - `[M]` **Order:** run the guard → `node scripts/review-gate.mjs --landing <branch>
   --base <mainline>`, its `PASS` line copied into the state file's `Landing:` line →
-  land commit **on the unit branch** (status, evidence, log row, closed state file)
-  → release the row → merge with `--no-ff` → push by the grant. Releasing after the
+  land commit **on the unit branch**: the closed state file and the FULL's SUMMARY
+  line, `RECORDS` paths only, its message holding the `Landing:` line and the
+  trailers `node scripts/unit-record.mjs --state <state file> --trailer` prints
+  (`Unit:`, and `Never-auto:` for a never-auto product category; a state file with no
+  `Never-auto:` line, or one that names no category, exits 2, so a claim that skipped it
+  cannot land silently; the deploy
+  list reads them, `gate-design.md` › The deploy list) → release the row → merge with `--no-ff`
+  → push by the grant. Releasing after the
   merge cannot work under `SCOPE=repo`: the guard refuses a mainline commit while
   any row is held. The merge hook re-runs the landing check on the merge's result
   (`commit-guard.md`).
-- `[M]` **Re-verify if the mainline moved** since step 8a's verify, before an
-  auto-merge — on the merged tree; `run-gates.sh` reuses the step 8a result when the
-  tree is unchanged, so an unmoved mainline costs nothing. Never re-run after a
-  merge whose tree equals the verified tip.
+- `[M]` **Re-verify if the mainline moved** since step 8d's verify, before an
+  auto-merge, on the merged tree: when the mainline's delta touches none of the
+  unit's changed paths, `bash scripts/run-gates.sh --since <the unit's verified
+  commit>`, which runs every `always` gate and promotes itself to FULL when a delta
+  path lies outside `SCOPED_PATHS` (the lockfile, the manifests, the build and test
+  config); otherwise FULL. `run-gates.sh` reuses the step 8d result when the tree is
+  unchanged but for `RECORDS`, so an unmoved mainline costs nothing. Never re-run
+  after a merge whose tree equals the verified tip. A merge-time suite in the merge
+  hook calls `run-gates.sh`, which prints `REUSED`; **CI never blocks the next local
+  merge**, and a CI red becomes a fix unit.
 - `[M]` **A Missed that comes after the land** — the merge policy merged, and the
   owner spoke later — goes in a commit of its own that edits that row: on the
   mainline where the guard allows it, else on the branch of the unit in flight
@@ -578,8 +647,12 @@ brief goes to the digest; one that waits on the owner parks the unit.
 - `[M]` **Every action idempotent.** A resumed run reaches land twice.
 - `[M]` Write the merge message to a file, its subject `Merge <branch>: <title>`;
   `git merge` does not read stdin.
-- `[M]` **A `NONE` landing parks the unit**, its merge line ready for the end of the
-  run (› Shape); the close announces the next unit in the runner's order.
+- `[M]` **A `NONE` landing parks the unit** (a `GUARDS` diff, an unknown host, or a
+  path the check cannot look up),
+  its merge asked in chat at the end of the run (› Shape: asks are the run's last
+  action); the close announces the next unit in the runner's order. A guard's `NONE`
+  that names critical paths no review read runs the second family's adversarial pass
+  over them first, with the `--base` the line names, so the owner's merge follows a read.
 
 **Step 10 — teardown.** `[M]` Long commands ran in the background, awaited by
 their completion notice, never a sleep loop, each recorded at its start — also with

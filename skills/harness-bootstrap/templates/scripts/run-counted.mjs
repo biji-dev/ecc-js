@@ -24,6 +24,9 @@
  *    failing run then names its failing tests, `run-counted: FAILED <file> :: <title>` each, and
  *    `run-counted: FAILED ?` when they are not its whole failure (run-counted-core.mjs › FAILING
  *    TESTS); files are relative to RUN_GATES_TOP, which run-gates.sh sets to the gate's repo top.
+ *    A vitest path is read against the root vitest's RUN line names; another path a workspace
+ *    runner prints from inside a package, which is no file at the top, is the one file git lists
+ *    under the top that it is the tail of (run-counted-core.mjs › idFile).
  *
  * exit: 0 when the command exited 0 and its one summary has no failed, errors, skipped, todo,
  * flaky, interrupted, not-run, cancelled, filtered-out, deselected, xfailed or xpassed count, no
@@ -41,7 +44,7 @@
  * A SIGKILL to this process cannot be forwarded, and the command's own group does not receive it:
  * the command runs on until a write to its closed pipes ends it, or to its end if it writes nothing.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -162,10 +165,37 @@ async function main() {
   // may have ended without a newline.
   process.stdout.write('\n');
   for (const l of v.lines) console.log(l);
-  const ids = v.ok || res.spawnError ? [] : failingTests(a.kind, `${res.stdout}\n${res.stderr}`, { cwd: process.cwd(), top: realTop(process.env.RUN_GATES_TOP) });
+  const top = realTop(process.env.RUN_GATES_TOP);
+  const ids = v.ok || res.spawnError ? [] : failingTests(a.kind, `${res.stdout}\n${res.stderr}`, { cwd: process.cwd(), top, files: () => topFiles(top) });
   for (const l of failedLines({ ok: v.ok, min: a.min, summary, ids, signal: res.signal, spawnError: res.spawnError, interrupted: res.interrupted })) console.log(l);
   if (res.interrupted) return res.exitCode || 128 + os.constants.signals[res.signal ?? res.interrupted];
   return v.ok ? EXIT.ok : EXIT.failed;
+}
+
+/**
+ * The files git lists under `top`, tracked or untracked but not ignored, top-relative. Null without a
+ * repository, and null when it holds a submodule or a nested repository: git lists none of their
+ * files, so a path inside one could be taken for a listed file of the same tail.
+ */
+function topFiles(top) {
+  if (!top) return null;
+  // a hook's GIT_DIR and GIT_INDEX_FILE name the caller's repository, not the gate's tree
+  const env = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR']) delete env[k];
+  const list = (args) => spawnSync('git', ['-C', top, 'ls-files', '-z', ...args], { encoding: 'utf8', env, maxBuffer: 256 * 1024 * 1024 });
+  const cached = list(['--stage']);
+  const others = list(['--others', '--exclude-standard']);
+  if (cached.status !== 0 || others.status !== 0) return null;
+  const files = new Set();
+  for (const rec of cached.stdout.split('\0').filter(Boolean)) {
+    if (rec.startsWith('160000 ')) return null; // a submodule
+    files.add(rec.slice(rec.indexOf('\t') + 1));
+  }
+  for (const f of others.stdout.split('\0').filter(Boolean)) {
+    if (f.endsWith('/')) return null; // a nested repository
+    files.add(f);
+  }
+  return files;
 }
 
 /** The gate's repo top as a real path (a test's location is one; macOS /tmp is a link), or null. */

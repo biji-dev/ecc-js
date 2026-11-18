@@ -16,7 +16,7 @@ use took the rest back (› What is in use).
 |---|---|---|---|
 | the machine sweep | caches, build output, residue worktrees, orphaned MCP servers, recorded processes | `scripts/machine-sweep.mjs`, this skill's own; never generated | the owner approves categories once; then `DIGEST disk` starts them |
 | the leftover-processes hook | orphans and runaway shells, stuck tool shells, what this checkout left listening, a full disk | `.claude/hooks/leftover-processes.mjs`, from `templates/leftover-processes.mjs` | every Claude Code install (`SKILL.md` › Phase C) |
-| admission | memory, disk and load before a FULL verify | `scripts/lib/admission.mjs`, run by `run-gates.sh` | every install with `run-gates.sh` |
+| admission | memory, disk and load before a FULL verify, and the host-wide lease | `scripts/lib/admission.mjs`, run by `run-gates.sh` | every install with `run-gates.sh` |
 
 That project's `dev:ps` and `dev:clean` stay its own: the hook and the report's orphan
 list name what runs, and `harness-due` and the sweep remove worktrees on
@@ -131,6 +131,17 @@ category's directory; any other process.
 `[M]` **Admission holds a FULL verify** until the machine has `MEM_RESERVE_GB`
 available, `DISK_FLOOR_GB` free and a load under `LOAD_PER_CPU` per CPU, for up to
 `WAIT_S`; past it `run-gates.sh` exits 97, `NOT ADMITTED`, no gate run (`context.md`).
+
+`[M]` **A FULL or snapshot run also holds a host-wide lease:** one of `[B]
+LEASE_SLOTS` slots in `~/.harness/leases/`, per user and shared by every repository on
+the machine (default `max(1, min(2, memory GB ÷ 8))`; `HARNESS_LEASE_DIR` moves the
+directory). While every slot is held it prints `MACHINE WAIT … lease held by <top>
+since <at>`, within `WAIT_S`; a slot whose holder died is taken over; `run-gates.sh`'s
+exit trap releases it. A scoped run never takes one. A lease directory that cannot be
+read or written admits the run (`ADMISSION unread lease`): the lease is a queue, never
+a reason to refuse.
+> Origin, the v12 study: up to 16 sessions at once on one 16 GB machine, and most of
+> the window's "flaky" reds came from that load.
 
 `[B]` The hook: `WORKTREES`, `MACHINE_WIDE`, `REAP_MINUTES`, `STUCK_MINUTES`,
 `DISK_NOTICE_GB`. Admission: the floors in `scripts/lib/admission-core.mjs`. The sweep: the

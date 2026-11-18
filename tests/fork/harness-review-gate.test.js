@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'review-gate-core.mjs');
 const WRAPPER_REL = 'review-gate.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 97;
+const EXPECTED_TESTS = 106;
 
 let passed = 0;
 let failed = 0;
@@ -101,6 +101,7 @@ const REBINDINGS = [
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that are not production', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /^scripts\\//]; // paths that are not production'],
   [CORE_REL, '/\\.(test|spec)\\.[cm]?[jt]sx?$/]; // paths that count as tests', '/\\.(test|spec)\\.[cm]?[jt]sx?$/, /(^|\\/)\\.maestro\\//]; // paths that count as tests'],
   [CORE_REL, 'export const FIX_LINES = 40;', 'export const FIX_LINES = 25;'],
+  [CORE_REL, "export const NOTES = 'docs/harness/upstream-notes.md';", "export const NOTES = 'harness/notes.md';"],
   [CORE_REL, 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//];', 'export const HARNESS = [...INSTRUCTIONS, /^\\.githooks\\//, /^scripts\\//, /^harness\\//];'],
   [TEST_REL, 'const EXPECTED_CRITICAL = [];', REBOUND_CRITICAL.replace('export const CRITICAL', 'const EXPECTED_CRITICAL')],
 ];
@@ -222,7 +223,11 @@ test('mutant: the P3 batch\'s writer check dropped, so Opus\'s own batch gets th
 });
 
 test('mutant: critical code written by the second family no longer gets a Claude reviewer', () => {
-  mutantRun('secondFamilyWrote(writer) && critical.length === 0', 'secondFamilyWrote(writer)');
+  mutantRun("if (writer !== 'claude' && critical.length > 0) {", "if (writer === 'sonnet' && critical.length > 0) {");
+});
+
+test('mutant: a cold slice by Opus reviewed on its own again, so the unit review is not its one read (v13 E1)', () => {
+  mutantRun("    if (critical.length === 0)\n      return out(\n        'defer',", "    if (critical.length === 0 && writer !== 'claude')\n      return out(\n        'defer',");
 });
 
 test('mutant: a default writer comes back, so a cold Codex slice run without --writer is not caught', () => {
@@ -313,8 +318,16 @@ test('mutant: production none takes the Opus reader off a fix the second family 
   mutantRun('if (none && !secondFamilyWrote(writer) && r.reviewers', 'if (none && r.reviewers');
 });
 
-test('mutant: a critical round 5 redesigned again instead of cut', () => {
-  mutantRun('  if (round >= 5)\n    return d(\n      \'cut\',', '  if (round >= 6)\n    return d(\n      \'cut\',');
+test('mutant: a critical round 4 re-reviewed again instead of cut (v13 E3)', () => {
+  mutantRun('  if (round >= 4)\n    return d(\n      \'cut\',', '  if (round >= 5)\n    return d(\n      \'cut\',');
+});
+
+test('mutant: a critical round 3 re-reviewed again instead of re-planned (v13 E3)', () => {
+  mutantRun('  if (round === 3)\n    return d(\n      \'redesign\',', '  if (round === 33)\n    return d(\n      \'redesign\',');
+});
+
+test('mutant: --state no longer refuses a round below the ledger, so the ladder restarts (v13 E3)', () => {
+  mutantRun('    const below = roundBelowLedger(round, ledgerRound);', '    const below = null;');
 });
 
 test('mutant: a test diff with a deleted line routed as cold, so a weakened assertion skips the critical lineup', () => {
@@ -329,8 +342,8 @@ test('mutant: production none dropping the adversarial pass over critical code',
   mutantRun('...(critical.length ? [adv] : [])', '...[]');
 });
 
-test('mutant: a self-loop edge counted as a read change, so an empty review certifies unread edits', () => {
-  mutantRun('const read = unreached.some((p) => (paths[p]?.edges ?? []).some((e) => e.from !== e.to));', 'const read = unreached.some((p) => (paths[p]?.edges ?? []).length > 0);');
+test('mutant: a critical path no review read goes back to the owner (NONE) instead of RE-REVIEW from the base (v13 A3)', () => {
+  mutantRun('const unknown = unreached.filter((p) => !paths[p]);', 'const unknown = unreached.filter((p) => !paths[p] || !paths[p].edges.some((e) => e.from !== e.to));');
 });
 
 test('mutant: the latest row read as the reviewed content, so a narrow later review certifies the gap', () => {
@@ -452,13 +465,15 @@ function featRepo(mutations = []) {
   return { ...r, tree, ledger };
 }
 
-test('--landing: NONE without a review, noise rows never count, PASS once the other family read the change', () => {
+test('--landing: RE-REVIEW from the base without a review, noise rows never count, PASS once the other family read the change', () => {
   const { git, gate, gateWith, tree, ledger } = featRepo();
   const base = tree('main');
   const feat = tree('feat');
+  const baseCommit = git('rev-parse', 'main');
+  const unread = `Landing: ${feat.slice(0, 12)} RE-REVIEW — ${RE_REVIEW(baseCommit, feat, [ENGINE])}\n`;
   let res = gate('--landing', 'feat', '--base', 'main');
   assert.strictEqual(res.status, 1, res.stderr);
-  assert.strictEqual(res.stdout, `Landing: ${feat.slice(0, 12)} NONE — no recorded cross-family review of ${ENGINE}: the owner merges\n`);
+  assert.strictEqual(res.stdout, unread);
 
   // a bad line, a failed run, another kind, a moved tree, a ref name, a pruned tree and Claude's own row
   fs.writeFileSync(path.join(git('rev-parse', '--show-toplevel'), '.codex-runs', 'ledger.jsonl'), '{not json\n');
@@ -471,7 +486,7 @@ test('--landing: NONE without a review, noise rows never count, PASS once the ot
   ledger('.claude-runs', reviewRow(base, feat));
   res = gate('--landing', 'feat', '--base', 'main');
   assert.strictEqual(res.status, 1, res.stdout + res.stderr);
-  assert.match(res.stdout, / NONE — no recorded cross-family review of src\/core\/engine\.js: the owner merges\n$/);
+  assert.strictEqual(res.stdout, unread);
 
   // the second family's review of base → feat passes on Claude Code; on Codex that row is its own
   ledger('.codex-runs', reviewRow(base, feat, { kind: 'adversarial' }));
@@ -484,7 +499,7 @@ test('--landing: NONE without a review, noise rows never count, PASS once the ot
   fs.rmSync(path.join(git('rev-parse', '--show-toplevel'), '.claude-runs', 'ledger.jsonl'));
   res = gateWith({ HARNESS_HOST: 'codex' }, '--landing', 'feat', '--base', 'main');
   assert.strictEqual(res.status, 1, res.stdout + res.stderr);
-  assert.match(res.stdout, / NONE — /);
+  assert.strictEqual(res.stdout, unread, 'on Codex its own row never counts');
 
   res = gate('--landing', 'feat', '--base', 'main', '--json');
   assert.strictEqual(res.status, 0, res.stderr);
@@ -593,7 +608,7 @@ function landingHostCases(mutations = []) {
   // 1. a Codex shell's own row: HARNESS_HOST=zcode, which reads both ledgers, does not widen it
   let res = run({ CODEX_THREAD_ID: 'thread', HARNESS_HOST: 'zcode' });
   assert.strictEqual(res.status, 1, `codex host with HARNESS_HOST=zcode: ${res.stdout}${res.stderr}`);
-  assert.match(res.stdout, / NONE — no recorded cross-family review of src\/core\/engine\.js: the owner merges\n$/, 'codex host with HARNESS_HOST=zcode');
+  assert.match(res.stdout, / RE-REVIEW — critical paths changed beyond the reviewed content: src\/core\/engine\.js → /, 'codex host with HARNESS_HOST=zcode');
   // 2. no host variable: the owner's word decides, and zcode reads either ledger
   res = run({ HARNESS_HOST: 'zcode' });
   assert.strictEqual(res.status, 0, res.stdout + res.stderr);
@@ -605,7 +620,7 @@ function landingHostCases(mutations = []) {
   // and a Claude Code shell's own row stays its own
   res = run({ CLAUDECODE: '1', HARNESS_HOST: 'zcode' });
   assert.strictEqual(res.status, 1, res.stdout + res.stderr);
-  assert.match(res.stdout, / NONE — /, 'claude host with HARNESS_HOST=zcode');
+  assert.match(res.stdout, / RE-REVIEW — /, 'claude host with HARNESS_HOST=zcode');
 }
 
 test('--landing: the host is the host\'s own variable; HARNESS_HOST decides only where none is set', () => {
@@ -635,13 +650,13 @@ test('--landing: with no host variable a pull of the remote mainline\'s tip, tru
 
 /**
  * A result tree that carries an unread critical edit, replaced in git by the base tree: the gate reads
- * the real objects, so it is NONE, not "no critical path changed". Throws on a verdict that differs.
+ * the real objects, so it is RE-REVIEW, not "no critical path changed". Throws on a verdict that differs.
  */
 function landingReplaceCase(mutations = []) {
   const { git, gate, tree } = featRepo(mutations);
   git('replace', tree('feat'), tree('main'));
   const res = gate('--landing', 'feat', '--base', 'main');
-  assert.strictEqual(res.stdout, `Landing: ${tree('feat').slice(0, 12)} NONE — no recorded cross-family review of ${ENGINE}: the owner merges\n`, 'the replaced result tree');
+  assert.strictEqual(res.stdout, `Landing: ${tree('feat').slice(0, 12)} RE-REVIEW — ${RE_REVIEW(git('rev-parse', 'main'), tree('feat'), [ENGINE])}\n`, 'the replaced result tree');
   assert.strictEqual(res.status, 1, res.stderr);
 }
 

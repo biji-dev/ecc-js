@@ -111,8 +111,8 @@ call it; never maintain the same sequence in three skill files.
 
 - **Models:** from the risk map (`gate-design.md`) — Opus for the main session,
   gates, critical code, the one unit code review on Full, the triggered specialists
-  and the claim auditor; Sonnet for cold slices, delegated builders, the conformance
-  auditor, `pr-test-analyzer`, doc rewrites and runners; the second family for
+  and the claim auditor's lane C; Sonnet for cold slices, delegated builders, the
+  step 8c claim audit, the conformance auditor, `pr-test-analyzer`, doc rewrites and runners; the second family for
   per-slice review, Small review, fix re-reviews and the adversarial pass. Pass
   `model` and `effort` on every Agent dispatch, and pin `effort: high` in every
   agent file.
@@ -165,7 +165,18 @@ call it; never maintain the same sequence in three skill files.
   (`codex-background`) a Codex or run-wrapper launch sent to the background
   with a shell `&`, (`unbounded-wait`) a background `while` or `until` loop, `tail -f`
   or `watch` that no `timeout` encloses, and (`full-verify-executor`) a `run-gates.sh`
-  run without `--since` or `--list` inside a subagent (`agent_id` set); `EXTRA_RULES`
+  run without `--since` or `--list` inside a subagent (`agent_id` set), and
+  (`credential-read`) a read of a credential file under a home directory: `~/.npmrc`,
+  `~/.netrc`, everything under `~/.ssh` (public keys and `known_hosts` too: the rule
+  reads names, not contents), `~/.aws/credentials`, `~/.config/gh/hosts.yml`,
+  `~/.docker/config.json`, `~/.codex/auth.json` and `~/.claude/.credentials.json`, by
+  a program that prints or copies it, a redirect, an inline script (`node -e`,
+  `python -c` and kin) or a recursive read of a directory holding one. Its refusal
+  says the values would land in the transcript and to check presence with
+  `test -s <file>`; a project's own `.env` is out of its scope. It reads names in the
+  line, so a subcommand that prints a secret (`gh auth token`, `aws configure get`,
+  `npm config get`, a credential helper), a wrapper (`stdbuf`, `script`, `busybox`),
+  a name built from pieces and a script file pass: its header lists the limits. `EXTRA_RULES`
   is `[B]`, and each rule gets the command's `env` and `background`. A commit message
   that *mentions* `--no-verify` passes. It exits 2 to block and 0 on any error. **The
   owner key** (`commit-guard.md`; and a mainline push under `Push deploys: yes`,

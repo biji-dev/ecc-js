@@ -36,6 +36,21 @@ customer-visible change is **C**, and its card says so. Unsure between T and C �
 **C**; a reversible C card is the grant's (recommendation taken, `By: grant`, reversal
 cost written), and only a one-way door, a never-auto item or an `owner-fact` asks.
 
+`[M]` **Never a card: decided, and logged as `DEC … By: grant` in the digest.** Copy
+and labels within the glossary; UI preferences inside the design system; ordering and
+internal names; demo-data defaults; deleting a merged branch; re-running a flaky gate;
+which reviewer runs; read-only queries against a dev database. **Still asks:** money
+policy, production, a security residual, anything irreversible, a fact only the owner
+knows, and scope. A project rule that sends one of the reversible kinds to the owner
+holds only where a decision row of the owner's names it.
+
+`[M]` **A card is asked at most twice.** Left unanswered after the second ask, it is
+`OWED`: its unit stays parked, the digest carries it once a day (`harness-due.mjs`'s
+`INBOX` and `OWED` lines), and the end line stops re-listing it.
+> Origin, the v12 study (5 installs, 54 h): about 90 of 169 controller stops were
+> questions the agent could have answered itself, and one unanswered card was listed
+> 11 times.
+
 `[M]` **A decision card** — one per P or C decision, never a bare question:
 
 ```
@@ -65,6 +80,12 @@ never-auto item it closes; otherwise it is listed, never recommended.
 > bare go-aheads, behind 403 capped hours of wait; one recommended answer declined
 > the grant, and "one more round" was recommended three times on one unit.
 
+`[M]` **Measure on real data before recommending.** A card that proposes a validation
+rule or a data constraint counts it against real data (a fixture sample, or a read-only
+dev or copy database) and quotes the count in its options' data cells.
+> Origin, the v12 study: a reference rail approved on its recommendation refused 22 of
+> 39 real references.
+
 `[M]` **A blocking card goes out as text**, with a `PushNotification` where the
 host has one, and its unit parks (› Parking a unit): each open card becomes a
 `Q-n` row in the state file's decision log, the answer comes back as text, and the
@@ -88,12 +109,12 @@ again with a never-auto way forward:
 3. post the gate as text with its cards in full, and a `PushNotification` where the
    host has one;
 4. start the next ready unit whose write set overlaps no held or parked unit's
-   (`runner.md` › Shape). With none, end the turn on `WAITING ON YOU:` and the inbox.
+   (`runner.md` › Shape). With none, end the turn on `WAITING ON OWNER —` and the inbox.
 
 A landing the check sends to the owner parks with its merge line ready, and its
 `owner-fact` cards go out with the run's others in one message (`runner.md` › Shape:
 asks are the run's last action). A push the grant does not cover waits in the state
-line (`WAITING ON YOU: push <mainline>, <n> commits`); a deploying push runs last.
+line (`WAITING ON OWNER — push <mainline>, <n> commits`); a deploying push runs last.
 
 ```markdown
 <!-- harness:parked -->
@@ -215,7 +236,7 @@ session dispatches what it names, with `model` and `effort` passed.
 |---|---|---|
 | **0 · Scripts** (no model) | every change | the commit guard, the gates (`run-gates.sh`), `review-gate.mjs`, `docs-drift.mjs` (step 8a), `unit-record.mjs` (step 8b) |
 | **Small** | cold or standard code, most units | the **second family's review** over the unit diff — no Opus reviewer. Lane B's change surface rides in an `adversarial` pass when a reader sits outside the diff (`blast-radius-auditor.md`). A Small unit the second family wrote gets the Opus `code-reviewer` instead, as critical code it wrote does per slice (`review-gate.mjs`). Lane A against the Scope block, carrying the claim checklist (`conformance-auditor.md`); no claim audit. |
-| **Full** | critical code, a never-auto category, a contract, a migration | **per slice:** the second family's review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **behaviour claims**. At `production: none`, the column of › Stakes instead |
+| **Full** | critical code, a never-auto category, a contract, a migration | **per slice, critical slices only:** the second family's review; a cold slice is `defer`, read by the unit review. **Step 8, once over the unit diff:** one Opus `code-reviewer` (the language and simplicity lenses are in its brief) · the second family's **adversarial pass**, carrying lane B's change surface · each **triggered specialist** (below) · `pr-test-analyzer` on Sonnet when tests changed. Then lane A once, and the claim audit over **behaviour claims**. At `production: none`, the column of › Stakes instead |
 | **Harness lane** | harness paths only | one cross-family review over the diff (`--tier harness`); no lane A, no claim audit |
 | **Fix rounds** | after any fix | `review-gate.mjs --kind fix` (above) |
 
@@ -259,6 +280,17 @@ model with the adversarial brief (the round-3 pass over a fix the second family
 wrote); every other name → the agent of that name (`pr-test-analyzer` on the
 bounded model). Each dispatch passes `model` and `effort: "high"`. Its decisions
 `adversarial`, `redesign`, `cut` and `drop` are in › Fix rounds; none asks the owner.
+
+`[M]` **The unit review runs exactly what `review-gate.mjs` names, nothing more.** An
+agent whose description says "MUST BE USED" (a language reviewer, a code reviewer)
+never adds a reviewer; the blind second plan (`plan-blind`) runs on Full only, never
+on Small; lanes A and C never run on a test-only diff; and bookkeeping never triggers
+a landing re-review: a change to a `RECORDS` path (the state and steps files) leaves
+every review row standing (`run-gates.sh`, `codex-run-core.mjs`).
+> Origin, the v12 study: the reviewer fan-out beyond the gate's lineup, `plan-blind`
+> on small units, lanes A and C and the landing re-reviews found about 0 P0/P1; one
+> install's 5 landing re-reviews came from state commits, a missing `--base` and 3
+> test lines.
 
 `[M]` **What the gate reviews.** Production files, tests, and the harness's
 instruction files (`INSTRUCTIONS` in the core's `[B]` block); only a diff of docs
@@ -318,7 +350,8 @@ Never impose a column the project does not have.
 
 | Condition | Gate 1 | Gate 2 |
 |---|---|---|
-| Never-auto category | ask | ask, **never auto** |
+| Never by the grant (› The standing grant: production, credentials, unrestorable data, spend, a public name, a contradiction) | ask | ask, **never auto** |
+| Never-auto product category (money, a stored-data format, a dependency, a shared contract, a migration) | ask only with an open P, C or `owner-fact` card; with none, the grant, its plan to the digest | merge when green, the landing check passed; its `Never-auto:` trailer puts it on the deploy list (› The deploy list) |
 | Critical code (risk map) | the grant — the claim line, the sheet to the digest | merge when green, the landing check passed |
 | Small, nothing else hit | auto — the Scope block, stated in the claim line | by the merge policy |
 | Conformance reports a blocking gap | — | never auto |
@@ -327,7 +360,7 @@ Never impose a column the project does not have.
 | Any invariant or contract check failing | — | **stop.** Never modify the check to pass |
 | Retries exhausted, or a tripwire (`rules.md` §2) | — | redesign once (› Fix rounds); park only when it trips again with a never-auto way forward |
 | **Owner taste** — identity, copy, naming | a `taste` card, by the grant unless `ASK` lists `taste` | the demo goes to the digest |
-| A re-tier during the run | a T row; into a never-auto category, ask | at the new tier |
+| A re-tier during the run | a T row; into a never-auto category, as its row | at the new tier |
 | The foundation stage (`foundation.md`) — the skeleton, then the flip | the grant | ask, **never auto**: no gate counts a product test yet |
 | Harness lane: a diff to a guard, a gate, a reviewed block or the rules block | ask | ask, **never auto**: the landing check says `NONE` (`GUARDS`) |
 | Harness lane, nothing else hit | auto — the claim line | by the merge policy |
@@ -355,7 +388,7 @@ one line what it covers; new findings re-arm the stop.
 generated default is one rule for every tier, **merge when green**: a unit merges
 locally on its own when
 
-- this round's FULL verify shows every gate PASS or `KNOWN` (`runner.md` › Step 8a),
+- this round's FULL verify shows every gate PASS or `KNOWN` (`runner.md` › Step 8d),
   every step the tier requires is `ran` in the ledger, and the run re-verified if the
   mainline moved since;
 - no P0 or P1 is open, conformance has no blocking gap, and every behaviour claim
@@ -368,14 +401,47 @@ locally on its own when
 - at `production: live`, nothing is `degraded` and the diff touches no path the
   coverage map leaves uncovered.
 
-**The owner merges** a never-auto category and any diff to a guard, a gate, a
-reviewed block or the rules block: `GUARDS` in `review-gate-core.mjs` names their
-paths, and the landing check says `NONE` on them, so no agent judges its own edit.
-**Push** follows the grant; a deploying push is an Ops step, one owner key.
+**The owner merges** a diff to a guard, a gate, a reviewed block or the rules block:
+`GUARDS` in `review-gate-core.mjs` names their paths, and the landing check says
+`NONE` on them, so no agent judges its own edit. **A critical path no review read
+is `RE-REVIEW`, never `NONE`:** the second family's adversarial pass reads it where
+the owner's click used to stand in, from the latest review row's tree that holds
+reviewed content for it, else from the base. `NONE` is left for a guard path, an
+unknown host (it counts no review rows) and a path the check cannot look up. A
+guard's `NONE` beside critical paths no review read names them, and the owner merges
+after the second family's adversarial pass over them. The merge is asked in chat first
+(`commit-guard.md` › The owner key). **A never-auto product category merges by this
+policy on PASS:** its land commit carries a `Never-auto: <category>` trailer
+(`unit-record.mjs --trailer`), and the owner reads it at the deploy (› The deploy
+list). **Push** follows the grant; where `Push deploys: yes`, the push is the
+owner's Ops step, one owner key.
 
 > Origin, the v10 study: the one real gap the harness reported in itself was an edit
 > to critical code after its last review reaching the mainline unread; guards had
 > been bypassed in five installs where the rule lived only in prose.
+> Origin, the v12 study: about 60 owner-key dialogs froze controllers for about 1,800
+> minutes; about 1 in 6 protected a harness file, and every Gate 1 answer in the
+> window took the recommendation.
+
+## The deploy list — the owner's checkpoint
+
+`[M]` **The owner reads never-auto product code once per deploy, not once per
+merge.** `node scripts/deploy-list.mjs <live-sha> [<sha>]` lists every land commit in
+`<live>..<sha>` carrying a `Never-auto:` trailer, on the merge or on the unit
+branch's own commits (the land commit sits there): the unit, the category, the
+landing line, its review rows (kind, reviewer, P0/P1 count) and whether a post-merge
+audit read it. `-` as `<live>` (no production yet) lists everything since the root;
+a `<live>` that is not an ancestor of `<sha>` exits 2. What it cannot read cleanly is
+a `WARN` line, never a silent miss: a `Never-auto:` line outside a trailer block (a
+bullet, bold or quote prefix too), a value that names no category, a log record that
+did not parse, and a land that is not a merge (its critical paths then cover that
+commit only). A unit's categories are the union over its commits; a squash message's
+indented trailers are read, and commits already in `<live>` are left out. The deploy runbook runs it before the deploy approval. A
+list that is not empty gets one second-family adversarial pass over the combined
+diff of its critical paths (`<live>..<sha>`), and the owner approves the deploy with
+both in front of them.
+> Origin, the v12 study: a post-merge audit over several units found two defects
+> that per-unit review had missed.
 
 ## The standing grant
 
@@ -384,10 +450,14 @@ paths, and the landing check says `NONE` on them, so no agent judges its own edi
 ```
 Grant: merge when green · push after merge · recommendation on reversible cards
 Push deploys: no
+Owner merges: GUARDS
+Owner at deploy: <the never-auto product categories>
 ```
 
 `Push deploys:` comes from the workflows: `yes` when a push to the mainline runs a
-deploy. A kickoff may only narrow the grant (`Grant: none`, or a `Stop:` line
+deploy. `Owner merges:` names what only the owner key merges (`GUARDS`, landing
+`NONE`); `Owner at deploy:` lists the policy's never-auto product categories, which
+merge by the grant and reach the owner on the deploy list. A kickoff may only narrow the grant (`Grant: none`, or a `Stop:` line
 such as `until 18:00` or `3 units`), copied into the state file (`scope-guard.md`)
 and quoted in the ledger's Gate 2 row. The session-resume hook reads the block, so
 the grant survives a compaction.
@@ -399,12 +469,24 @@ the grant survives a compaction.
   or a forward fix takes its recommendation, logged `By: grant`, unless its kind
   asks (below).
 
-`[M]` **What the grant never covers — the never-auto list:** a production
-write, deploy or Ops step; data that cannot be restored; credentials; money; a
-durable public name or a store build; spend past the estimate's upper bound; a
-specification contradiction that changes a deliverable; an edit to a guard, a
-gate, a reviewed block or the rules block. Each parks its unit, and the run goes
-on with the next ready unit. `grant-without-machine-gates` narrows the grant to
+`[M]` **What the grant never covers, at any step:** a production write, deploy or
+Ops step; credentials; production data that cannot be restored; spend past the
+estimate's upper bound; a durable public name or a store build; a specification
+contradiction that changes a deliverable; an edit to `GUARDS` (a guard, a gate, a
+reviewed block or the rules block). Each parks its unit, and the run goes on with
+the next ready unit.
+
+`[M]` **What the grant merges and the owner reads at deploy — the never-auto product
+categories:** money, stored-data formats, dependency changes, shared contracts and
+schemas, and migrations (a migration runs at deploy, an Ops step). Every review the
+tier runs still runs, and the landing check passes first; the land commit's
+`Never-auto:` trailer puts the unit on the deploy list (› The deploy list). Gate 1 of
+such a unit asks only when it carries an open P, C or `owner-fact` card; with none
+open it goes by the grant, and its plan is listed in the digest and on the deploy
+list. A real money decision (a chargeback policy, a live provider) is a card, and
+still asks.
+
+`[M]` `grant-without-machine-gates` narrows the grant to
 Small until the counted product test gate exists. The runner applies that narrowing
 from the status line; no script refuses a grant merge of a Full unit meanwhile.
 
@@ -436,8 +518,8 @@ writing; outside it, an unanswered question parks.
 
 `[M]` **Stop for the owner only at:**
 
-1. a card on the never-auto list (› The standing grant), or of a kind the `ASK`
-   line lists;
+1. a card on the never-by-the-grant list or of the `never-auto` kind (› The
+   standing grant), or of a kind the `ASK` line lists;
 2. a divergence from the approved plan that changes a deliverable or its `Demo:`
    (a divergence inside one deliverable's technique is T: decide, log, list it);
 3. a gate the grant does not cover — the table says ask, the kickoff narrowed it,
@@ -453,7 +535,9 @@ auto-compaction is the reset, `context.md`), the second family being unavailable
 findings arriving (triage is the session's), a red gate that can be attributed, a
 T decision (decide, log, list it at Gate 2), a non-blocking P or C question (its
 default goes in a `default` row, batched), a third or fourth fix round, a `SPLIT`,
-a due report, and "what next?" — announce the next step in one line and start it.
+a due report, a reversible kind (› Who decides: never a card), a flaky gate's
+re-run, an admission refusal for low memory (re-queued, `runner.md` › Step 8d), a
+never-auto product merge (› The merge policy), and "what next?" — announce the next step in one line and start it.
 
 `[M]` **What were H questions, as rules:**
 
@@ -507,10 +591,9 @@ line in the ledger. Its rules:
 | P3 only | **no fix round** — `p3-batch` | **no fix round** — `p3-batch`; a batch not written by Opus gets the Opus `code-reviewer` |
 | P2 only | **`defer`** — no re-review of its own: the unit review reads it when one is still to come, its regression tests otherwise | rounds 1 and 2: the second family re-reviews; from round 3 **`defer`** — no ladder, the landing check re-reads what it changed (`RE-REVIEW`) |
 | P1 or P0 | round 1: the second family re-reviews; later rounds: the regression tests prove it | the second family; **plus Opus** when the fix is larger than the gate's `FIX_LINES` (never at `production: none`) |
-| round 3 (a P1 or P0) | — | `adversarial`: the second family's adversarial pass over the fix diff, run without asking |
-| round 4 | — | `redesign`: the judgment model re-plans the area once, and the adversarial pass reviews the new approach |
-| round 5 or later | — | `cut`: the area goes behind a flag or out of the diff, the unit lands what is green, and the area becomes one follow-up, in the digest |
-| **written by the second family** | round 1 of a P1 or P0: an Opus `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review (at `none` too: it is the cross-family reviewer); round 3 is an Opus adversarial brief |
+| round 3 (a P1 or P0) | — | `redesign`: the judgment model re-plans the area once, and the second family's adversarial pass reviews the new approach, run without asking |
+| round 4 or later | — | `cut`: the area goes behind a flag or out of the diff, the unit lands what is green, and the area becomes one follow-up, in the digest |
+| **written by the second family** | round 1 of a P1 or P0: an Opus `code-reviewer`; later rounds: the regression tests | an Opus `code-reviewer` instead of the second family's re-review (at `none` too: it is the cross-family reviewer); round 3's redesign is read by an Opus adversarial brief |
 | **the harness lane** (`--tier harness`) | round 1: the other family re-reviews; round 2: the adversarial pass; round 3: `drop` the change, one line in `docs/harness/upstream-notes.md` | — |
 
 `[M]` **P2s go in one batch round,** the round that fixes the P1s or one of their
@@ -544,7 +627,15 @@ dropped.
 `[M]` **A re-review reads the fix diff, by the reviewer whose finding was fixed** —
 never the whole lineup again over the whole unit. The specialist whose trigger the
 fix hits joins it. **At most two Opus rounds** on one area; the third is the
-adversarial pass and the fourth the redesign, neither asked.
+redesign the adversarial pass reads and the fourth the cut, neither asked.
+**Rounds are counted from the ledger** (`--state`): a `--round` below the highest
+the state file records exits 2, so a ladder cannot restart at 1. The `8 fix rN` row
+is written when round N opens, so the live round equals the recorded one and passes;
+a state file with no `## Ledger` section exits 2. **A new P2 a
+re-review finds is a follow-up**, never another round.
+> Origin, the v12 study: one unit's fix rounds reached round 10, and nothing stopped
+> a round being numbered 1 again; the adversarial pass and the redesign were two
+> rounds over one area, so v13 merges them.
 > Origin, the third project: review-fix commits on critical code kept introducing
 > defects, and the later rounds caught real money defects — which is why critical
 > fixes are still re-reviewed. Origin, the cost study: re-reviews were 50 of 174
@@ -571,10 +662,10 @@ second family, and the roles are the same on each.
 | Role | Claude Code | Codex | ZCode |
 |---|---|---|---|
 | Main session — Phase B, both gates, the plan, diagnosis, triage | **Opus**, `high` | **gpt-6.1-sol**, `high` | **GLM-5.3** |
-| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the claim auditor · the reviewer of anything the second family wrote | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
+| Implementer of critical code and its fixes · the one unit code review on Full · the triggered specialists · the reviewer of anything the second family wrote | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
 | **First builder** for cold slices, fixes outside critical code, tests for cold code and doc rewrites, while its weekly budget allows (`implement-cold`, `fix-cold`, `docs`) | Codex (`codex-run`) | the bounded model below: `claude-run` has no write kind | Codex (`codex-run`) |
 | Per-slice review · the review of a Small unit · re-reviews of fixes the host's family wrote · the adversarial pass (carrying lane B) | Codex (`codex-run`) | Claude (`claude-run`) | Codex (`codex-run`); Claude (`claude-run`) when Codex is out |
-| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · `pr-test-analyzer` · a run-and-report runner · release runbooks · the code reviewer when the second family is unavailable (`degraded`) | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
+| The same cold work when the second family is reserved or the task needs a browser, a service or steering · delegated builders · the P3 batch · the conformance auditor · the step 8c claim audit (`model: "sonnet"`, over the agent file's `opus`) · `pr-test-analyzer` · a run-and-report runner · release runbooks · the code reviewer when the second family is unavailable (`degraded`) | **Sonnet** | `[B]` the smaller Codex model, **gpt-6-luna** | **GLM-5.3-Flash** (reads images) |
 | The blast-radius auditor (lane B), only when the second family is unavailable (`degraded`) and the Impact Analysis lists a reader outside the diff | **Opus** | **gpt-6.1-sol** | **GLM-5.3** |
 
 `[M]` **The cross-family rule is unchanged** (`cross-model.md`): whatever one family

@@ -66,6 +66,64 @@ const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_
 // templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
 const SKILL_DIR = path.join(__dirname, '..');
 const TEMPLATE_STATES = ['current', 'newer', 'gone', 'unrecorded', 'invalid'];
+// The skill version from which every install takes each template, read from the shipped copies: the
+// version that shipped it, or made it core (leftover-processes.mjs, optional to v10); 6 stands for v6
+// or before. A core template an install lacks is the upgrade's new file when it is newer than the
+// install's skillVersion, else a file the install never took; a template not listed counts as new.
+// A template a version adds or makes core goes under that version.
+const TEMPLATES_SINCE = {
+  6: [
+    'templates/agents-rules.md', 'templates/command-guard.mjs', 'templates/context-budget.mjs',
+    'templates/edit-guard.mjs', 'templates/harness-guard.sh', 'templates/harness-models.json',
+    'templates/run-gates.sh', 'templates/scripts/check-agent-docs.mjs',
+    'templates/scripts/claude-run.mjs', 'templates/scripts/codex-run.mjs',
+    'templates/scripts/docs-drift.mjs', 'templates/scripts/estimate.mjs',
+    'templates/scripts/harness-due.mjs', 'templates/scripts/harness-host.mjs',
+    'templates/scripts/intake.mjs', 'templates/scripts/lib/check-agent-docs.test.mjs',
+    'templates/scripts/lib/claude-run-core.mjs', 'templates/scripts/lib/claude-run-core.test.mjs',
+    'templates/scripts/lib/codex-run-core.mjs', 'templates/scripts/lib/codex-run-core.test.mjs',
+    'templates/scripts/lib/command-guard.test.mjs', 'templates/scripts/lib/context-budget.test.mjs',
+    'templates/scripts/lib/docs-drift-core.mjs', 'templates/scripts/lib/docs-drift-core.test.mjs',
+    'templates/scripts/lib/edit-guard.test.mjs', 'templates/scripts/lib/estimate-core.mjs',
+    'templates/scripts/lib/estimate-core.test.mjs', 'templates/scripts/lib/harness-due-core.mjs',
+    'templates/scripts/lib/harness-due-core.test.mjs', 'templates/scripts/lib/harness-guard.test.mjs',
+    'templates/scripts/lib/harness-host-core.mjs', 'templates/scripts/lib/harness-host-core.test.mjs',
+    'templates/scripts/lib/intake-core.mjs', 'templates/scripts/lib/intake-core.test.mjs',
+    'templates/scripts/lib/retro-core.mjs', 'templates/scripts/lib/retro-core.test.mjs',
+    'templates/scripts/lib/retro-gather.mjs', 'templates/scripts/lib/review-gate-core.mjs',
+    'templates/scripts/lib/review-gate-core.test.mjs', 'templates/scripts/lib/run-counted-core.mjs',
+    'templates/scripts/lib/run-counted-core.test.mjs', 'templates/scripts/lib/run-gates.test.mjs',
+    'templates/scripts/lib/run-sources.mjs', 'templates/scripts/lib/unit-cost-core.mjs',
+    'templates/scripts/lib/unit-cost-core.test.mjs', 'templates/scripts/lib/unit-record-core.mjs',
+    'templates/scripts/lib/unit-record-core.test.mjs', 'templates/scripts/lib/unit-step-core.mjs',
+    'templates/scripts/lib/unit-step-core.test.mjs', 'templates/scripts/retro.mjs',
+    'templates/scripts/review-gate.mjs', 'templates/scripts/run-counted.mjs',
+    'templates/scripts/unit-cost.mjs', 'templates/scripts/unit-record.mjs',
+    'templates/scripts/unit-step.mjs', 'templates/unit-stack.sh', 'templates/workflows/review.workflow.js',
+  ],
+  7: [
+    'templates/scripts/lib/run-status.mjs', 'templates/scripts/lib/run-status.test.mjs',
+  ],
+  8: [
+    'templates/scripts/lib/session-resume.test.mjs', 'templates/session-resume.mjs',
+  ],
+  10: [
+    'templates/scripts/lib/snapshot-tree.mjs', 'templates/scripts/lib/snapshot-tree.test.mjs',
+  ],
+  11: [
+    'templates/leftover-processes.mjs',
+    'templates/scripts/lib/admission-core.mjs', 'templates/scripts/lib/admission-core.test.mjs',
+    'templates/scripts/lib/admission.mjs',
+  ],
+  13: [
+    'templates/scripts/deploy-list.mjs', 'templates/scripts/lib/deploy-list-core.mjs',
+    'templates/scripts/lib/deploy-list-core.test.mjs', 'templates/scripts/lib/review-gate.golden.json',
+  ],
+};
+const TEMPLATE_SINCE = new Map(Object.entries(TEMPLATES_SINCE).flatMap(([v, ts]) => ts.map(t => [t, Number(v)])));
+// where a template is installed when that is not its path below templates/ at some depth (the
+// guard: its own hook, or the script husky and lefthook call)
+const INSTALLED_AS = { 'templates/agents-rules.md': ['AGENTS.md#rules'], 'templates/harness-guard.sh': ['.githooks/pre-commit', '.githooks/harness-guard.sh'] };
 const SKILL_ROOTS = ['.claude/skills', '.agents/skills'];
 const DOCS = ['AGENTS.md', 'CLAUDE.md'];
 const PLAN_SKILLS = ['task-runner', 'segment-runner', 'phase-preflight', 'workstream-sweep'];
@@ -568,6 +626,39 @@ function registryCells(registry) {
   return out;
 }
 
+/** The commit guard's hooks: a pre-commit hook in the hooks dir, or the guard in husky / lefthook
+ *  (installed); the guard itself there, not just any pre-commit hook (guard); and whether a
+ *  pre-merge-commit hook (mergeGuarded) and a reference-transaction hook (refGuarded) run it. */
+function guardHooks() {
+  // a guard in the hooks dir, or in husky / lefthook; each must be paired with a pre-merge-commit
+  // hook that runs it, because a non-conflicting `git merge` runs pre-merge-commit, not pre-commit
+  const hooks = hooksDir();
+  const husky = read('.husky/pre-commit');
+  const lefthook = read('lefthook.yml') || '';
+  const hooksPre = readAbs(path.join(hooks, 'pre-commit'));
+  let installed = hooksPre !== null;
+  // the guard's own file (its REGISTRY binding) or a hook that runs it
+  let guard = /harness-guard|^REGISTRY=/m.test(hooksPre ?? '');
+  let mergeGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'pre-merge-commit')) || '');
+  // and with a reference-transaction hook that runs it: a fast-forward, reset or update-ref of the
+  // mainline writes no commit, so no other hook sees it. husky v9 writes .husky/_ stubs only for its
+  // own hook list, which lacks reference-transaction, so the project must write that stub too.
+  let refGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'reference-transaction')) || '');
+  if (husky !== null && /harness-guard/.test(husky)) {
+    installed = true;
+    guard = true;
+    if (GUARD_RUN.test(read('.husky/pre-merge-commit') || '')) mergeGuarded = true;
+    if (GUARD_RUN.test(read('.husky/reference-transaction') || '') && isFile('.husky/_/reference-transaction')) refGuarded = true;
+  }
+  if (/harness-guard/.test(lefthook)) {
+    installed = true;
+    guard = true;
+    if (/harness-guard/.test(lefthookSection(lefthook, 'pre-merge-commit') || '')) mergeGuarded = true;
+    if (/harness-guard/.test(lefthookSection(lefthook, 'reference-transaction') || '')) refGuarded = true;
+  }
+  return { installed, guard, mergeGuarded, refGuarded };
+}
+
 /** Section of a lefthook.yml below a top-level `key:` (up to the next top-level key). */
 function lefthookSection(text, key) {
   const ls = norm(text).split('\n');
@@ -656,6 +747,22 @@ function buildReport() {
       rawEntries = parsed.entries || [];
       entries = rawEntries.map(manifestEntry);
     }
+  }
+  // a manifest that records templates names every core one it installed: one it lacks is new since,
+  // unless the install's own version shipped it and nothing kept or new imports it (a file it never
+  // took), or an entry holds it unrecorded
+  const notInstalled = rawEntries.some(e => e && typeof e.template === 'string') ? templatesNotInstalled(rawEntries, manifest && manifest.skillVersion) : null;
+  if (notInstalled && notInstalled.core.length) {
+    const at = notInstalled.reviewedAt;
+    const held = at.length ? `; a reviewed entry sits where ${at.length === 1 ? 'one is' : 'they are'} installed: ${at.join(', ')}` : '';
+    haz('template-not-installed', `the skill ships ${notInstalled.core.length} core template${notInstalled.core.length === 1 ? '' : 's'} no manifest entry names: ${notInstalled.core.join(', ')}${held}`, MANIFEST);
+  }
+  if (notInstalled && notInstalled.gaps.length) {
+    haz('template-never-installed', `the install never took ${notInstalled.gaps.length} core template${notInstalled.gaps.length === 1 ? '' : 's'} its skillVersion ${manifest.skillVersion} already shipped: ${notInstalled.gaps.join(', ')}`, MANIFEST);
+  }
+  if (notInstalled && notInstalled.unrecorded.length) {
+    const one = notInstalled.unrecorded.length === 1;
+    haz('template-unrecorded', `${notInstalled.unrecorded.length} manifest entr${one ? 'y' : 'ies'} not reviewed hold${one ? 's' : ''} a template's file and record${one ? 's' : ''} no template: ${notInstalled.unrecorded.join(', ')}`, MANIFEST);
   }
 
   // the registry is in the main checkout, from a linked worktree too (the commit guard finds it so)
@@ -756,28 +863,7 @@ function buildReport() {
     if (!reg.includes('<!-- harness:active -->') || !reg.includes('<!-- /harness:active -->')) {
       haz('registry-no-markers', 'registry lacks the <!-- harness:active --> / <!-- /harness:active --> markers', registryFile.rel);
     }
-    // a guard in the hooks dir, or in husky / lefthook; each must be paired with a pre-merge-commit
-    // hook that runs it, because a non-conflicting `git merge` runs pre-merge-commit, not pre-commit
-    const hooks = hooksDir();
-    const husky = read('.husky/pre-commit');
-    const lefthook = read('lefthook.yml') || '';
-    const hooksPre = readAbs(path.join(hooks, 'pre-commit'));
-    let installed = hooksPre !== null;
-    let mergeGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'pre-merge-commit')) || '');
-    // and with a reference-transaction hook that runs it: a fast-forward, reset or update-ref of the
-    // mainline writes no commit, so no other hook sees it. husky v9 writes .husky/_ stubs only for its
-    // own hook list, which lacks reference-transaction, so the project must write that stub too.
-    let refGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'reference-transaction')) || '');
-    if (husky !== null && /harness-guard/.test(husky)) {
-      installed = true;
-      if (GUARD_RUN.test(read('.husky/pre-merge-commit') || '')) mergeGuarded = true;
-      if (GUARD_RUN.test(read('.husky/reference-transaction') || '') && isFile('.husky/_/reference-transaction')) refGuarded = true;
-    }
-    if (/harness-guard/.test(lefthook)) {
-      installed = true;
-      if (/harness-guard/.test(lefthookSection(lefthook, 'pre-merge-commit') || '')) mergeGuarded = true;
-      if (/harness-guard/.test(lefthookSection(lefthook, 'reference-transaction') || '')) refGuarded = true;
-    }
+    const { installed, mergeGuarded, refGuarded } = guardHooks();
     if (!installed) {
       const snippet = DOCS.some(f => {
         const t = read(f) || '';
@@ -806,7 +892,10 @@ function buildReport() {
       }
     }
   } else if (verdict !== 'none' || manifest) {
-    haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
+    // the guard passes every commit while there is no registry, so an installed guard locks nothing either
+    haz('lock-missing', guardHooks().guard
+      ? `a harness is installed but no commit lock: the guard is installed, but with no registry (${registryFile.rel}) it passes every commit`
+      : 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
   }
 
   // the guard's ID_PATTERN must take whole task ids: it is cut short by '.' or a trailing alnum run
@@ -1145,6 +1234,7 @@ function buildReport() {
     lineage: { plan, change, verdict, source: lineageSource },
     entries,
     templates: templateCounts(entries),
+    notInstalled,
     markers,
     sizes,
     ids,
@@ -1205,6 +1295,114 @@ function templateState(entry) {
   try { text = fs.readFileSync(path.join(SKILL_DIR, ...rel.split('/')), 'utf8'); } catch { return 'gone'; }
   if (typeof entry.templateSha256 !== 'string') return 'unrecorded';
   return sha(text) === entry.templateSha256 ? 'current' : 'newer';
+}
+
+/** Every file under the skill's templates/, as `templates/...` paths, sorted. */
+function shippedTemplates() {
+  const walk = (dir) => {
+    let names = [];
+    try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    return names.flatMap(d => (d.isDirectory() ? walk(path.join(dir, d.name)) : d.isFile() ? [path.join(dir, d.name)] : []));
+  };
+  // a dotfile (.DS_Store) or an editor's or a merge's leftover is no template
+  const stray = (f) => /^\./.test(path.basename(f)) || /(\.(orig|rej|bak|swp)|~)$/.test(f);
+  return walk(path.join(SKILL_DIR, 'templates')).filter(f => !stray(f)).map(f => path.relative(SKILL_DIR, f).split(path.sep).join('/')).sort();
+}
+
+/** The Component and From cells of SKILL.md's optional table (below its `**Optional` line), or ''. */
+function optionalCells() {
+  let lines = [];
+  try { lines = norm(fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8')).split('\n'); } catch { return ''; }
+  const at = lines.findIndex(l => l.startsWith('**Optional'));
+  if (at < 0) return '';
+  let i = lines.findIndex((l, j) => j > at && l.startsWith('|'));
+  const cells = [];
+  for (; i >= 0 && i < lines.length && lines[i].startsWith('|'); i += 1) cells.push(lines[i].split('|').slice(1, 3).join('|'));
+  return cells.join('\n');
+}
+
+/** The templates the skill ships that no manifest entry names, as its `template` or in `replaces` (a
+ *  file the project wrote in place of them): optional when the optional table names their stem
+ *  (`claude-run-core` for its test too), else core, which every install takes (SKILL.md › Core). A
+ *  core one newer than `skillVersion` (TEMPLATES_SINCE) is the upgrade's new file (`core`); one that
+ *  version already shipped is a file the install never took (`gaps`), unless a template the install
+ *  has, or one in `core`, imports or runs it (templateDeps), which puts it, or an optional one, in
+ *  `core` too (a name only `replaces` gives is the project's file, whose imports are its own). An entry with
+ *  no template where the template is installed (installedAt) holds it: one not reviewed is listed in
+ *  `unrecorded` as `<path>[#block] (<template>)`; a reviewed one is the project's own file for a
+ *  template the install's version shipped, and for a newer one leaves it in `core`, listed in
+ *  `reviewedAt` (the project says in `replaces` that its file stands in). */
+function templatesNotInstalled(rawEntries, skillVersion) {
+  // `replaces` counts on a file the project wrote itself: a reviewed entry with no template
+  const named = (e) => (e && typeof e === 'object' ? [e.template, ...(e.kind === 'reviewed' && e.template === undefined ? [e.replaces].flat() : [])] : []);
+  const recorded = new Set(rawEntries.flatMap(named).map(safeRel).filter(Boolean));
+  const installed = new Set(rawEntries.map(e => (e && typeof e === 'object' ? safeRel(e.template) : null)).filter(Boolean));
+  const unnamed = rawEntries.filter(e => e && typeof e === 'object' && e.template === undefined && safeRel(e.path) && (e.block === undefined || typeof e.block === 'string'));
+  const optional = optionalCells();
+  const shipped = shippedTemplates();
+  const old = (t) => Number.isInteger(skillVersion) && (TEMPLATE_SINCE.get(t) ?? Infinity) <= skillVersion;
+  const out = { core: [], gaps: [], unrecorded: [], reviewedAt: [], optional: [] };
+  // the templates the install has or this upgrade installs: what they import must be there too
+  const kept = [];
+  for (const t of shipped) {
+    if (recorded.has(t)) {
+      if (installed.has(t)) kept.push(t);
+      continue;
+    }
+    const holder = unnamed.find(e => installedAt(t, e));
+    const label = holder ? `${safeRel(holder.path)}${holder.block ? `#${holder.block}` : ''} (${t})` : null;
+    if (holder && holder.kind !== 'reviewed') {
+      out.unrecorded.push(label);
+      kept.push(t);
+      continue;
+    }
+    if (holder && old(t)) continue;
+    const stem = path.posix.basename(t).replace(/(\.test)?\.[a-z]+$/, '').replace(/\.golden$/, '');
+    const isOptional = new RegExp(`(^|[^\\w-])${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w-]|$)`).test(optional);
+    if (isOptional) {
+      out.optional.push(t);
+    } else if (old(t)) {
+      out.gaps.push(t);
+    } else {
+      out.core.push(t);
+      kept.push(t);
+      if (holder) out.reviewedAt.push(label);
+    }
+  }
+  const known = new Set(shipped);
+  for (let i = 0; i < kept.length; i += 1) {
+    for (const d of templateDeps(kept[i], known)) {
+      const from = [out.gaps, out.optional].find(list => list.includes(d));
+      if (!from) continue;
+      from.splice(from.indexOf(d), 1);
+      out.core.push(d);
+      kept.push(d);
+    }
+  }
+  out.core.sort();
+  return out;
+}
+
+/** Whether manifest entry `e` sits where template `t` is installed: an INSTALLED_AS place, else the
+ *  template's path below templates/, at the top or under a directory (`.claude/hooks/edit-guard.mjs`). */
+function installedAt(t, e) {
+  const at = safeRel(e.path);
+  if (INSTALLED_AS[t]) return INSTALLED_AS[t].includes(`${at}${e.block ? `#${e.block}` : ''}`);
+  const rest = t.slice('templates/'.length);
+  return !e.block && (at === rest || at.endsWith(`/${rest}`));
+}
+
+/** The shipped templates (`known`) template `t` imports, by a relative import in a .mjs or .js
+ *  template, or runs, by a `scripts/` path in a .sh one (a .mjs one names optional lanes it may run,
+ *  so its paths are not read): an install keeps templates/scripts/'s layout
+ *  under scripts/, so an import resolves the same in both. */
+function templateDeps(t, known) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(SKILL_DIR, ...t.split('/')), 'utf8'); } catch { return []; }
+  const deps = /\.sh$/.test(t)
+    ? [...text.matchAll(/\bscripts\/(?:lib\/)?[\w.-]+\.mjs\b/g)].map(m => `templates/${m[0]}`)
+    : [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.\.?\/[^'"]+)['"]/g)].map(m => path.posix.join(path.posix.dirname(t), m[1].replace(/[?#].*$/, '')));
+  return deps.filter(d => known.has(d));
 }
 
 function templateCounts(entries) {
@@ -1338,6 +1536,12 @@ function renderText(r) {
     const t = r.templates;
     out.push(`templates: ${t.newer} newer, ${t.current} current, ${t.gone} gone, ${t.unrecorded} unrecorded${t.invalid ? `, ${t.invalid} invalid` : ''} (against the skill at ${SKILL_DIR})`);
   }
+  if (r.notInstalled && (r.notInstalled.core.length || r.notInstalled.gaps.length || r.notInstalled.optional.length)) {
+    const n = r.notInstalled;
+    const gaps = n.gaps.length ? `, ${n.gaps.length} core the install never took (${n.gaps.join(', ')})` : '';
+    out.push(`not installed: ${n.core.length} core${n.core.length ? ` (${n.core.join(', ')})` : ''}${gaps}, ${n.optional.length} optional${n.optional.length ? ` (${n.optional.join(', ')})` : ''}`);
+  }
+  if (r.notInstalled && r.notInstalled.unrecorded.length) out.push(`no template recorded: ${r.notInstalled.unrecorded.join(', ')}`);
   out.push('');
   if (!r.markers.length) {
     out.push('markers: none');
@@ -1484,6 +1688,6 @@ function main() {
   process.stdout.write(text ? renderText(report) : `${JSON.stringify(report, null, 2)}\n`);
 }
 
-module.exports = { READONLY_CLAIM };
+module.exports = { READONLY_CLAIM, TEMPLATES_SINCE };
 
 if (require.main === module) main();

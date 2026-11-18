@@ -64,20 +64,25 @@ const HEADER_KEYS = {
   deliverablestarted: 'deliverableStarted',
   ownerwait: 'ownerWait',
   rows: 'rows',
+  neverauto: 'neverAuto',
 };
 // A combined key (`Type · tier: Feature · Full`) is split on these, key and value alike.
 const COMBINED_SEP = /\s*[·/]\s*/;
 const EMPTY_ALSO = new Set(['', '-', '—']);
+// A `Never-auto:` value or category naming nothing: the retro's EMPTY pattern (retro-core), so `none (docs
+// only)`, `None.` and `n/a` count as none.
+const NO_CATEGORY = /^(?:|none|nothing|n\/a|-|\u2014|\u2013)(?:[\s.,;:]*\(.*\))?[\s.]*$/i;
 const NO_SUMMARY = 'not run — no SUMMARY line found';
 const MAX_OWNER_WAIT = 80;
 const NO_CLAIMED = 'unknown — no Claimed: line in the state file';
 
 /** Reject unknown flags and a missing --state before any file is read. */
 export function parseArgs(argv) {
-  const a = { state: null, base: null, gates: null, cost: null, steps: null, json: false };
+  const a = { state: null, base: null, gates: null, cost: null, steps: null, json: false, trailer: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--json') a.json = true;
+    else if (t === '--trailer') a.trailer = true;
     else if (t === '--state' || t === '--base' || t === '--gates' || t === '--cost' || t === '--steps') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${t} needs a value`);
@@ -85,6 +90,9 @@ export function parseArgs(argv) {
     } else throw new Error(`unknown option ${t}`);
   }
   if (!a.state) throw new Error('--state <file> is required');
+  if (a.trailer && (a.json || a.base || a.gates || a.cost || a.steps)) {
+    throw new Error('--trailer prints the land commit trailer only: use it with --state alone');
+  }
   return a;
 }
 
@@ -164,6 +172,7 @@ export function parseState(text) {
     claimed: '',
     deliverableStarted: '',
     ownerWait: '',
+    neverAuto: '',
   };
   const raw = { [LEDGER_HEADING]: [], [FINDINGS_HEADING]: [] };
   let section = null;
@@ -180,8 +189,9 @@ export function parseState(text) {
       values = value.split(COMBINED_SEP);
       if (values.length > keys.length) values.splice(keys.length - 1, Infinity, values.slice(keys.length - 1).join(' · '));
     }
+    // `Never-auto` is its own header line: as a part of a combined key it is not read
     keys.forEach((key, i) => {
-      if (key && !header[key]) header[key] = (values[i] ?? '').trim().replace(/^`(.*)`$/, '$1');
+      if (key && !(key === 'neverAuto' && keys.length > 1) && !header[key]) header[key] = (values[i] ?? '').trim().replace(/^`(.*)`$/, '$1');
     });
   };
   for (const line of text.split(/\r?\n/)) {
@@ -339,6 +349,70 @@ export function parseOwnerWait(text, nowIso, sinceIso = null) {
   return { ms, pairs: true, waiting };
 }
 
+/** A value split on the commas outside parentheses; an unclosed `(` runs to the end of the value. */
+function splitOutsideParens(value) {
+  const parts = [''];
+  let depth = 0;
+  for (const ch of value) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) parts.push('');
+    else parts[parts.length - 1] += ch;
+  }
+  return parts;
+}
+
+// A parenthesised note, nested ones and an unclosed one included, is no part of a category's name.
+function withoutNotes(part) {
+  let depth = 0;
+  let out = '';
+  for (const ch of part) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')' && depth > 0) depth -= 1;
+    else if (depth === 0) out += ch;
+  }
+  return out;
+}
+
+/**
+ * A state file's `Never-auto:` value -> the categories it names: a comma list (commas inside parentheses
+ * do not split, and a parenthesised note is no part of the name), lower-cased, in the file's order, each
+ * once; `-`, `none`, `none (docs only)`, `None.`, `n/a` and an empty value name none.
+ */
+export function neverAutoCategories(value) {
+  const text = String(value ?? '').trim();
+  if (NO_CATEGORY.test(text)) return [];
+  const out = [];
+  for (const part of splitOutsideParens(text)) {
+    const c = withoutNotes(part).trim().replace(/^`(.*)`$/, '$1').trim().toLowerCase();
+    if (!NO_CATEGORY.test(c) && !out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Whether a `Never-auto:` value is there but reads as no category and is not a way of saying none (`(money)`,
+ * a note with no name; `(none)` is none): the value was meant to name something and names nothing, which no caller should
+ * take for none. `-`, `none`, `n/a`, an empty value and `none (docs only)` are none, so false.
+ */
+export function neverAutoUnreadable(value) {
+  const text = String(value ?? '').trim();
+  if (text === '' || neverAutoCategories(text).length > 0) return false;
+  // a value that is a note alone: NO_CATEGORY takes it for none (its name part may be empty), so read the note
+  const note = /^\(([^]*)\)[\s.]*$/.exec(text);
+  return note ? !/^(?:none|nothing|n\/a|-|\u2014|\u2013)$/i.test(note[1].trim()) : !NO_CATEGORY.test(text);
+}
+
+/**
+ * The land commit's trailer lines, which the owner reads at the deploy (deploy-list.mjs): `Unit: <id>`
+ * and, when the unit touches a never-auto product category, `Never-auto: <cat>[, <cat>]`. The agent
+ * passes each to `git commit --trailer` or pastes them at the end of the message.
+ */
+export function landTrailer(header) {
+  const categories = neverAutoCategories(header.neverAuto);
+  return [`Unit: ${header.unit}`, ...(categories.length ? [`Never-auto: ${categories.join(', ')}`] : [])];
+}
+
 // A table cell holds one line: CR/LF runs become one space (a multi-line --cost would break the row).
 const cell = (s) => String(s).replace(/[\r\n]+/g, ' ').replaceAll('|', '\\|');
 
@@ -389,6 +463,7 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
   const h = state.header;
   const sum = summarizeFindings(state.findings);
   const unit = h.unit || 'unit';
+  const neverAuto = neverAutoCategories(h.neverAuto);
   const sources = Object.entries(sum.yield);
   const yieldLine = sources.length
     ? sources.map(([s, y]) => `${s} P0/P1/P2 ${y.P0}/${y.P1}/${y.P2}`).join(' · ')
@@ -455,6 +530,7 @@ export function buildRecord({ state, commits, diffstat, gatesSummary, now, base,
     ...shown,
     `- Diffstat: ${diffstat.trim() || 'none'}`,
     `- Gates: ${gatesSummary ?? NO_SUMMARY}`,
+    ...(neverAuto.length ? [`- Land commit trailer: Never-auto: ${neverAuto.join(', ')}`] : []),
     `- Findings: P0 ${sum.bySev.P0} · P1 ${sum.bySev.P1} · P2 ${sum.bySev.P2} · P3 ${sum.bySev.P3} (open ${s.open} · fixed ${s.fixed} · follow-up ${s['follow-up']} · retracted ${s.retracted})`,
     `- Yield by source: ${yieldLine}`,
     `- Elapsed: ${elapsedLine}`,

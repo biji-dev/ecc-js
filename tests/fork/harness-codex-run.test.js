@@ -18,7 +18,7 @@ const SNAPSHOT_TEST_REL = path.join('lib', 'snapshot-tree.test.mjs');
 const SNAPSHOT_REL = path.join('lib', 'snapshot-tree.mjs');
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 68;
+const EXPECTED_TESTS = 71;
 // The number of tests in the shipped snapshot-tree suite (the ledger rows' tree and branch).
 const EXPECTED_SNAPSHOT_TESTS = 18;
 
@@ -114,6 +114,24 @@ test('mutant: removing the clamp in resolveRoute makes the suite fail', () => {
   assert.notStrictEqual(res.status, 0, 'the mutant suite still passed');
   assert.ok(tapCount(out, 'fail') > 0, out.slice(-800));
 });
+
+for (const [label, needle, replacement] of [
+  ['every change counts as moved, a records-only edit included', '  return changed.some((p) => !records.test(p));', '  return changed.length > 0;'],
+  ['no change counts as moved, so a code edit mid-run keeps the row', '  return changed.some((p) => !records.test(p));', '  return false;'],
+  ['an unreadable tree diff counts as unmoved', '  if (!Array.isArray(changed)) return true;', '  if (!Array.isArray(changed)) return false;'],
+]) {
+  test(`mutant (v13 treeMoved minus RECORDS): ${label} makes the suite fail`, () => {
+    const copy = tmp('codex-run-mutant-');
+    cleanup.push(copy);
+    fs.cpSync(SCRIPTS, copy, { recursive: true });
+    const corePath = path.join(copy, CORE_REL);
+    const before = fs.readFileSync(corePath, 'utf8');
+    assert.strictEqual(before.split(needle).length - 1, 1, `${needle} is not in the core exactly once`);
+    fs.writeFileSync(corePath, before.replace(needle, () => replacement));
+    const res = runSuite(copy, cleanup);
+    assert.ok(tapCount(res.stdout + res.stderr, 'fail') > 0, 'the mutant suite still passed');
+  });
+}
 
 test('mutant: dropping the frontier model gate makes the suite fail', () => {
   const copy = tmp('codex-run-mutant-');
@@ -218,14 +236,20 @@ codexMutant('classifying a safety refusal as a failure', CORE_REL, 'const REFUSE
 codexMutant(
   'not checking an interrupted review for a refusal',
   CORE_REL,
-  "    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  "    if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };\n",
   '',
 );
 codexMutant(
   'not checking a failed or completed turn for a refusal',
   CORE_REL,
-  "\n  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  "\n  if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };\n",
   '\n',
+);
+codexMutant(
+  'reading a refusal from the error events only, not an item error',
+  CORE_REL,
+  'const refusal = [errorText, ...events.warnings].flatMap(',
+  'const refusal = [errorText].flatMap(',
 );
 // The landing check counts an adversarial pass with a base as a read of its whole range: the prompt lists it.
 codexMutant('sending an adversarial pass with a base no range', WRAPPER_REL, "const stdin = fullPrompt + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');", 'const stdin = fullPrompt;');

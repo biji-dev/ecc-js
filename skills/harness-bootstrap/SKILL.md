@@ -4,7 +4,7 @@ description: Use when setting up, adopting, auditing or upgrading a gated agent 
 when_to_use: Set up, audit, adopt, or upgrade a gated harness in a repository — task runner or change workflow, commit guard, gates, tiers, risk map, auditors, harness log. Also when asked whether a project is ready for one, or to bring an installed harness up to date.
 metadata:
   origin: ecc-js
-  version: 12
+  version: 13
 ---
 
 # Harness bootstrap
@@ -241,7 +241,8 @@ Also list here:
   harness's docs live — default `harness/` at the root, outside the set, unless the
   owner registers them;
 - whether units run in the main checkout or in worktrees (`git worktree list`; no
-  units yet → the main checkout, `SCOPE=repo`, unless the owner says worktrees).
+  units yet → the main checkout, unless the owner says worktrees). The guard is bound
+  `SCOPE=checkout` either way (`commit-guard.md` › Two scopes).
 
 ### Phase B — Derive the policy, the risk map and the merge policy
 
@@ -249,9 +250,10 @@ Also list here:
 wrong and ships, can it be corrected forward?* — the output rules, two worked
 examples whose right answers differed, and how the same test yields the **risk
 map** (hot modules, critical code, cold modules, each entry citing its evidence)
-and the **merge policy** (the generated default: merge when green, the never-auto
-categories the owner's, and the **standing grant** in the `merge` block, with
-`Push deploys:` read from the workflows — `gate-design.md` › The standing grant).
+and the **merge policy** (the generated default: merge when green, and the
+**standing grant** in the `merge` block, with `Push deploys:` read from the
+workflows and two lines, `Owner merges: GUARDS` and `Owner at deploy: <the
+never-auto product categories>` — `gate-design.md` › The standing grant).
 This is the piece that cannot be templated.
 
 The policy block opens with Phase A's `Stakes:` line, and every critical entry cites
@@ -285,16 +287,17 @@ Claude Code; `harness-targets.md` gives the Codex, ZCode and Kimi forms.
 | `.agents/skills/task-runner/SKILL.md`, with a committed relative symlink at `.claude/skills/task-runner` (a copy where the project refuses committed symlinks, `harness-targets.md`) | `runner.md` | the sequence with this project's front-end(s), bound to its plan or change documents. Edit the real file, never through the link |
 | `.claude/agents/plan-conformance-auditor.md` | `conformance-auditor.md` | lane A · `model: sonnet`, `effort: high`, `tools: Read, Grep, Glob`; states its bound |
 | `.claude/agents/blast-radius-auditor.md` | `blast-radius-auditor.md` | lane B's fallback when the second family is unavailable · `model: opus`, `effort: high`, `tools: Read, Grep, Glob` |
-| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; behaviour claims only, one round; states that it sabotages only in a worktree of its own and restores |
+| `.claude/agents/claim-auditor.md` | `claim-auditor.md` | lane C · `model: opus`, `effort: high`, `tools: Read, Grep, Glob, Bash`; the step 8c audit is dispatched on Sonnet, Full with critical code only; behaviour claims only, one round; states that it sabotages only in a worktree of its own and restores |
 | `.claude/agents/implementer.md` | `runner.md` | `model: opus` default, `sonnet` passed for cold slices, `effort: high`, `autoCompactWindow: 250000` |
 | every generated agent file | `context.md` | the **Tool discipline** section, verbatim |
-| `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs` | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line — and `HARNESS` to the harness's own scripts and records (`--tier harness`, `runner.md` › The harness lane); `GUARDS` lists the paths only the owner merges |
+| `scripts/review-gate.mjs` + `scripts/lib/review-gate-core.mjs` + its test and golden matrix | `templates/scripts/review-gate.mjs`, `templates/scripts/lib/review-gate-core.mjs`, `templates/scripts/lib/review-gate-core.test.mjs`, `templates/scripts/lib/review-gate.golden.json` (the test reads it; `REVIEW_GATE_GOLDEN=write` regenerates it after a reviewed routing change) | names the reviewers at each review point (`gate-design.md` › Review lineup, Fix rounds); `--writer` names the role that wrote the diff, on the host `harness-host-core.mjs` detects (the harness-host row). Bind `CRITICAL` and `TRIGGERS` from the risk map — unbound, it says so in every result line — and `HARNESS` to the harness's own scripts and records (`--tier harness`, `runner.md` › The harness lane); `GUARDS` lists the paths only the owner merges |
 | `scripts/docs-drift.mjs` + `scripts/lib/docs-drift-core.mjs` + its test | `templates/scripts/docs-drift.mjs`, `templates/scripts/lib/docs-drift-core.mjs`, `templates/scripts/lib/docs-drift-core.test.mjs` | step 8a's stale-doc list; bind `DOC_GLOBS` to the doc tree |
 | `scripts/unit-step.mjs` + `scripts/lib/unit-step-core.mjs` + its test | `templates/scripts/unit-step.mjs`, `templates/scripts/lib/unit-step-core.mjs`, `templates/scripts/lib/unit-step-core.test.mjs` | each runner step's start and end, one line each in the unit's steps file beside its state file (`runner.md` › Step markers); bind `STEPS_DIR` to the state file's directory, and `MAIN_CHECKOUT_STEPS` to the runner's resume, claim and teardown steps |
 | `scripts/unit-record.mjs` + `scripts/lib/unit-record-core.mjs` + its test | `templates/scripts/unit-record.mjs`, `templates/scripts/lib/unit-record-core.mjs`, `templates/scripts/lib/unit-record-core.test.mjs` | step 8b's record fields and the log row, from git, the state file and the steps file (`scope-guard.md` › the state file's shape) |
 | `scripts/unit-cost.mjs` + `scripts/lib/unit-cost-core.mjs` + its test | `templates/scripts/unit-cost.mjs`, `templates/scripts/lib/unit-cost-core.mjs`, `templates/scripts/lib/unit-cost-core.test.mjs` | the log's Cost cell — the unit's Claude cost from its transcripts and the second family's meter from its ledger (`log-format.md`); with `--times` and `--by-step`, where the time and money went; bind the price table and the dollars-per-percent calibration |
 | `scripts/retro.mjs` + `scripts/lib/retro-core.mjs` + `scripts/lib/retro-gather.mjs` + its test | `templates/scripts/retro.mjs`, `templates/scripts/lib/retro-core.mjs`, `templates/scripts/lib/retro-gather.mjs`, `templates/scripts/lib/retro-core.test.mjs` | the week's digest, committed under retro-core's `REPORTS_DIR` (default `docs/harness/reports/`): KPIs against the four weeks before, outliers, where the money went by step, friction, the queue, at most five candidates (`learning.md` › The retro); bind the paths, the extra log columns, the outlier rule and the step words |
 | `scripts/harness-due.mjs` + `scripts/lib/harness-due-core.mjs` + its test | `templates/scripts/harness-due.mjs`, `templates/scripts/lib/harness-due-core.mjs`, `templates/scripts/lib/harness-due-core.test.mjs` | the due-checks (`runner.md` › Due-checks): at step 0, `--claim` prints only what blocks the claim, a missing preflight for the row that opens a phase (`DUE preflight`) and a harness unit while a product unit is held or parked (`WAIT`; `--owner` on the owner's word); once, at the end of the run, owed owner input, the parked inbox, a unit past its size, a report due (never a unit), the asking kinds and the digest each print (`OWED`, `INBOX`, `SPLIT`, `REPORT`, `ASK`, `DIGEST`); bind `MAIN`, `REGISTRY` (the guard's), `STATE_DIR`, the paths, `REPORTS`, `PHASE_OF`, `COMMANDS`, `CADENCE` and the limits |
+| `scripts/deploy-list.mjs` + `scripts/lib/deploy-list-core.mjs` + its test | `gate-design.md` › The deploy list, `templates/scripts/deploy-list.mjs`, `templates/scripts/lib/deploy-list-core.mjs`, `templates/scripts/lib/deploy-list-core.test.mjs` | the owner's deploy checkpoint: every never-auto land commit between the live commit and the one to deploy, from their `Never-auto:` trailers, with each landing, review and audit line, then the critical paths the range touched |
 | `scripts/lib/run-sources.mjs` | `templates/scripts/lib/run-sources.mjs` | where a run's transcripts, a Codex host's threads and the two run ledgers are, for `unit-cost.mjs` and `retro.mjs`; bind `LEDGER_DIR` as `codex-run.mjs` does and `CLAUDE_LEDGER_DIR` as `claude-run.mjs` does |
 | `scripts/estimate.mjs` + `scripts/lib/estimate-core.mjs` + its test | `templates/scripts/estimate.mjs`, `templates/scripts/lib/estimate-core.mjs`, `templates/scripts/lib/estimate-core.test.mjs` | Gate 1's estimate — p25–p75 ranges from the log, "no history" below three rows (`log-format.md` › Estimates); bind the log's column names |
 | `scripts/intake.mjs` + `scripts/lib/intake-core.mjs` + its test | `templates/scripts/intake.mjs`, `templates/scripts/lib/intake-core.mjs`, `templates/scripts/lib/intake-core.test.mjs` | the Intake type: `--check` holds a drafted request to the owner sheet's properties, and `--gate1` makes unit 1's Gate 1 automatic while its approval still matches the claim (`intake.md`); bind `STRAY` |
@@ -319,7 +322,7 @@ to the change-request and milestone documents — the project's own home for the
 else `docs/changes/<unit>.md` — puts each unit's plan and state file at
 `docs/plans/<unit>.md` and `docs/plans/<unit>.state.md`, matches registry rows by
 the `Branch` cell with `ID_PATTERN` empty (unless changes carry ids), and takes
-`SCOPE=checkout` when units run in worktrees, else `SCOPE=repo`.
+`SCOPE=checkout`, the default in both modes.
 
 **Optional — ask first, each where the project earns it.** The default is the
 answer when the owner just accepts:

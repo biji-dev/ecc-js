@@ -72,9 +72,13 @@ session is the owner's choice alone. Automatic compaction is the reset, and the
 state file is what survives it. The model cannot compact or clear itself; what it
 can judge is what the main thread reads.
 
-- **Persist first, every boundary.** The state file is current and work is
-  committed at **every** step boundary — automatic compaction can land on any turn.
-  A compaction replaces the chat with a summary; files survive, the chat does not.
+- **Persist first, every boundary.** The state file is written at **every** step
+  boundary — automatic compaction can land on any turn — and committed at Gate 1,
+  before the FULL verify and at land. A compaction replaces the chat with a summary;
+  files survive on disk, the chat does not, and the session-resume hook reads the
+  file from disk. Target: 5 or fewer harness commits per unit.
+  > Origin, the v12 study: 12–28 harness commits per unit, most of them state-file
+  > commits at step boundaries.
 - **Past the warning figure, reading goes to subagents.** Grounding, run-and-report
   steps and doc sweeps read far more than they hand back; a subagent pays for that
   reading in its own context and returns the summary. The main thread keeps the
@@ -277,7 +281,7 @@ output that matters), or `skipped` / `unavailable` / `degraded` / `refused` with
 | 8 review — code-reviewer + security-reviewer | ran | 3 findings: 2 fixed (abc1234), 1 → follow-ups |
 | 8 second-family review | unavailable | `codex-run: unavailable kind=review … usage limit` — degraded, Opus stood in |
 | 8 lane B blast radius | ran | 2 readers outside the diff fixed (def5678) |
-| 8a verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
+| 8d verify FULL | ran | `SUMMARY 9 passed, 0 failed, 0 skipped (full)` |
 ```
 
 `[M]` Then five lists:
@@ -301,10 +305,29 @@ never stops at the first red**; its exit status is the number of failed gates.
 
 `templates/run-gates.sh` is that runner — bash, so always `bash scripts/run-gates.sh`.
 Its gate list sits between `# >>> harness:gates` and `# <<< harness:gates` as one
-`gate <name> <always|full> '<command>'` line per gate; each gate's output goes to its
+`gate <name> <always|full|paths> '<command>'` line per gate; each gate's output goes to its
 own log; the last line is `SUMMARY <p> passed, <f> failed, <s> skipped (<mode>)`. It
 ships with every example gate commented out, and a run with none bound exits 99 —
 never a green summary of nothing.
+
+`[M]` **A `paths` gate runs only when something outside the product changed.** With
+`[B] PRODUCT_PATHS` bound (an extended regex of the product's paths), a `paths` gate
+is skipped when every path changed since the merge base (a FULL run) or the `--since`
+commit (a scoped run) matches it: `SKIP <name> (no path outside PRODUCT_PATHS changed
+since <commit>)`. It always runs on the mainline's tip, with no merge base, on an
+empty diff and on a git error; unbound, it is a `full` gate. The harness's own
+self-tests are the usual one: a product unit no longer pays for them.
+
+`[M]` **`RECORDS` stay out of the cache key.** `[B] RECORDS` (by default the state
+files and step markers, `*.state.md` and `*.steps.jsonl`) is left out of the tree
+key, the scoped run's changed list and the paths diff, so a land commit that adds
+only records reuses the step 8d FULL (`runner.md` › Step 9).
+
+`[B]` **`GATE_JOBS` and `SERIAL`.** `GATE_JOBS` gates run at once; 1, the default,
+is the sequential loop. A gate `SERIAL` names runs alone. Lines print in registration
+order, so the SUMMARY, the records and the exit status are those of a sequential run.
+A registry with a gate twice, a `SERIAL` name that is no gate, or a `PRODUCT_PATHS`
+or `RECORDS` regex that is invalid or matches every path exits 99.
 
 `[M]` **A test gate counts its cases.** `gate_counted <name> <always|full> '<regex>'
 '<command>'` passes only when the command exits 0 **and** its output, colour codes

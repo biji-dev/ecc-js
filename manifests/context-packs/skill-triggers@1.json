@@ -10,7 +10,7 @@
     "id": "hand-seeded",
     "source": "manual-curation-pending-regeneration"
   },
-  "registryDigest": "e2acd906c48c30b812035796fde401427c4bb301356fc921eae396c37c2615a3",
+  "registryDigest": "43e8876797b4d7b4a230656fd8732a822c1c4c91e9274a396ba3c7e29bfc9169",
   "schemaVersion": 1,
   "triggers": {
     "skill:api-connector-builder": [

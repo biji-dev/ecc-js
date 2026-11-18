@@ -1,7 +1,8 @@
 // harness-bootstrap codex-run core (generated YYYY-MM-DD). Pure core of scripts/codex-run.mjs.
-// [M] mechanism (ships as-is): everything below except the model catalog. [B] binding: the
-// CATALOG block, re-derived from the models this machine's codex CLI offers; the route table
-// rows (ROUTES) are a starting point to tune per project, the clamp and exit codes are not.
+// [M] mechanism (ships as-is): everything below except the model catalog and RECORDS. [B] binding:
+// the CATALOG block, re-derived from the models this machine's codex CLI offers, and RECORDS, the
+// harness's own record files; the route table rows (ROUTES) are a starting point to tune per
+// project, the clamp and exit codes are not.
 /**
  * The per-task route table, the clamp a router's answer passes through, the `--json` event
  * parser, the run verdict and the budget guard. No I/O here, so `codex-run-core.test.mjs`
@@ -25,6 +26,21 @@ export const MODELS = Object.values(CATALOG);
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 const DEFAULT_MODEL = CATALOG.default;
+
+// [B] The records the harness writes while a unit runs (its state file and its step ledger), as
+// run-gates.sh's RECORDS names them: keep the two equal. A tree that moved only in these paths
+// during a review did not move under the reviewer, so the row still counts at landing.
+export const RECORDS = /(^|\/)[^/]+\.(state\.md|steps\.jsonl)$/;
+
+/**
+ * Whether a landing row's tree moved under the reviewer: `changed` lists the paths that differ
+ * between the tree before the run and the tree after it, or is null when git could not list them.
+ * A path outside RECORDS moves it, and so does a list git could not give.
+ */
+export function movedBeyondRecords(changed, records = RECORDS) {
+  if (!Array.isArray(changed)) return true;
+  return changed.some((p) => !records.test(p));
+}
 
 // [B] Where the codex CLI's installer puts it, relative to the home directory, tried in order
 // before `codex` on PATH: a terminal can put its own `codex` shim first on PATH, and the shim
@@ -464,8 +480,10 @@ export function classify({
       .filter((l) => /^ERROR/.test(l))
       .join('\n'),
   ].join('\n');
+  // a refusal can also come as an item error, which parseEvents keeps as a warning; the reason is its line
+  const refusal = [errorText, ...events.warnings].flatMap((t) => t.split('\n')).find((l) => REFUSED.test(l));
   if (mode === 'review' && /^review was interrupted\b/i.test(verdict?.trim() ?? '')) {
-    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
+    if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };
     // Interrupted by quota/login -> still the Claude fallback, not "fix the call".
     if (UNAVAILABLE.test(errorText))
       return { outcome: 'unavailable', exit: EXIT.unavailable, reason: firstLine(errorText) };
@@ -477,7 +495,7 @@ export function classify({
   }
   // A refusal in an error event or on stderr is never a verdict, even in a turn that completed:
   // what the model wrote after the filter turned it down is not the review it was asked for.
-  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
+  if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };
   if (events.turns > 0 && !events.failed && verdict?.trim()) {
     const warnings = [...events.warnings, ...events.errors];
     const reasons = exitCode === 0 ? [] : [`codex exit ${exitCode} but verdict present`];

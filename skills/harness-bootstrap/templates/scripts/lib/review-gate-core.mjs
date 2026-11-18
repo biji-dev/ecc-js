@@ -41,6 +41,14 @@
 // second family wrote is the Opus code-reviewer; a Sonnet one runs only where no second family does
 // (the session's degraded fallback, harness-bootstrap's reference/gate-design.md › Review lineup).
 //
+// V13: REVIEW WHERE THE CODE IS CRITICAL, AND COUNT THE ROUNDS. A slice is reviewed on its own only
+// when it holds critical code; a cold slice, whoever wrote it, is `defer`: the unit review reads it.
+// The fix ladder on critical code is shorter: rounds 1 and 2 as before, round 3 the redesign the
+// adversarial pass reads, round 4 a cut; `--state` reads the unit's ledger, so a round is never
+// numbered below one already run. At landing, a critical path no cross-family review read is
+// RE-REVIEW from the base, not the owner's: the review reads it instead of the owner's click. A
+// guard, an unknown host and a path git could not look up stay NONE.
+//
 // THE WRITER IS A ROLE. A harness runs on Claude Code, Codex, ZCode or Kimi, each with a judgment
 // model, a bounded model and a second family (harness-bootstrap's reference/gate-design.md › Model
 // and effort). Read as Claude Code's names, `--writer codex` on a Codex host meant "the second family wrote it", and a small
@@ -72,6 +80,7 @@ export const TRIGGERS = {
   ],
 };
 export const FIX_LINES = 40; // a critical P1 fix at or under this many production lines skips the Opus pass
+export const NOTES = 'docs/harness/upstream-notes.md'; // the install's upstream-notes file: a dropped harness-lane change files one line there
 // [B] Paths only the owner merges: the guards, the gates and the files that hold reviewed blocks.
 // The landing check says NONE when a merge changes one, so no agent judges its own edit to them.
 export const GUARDS = [
@@ -113,6 +122,7 @@ const secondFamilyWrote = (writer) => writer === 'codex' || writer === 'mixed'; 
 
 const UNBOUND_NOTE = 'CRITICAL unbound — every path treated as cold';
 const STAKES_NOTE = 'stakes unbound — routed as live';
+const NO_STATE_NOTE = 'the round against the ledger (no --state)';
 const P3_BATCH = 'P3s never open a fix round: they wait for the P3 batch, one per slice set, no re-review';
 // harness-bootstrap's reference/gate-design.md: the P3 batch runs at live only; with no production
 // users a P3 rides along
@@ -268,6 +278,7 @@ export function parseArgs(argv) {
     '--stakes': 'stakes',
     '--landing': 'landing',
     '--trust': 'trust',
+    '--state': 'state',
   };
   // a revision becomes a git argument: one that starts with `-` would be read as an option
   const revisions = { '--base': 'a revision', '--head': 'a revision', '--landing': 'a revision', '--trust': 'a commit' };
@@ -293,6 +304,7 @@ export function parseArgs(argv) {
   if (a.stakes !== undefined && !STAKES.includes(a.stakes))
     throw new Error(`--stakes must be one of ${STAKES.join('|')}, not "${a.stakes}"`);
   checkLanding(a, given);
+  if (a.state !== undefined && a.kind !== 'fix') throw new Error('--state goes with --kind fix');
   a.round = Number(a.round);
   return a;
 }
@@ -303,12 +315,58 @@ function checkLanding(a, given) {
     if (a.trust) throw new Error('--trust goes with --landing');
     return;
   }
-  const steering = ['--kind', '--writer', '--tier', '--head', '--max-fixed', '--round', '--stakes', '--host'].filter((o) => given.has(o));
+  const steering = ['--kind', '--writer', '--tier', '--head', '--max-fixed', '--round', '--stakes', '--host', '--state'].filter((o) => given.has(o));
   if (steering.length) throw new Error(`--landing takes only --base, --trust and --json, not ${steering.join(', ')}`);
 }
 
 /**
- * kind 'slice': after a slice passes its gate, before the next builds on it.
+ * A unit's state file → the highest fix round its `## Ledger` section records: a Step cell (the
+ * column its table's header names Step, else the first) that starts `8 fix r<N>`. 0 when it records
+ * none; null when the file has no `## Ledger` section (it is no unit's state file). `8 fix r3`, `8 fix
+ * round 3`, `8 fix 3`, `8 fixes (r3)` and `**8 fix r3**` all read 3. Fenced examples are dropped first,
+ * so a sample row never counts. A header is the row above a
+ * `|---|` separator (else the section's first row), so a second table reads its own Step column.
+ */
+export function ledgerFixRound(text) {
+  let section = null;
+  let stepCol = null;
+  let highest = 0;
+  let seen = false;
+  const lines = dropFences(text).split('\n');
+  const cellsOf = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const isSep = (line) => line.trim().startsWith('|') && cellsOf(line).every((c) => /^:?-+:?$/.test(c));
+  for (const [i, line] of lines.entries()) {
+    const heading = /^##(?!#)\s*(.*?)\s*$/.exec(line);
+    if (heading) {
+      section = heading[1].toLowerCase();
+      stepCol = null;
+      continue;
+    }
+    if (/^ledger\b/.test(section ?? '')) seen = true;
+    if (!/^ledger\b/.test(section ?? '') || !line.trim().startsWith('|') || isSep(line)) continue;
+    const cells = cellsOf(line);
+    if (stepCol === null || isSep(lines[i + 1] ?? '')) {
+      stepCol = Math.max(0, cells.findIndex((c) => c.toLowerCase() === 'step'));
+      continue;
+    }
+    const m = /^8\s+fix(?:es)?[\s(-]*(?:r|round\s*)?(\d+)\b/i.exec((cells[stepCol] ?? '').replace(/[`*_]/g, ''));
+    if (m) highest = Math.max(highest, Number(m[1]));
+  }
+  return seen ? highest : null;
+}
+
+/**
+ * Why `round` cannot run when the ledger records fix round `recorded`, or null: a round is never
+ * re-numbered below what the unit already ran, so the ladder (redesign, then cut) cannot restart.
+ */
+export function roundBelowLedger(round, recorded, file = "the unit's state file") {
+  if (!Number.isInteger(recorded) || !Number.isInteger(round) || round >= recorded) return null;
+  return `--round ${round} is below r${recorded}, the highest fix round the ledger in ${file} records: fix rounds count on and never restart; pass --round ${recorded} or higher`;
+}
+
+/**
+ * kind 'slice': after a slice passes its gate, before the next builds on it. A cold slice is 'defer'
+ *               (the unit review covers it), whoever wrote it; a critical one is reviewed now.
  * kind 'unit':  step 8, once, over the whole unit diff from the merge base.
  * `writer` (required) is who wrote the diff: claude (Opus) | codex (the second family) | sonnet
  * (Sonnet, or Opus and Sonnet together) | mixed (several executors, the second family among them;
@@ -321,9 +379,11 @@ function checkLanding(a, given) {
  *               A cold fix that closed only P2s is 'defer': no re-review of its own.
  *               A P3 round is the P3 batch ('p3-batch', no re-review) unless it touches critical
  *               code and Opus did not write it: then the Opus reviewer reads it ('review').
- *               On critical code round 3 is an adversarial pass over the fix diff ('adversarial'),
- *               round 4 a redesign that pass reviews ('redesign'), round 5 and later a cut ('cut');
- *               a round that closed only P2s is 'defer' from round 3 on, never on the ladder.
+ *               On critical code round 3 is a redesign the adversarial pass reviews ('redesign'),
+ *               round 4 and later a cut ('cut'); a round that closed only P2s is 'defer' from
+ *               round 3 on, never on the ladder. `ledgerRound` (the CLI's --state) is the highest
+ *               round the unit's ledger records: a lower `round` is an error, and without it the
+ *               result says the round was not checked.
  * tier 'harness': the harness lane, a diff of HARNESS paths alone -- one cross-family review over the
  *               unit, one fix round re-read by the other family, an adversarial second round, and
  *               the change dropped at the third ('drop'). A reviewed path outside HARNESS takes the
@@ -341,7 +401,7 @@ function checkLanding(a, given) {
  * reviewers to run (maybe empty). `critical` covers production files and tests; `testFiles` counts
  * the tests that are not production.
  */
-export function decide({ files, kind, tier = 'full', writer, maxFixed = null, round = 1, stakes = 'live' }) {
+export function decide({ files, kind, tier = 'full', writer, maxFixed = null, round = 1, stakes = 'live', ledgerRound = null }) {
   if (!KINDS.includes(kind)) throw new Error(`--kind must be one of ${KINDS.join('|')}`);
   if (!TIERS.includes(tier)) throw new Error(`--tier must be one of ${TIERS.join('|')}`);
   if (!WRITERS.includes(writer)) throw new Error(`--writer is required and must be one of ${WRITERS.join('|')} (who wrote the diff)`);
@@ -349,6 +409,12 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
   if (kind === 'fix' && !SEVERITIES.includes(maxFixed))
     throw new Error(`--max-fixed must be one of ${SEVERITIES.join('|')} for --kind fix`);
   if (stakes !== null && !STAKES.includes(stakes)) throw new Error(`--stakes must be one of ${STAKES.join('|')}`);
+  if (ledgerRound !== null) {
+    if (kind !== 'fix') throw new Error('--state goes with --kind fix');
+    if (!Number.isInteger(ledgerRound) || ledgerRound < 0) throw new Error('the ledger round must be an integer >= 0');
+    const below = roundBelowLedger(round, ledgerRound);
+    if (below) throw new Error(below);
+  }
   const none = stakes === 'none';
 
   const prod = files.filter((f) => isProduction(f.path));
@@ -371,6 +437,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
     'critical code outside the CRITICAL path set',
     ...(CRITICAL.length === 0 ? [UNBOUND_NOTE] : []),
     ...(stakes === null ? [STAKES_NOTE] : []),
+    ...(kind === 'fix' && ledgerRound === null ? [NO_STATE_NOTE] : []),
   ];
   const facts = {
     kind,
@@ -400,13 +467,14 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
 
   if (kind === 'slice') {
     if (docsOnly) return out('skip', [], DOCS_ONLY);
-    if (secondFamilyWrote(writer) && critical.length === 0)
+    // v13: a slice is reviewed on its own only when it holds critical code; the unit review reads the rest
+    if (critical.length === 0)
       return out(
         'defer',
         [],
-        writer === 'codex'
-          ? 'cold slice written by the second family: the unit review covers it'
-          : 'cold slice written partly by the second family: the unit review covers it',
+        writer === 'mixed'
+          ? 'cold slice written partly by the second family: the unit review covers it'
+          : `cold slice written by ${WRITER_NAMES[writer]}: the unit review covers it`,
       );
     if (writer !== 'claude' && critical.length > 0) {
       const by =
@@ -485,7 +553,7 @@ export function decide({ files, kind, tier = 'full', writer, maxFixed = null, ro
       return out(
         'drop',
         [],
-        `harness lane, fix round ${round}: drop the change and file one line in docs/harness/upstream-notes.md; the lane does not run a third round`,
+        `harness lane, fix round ${round}: drop the change and file one line in ${NOTES}; the lane does not run a third round`,
       );
     if (round === 2)
       return out(
@@ -565,26 +633,21 @@ function fixRound({ critical, maxFixed, round, prodLines, writer }) {
       [],
       `fix round ${round} on critical code closed only P2s: no re-review loop past round 2 -- the landing check reads what it changed (RE-REVIEW), no adversarial pass, redesign or cut`,
     );
-  // rounds end by themselves: a third is adversarial, a fourth re-plans the area, a fifth cuts it
+  // rounds end by themselves (v13): a third re-plans the area and the adversarial pass reads the new
+  // approach, a fourth cuts it
   const adversary = notOpus ? 'opus-adversarial' : 'second-family-adversarial';
   const byAdversary = notOpus ? 'the adversarial pass by Opus (the fix was not written by Opus)' : 'the adversarial pass by the second family';
-  if (round >= 5)
+  if (round >= 4)
     return d(
       'cut',
       [],
       `fix round ${round} on critical code: the redesign tripped again -- cut the area (flag-off or out of the diff), land what is green, file one follow-up; it parks only when the way forward is never-auto`,
     );
-  if (round === 4)
+  if (round === 3)
     return d(
       'redesign',
       [adversary],
-      `fix round 4 on critical code: the adversarial round tripped again -- the judgment model re-plans this area once, and ${byAdversary} reviews the new approach`,
-    );
-  if (round === 3)
-    return d(
-      'adversarial',
-      [adversary],
-      `fix round 3 on critical code: an adversarial pass over the fix diff, run without asking; ${byAdversary} reads it -- never another standard code-review round`,
+      `fix round 3 on critical code: two fix rounds did not hold -- the judgment model re-plans this area once, and ${byAdversary} reviews the new approach, run without asking`,
     );
   const small = prodLines <= FIX_LINES;
   if (notOpus) {
@@ -688,9 +751,12 @@ function reachable(starts, edges) {
  * read only its own range, so it says nothing about the edits before it; and a merge can write
  * content no branch held. A path is reached when its result blob follows from a start through
  * changes some review read. A self-loop is a review that read no change to the path: it adds
- * nothing. A guard is checked first, so no agent judges its own edit to a gate. An unknown host
+ * nothing. A guard is the owner's, so no agent judges its own edit to a gate; its NONE also names the
+ * critical paths no review read, so the owner's click never stands in for that read unseen. An unknown host
  * counts no row, so only the base and the trusted tips reach, and a path left unreached is NONE: the
  * hook trusts the environment, which a process can strip, so an unidentified host fails closed.
+ * On a known host an unreached path is RE-REVIEW, from the latest reviewed tree when a review read
+ * part of it and from the base when none did; only a path with no facts stays NONE.
  */
 export function landing({ result, base, trust = [], changed, blockChanged = {}, rows = [], paths = {}, host }) {
   const guards = changed.filter((p) => isGuard(p) && (!holdsBlocks(p) || blockChanged[p] !== false));
@@ -709,7 +775,8 @@ export function landing({ result, base, trust = [], changed, blockChanged = {}, 
     host,
     reason,
   });
-  if (guards.length) return out('NONE', `a guard, a gate or a reviewed block changed (${name(guards)}): the owner merges`);
+  const guarded = `a guard, a gate or a reviewed block changed (${name(guards)}): the owner merges`;
+  if (guards.length && critical.length === 0) return out('NONE', guarded);
   if (critical.length === 0) return out('PASS', 'no critical path changed');
 
   // per path, what the starts reach; a path the CLI could not look up has no facts and is unreached.
@@ -720,13 +787,22 @@ export function landing({ result, base, trust = [], changed, blockChanged = {}, 
     if (facts) closure.set(p, reachable(facts.starts, facts.edges.filter((e) => e.from !== e.to)));
   }
   const unreached = critical.filter((p) => !closure.get(p)?.has(paths[p].result));
+  // a guard is the owner's, and the owner is told of the critical code no review read beside it
+  if (guards.length) {
+    if (!unreached.length) return out('NONE', guarded);
+    return out('NONE', `${guarded}, after a second-family-adversarial --base ${base} over the critical paths no review read: ${name(unreached)}`, { unreached });
+  }
   if (unreached.length === 0) return out('PASS', `every critical path is reviewed content (${rows.length} review rows)`);
   if (host === 'unknown') return out('NONE', NO_HOST, { unreached });
 
-  const read = unreached.some((p) => (paths[p]?.edges ?? []).some((e) => e.from !== e.to));
-  if (!read) return out('NONE', `no recorded cross-family review of ${name(unreached)}: the owner merges`, { unreached });
+  // a path the CLI could not look up (a name git cannot take on one batch line) has no blob to follow,
+  // so no review could ever reach it: it stays the owner's
+  const unknown = unreached.filter((p) => !paths[p]);
+  if (unknown.length) return out('NONE', `no recorded cross-family review of ${name(unknown)}: the owner merges`, { unreached });
 
-  // the re-review starts at the latest reviewed tree that holds reviewed content for every unreached
+  // v13: a critical path no review read is RE-REVIEW too, from the base: the second family's
+  // adversarial pass reads it where the owner's click used to stand in for that read.
+  // The re-review starts at the latest reviewed tree that holds reviewed content for every unreached
   // path, so it reads only the delta; with none, it reads the whole change from the base
   const holdsReached = (row) =>
     unreached.every((p) => (paths[p]?.edges ?? []).some((e) => e.row === row && closure.get(p).has(e.to)));

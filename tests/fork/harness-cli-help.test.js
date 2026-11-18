@@ -13,7 +13,7 @@ const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS = path.join(ROOT, 'skills', 'harness-bootstrap', 'templates', 'scripts');
 
 // Pinned: the number of CLIs in the scripts directory. Update it when one is added or removed.
-const EXPECTED_CLIS = 14;
+const EXPECTED_CLIS = 15;
 
 let passed = 0;
 let failed = 0;

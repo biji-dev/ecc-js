@@ -2120,6 +2120,14 @@ Both versions are shown here rather than one being picked.
   in the rollout, not known.
 - **Yield by step counts the second family only.** The kept verdicts are codex-run's; the Claude-side reviewers' and
   lanes' yield still comes from a transcript study.
+- **Known reds turn off their path search in a nested repository or an in-tree worktree.** In a tree that holds an
+  unignored worktree or a nested repository, `run-counted` no longer matches a test path printed relative to a
+  package (other than vitest's, read against its root) to a repo path, so such a known red counts as a red. It fails
+  closed: an extra red, never a missed one. To act on when an install with that layout reports false reds.
+- **The upgrade does not read script paths inside `.mjs` templates.** `harness-status` adds what a kept template
+  needs by its relative imports, and by the `scripts/…mjs` paths a shell template runs; a path an `.mjs` template
+  hands to a child process is not read. Today those name only the optional lanes (codex-run, claude-run), which each
+  install picks. The first core `.mjs` template that runs a script by path needs the closure to read them.
 - **Least-validated component:** the segment runner, with 2 runs and one halt. It is not installed by default.
 
 ### What v13 must show

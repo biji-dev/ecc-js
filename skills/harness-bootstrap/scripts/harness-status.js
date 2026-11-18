@@ -568,6 +568,39 @@ function registryCells(registry) {
   return out;
 }
 
+/** The commit guard's hooks: a pre-commit hook in the hooks dir, or the guard in husky / lefthook
+ *  (installed); the guard itself there, not just any pre-commit hook (guard); and whether a
+ *  pre-merge-commit hook (mergeGuarded) and a reference-transaction hook (refGuarded) run it. */
+function guardHooks() {
+  // a guard in the hooks dir, or in husky / lefthook; each must be paired with a pre-merge-commit
+  // hook that runs it, because a non-conflicting `git merge` runs pre-merge-commit, not pre-commit
+  const hooks = hooksDir();
+  const husky = read('.husky/pre-commit');
+  const lefthook = read('lefthook.yml') || '';
+  const hooksPre = readAbs(path.join(hooks, 'pre-commit'));
+  let installed = hooksPre !== null;
+  // the guard's own file (its REGISTRY binding) or a hook that runs it
+  let guard = /harness-guard|^REGISTRY=/m.test(hooksPre ?? '');
+  let mergeGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'pre-merge-commit')) || '');
+  // and with a reference-transaction hook that runs it: a fast-forward, reset or update-ref of the
+  // mainline writes no commit, so no other hook sees it. husky v9 writes .husky/_ stubs only for its
+  // own hook list, which lacks reference-transaction, so the project must write that stub too.
+  let refGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'reference-transaction')) || '');
+  if (husky !== null && /harness-guard/.test(husky)) {
+    installed = true;
+    guard = true;
+    if (GUARD_RUN.test(read('.husky/pre-merge-commit') || '')) mergeGuarded = true;
+    if (GUARD_RUN.test(read('.husky/reference-transaction') || '') && isFile('.husky/_/reference-transaction')) refGuarded = true;
+  }
+  if (/harness-guard/.test(lefthook)) {
+    installed = true;
+    guard = true;
+    if (/harness-guard/.test(lefthookSection(lefthook, 'pre-merge-commit') || '')) mergeGuarded = true;
+    if (/harness-guard/.test(lefthookSection(lefthook, 'reference-transaction') || '')) refGuarded = true;
+  }
+  return { installed, guard, mergeGuarded, refGuarded };
+}
+
 /** Section of a lefthook.yml below a top-level `key:` (up to the next top-level key). */
 function lefthookSection(text, key) {
   const ls = norm(text).split('\n');
@@ -656,6 +689,11 @@ function buildReport() {
       rawEntries = parsed.entries || [];
       entries = rawEntries.map(manifestEntry);
     }
+  }
+  // a manifest that records templates names every core one it installed; one it lacks is new since
+  const notInstalled = rawEntries.some(e => e && typeof e.template === 'string') ? templatesNotInstalled(rawEntries) : null;
+  if (notInstalled && notInstalled.core.length) {
+    haz('template-not-installed', `the skill ships ${notInstalled.core.length} core template${notInstalled.core.length === 1 ? '' : 's'} no manifest entry names: ${notInstalled.core.join(', ')}`, MANIFEST);
   }
 
   // the registry is in the main checkout, from a linked worktree too (the commit guard finds it so)
@@ -756,28 +794,7 @@ function buildReport() {
     if (!reg.includes('<!-- harness:active -->') || !reg.includes('<!-- /harness:active -->')) {
       haz('registry-no-markers', 'registry lacks the <!-- harness:active --> / <!-- /harness:active --> markers', registryFile.rel);
     }
-    // a guard in the hooks dir, or in husky / lefthook; each must be paired with a pre-merge-commit
-    // hook that runs it, because a non-conflicting `git merge` runs pre-merge-commit, not pre-commit
-    const hooks = hooksDir();
-    const husky = read('.husky/pre-commit');
-    const lefthook = read('lefthook.yml') || '';
-    const hooksPre = readAbs(path.join(hooks, 'pre-commit'));
-    let installed = hooksPre !== null;
-    let mergeGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'pre-merge-commit')) || '');
-    // and with a reference-transaction hook that runs it: a fast-forward, reset or update-ref of the
-    // mainline writes no commit, so no other hook sees it. husky v9 writes .husky/_ stubs only for its
-    // own hook list, which lacks reference-transaction, so the project must write that stub too.
-    let refGuarded = installed && GUARD_RUN.test(readAbs(path.join(hooks, 'reference-transaction')) || '');
-    if (husky !== null && /harness-guard/.test(husky)) {
-      installed = true;
-      if (GUARD_RUN.test(read('.husky/pre-merge-commit') || '')) mergeGuarded = true;
-      if (GUARD_RUN.test(read('.husky/reference-transaction') || '') && isFile('.husky/_/reference-transaction')) refGuarded = true;
-    }
-    if (/harness-guard/.test(lefthook)) {
-      installed = true;
-      if (/harness-guard/.test(lefthookSection(lefthook, 'pre-merge-commit') || '')) mergeGuarded = true;
-      if (/harness-guard/.test(lefthookSection(lefthook, 'reference-transaction') || '')) refGuarded = true;
-    }
+    const { installed, mergeGuarded, refGuarded } = guardHooks();
     if (!installed) {
       const snippet = DOCS.some(f => {
         const t = read(f) || '';
@@ -806,7 +823,10 @@ function buildReport() {
       }
     }
   } else if (verdict !== 'none' || manifest) {
-    haz('lock-missing', 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
+    // the guard passes every commit while there is no registry, so an installed guard locks nothing either
+    haz('lock-missing', guardHooks().guard
+      ? `a harness is installed but no commit lock: the guard is installed, but with no registry (${registryFile.rel}) it passes every commit`
+      : 'a harness is installed but no commit lock: no registry, no guard', registryFile.rel);
   }
 
   // the guard's ID_PATTERN must take whole task ids: it is cut short by '.' or a trailing alnum run
@@ -1145,6 +1165,7 @@ function buildReport() {
     lineage: { plan, change, verdict, source: lineageSource },
     entries,
     templates: templateCounts(entries),
+    notInstalled,
     markers,
     sizes,
     ids,
@@ -1205,6 +1226,45 @@ function templateState(entry) {
   try { text = fs.readFileSync(path.join(SKILL_DIR, ...rel.split('/')), 'utf8'); } catch { return 'gone'; }
   if (typeof entry.templateSha256 !== 'string') return 'unrecorded';
   return sha(text) === entry.templateSha256 ? 'current' : 'newer';
+}
+
+/** Every file under the skill's templates/, as `templates/...` paths, sorted. */
+function shippedTemplates() {
+  const walk = (dir) => {
+    let names = [];
+    try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    return names.flatMap(d => (d.isDirectory() ? walk(path.join(dir, d.name)) : d.isFile() ? [path.join(dir, d.name)] : []));
+  };
+  return walk(path.join(SKILL_DIR, 'templates')).map(f => path.relative(SKILL_DIR, f).split(path.sep).join('/')).sort();
+}
+
+/** The Component and From cells of SKILL.md's optional table (below its `**Optional` line), or ''. */
+function optionalCells() {
+  let lines = [];
+  try { lines = norm(fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8')).split('\n'); } catch { return ''; }
+  const at = lines.findIndex(l => l.startsWith('**Optional'));
+  if (at < 0) return '';
+  let i = lines.findIndex((l, j) => j > at && l.startsWith('|'));
+  const cells = [];
+  for (; i >= 0 && i < lines.length && lines[i].startsWith('|'); i += 1) cells.push(lines[i].split('|').slice(1, 3).join('|'));
+  return cells.join('\n');
+}
+
+/** The templates the skill ships that no manifest entry names, as its `template` or in `replaces` (a
+ *  file the project wrote in place of them): optional when the optional table names their stem
+ *  (`claude-run-core` for its test too), else core, which every install takes (SKILL.md › Core). */
+function templatesNotInstalled(rawEntries) {
+  const named = (e) => (e && typeof e === 'object' ? [e.template, ...(Array.isArray(e.replaces) ? e.replaces : [e.replaces])] : []);
+  const recorded = new Set(rawEntries.flatMap(named).map(safeRel).filter(Boolean));
+  const optional = optionalCells();
+  const out = { core: [], optional: [] };
+  for (const t of shippedTemplates()) {
+    if (recorded.has(t)) continue;
+    const stem = path.posix.basename(t).replace(/(\.test)?\.[a-z]+$/, '').replace(/\.golden$/, '');
+    const isOptional = new RegExp(`(^|[^\\w-])${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w-]|$)`).test(optional);
+    out[isOptional ? 'optional' : 'core'].push(t);
+  }
+  return out;
 }
 
 function templateCounts(entries) {
@@ -1337,6 +1397,10 @@ function renderText(r) {
   if (r.entries.some(e => e.template)) {
     const t = r.templates;
     out.push(`templates: ${t.newer} newer, ${t.current} current, ${t.gone} gone, ${t.unrecorded} unrecorded${t.invalid ? `, ${t.invalid} invalid` : ''} (against the skill at ${SKILL_DIR})`);
+  }
+  if (r.notInstalled && (r.notInstalled.core.length || r.notInstalled.optional.length)) {
+    const n = r.notInstalled;
+    out.push(`not installed: ${n.core.length} core${n.core.length ? ` (${n.core.join(', ')})` : ''}, ${n.optional.length} optional${n.optional.length ? ` (${n.optional.join(', ')})` : ''}`);
   }
   out.push('');
   if (!r.markers.length) {

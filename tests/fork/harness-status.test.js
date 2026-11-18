@@ -857,7 +857,8 @@ test('manifest install: unchanged, reviewed, scaffold, and a deleted file is mis
   assert.strictEqual(statusOf(rep, 'docs/harness-log.md'), 'scaffold');
   assert.strictEqual(statusOf(rep, 'scripts/gone.sh'), 'missing');
   assert.deepStrictEqual(rep.markers.map(m => [m.block, m.ok]), [['gates', true], ['policy', true]]);
-  assert.deepStrictEqual(rep.hazards, []);
+  // the fixture names one template of the real skill, so every other core template is not installed
+  assert.deepStrictEqual(rep.hazards.map(h => h.id), ['template-not-installed']);
 });
 
 test('editing a generated file marks it edited; editing the gates block marks only gates', () => {
@@ -1133,6 +1134,27 @@ test('3. mutant: lock-missing keyed on the wrong condition is noticed', () => {
   const m = mutantOf("haz('lock-missing'", "haz('lock-missing-x'");
   const repo = mk({ '.claude/skills/change-workflow/SKILL.md': '# cw\n' });
   assert.ok(ids(report(repo)).includes('lock-missing') && !ids(report(repo, m)).includes('lock-missing'));
+});
+
+test('3. lock-missing names an installed guard: with no registry it passes every commit', () => {
+  const cw = { '.claude/skills/change-workflow/SKILL.md': '# cw\n' };
+  const detail = (files) => report(mk({ ...cw, ...files })).hazards.find(h => h.id === 'lock-missing').detail;
+  for (const files of [
+    { '.git/hooks/pre-commit': 'REGISTRY=".claude/registry.md"\n' },
+    { '.git/hooks/pre-commit': '#!/bin/sh\nexec sh .githooks/harness-guard.sh "$@"\n' },
+    { '.husky/pre-commit': 'sh .githooks/harness-guard.sh\n' },
+    { 'lefthook.yml': 'pre-commit:\n  commands:\n    guard:\n      run: sh .githooks/harness-guard.sh\n' },
+  ]) assert.match(detail(files), /the guard is installed, but with no registry \(\.claude\/registry\.md\) it passes every commit/, JSON.stringify(files));
+  // a pre-commit hook that is not the guard (a linter) is no guard
+  assert.match(detail({ '.git/hooks/pre-commit': '#!/bin/sh\nnpx lint-staged\n' }), /no registry, no guard/);
+});
+
+test('3. mutant: lock-missing that takes any pre-commit hook for the guard is noticed', () => {
+  const m = mutantOf("haz('lock-missing', guardHooks().guard", "haz('lock-missing', guardHooks().installed");
+  const repo = mk({ '.claude/skills/change-workflow/SKILL.md': '# cw\n', '.git/hooks/pre-commit': '#!/bin/sh\nnpx lint-staged\n' });
+  const detail = (script) => report(repo, script).hazards.find(h => h.id === 'lock-missing').detail;
+  assert.match(detail(SCRIPT), /no registry, no guard/);
+  assert.doesNotMatch(detail(m), /no registry, no guard/);
 });
 
 test('4. merge-unguarded: a pre-commit guard without a pre-merge-commit guard', () => {
@@ -2041,6 +2063,93 @@ test('template state (js.8): a template path outside templates/ is invalid and i
   const rep = report(repo, script);
   assert.deepStrictEqual(rep.entries.map(e => e.template), ['invalid', 'invalid', 'invalid']);
   assert.strictEqual(rep.templates.invalid, 3);
+});
+
+/** A skill with core templates, an optional one with its core and test, and an optional table whose
+ *  Needs cell names a core template; `script` is harness-status in it, mutated `from` -> `to` if given. */
+function skillWithOptional(from, to) {
+  const skill = mk({
+    'skills/harness-bootstrap/templates/demo.mjs': TEMPLATE_V1,
+    'skills/harness-bootstrap/templates/new-core.mjs': 'export {};\n',
+    'skills/harness-bootstrap/templates/extra.mjs': 'export {};\n',
+    'skills/harness-bootstrap/templates/scripts/lib/extra-core.mjs': 'export {};\n',
+    'skills/harness-bootstrap/templates/scripts/lib/extra-core.test.mjs': 'export {};\n',
+    'skills/harness-bootstrap/SKILL.md': [
+      '**Core — every install:**', '', '| File | From | Notes |', '|---|---|---|', '| `scripts/new-core.mjs` | `templates/new-core.mjs` | x |', '',
+      '**Optional — ask first.**', '', '| Component | From | Needs | Default |', '|---|---|---|---|',
+      '| `scripts/extra.mjs` + `scripts/lib/extra-core.mjs` + its test | `templates/extra.mjs` | units that call new-core | no |', '',
+    ].join('\n'),
+  });
+  const script = path.join(skill, 'skills', 'harness-bootstrap', 'scripts', 'harness-status.js');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(script, from === undefined ? fs.readFileSync(SCRIPT, 'utf8') : fs.readFileSync(mutantOf(from, to), 'utf8'));
+  return script;
+}
+
+/** An install whose manifest names `templates` (one entry each), or has entries with no template. */
+function installNaming(templates) {
+  const repo = mk({ 'docs/harness-log.md': '# Harness log\n' });
+  const entries = templates.length
+    ? templates.map((tpl, i) => ({ path: `scripts/f${i}.mjs`, kind: 'generated', template: tpl, templateSha256: 'a'.repeat(64), sha256: 'b'.repeat(64) }))
+    : [{ path: 'docs/harness-log.md', kind: 'scaffold' }];
+  write(repo, '.agents/harness-manifest.json', JSON.stringify({ schema: 1, skillVersion: 13, modes: ['change'], entries }));
+  return repo;
+}
+
+test('template-not-installed (v13): a core template the manifest names nowhere; optional ones are listed, not a hazard', () => {
+  const script = skillWithOptional();
+  const rep = report(installNaming(['templates/demo.mjs']), script);
+  assert.deepStrictEqual(rep.notInstalled, {
+    core: ['templates/new-core.mjs'],
+    optional: ['templates/extra.mjs', 'templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'],
+  });
+  const h = rep.hazards.filter(x => x.id === 'template-not-installed');
+  assert.strictEqual(h.length, 1);
+  assert.strictEqual(h[0].path, '.agents/harness-manifest.json');
+  assert.match(h[0].detail, /ships 1 core template no manifest entry names: templates\/new-core\.mjs$/);
+  const text = run(installNaming(['templates/demo.mjs']), ['--text'], script).stdout;
+  assert.ok(text.includes('not installed: 1 core (templates/new-core.mjs), 3 optional (templates/extra.mjs, '), text);
+  // named by an entry, it is installed; a manifest that names no template at all says nothing
+  const all = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), script);
+  assert.ok(!ids(all).includes('template-not-installed'), ids(all).join());
+  assert.deepStrictEqual(all.notInstalled.core, []);
+  const none = report(installNaming([]), script);
+  assert.strictEqual(none.notInstalled, null);
+  assert.ok(!ids(none).includes('template-not-installed'));
+  // a template path is read as templateState reads it
+  assert.deepStrictEqual(report(installNaming(['templates/demo.mjs', './templates/new-core.mjs']), script).notInstalled.core, []);
+});
+
+test('template-not-installed (v13): a file the project wrote in place of a template names it in `replaces`', () => {
+  const script = skillWithOptional();
+  const repo = installNaming(['templates/demo.mjs']);
+  const manifest = JSON.parse(fs.readFileSync(path.join(repo, '.agents/harness-manifest.json'), 'utf8'));
+  manifest.entries.push({ path: 'scripts/own-lint.mjs', kind: 'reviewed', replaces: 'templates/new-core.mjs' });
+  write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest));
+  const one = report(repo, script);
+  assert.ok(!ids(one).includes('template-not-installed'), ids(one).join());
+  manifest.entries[manifest.entries.length - 1].replaces = ['templates/new-core.mjs', 'templates/extra.mjs'];
+  write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest));
+  assert.deepStrictEqual(report(repo, script).notInstalled, { core: [], optional: ['templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'] });
+});
+
+test('template-not-installed (v13): mutants that read the Needs cell, or count a named template, are noticed', () => {
+  const repo = installNaming(['templates/demo.mjs']);
+  const wide = report(repo, skillWithOptional("split('|').slice(1, 3)", "split('|').slice(1)"));
+  assert.ok(wide.notInstalled.optional.includes('templates/new-core.mjs'), 'the mutant still reads only Component and From');
+  const blind = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), skillWithOptional('    if (recorded.has(t)) continue;\n', ''));
+  assert.ok(ids(blind).includes('template-not-installed'), 'the mutant still skips the templates the manifest names');
+});
+
+test("template-not-installed (v13): the real skill's tables sort its templates into core and optional", () => {
+  const rep = report(installNaming(['templates/harness-guard.sh']));
+  for (const t of ['templates/run-gates.sh', 'templates/scripts/claude-run.mjs', 'templates/scripts/lib/claude-run-core.test.mjs', 'templates/unit-stack.sh', 'templates/workflows/review.workflow.js', 'templates/scripts/codex-run.mjs', 'templates/context-budget.mjs']) {
+    assert.ok(rep.notInstalled.optional.includes(t), `${t} is not optional`);
+  }
+  for (const t of ['templates/agents-rules.md', 'templates/scripts/deploy-list.mjs', 'templates/scripts/lib/deploy-list-core.test.mjs', 'templates/scripts/lib/review-gate.golden.json', 'templates/scripts/intake.mjs', 'templates/command-guard.mjs']) {
+    assert.ok(rep.notInstalled.core.includes(t), `${t} is not core`);
+  }
+  assert.ok(!rep.notInstalled.core.includes('templates/harness-guard.sh'), 'a template the manifest names is installed');
 });
 
 test('--base (js.8): prints the template an entry was installed from, found by its hash in the skill repository history', () => {

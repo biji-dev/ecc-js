@@ -254,7 +254,9 @@ hashed fresh.
 `[M]` **Entries no template covers.** A harness file the project wrote itself in
 place of a template (its own agent-docs lint, its own runner) is a `reviewed` entry
 with no `template`: an upgrade proposes section-level changes and never merges into
-it. An entry whose file the project deleted reads `missing`: ask whether to generate
+it. The entry names the templates it stands in for in `replaces` (one path or a
+list, for example `"replaces": "templates/scripts/check-agent-docs.mjs"`), so
+`harness-status` does not report them as not installed. An entry whose file the project deleted reads `missing`: ask whether to generate
 it again or drop the entry. A renamed file moves its entry, `template` and
 `templateSha256` included, to the new path.
 
@@ -308,6 +310,7 @@ a `SKILL.md`: frontmatter must be the first line.
 | `keyword-commit-hook` | remove it: a hook that checks for tags the agent writes itself is keyword matching (`rules.md` §3) |
 | `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
 | `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
+| `template-not-installed` | install each core template it names (`SKILL.md` › Core, the row that names it), with its manifest entry; where an older entry already holds the file (a rules block recorded with no `template`), record `template` and `templateSha256` on that entry instead; where the project wrote its own file in its place, name the template in that entry's `replaces` and install nothing |
 | `agent-effort-unpinned` | add `effort: high` to the agent file's frontmatter: without it the agent inherits the session's level, and a session at `max` reaches every reviewer |
 | `agent-model-unpinned` | add `model:` to the agent file's frontmatter (`opus` for judgment, `sonnet` for bounded work): one dispatch in ten names no model, and without a pin those run on the session's Opus |
 | `effort-above-high` | lower it to `high` — an agent file at `xhigh` or `max`, or `CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel` above `high` in the project's settings; raise effort per question, never per session (`gate-design.md`) |
@@ -677,8 +680,8 @@ reads the outcome first: `refused` reruns on Opus, never on Codex.
 
 `[M]` **One merge, asked in chat first.** Every v13 row is a replace, a keep or a clean
 merge, plus the bindings below, so there is no owner card. The files it replaces
-include guards (`run-gates.sh`, `admission.mjs` and its core, the review-gate core,
-`codex-run.mjs` and its core, the command guard, `session-resume.mjs`, the commit
+include guards (`run-gates.sh`, `run-counted.mjs`, `admission.mjs` and its core, the
+review-gate core, `codex-run.mjs` and its core, the command guard, `session-resume.mjs`, the commit
 guard's hooks), so the landing check says `NONE`: the session runs the merge hook's
 checks first, and the branch's own `node scripts/review-gate.mjs --landing <branch>
 --base <mainline>` too, since
@@ -690,8 +693,9 @@ together, as one upgrade and one merge.
 `[M]` **What regenerates.** `run-gates.sh` and its test (the `paths` gate mode,
 `RECORDS`, `RETRY_FLAKY`, `GATE_JOBS` and `SERIAL`, the lease), `admission.mjs` and
 its core (the host-wide lease), the review-gate core and its golden matrix
-(`review-gate.golden.json`), `review-gate.mjs`, `codex-run.mjs` and its core, the
-command guard (`credential-read`), `session-resume.mjs`, `harness-guard.sh` and its
+(`review-gate.golden.json`), `review-gate.mjs`, `codex-run.mjs` and its core (a refusal
+sent as an item error is refused), `run-counted.mjs` and its core (a test path a workspace
+runner prints from inside a package names the repo's file), the command guard (`credential-read`), `session-resume.mjs`, `harness-guard.sh` and its
 hook copies, `unit-record.mjs` and its core (`--trailer`), `harness-due.mjs` and its
 core (the undeployed line), `retro-core.mjs` (the flake line), the new
 `deploy-list.mjs` and its core, each with its test; the rules block (`templates/agents-rules.md`).
@@ -700,6 +704,12 @@ and its process blocks (tiers, gates, scope, context) and the claim auditor.
 `harness-status` reads them `unchanged` or `edited`, never `newer`, so they regenerate
 by the row (Step 2's table), not by its count of templates. The golden matrix is the
 template's file as it is: no binding changes it (the notes path is `<notes>`).
+`harness-status` names each core template the manifest records nowhere
+(`template-not-installed`): from v12 that is `deploy-list.mjs`, its core and test, and the
+golden matrix; each is a new file of this upgrade. A known-red record written before v13
+names a package's failing tests by the package's own path, so it matches nothing until the
+first FULL at the mainline's tip after the merge writes it again; until then those reds
+fail, as they did.
 
 `[M]` **Bindings, each read from the install.** A binding a shipped test pins changes
 with its pin: `EXPECTED_SCOPE` (the guard's test), `EXPECTED_CRITICAL` (the review-gate

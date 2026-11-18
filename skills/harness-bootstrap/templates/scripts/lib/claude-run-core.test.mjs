@@ -26,6 +26,10 @@ import {
   reviewPrompt,
 } from './claude-run-core.mjs';
 
+// Git sets GIT_DIR, GIT_WORK_TREE and an absolute GIT_INDEX_FILE inside hooks; a suite run from a
+// hook would otherwise build its fixture repos in the caller's repository. Every child inherits this.
+for (const k of Object.keys(process.env)) if (k.startsWith('GIT_')) delete process.env[k];
+
 test('parseArgs: the kind as a word or --kind; review needs --base, the others a --prompt', () => {
   const a = parseArgs(['review', '--base', 'main']);
   assert.equal(a.kind, 'review');
@@ -408,21 +412,29 @@ const killQuietly = (pid, sig = 'SIGKILL') => {
   }
 };
 
+// On a loaded machine the timeout can fire before the fake model has started its grandchild, which
+// proves nothing; each such run is retried with a longer timeout, and one with a grandchild must kill it.
+const GROUP_TIMEOUTS_MIN = ['0.02', '0.05', '0.2'];
+
 test('the wrapper: a timed-out run takes the model\'s whole process group with it: no grandchild survives', async () => {
-  const { dir, env, args } = stubDir(GRANDCHILD);
-  const pidFile = path.join(dir, 'grandchild.pid');
-  try {
-    const res = spawnSync(process.execPath, [RUNNER, ...args, '--timeout-min', '0.02'], { encoding: 'utf8', env: env({ PIDFILE: pidFile }) });
-    assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
-    assert.match(res.stdout, /timed out after 0\.02 min/);
-    const pid = readPid(pidFile);
-    assert.ok(pid > 0, 'the fake model never started its grandchild');
-    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
-  } finally {
-    const pid = readPid(pidFile);
-    if (pid) killQuietly(pid);
-    fs.rmSync(dir, { recursive: true, force: true });
+  for (const timeoutMin of GROUP_TIMEOUTS_MIN) {
+    const { dir, env, args } = stubDir(GRANDCHILD);
+    const pidFile = path.join(dir, 'grandchild.pid');
+    try {
+      const res = spawnSync(process.execPath, [RUNNER, ...args, '--timeout-min', timeoutMin], { encoding: 'utf8', env: env({ PIDFILE: pidFile }) });
+      assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
+      assert.ok(res.stdout.includes(`timed out after ${timeoutMin} min`), res.stdout);
+      const pid = readPid(pidFile);
+      if (!pid) continue;
+      assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
+      return;
+    } finally {
+      const pid = readPid(pidFile);
+      if (pid) killQuietly(pid);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
+  assert.fail(`the fake model never started its grandchild within ${GROUP_TIMEOUTS_MIN.at(-1)} min`);
 });
 
 test('the wrapper: SIGTERM to the wrapper itself reaches the model\'s process group first', async () => {

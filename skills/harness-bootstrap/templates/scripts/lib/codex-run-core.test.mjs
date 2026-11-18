@@ -1146,32 +1146,40 @@ async function until(fn, ms = 8_000) {
 }
 const readPid = (file) => (fs.existsSync(file) ? Number(fs.readFileSync(file, 'utf8')) || 0 : 0);
 
+// On a loaded machine the timeout can fire before the fake model has started its grandchild, which
+// proves nothing; each such run is retried with a longer timeout, and one with a grandchild must kill it.
+const GROUP_TIMEOUTS_MIN = ['0.02', '0.05', '0.2'];
+
 test('a timed-out run takes the model\'s whole process group with it: no grandchild survives', async () => {
-  const dir = tmpDir('codex-run-group-');
-  fs.writeFileSync(path.join(dir, 'p.md'), 'task');
-  const pidFile = path.join(dir, 'grandchild.pid');
-  const fake = fakeCodex(GRANDCHILD);
-  try {
-    const res = runWrapper(
-      dir,
-      ['investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', '0.02'],
-      { CODEX_BIN: fake, PIDFILE: pidFile },
-    );
-    assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
-    assert.match(res.stdout, /timed out after 0\.02 min/);
-    const pid = readPid(pidFile);
-    assert.ok(pid > 0, 'the fake model never started its grandchild');
-    assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
-  } finally {
-    const pid = readPid(pidFile);
-    if (pid) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        /* already gone */
+  for (const timeoutMin of GROUP_TIMEOUTS_MIN) {
+    const dir = tmpDir('codex-run-group-');
+    fs.writeFileSync(path.join(dir, 'p.md'), 'task');
+    const pidFile = path.join(dir, 'grandchild.pid');
+    const fake = fakeCodex(GRANDCHILD);
+    try {
+      const res = runWrapper(
+        dir,
+        ['investigate', '--prompt', 'p.md', '--out', path.join(dir, 'v.md'), '--cwd', dir, '--timeout-min', timeoutMin],
+        { CODEX_BIN: fake, PIDFILE: pidFile },
+      );
+      assert.equal(res.status, EXIT.failed, res.stdout + res.stderr);
+      assert.ok(res.stdout.includes(`timed out after ${timeoutMin} min`), res.stdout);
+      const pid = readPid(pidFile);
+      if (!pid) continue;
+      assert.equal(await until(() => !alive(pid)), true, `grandchild ${pid} survived the timeout`);
+      return;
+    } finally {
+      const pid = readPid(pidFile);
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
       }
     }
   }
+  assert.fail(`the fake model never started its grandchild within ${GROUP_TIMEOUTS_MIN.at(-1)} min`);
 });
 
 test('SIGTERM to the wrapper itself reaches the model\'s process group first', async () => {

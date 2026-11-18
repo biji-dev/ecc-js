@@ -506,18 +506,43 @@ function textFailing(kind, text) {
   return out;
 }
 
-/** A test file as the id names it: relative to `top` when inside it, else as resolved against `cwd`; `?` stays. */
-function idFile(file, cwd, top) {
+/** The one file of `files` that ends with `tail`, or null when none or several do. */
+function tailMatch(files, tail) {
+  let hit = null;
+  for (const f of files) {
+    if (!f.endsWith(tail)) continue;
+    if (hit !== null) return null;
+    hit = f;
+  }
+  return hit;
+}
+
+/**
+ * A test file as the id names it: relative to `top` when inside it, else as resolved against `cwd`; `?`
+ * stays. A relative path that resolves to none of `files` (top's files, top-relative) but is the tail of
+ * exactly one of them is that one: a workspace runner (`pnpm --filter`, a script that enters the
+ * package) runs a package's tests there and prints their paths from there. No match, or several,
+ * keeps the path as resolved. `files` must hold every test file the runner can name: a file git does
+ * not list (an ignored one) could otherwise stand for a listed one in a sibling package. `memo` keeps
+ * each printed path's match for the call.
+ */
+function idFile(file, cwd, top, files, memo) {
   if (file === '?') return file;
-  const abs = path.resolve(cwd, file.startsWith('file://') ? fileURLToPath(file) : file);
+  const local = file.startsWith('file://') ? fileURLToPath(file) : file;
+  const abs = path.resolve(cwd, local);
   const rel = path.relative(top ?? cwd, abs);
-  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : abs;
+  const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  const id = inside ? rel.split(path.sep).join('/') : abs;
+  if (!files || !top || !inside || path.isAbsolute(local) || files.has(id)) return id;
+  if (!memo.has(local)) memo.set(local, tailMatch(files, `/${path.posix.normalize(local.split(path.sep).join('/'))}`));
+  return memo.get(local) ?? id;
 }
 
 /**
  * The failing tests `text` names, as `<file> :: <title>` ids, each once, in output order. The file
- * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`; a
- * file the output does not name is `?`.
+ * is relative to `top` (run-gates' RUN_GATES_TOP) when inside it, else resolved against `cwd`, or the
+ * one file of `files` (a Set of top-relative paths) it is the tail of (idFile); a file the output
+ * does not name is `?`.
  * - node: each `not ok` result line, at any indent, whose YAML block is not a suite's and that has
  *   no directive; its `# Subtest:` parents joined with ` > `, the file its `location:`. A suite that
  *   failed for itself (a hook, its describe body: failureType not subtestsFailed) is a `?`.
@@ -529,11 +554,12 @@ function idFile(file, cwd, top) {
  *   at bun's closing `<n> tests failed:` list, which repeats them without their files.
  * - playwright: each line four spaces in under `  <n> failed`, `[<project>] › <file>:<l>:<c> › <title>`.
  */
-export function failingTests(kind, text, { cwd = '.', top = null } = {}) {
+export function failingTests(kind, text, { cwd = '.', top = null, files = null } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`unknown kind: ${kind}`);
   const ids = [];
+  const memo = new Map();
   for (const { file, title } of kind === 'node' ? nodeFailing(text) : textFailing(kind, text)) {
-    const id = `${idFile(file, cwd, top)} :: ${title}`;
+    const id = `${idFile(file, cwd, top, files, memo)} :: ${title}`;
     if (!ids.includes(id)) ids.push(id);
   }
   return ids;

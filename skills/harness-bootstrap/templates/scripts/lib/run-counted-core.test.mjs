@@ -601,6 +601,34 @@ test('failingTests, vitest: the FAIL lines of Failed Tests; a Failed Suites sect
   assert.deepEqual(failingTests('vitest', ' FAIL  src/c.test.js [ src/c.test.js ]\n'), ['? :: FAIL  src/c.test.js [ src/c.test.js ]']);
 });
 
+test("failingTests: a path printed from inside a package is the one file of the top's it is the tail of", () => {
+  const pkg = ' FAIL  test/keys.test.ts > signs\n';
+  const files = new Set(['packages/keys/test/keys.test.ts', 'packages/keys/src/keys.ts', 'packages/web/test/app.test.ts']);
+  // `pnpm --filter keys test` from the top: vitest prints the path from packages/keys
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs']);
+  // without the file list, or with no top, the path stays as resolved (the gate fails closed)
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', top: '/repo' }), ['test/keys.test.ts :: signs']);
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', files }), ['test/keys.test.ts :: signs']);
+  // two packages with that tail: never a guess
+  const two = new Set([...files, 'packages/wallet/test/keys.test.ts']);
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', top: '/repo', files: two }), ['test/keys.test.ts :: signs']);
+  // a file at the top itself is the one the path names, as before
+  const atTop = new Set([...files, 'test/keys.test.ts']);
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', top: '/repo', files: atTop }), ['test/keys.test.ts :: signs']);
+  // a tail matches at a directory boundary only
+  const near = new Set(['packages/keys/mytest/keys.test.ts']);
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo', top: '/repo', files: near }), ['test/keys.test.ts :: signs']);
+  // an absolute path names its file exactly, even with a listed file of the same tail
+  const deep = new Set([...files, 'vendor/repo/test/keys.test.ts']);
+  assert.deepEqual(failingTests('vitest', ' FAIL  /repo/test/keys.test.ts > signs\n', { cwd: '/repo', top: '/repo', files: deep }), ['test/keys.test.ts :: signs']);
+  assert.deepEqual(failingTests('vitest', ' FAIL  /elsewhere/test/keys.test.ts > signs\n', { cwd: '/repo', top: '/repo', files }), ['/elsewhere/test/keys.test.ts :: signs']);
+  assert.deepEqual(failingTests('vitest', ' FAIL  ../test/keys.test.ts > signs\n', { cwd: '/repo/packages/web', top: '/repo', files }), ['packages/test/keys.test.ts :: signs']);
+  // each failing test of one file takes the same match
+  assert.deepEqual(failingTests('vitest', `${pkg} FAIL  test/keys.test.ts > verifies\n`, { cwd: '/repo', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs', 'packages/keys/test/keys.test.ts :: verifies']);
+  // a gate run inside the package resolves against its cwd, as before
+  assert.deepEqual(failingTests('vitest', pkg, { cwd: '/repo/packages/keys', top: '/repo', files }), ['packages/keys/test/keys.test.ts :: signs']);
+});
+
 test('failingTests, bun: each (fail) line under the file line before it; the closing list is not read again', () => {
   const ids = failingTests('bun', BUN_FAILING, { cwd: '/repo', top: '/repo' });
   assert.deepEqual(ids, ['test/b.test.ts :: b fails', 'test/a.test.ts :: top fails', 'test/a.test.ts :: group > inner fails']);
@@ -712,6 +740,11 @@ function fakeRunner(dir, out, { code = 0, err = '' } = {}) {
 
 function wrapEnv(env = {}) {
   const base = { ...process.env };
+  // git sets GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE inside hooks: the wrapper's git and a fixture's
+  // must not reach the caller's repository
+  for (const k of Object.keys(base)) if (k.startsWith('GIT_')) delete base[k];
+  base.GIT_CONFIG_GLOBAL = os.devNull;
+  base.GIT_CONFIG_NOSYSTEM = '1';
   delete base.NODE_OPTIONS;
   // node --test marks its children with NODE_TEST_CONTEXT: a nested `node --test` that inherits it
   // reports to this run instead of printing its own TAP
@@ -982,6 +1015,36 @@ test('the wrapper names each failing test after its verdict: relative to RUN_GAT
   const pass = wrap(node('b.test.mjs'), { RUN_GATES_TOP: d }, path.join(d, 'pkg'));
   assert.equal(pass.status, 0, pass.stdout + pass.stderr);
   assert.doesNotMatch(pass.stdout, /FAILED/);
+});
+
+test('the wrapper: a path a workspace runner prints from inside a package is the one file git lists under RUN_GATES_TOP; with a submodule or a nested repository, none is', () => {
+  const touch = (d, files) => {
+    for (const f of files) {
+      fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true });
+      fs.writeFileSync(path.join(d, f), '\n');
+    }
+  };
+  const gitIn = (d, ...args) => assert.equal(spawnSync('git', ['-C', d, ...args], { env: wrapEnv() }).status, 0, `git ${args.join(' ')}`);
+  const failing = (d) => {
+    const r = wrap(['--kind', 'vitest', '--min', '1', '--', ...fakeRunner(d, ' FAIL  test/keys.test.ts > signs\n      Tests  1 failed | 1 passed (2)\n', { code: 1 })], { RUN_GATES_TOP: d }, d);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    return r.stdout.trim().split('\n').at(-1);
+  };
+  const d = tmp();
+  touch(d, ['packages/keys/test/keys.test.ts', 'packages/web/test/app.test.ts']);
+  gitIn(d, 'init', '-q');
+  assert.equal(failing(d), 'run-counted: FAILED packages/keys/test/keys.test.ts :: signs');
+  // packages/keys is a repository of its own: git lists wallet's file only, which is not the one run
+  const nested = tmp();
+  touch(nested, ['packages/keys/test/keys.test.ts', 'packages/wallet/test/keys.test.ts']);
+  gitIn(nested, 'init', '-q');
+  gitIn(path.join(nested, 'packages', 'keys'), 'init', '-q');
+  assert.equal(failing(nested), 'run-counted: FAILED test/keys.test.ts :: signs');
+  const sub = tmp();
+  touch(sub, ['packages/wallet/test/keys.test.ts']);
+  gitIn(sub, 'init', '-q');
+  gitIn(sub, 'update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},packages/keys`);
+  assert.equal(failing(sub), 'run-counted: FAILED test/keys.test.ts :: signs');
 });
 
 test("the wrapper: a failure it cannot put down to named tests ends with `FAILED ?` -- a missing binary, a count the names do not cover", () => {

@@ -17,7 +17,7 @@ const CORE_REL = path.join('lib', 'run-counted-core.mjs');
 const CLI_REL = 'run-counted.mjs';
 
 // The number of tests in the shipped suite. Adding or removing a test changes this on purpose.
-const EXPECTED_TESTS = 35;
+const EXPECTED_TESTS = 37;
 
 let passed = 0;
 let failed = 0;
@@ -134,10 +134,40 @@ mutantFails("leaving vitest's Failed Suites out of the ids", "if (section === 'S
 mutantFails('naming the ids whole when they are fewer than the failed count', '    summary.failed === ids.length &&\n', '');
 mutantFails('naming the ids whole after the command died of a signal', '    !signal &&\n', '');
 mutantFails("reading bun's failing tests past its summary list", 'if (BUN_FAILED_LIST.test(l)) break;', '');
-mutantFails('naming ids relative to the cwd, not the gate tree', 'top: realTop(process.env.RUN_GATES_TOP)', 'top: null', CLI_REL);
+mutantFails('naming ids relative to the cwd, not the gate tree', 'const top = realTop(process.env.RUN_GATES_TOP);', 'const top = null;', CLI_REL);
+mutantFails('ignoring the files git lists under the gate tree', 'files: topFiles(top)', 'files: null', CLI_REL);
+mutantFails('guessing between two package files with one tail', '    if (hit !== null) return null;\n', '');
+mutantFails('matching a tail inside a directory name', "tailMatch(files, `/${path.posix.normalize(local.split(path.sep).join('/'))}`)", "tailMatch(files, path.posix.normalize(local.split(path.sep).join('/')))");
+mutantFails('searching a tree with a nested repository', "    if (f.endsWith('/')) return null; // a nested repository\n", '', CLI_REL);
+mutantFails('searching a tree with a submodule', "    if (rec.startsWith('160000 ')) return null; // a submodule\n", '', CLI_REL);
 mutantFails('taking the gate tree through a symlink as given', 'return fs.realpathSync(top);', 'return top;', CLI_REL);
 mutantFails("ending a pytest id at a space inside a parameter's brackets", "if (rest[i] === '[') depth++;", 'if (false) depth++;');
 mutantFails('skipping a node suite whose own hook failed', "if (failure !== 'subtestsFailed') out.push({ file: '?', title });", '');
+
+test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) leaves that repo untouched', () => {
+  const decoy = tmp('run-counted-decoy-');
+  cleanup.push(decoy);
+  const git = (...args) => {
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
+    env.GIT_CONFIG_GLOBAL = os.devNull;
+    env.GIT_CONFIG_NOSYSTEM = '1';
+    const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', '-C', decoy, ...args], { env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(decoy, 'f.txt'), 'x\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const snapshot = () => [git('log', '--all', '--format=%H'), git('status', '--porcelain'), git('ls-files', '-s'), fs.readdirSync(path.join(decoy, '.git')).sort().join(',')].join('\n');
+  const before = snapshot();
+  const env = { ...hermeticEnv(cleanup), GIT_DIR: path.join(decoy, '.git'), GIT_WORK_TREE: decoy, GIT_INDEX_FILE: path.join(decoy, '.git', 'index') };
+  const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join(SCRIPTS, TEST_REL)], { encoding: 'utf8', env, timeout: 120_000 });
+  const out = res.stdout + res.stderr;
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS, out.slice(-1500));
+  assert.strictEqual(snapshot(), before, 'the suite wrote into the repository named by GIT_DIR');
+});
 
 test("a project's own kind and flag in its core do not fail the shipped suite", () => {
   const copy = mutatedCopy([

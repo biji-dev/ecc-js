@@ -2162,7 +2162,7 @@ test('template-not-installed (v13): mutants that read the Needs cell, or count a
   const repo = installNaming(['templates/demo.mjs']);
   const wide = report(repo, skillWithOptional("split('|').slice(1, 3)", "split('|').slice(1)"));
   assert.ok(wide.notInstalled.optional.includes('templates/new-core.mjs'), 'the mutant still reads only Component and From');
-  const blind = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), skillWithOptional('    if (recorded.has(t)) {\n      kept.push(t);\n      continue;\n    }\n', ''));
+  const blind = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), skillWithOptional('    if (recorded.has(t)) {\n      if (installed.has(t)) kept.push(t);\n      continue;\n    }\n', ''));
   assert.ok(ids(blind).includes('template-not-installed'), 'the mutant still skips the templates the manifest names');
 });
 
@@ -2217,6 +2217,18 @@ test('template-never-installed (v13): a template a kept or new file imports or r
     assert.ok(at12.core.includes(t) && !at12.gaps.includes(t), t);
   }
   assert.ok(at12.gaps.includes('templates/scripts/intake.mjs'), 'nothing kept or new imports the intake script');
+  // an optional template a kept file needs: the v13 runner runs admission (v11), codex-run imports snapshot-tree (v10)
+  const runner = report(installNaming(['templates/harness-guard.sh', 'templates/run-gates.sh', 'templates/scripts/run-counted.mjs'], 10)).notInstalled;
+  for (const t of ['templates/scripts/lib/admission.mjs', 'templates/scripts/lib/admission-core.mjs']) assert.ok(runner.core.includes(t) && !runner.optional.includes(t), t);
+  assert.ok(runner.optional.includes('templates/scripts/lib/admission-core.test.mjs'), 'nothing kept imports the test');
+  const lane = report(installNaming(['templates/harness-guard.sh', 'templates/scripts/codex-run.mjs', 'templates/scripts/lib/codex-run-core.mjs'], 9)).notInstalled;
+  assert.ok(lane.core.includes('templates/scripts/lib/snapshot-tree.mjs'), lane.optional.join());
+  assert.ok(lane.optional.includes('templates/scripts/claude-run.mjs'), 'an optional lane nothing kept imports stays optional');
+  // a name only `replaces` gives is the project's file: its template's imports are not pulled in
+  const own = installNaming(['templates/harness-guard.sh'], 12);
+  editManifest(own, m => m.entries.push({ path: 'tools/deploy.mjs', kind: 'reviewed', replaces: ['templates/scripts/deploy-list.mjs', 'templates/scripts/lib/deploy-list-core.mjs'] }));
+  const replaced = report(own).notInstalled;
+  assert.ok(replaced.gaps.includes('templates/scripts/lib/retro-gather.mjs') && !replaced.core.includes('templates/scripts/lib/deploy-list-core.mjs'), replaced.core.join());
   assert.deepStrictEqual(at12.core, [...at12.core].sort());
   // a fixture: a new template importing an old one; the mutant without the closure leaves it a gap
   const withImport = (script) => {
@@ -2283,7 +2295,9 @@ test("template-unrecorded (v13): an entry with no template where the template is
   for (const hook of ['.githooks/pre-commit', '.githooks/harness-guard.sh']) {
     const guard = installNaming(['templates/command-guard.mjs'], 12);
     editManifest(guard, m => m.entries.push({ path: hook, kind: 'generated' }));
-    assert.ok(report(guard).notInstalled.unrecorded.includes(`${hook} (templates/harness-guard.sh)`), hook);
+    const held = report(guard).notInstalled;
+    assert.ok(held.unrecorded.includes(`${hook} (templates/harness-guard.sh)`), hook);
+    assert.ok(held.core.includes('templates/scripts/review-gate.mjs'), `${hook}: the guard it holds runs the review gate`);
   }
 });
 

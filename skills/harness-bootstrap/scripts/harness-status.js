@@ -1326,7 +1326,8 @@ function optionalCells() {
  *  (`claude-run-core` for its test too), else core, which every install takes (SKILL.md › Core). A
  *  core one newer than `skillVersion` (TEMPLATES_SINCE) is the upgrade's new file (`core`); one that
  *  version already shipped is a file the install never took (`gaps`), unless a template the install
- *  has, or one in `core`, imports or runs it (templateDeps), which puts it in `core` too. An entry with
+ *  has, or one in `core`, imports or runs it (templateDeps), which puts it, or an optional one, in
+ *  `core` too (a name only `replaces` gives is the project's file, whose imports are its own). An entry with
  *  no template where the template is installed (installedAt) holds it: one not reviewed is listed in
  *  `unrecorded` as `<path>[#block] (<template>)`; a reviewed one is the project's own file for a
  *  template the install's version shipped, and for a newer one leaves it in `core`, listed in
@@ -1335,6 +1336,7 @@ function templatesNotInstalled(rawEntries, skillVersion) {
   // `replaces` counts on a file the project wrote itself: a reviewed entry with no template
   const named = (e) => (e && typeof e === 'object' ? [e.template, ...(e.kind === 'reviewed' && e.template === undefined ? [e.replaces].flat() : [])] : []);
   const recorded = new Set(rawEntries.flatMap(named).map(safeRel).filter(Boolean));
+  const installed = new Set(rawEntries.map(e => (e && typeof e === 'object' ? safeRel(e.template) : null)).filter(Boolean));
   const unnamed = rawEntries.filter(e => e && typeof e === 'object' && e.template === undefined && safeRel(e.path) && (e.block === undefined || typeof e.block === 'string'));
   const optional = optionalCells();
   const shipped = shippedTemplates();
@@ -1344,7 +1346,7 @@ function templatesNotInstalled(rawEntries, skillVersion) {
   const kept = [];
   for (const t of shipped) {
     if (recorded.has(t)) {
-      kept.push(t);
+      if (installed.has(t)) kept.push(t);
       continue;
     }
     const holder = unnamed.find(e => installedAt(t, e));
@@ -1370,9 +1372,9 @@ function templatesNotInstalled(rawEntries, skillVersion) {
   const known = new Set(shipped);
   for (let i = 0; i < kept.length; i += 1) {
     for (const d of templateDeps(kept[i], known)) {
-      const g = out.gaps.indexOf(d);
-      if (g < 0) continue;
-      out.gaps.splice(g, 1);
+      const from = [out.gaps, out.optional].find(list => list.includes(d));
+      if (!from) continue;
+      from.splice(from.indexOf(d), 1);
       out.core.push(d);
       kept.push(d);
     }
@@ -1391,14 +1393,15 @@ function installedAt(t, e) {
 }
 
 /** The shipped templates (`known`) template `t` imports, by a relative import in a .mjs or .js
- *  template, or runs, by a `scripts/` path in a .sh one: an install keeps templates/scripts/'s layout
+ *  template, or runs, by a `scripts/` path in a .sh one (a .mjs one names optional lanes it may run,
+ *  so its paths are not read): an install keeps templates/scripts/'s layout
  *  under scripts/, so an import resolves the same in both. */
 function templateDeps(t, known) {
   let text = '';
   try { text = fs.readFileSync(path.join(SKILL_DIR, ...t.split('/')), 'utf8'); } catch { return []; }
   const deps = /\.sh$/.test(t)
     ? [...text.matchAll(/\bscripts\/(?:lib\/)?[\w.-]+\.mjs\b/g)].map(m => `templates/${m[0]}`)
-    : [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.\.?\/[^'"]+)['"]/g)].map(m => path.posix.join(path.posix.dirname(t), m[1]));
+    : [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.\.?\/[^'"]+)['"]/g)].map(m => path.posix.join(path.posix.dirname(t), m[1].replace(/[?#].*$/, '')));
   return deps.filter(d => known.has(d));
 }
 

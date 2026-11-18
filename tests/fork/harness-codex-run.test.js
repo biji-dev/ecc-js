@@ -320,7 +320,7 @@ test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) lea
     GIT_INDEX_FILE: path.join(decoy, '.git', 'index'),
   });
   const out = res.stdout + res.stderr;
-  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS, out.slice(-1500));
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS, out.match(/^not ok .*$/gm)?.join('\n') || out.slice(-1500));
   assert.deepStrictEqual(snapshot(), before, 'the suite wrote into the repository named by GIT_DIR');
 });
 

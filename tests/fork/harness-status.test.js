@@ -2334,6 +2334,39 @@ test('TEMPLATES_SINCE (v13): every shipped template, once, at a version from 6 t
   for (const v of Object.keys(TEMPLATES_SINCE).map(Number)) assert.ok(v >= 6 && v <= version, `version ${v}`);
 });
 
+test('TEMPLATES_SINCE (js.17): each version is the one the mainline first shipped the template at, or when it became core', () => {
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 << 20 });
+    return r.status === 0 ? r.stdout : null;
+  };
+  if (git('rev-parse', '--is-shallow-repository')?.trim() !== 'false') {
+    console.log('    (skipped: no full git history to date the templates by)');
+    return;
+  }
+  const { TEMPLATES_SINCE } = require(SCRIPT);
+  const SKILL = 'skills/harness-bootstrap';
+  // optional before the version given here, core from it
+  const CORE_LATER = { 'templates/leftover-processes.mjs': 11 };
+  const shipped = new Map();
+  const commits = git('log', '--first-parent', '--reverse', '--format=%H', 'HEAD', '--', `${SKILL}/templates`).split('\n').filter(Boolean);
+  for (const c of commits) {
+    const skillMd = git('show', `${c}:${SKILL}/SKILL.md`);
+    const m = skillMd && /^\s+version:\s*(\d+)\s*$/m.exec(skillMd);
+    if (!m) continue;
+    for (const f of git('ls-tree', '-r', '--name-only', c, `${SKILL}/templates`).split('\n').filter(Boolean)) {
+      const t = f.slice(SKILL.length + 1);
+      if (!shipped.has(t)) shipped.set(t, Math.max(6, Number(m[1])));
+    }
+  }
+  const wrong = (table) => Object.entries(table).flatMap(([v, ts]) => ts
+    .filter(t => (CORE_LATER[t] ?? shipped.get(t)) !== Number(v) || (CORE_LATER[t] !== undefined && CORE_LATER[t] <= shipped.get(t)))
+    .map(t => `${t}: listed at ${v}, shipped at ${shipped.get(t) ?? 'none'}${CORE_LATER[t] ? `, core from ${CORE_LATER[t]}` : ''}`));
+  assert.deepStrictEqual(wrong(TEMPLATES_SINCE), [], 'a template dated at the wrong version');
+  // the check itself: a table that dates v13's deploy list at v12 is refused
+  const early = { ...TEMPLATES_SINCE, 12: ['templates/scripts/deploy-list.mjs'], 13: TEMPLATES_SINCE[13].filter(t => t !== 'templates/scripts/deploy-list.mjs') };
+  assert.deepStrictEqual(wrong(early), ['templates/scripts/deploy-list.mjs: listed at 12, shipped at 13']);
+});
+
 test('--base (js.8): prints the template an entry was installed from, found by its hash in the skill repository history', () => {
   const { clone, script } = skillClone();
   const repo = installOf(LOCAL_FIX, sha(TEMPLATE_V1));

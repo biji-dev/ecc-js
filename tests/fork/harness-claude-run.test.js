@@ -56,12 +56,23 @@ function tapCount(output, key) {
   return Number(match[1]);
 }
 
-function runSuite(scriptsDir, cleanup) {
+function runSuite(scriptsDir, cleanup, extraEnv = {}) {
   return spawnSync(
     process.execPath,
     ['--test', '--test-reporter=tap', path.join(scriptsDir, TEST_REL)],
-    { encoding: 'utf8', env: hermeticEnv(cleanup), timeout: 120_000 },
+    { encoding: 'utf8', env: hermeticEnv(cleanup, extraEnv), timeout: 120_000 },
   );
+}
+
+/** Run git in `cwd` with only hermetic GIT_* variables; returns trimmed stdout. */
+function git(cwd, ...args) {
+  const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
+    cwd,
+    encoding: 'utf8',
+    env: hermeticEnv([]),
+  });
+  assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
 }
 
 const cleanup = [];
@@ -93,6 +104,31 @@ test('the shipped claude-run suite passes with the pinned test count', () => {
   assert.strictEqual(tapCount(out, 'fail'), 0, out.slice(-1500));
   assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS);
   assert.strictEqual(tapCount(out, 'tests'), EXPECTED_TESTS);
+});
+
+test('a suite run with GIT_DIR and GIT_INDEX_FILE set (as inside a git hook) passes and leaves that repo untouched', () => {
+  const decoy = tmp('claude-run-decoy-');
+  cleanup.push(decoy);
+  git(decoy, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(decoy, 'f.txt'), 'x\n');
+  git(decoy, 'add', '.');
+  git(decoy, 'commit', '-q', '-m', 'base');
+  const objects = () => git(decoy, 'count-objects', '-v');
+  const snapshot = () => ({
+    log: git(decoy, 'log', '--all', '--format=%H'),
+    branches: git(decoy, 'branch', '--format=%(refname)'),
+    status: git(decoy, 'status', '--porcelain'),
+    objects: objects(),
+  });
+  const before = snapshot();
+  const res = runSuite(SCRIPTS, cleanup, {
+    GIT_DIR: path.join(decoy, '.git'),
+    GIT_WORK_TREE: decoy,
+    GIT_INDEX_FILE: path.join(decoy, '.git', 'index'),
+  });
+  const out = res.stdout + res.stderr;
+  assert.strictEqual(tapCount(out, 'pass'), EXPECTED_TESTS, out.match(/^not ok .*$/gm)?.join('\n') || out.slice(-1500));
+  assert.deepStrictEqual(snapshot(), before, 'the suite wrote into the repository named by GIT_DIR');
 });
 
 mutantFails('a command tool among the tools', "export const TOOLS = ['Read', 'Grep', 'Glob'];", "export const TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];");

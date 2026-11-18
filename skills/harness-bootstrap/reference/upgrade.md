@@ -311,9 +311,9 @@ a `SKILL.md`: frontmatter must be the first line.
 | `keyword-commit-hook` | remove it: a hook that checks for tags the agent writes itself is keyword matching (`rules.md` §3) |
 | `marker-unbalanced` | fix the pair before anything else; hashing depends on it |
 | `manifest-invalid` | regenerate the manifest from the status report: every entry re-assessed, kind `reviewed` until the owner decides |
-| `template-not-installed` | each core template it names is newer than the install's `skillVersion`: install it (`SKILL.md` › Core, the row that names it), with its manifest entry; where the project wrote its own file in its place, name the template in that entry's `replaces` and install nothing |
-| `template-never-installed` | each core template it names shipped at the install's own `skillVersion` or before, and the install never took it: not this upgrade's work. Install nothing, add one follow-up row naming the files for the owner (install them as a unit of their own, or name them in `replaces` on the project's own file), and do not stop. A block the upgrade regenerates leaves out the steps that run them (for `intake.mjs`, the Intake type and its Gate 1 line) |
-| `template-unrecorded` | a generated entry holds the template's file and records no `template` (a rules block from before templates were recorded): record `template` on that entry, and `templateSha256` when the upgrade regenerates it from the current template; nothing to install |
+| `template-not-installed` | each core template it names is newer than the install's `skillVersion`, or one such a file or the install's own imports or runs: install it (`SKILL.md` › Core, the row that names it), with its manifest entry; where a reviewed entry the line names is the project's own file in its place, name the template in that entry's `replaces` and install nothing |
+| `template-never-installed` | each core template it names shipped at the install's own `skillVersion` or before, the install never took it, and nothing it keeps or this upgrade installs imports it: not this upgrade's work. Install nothing, add one follow-up row naming the files for the owner (install them as a unit of their own, or name them in `replaces` on the project's own file), and do not stop. A block the upgrade regenerates leaves out the steps that run them (for `intake.mjs`, the Intake type and its Gate 1 line) |
+| `template-unrecorded` | an entry that is not `reviewed` holds the template's file and records no `template` (a rules block from before templates were recorded): record `template` on that entry, and `templateSha256` when the upgrade regenerates it from the current template; nothing to install |
 | `agent-effort-unpinned` | add `effort: high` to the agent file's frontmatter: without it the agent inherits the session's level, and a session at `max` reaches every reviewer |
 | `agent-model-unpinned` | add `model:` to the agent file's frontmatter (`opus` for judgment, `sonnet` for bounded work): one dispatch in ten names no model, and without a pin those run on the session's Opus |
 | `effort-above-high` | lower it to `high` — an agent file at `xhigh` or `max`, or `CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel` above `high` in the project's settings; raise effort per question, never per session (`gate-design.md`) |
@@ -710,10 +710,12 @@ by the row (Step 2's table), not by its count of templates. The golden matrix is
 template's file as it is: no binding changes it (the notes path is `<notes>`).
 `harness-status` names each core template the manifest records nowhere and the install's
 version did not ship (`template-not-installed`): from v11 or v12 that is `deploy-list.mjs`,
-its core and test, and the golden matrix, the new files of this upgrade. A core template the
-install's own version shipped and it never took is `template-never-installed`, and a
-generated entry that holds one with no `template` recorded is `template-unrecorded`: a
-follow-up row and a manifest edit, neither one an install or a stop. A known-red record written before v13
+its core and test, and the golden matrix, the new files of this upgrade, with any older
+template they import that the install lacks. A core template the install's own version
+shipped, that it never took and that nothing it keeps or installs imports, is
+`template-never-installed`: a follow-up row, not an install or a stop. An entry that is not
+`reviewed` and holds a template's file with no `template` recorded is `template-unrecorded`:
+a manifest edit. A known-red record written before v13
 names a package's failing tests by the package's own path, so it matches nothing until the
 first FULL at the mainline's tip after the merge writes it again; until then those reds
 fail, as they did.

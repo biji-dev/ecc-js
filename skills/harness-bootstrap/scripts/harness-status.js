@@ -66,14 +66,16 @@ const TEST_FILE = /(^|\/)([^/]+\.(test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_
 // templates/ (`template`) and that file's hash when the entry was generated (`templateSha256`)
 const SKILL_DIR = path.join(__dirname, '..');
 const TEMPLATE_STATES = ['current', 'newer', 'gone', 'unrecorded', 'invalid'];
-// The skill version that first shipped each template, read from the shipped copies (6 stands for v6
-// or before). A core template an install lacks is the upgrade's new file when it is newer than the
+// The skill version from which every install takes each template, read from the shipped copies: the
+// version that shipped it, or made it core (leftover-processes.mjs, optional to v10); 6 stands for v6
+// or before. A core template an install lacks is the upgrade's new file when it is newer than the
 // install's skillVersion, else a file the install never took; a template not listed counts as new.
+// A template a version adds or makes core goes under that version.
 const TEMPLATES_SINCE = {
   6: [
     'templates/agents-rules.md', 'templates/command-guard.mjs', 'templates/context-budget.mjs',
     'templates/edit-guard.mjs', 'templates/harness-guard.sh', 'templates/harness-models.json',
-    'templates/leftover-processes.mjs', 'templates/run-gates.sh', 'templates/scripts/check-agent-docs.mjs',
+    'templates/run-gates.sh', 'templates/scripts/check-agent-docs.mjs',
     'templates/scripts/claude-run.mjs', 'templates/scripts/codex-run.mjs',
     'templates/scripts/docs-drift.mjs', 'templates/scripts/estimate.mjs',
     'templates/scripts/harness-due.mjs', 'templates/scripts/harness-host.mjs',
@@ -109,6 +111,7 @@ const TEMPLATES_SINCE = {
     'templates/scripts/lib/snapshot-tree.mjs', 'templates/scripts/lib/snapshot-tree.test.mjs',
   ],
   11: [
+    'templates/leftover-processes.mjs',
     'templates/scripts/lib/admission-core.mjs', 'templates/scripts/lib/admission-core.test.mjs',
     'templates/scripts/lib/admission.mjs',
   ],
@@ -118,8 +121,9 @@ const TEMPLATES_SINCE = {
   ],
 };
 const TEMPLATE_SINCE = new Map(Object.entries(TEMPLATES_SINCE).flatMap(([v, ts]) => ts.map(t => [t, Number(v)])));
-// where a template is installed when that is not its path below templates/ at some depth
-const INSTALLED_AS = { 'templates/agents-rules.md': 'AGENTS.md#rules', 'templates/harness-guard.sh': '.githooks/pre-commit' };
+// where a template is installed when that is not its path below templates/ at some depth (the
+// guard: its own hook, or the script husky and lefthook call)
+const INSTALLED_AS = { 'templates/agents-rules.md': ['AGENTS.md#rules'], 'templates/harness-guard.sh': ['.githooks/pre-commit', '.githooks/harness-guard.sh'] };
 const SKILL_ROOTS = ['.claude/skills', '.agents/skills'];
 const DOCS = ['AGENTS.md', 'CLAUDE.md'];
 const PLAN_SKILLS = ['task-runner', 'segment-runner', 'phase-preflight', 'workstream-sweep'];
@@ -745,17 +749,20 @@ function buildReport() {
     }
   }
   // a manifest that records templates names every core one it installed: one it lacks is new since,
-  // unless the install's own version shipped it (a file it never took) or an entry holds it unrecorded
+  // unless the install's own version shipped it and nothing kept or new imports it (a file it never
+  // took), or an entry holds it unrecorded
   const notInstalled = rawEntries.some(e => e && typeof e.template === 'string') ? templatesNotInstalled(rawEntries, manifest && manifest.skillVersion) : null;
   if (notInstalled && notInstalled.core.length) {
-    haz('template-not-installed', `the skill ships ${notInstalled.core.length} core template${notInstalled.core.length === 1 ? '' : 's'} no manifest entry names: ${notInstalled.core.join(', ')}`, MANIFEST);
+    const at = notInstalled.reviewedAt;
+    const held = at.length ? `; a reviewed entry sits where ${at.length === 1 ? 'one is' : 'they are'} installed: ${at.join(', ')}` : '';
+    haz('template-not-installed', `the skill ships ${notInstalled.core.length} core template${notInstalled.core.length === 1 ? '' : 's'} no manifest entry names: ${notInstalled.core.join(', ')}${held}`, MANIFEST);
   }
   if (notInstalled && notInstalled.gaps.length) {
     haz('template-never-installed', `the install never took ${notInstalled.gaps.length} core template${notInstalled.gaps.length === 1 ? '' : 's'} its skillVersion ${manifest.skillVersion} already shipped: ${notInstalled.gaps.join(', ')}`, MANIFEST);
   }
   if (notInstalled && notInstalled.unrecorded.length) {
     const one = notInstalled.unrecorded.length === 1;
-    haz('template-unrecorded', `${notInstalled.unrecorded.length} generated manifest entr${one ? 'y holds' : 'ies hold'} a template's file and record${one ? 's' : ''} no template: ${notInstalled.unrecorded.join(', ')}`, MANIFEST);
+    haz('template-unrecorded', `${notInstalled.unrecorded.length} manifest entr${one ? 'y' : 'ies'} not reviewed hold${one ? 's' : ''} a template's file and record${one ? 's' : ''} no template: ${notInstalled.unrecorded.join(', ')}`, MANIFEST);
   }
 
   // the registry is in the main checkout, from a linked worktree too (the commit guard finds it so)
@@ -1318,38 +1325,81 @@ function optionalCells() {
  *  file the project wrote in place of them): optional when the optional table names their stem
  *  (`claude-run-core` for its test too), else core, which every install takes (SKILL.md › Core). A
  *  core one newer than `skillVersion` (TEMPLATES_SINCE) is the upgrade's new file (`core`); one that
- *  version already shipped is a file the install never took (`gaps`). An entry with no template where
- *  the template is installed (installedAt) holds it: a reviewed one is the project's own file, a
- *  generated one is listed in `unrecorded` as `<path>[#block] (<template>)`. */
+ *  version already shipped is a file the install never took (`gaps`), unless a template the install
+ *  has, or one in `core`, imports or runs it (templateDeps), which puts it in `core` too. An entry with
+ *  no template where the template is installed (installedAt) holds it: one not reviewed is listed in
+ *  `unrecorded` as `<path>[#block] (<template>)`; a reviewed one is the project's own file for a
+ *  template the install's version shipped, and for a newer one leaves it in `core`, listed in
+ *  `reviewedAt` (the project says in `replaces` that its file stands in). */
 function templatesNotInstalled(rawEntries, skillVersion) {
   // `replaces` counts on a file the project wrote itself: a reviewed entry with no template
   const named = (e) => (e && typeof e === 'object' ? [e.template, ...(e.kind === 'reviewed' && e.template === undefined ? [e.replaces].flat() : [])] : []);
   const recorded = new Set(rawEntries.flatMap(named).map(safeRel).filter(Boolean));
-  const unnamed = rawEntries.filter(e => e && typeof e === 'object' && e.template === undefined && safeRel(e.path));
+  const unnamed = rawEntries.filter(e => e && typeof e === 'object' && e.template === undefined && safeRel(e.path) && (e.block === undefined || typeof e.block === 'string'));
   const optional = optionalCells();
-  const out = { core: [], gaps: [], unrecorded: [], optional: [] };
-  for (const t of shippedTemplates()) {
-    if (recorded.has(t)) continue;
-    const holder = unnamed.find(e => installedAt(t, e));
-    if (holder) {
-      if (holder.kind !== 'reviewed') out.unrecorded.push(`${safeRel(holder.path)}${holder.block ? `#${holder.block}` : ''} (${t})`);
+  const shipped = shippedTemplates();
+  const old = (t) => Number.isInteger(skillVersion) && (TEMPLATE_SINCE.get(t) ?? Infinity) <= skillVersion;
+  const out = { core: [], gaps: [], unrecorded: [], reviewedAt: [], optional: [] };
+  // the templates the install has or this upgrade installs: what they import must be there too
+  const kept = [];
+  for (const t of shipped) {
+    if (recorded.has(t)) {
+      kept.push(t);
       continue;
     }
+    const holder = unnamed.find(e => installedAt(t, e));
+    const label = holder ? `${safeRel(holder.path)}${holder.block ? `#${holder.block}` : ''} (${t})` : null;
+    if (holder && holder.kind !== 'reviewed') {
+      out.unrecorded.push(label);
+      kept.push(t);
+      continue;
+    }
+    if (holder && old(t)) continue;
     const stem = path.posix.basename(t).replace(/(\.test)?\.[a-z]+$/, '').replace(/\.golden$/, '');
     const isOptional = new RegExp(`(^|[^\\w-])${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w-]|$)`).test(optional);
-    if (isOptional) out.optional.push(t);
-    else out[Number.isInteger(skillVersion) && (TEMPLATE_SINCE.get(t) ?? Infinity) <= skillVersion ? 'gaps' : 'core'].push(t);
+    if (isOptional) {
+      out.optional.push(t);
+    } else if (old(t)) {
+      out.gaps.push(t);
+    } else {
+      out.core.push(t);
+      kept.push(t);
+      if (holder) out.reviewedAt.push(label);
+    }
   }
+  const known = new Set(shipped);
+  for (let i = 0; i < kept.length; i += 1) {
+    for (const d of templateDeps(kept[i], known)) {
+      const g = out.gaps.indexOf(d);
+      if (g < 0) continue;
+      out.gaps.splice(g, 1);
+      out.core.push(d);
+      kept.push(d);
+    }
+  }
+  out.core.sort();
   return out;
 }
 
-/** Whether manifest entry `e` sits where template `t` is installed: its INSTALLED_AS place, else the
+/** Whether manifest entry `e` sits where template `t` is installed: an INSTALLED_AS place, else the
  *  template's path below templates/, at the top or under a directory (`.claude/hooks/edit-guard.mjs`). */
 function installedAt(t, e) {
   const at = safeRel(e.path);
-  if (INSTALLED_AS[t]) return `${at}${e.block ? `#${e.block}` : ''}` === INSTALLED_AS[t];
+  if (INSTALLED_AS[t]) return INSTALLED_AS[t].includes(`${at}${e.block ? `#${e.block}` : ''}`);
   const rest = t.slice('templates/'.length);
   return !e.block && (at === rest || at.endsWith(`/${rest}`));
+}
+
+/** The shipped templates (`known`) template `t` imports, by a relative import in a .mjs or .js
+ *  template, or runs, by a `scripts/` path in a .sh one: an install keeps templates/scripts/'s layout
+ *  under scripts/, so an import resolves the same in both. */
+function templateDeps(t, known) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(SKILL_DIR, ...t.split('/')), 'utf8'); } catch { return []; }
+  const deps = /\.sh$/.test(t)
+    ? [...text.matchAll(/\bscripts\/(?:lib\/)?[\w.-]+\.mjs\b/g)].map(m => `templates/${m[0]}`)
+    : [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.\.?\/[^'"]+)['"]/g)].map(m => path.posix.join(path.posix.dirname(t), m[1]));
+  return deps.filter(d => known.has(d));
 }
 
 function templateCounts(entries) {

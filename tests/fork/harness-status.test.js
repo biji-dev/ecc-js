@@ -2112,6 +2112,7 @@ test('template-not-installed (v13): a core template the manifest names nowhere; 
     core: ['templates/new-core.mjs'],
     gaps: [],
     unrecorded: [],
+    reviewedAt: [],
     optional: ['templates/extra.mjs', 'templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'],
   });
   const h = rep.hazards.filter(x => x.id === 'template-not-installed');
@@ -2141,7 +2142,7 @@ test('template-not-installed (v13): a file the project wrote in place of a templ
   assert.ok(!ids(one).includes('template-not-installed'), ids(one).join());
   manifest.entries[manifest.entries.length - 1].replaces = ['templates/new-core.mjs', 'templates/extra.mjs'];
   write(repo, '.agents/harness-manifest.json', JSON.stringify(manifest));
-  assert.deepStrictEqual(report(repo, script).notInstalled, { core: [], gaps: [], unrecorded: [], optional: ['templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'] });
+  assert.deepStrictEqual(report(repo, script).notInstalled, { core: [], gaps: [], unrecorded: [], reviewedAt: [], optional: ['templates/scripts/lib/extra-core.mjs', 'templates/scripts/lib/extra-core.test.mjs'] });
   // on a generated entry, or one that records a template, `replaces` names nothing
   for (const extra of [{ kind: 'generated' }, { template: 'templates/demo.mjs' }]) {
     Object.assign(manifest.entries[manifest.entries.length - 1], extra);
@@ -2161,7 +2162,7 @@ test('template-not-installed (v13): mutants that read the Needs cell, or count a
   const repo = installNaming(['templates/demo.mjs']);
   const wide = report(repo, skillWithOptional("split('|').slice(1, 3)", "split('|').slice(1)"));
   assert.ok(wide.notInstalled.optional.includes('templates/new-core.mjs'), 'the mutant still reads only Component and From');
-  const blind = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), skillWithOptional('    if (recorded.has(t)) continue;\n', ''));
+  const blind = report(installNaming(['templates/demo.mjs', 'templates/new-core.mjs']), skillWithOptional('    if (recorded.has(t)) {\n      kept.push(t);\n      continue;\n    }\n', ''));
   assert.ok(ids(blind).includes('template-not-installed'), 'the mutant still skips the templates the manifest names');
 });
 
@@ -2179,22 +2180,57 @@ test("template-not-installed (v13): the real skill's tables sort its templates i
 
 const NEW_IN_V13 = ['templates/scripts/deploy-list.mjs', 'templates/scripts/lib/deploy-list-core.mjs', 'templates/scripts/lib/deploy-list-core.test.mjs', 'templates/scripts/lib/review-gate.golden.json'];
 
+const INTAKE = ['templates/scripts/intake.mjs', 'templates/scripts/lib/intake-core.mjs', 'templates/scripts/lib/intake-core.test.mjs'];
+
 test("template-never-installed (v13): a core template the install's own version shipped is no new file of the upgrade", () => {
-  const at12 = report(installNaming(['templates/harness-guard.sh'], 12));
-  assert.deepStrictEqual(at12.notInstalled.core, NEW_IN_V13);
-  for (const t of ['templates/scripts/intake.mjs', 'templates/edit-guard.mjs', 'templates/agents-rules.md']) assert.ok(at12.notInstalled.gaps.includes(t), t);
-  assert.match(at12.hazards.find(h => h.id === 'template-not-installed').detail, /ships 4 core templates no manifest entry names: templates\/scripts\/deploy-list\.mjs, /);
-  assert.match(at12.hazards.find(h => h.id === 'template-never-installed').detail, /^the install never took \d+ core templates its skillVersion 12 already shipped: .*templates\/scripts\/intake\.mjs/);
-  const text = run(installNaming(['templates/harness-guard.sh'], 12), ['--text']).stdout;
-  assert.ok(text.includes(`not installed: 4 core (${NEW_IN_V13.join(', ')}), ${at12.notInstalled.gaps.length} core the install never took (`), text);
-  // at v13 every core template is one the install never took; with no skillVersion, each is new
+  // an install with every template but the intake script's at v12: the upgrade installs v13's four
+  const { TEMPLATES_SINCE } = require(SCRIPT);
+  const all = Object.values(TEMPLATES_SINCE).flat();
+  const repo = installNaming(all.filter(t => !INTAKE.includes(t) && !NEW_IN_V13.includes(t)), 12);
+  const at12 = report(repo);
+  assert.deepStrictEqual([at12.notInstalled.core, at12.notInstalled.gaps], [NEW_IN_V13, INTAKE]);
+  assert.match(at12.hazards.find(h => h.id === 'template-not-installed').detail, /^the skill ships 4 core templates no manifest entry names: templates\/scripts\/deploy-list\.mjs, [^;]*$/);
+  assert.strictEqual(at12.hazards.find(h => h.id === 'template-never-installed').detail, `the install never took 3 core templates its skillVersion 12 already shipped: ${INTAKE.join(', ')}`);
+  assert.ok(run(repo, ['--text']).stdout.includes(`not installed: 4 core (${NEW_IN_V13.join(', ')}), 3 core the install never took (${INTAKE.join(', ')})`));
+  // at v13 every core template is one the install never took, but for what the kept guard runs (the
+  // review gate and its imports); with no integer skillVersion, each is new
   const at13 = report(installNaming(['templates/harness-guard.sh'], 13));
-  assert.deepStrictEqual(at13.notInstalled.core, []);
+  assert.deepStrictEqual(at13.notInstalled.core, ['harness-host-core', 'review-gate-core', 'run-sources', 'unit-cost-core', 'unit-step-core']
+    .map(f => `templates/scripts/lib/${f}.mjs`).concat('templates/scripts/review-gate.mjs'));
   assert.ok(NEW_IN_V13.every(t => at13.notInstalled.gaps.includes(t)), at13.notInstalled.gaps.join());
-  const unknown = report(installNaming(['templates/harness-guard.sh'], null));
-  assert.deepStrictEqual(unknown.notInstalled.gaps, []);
-  assert.ok(unknown.notInstalled.core.includes('templates/scripts/intake.mjs'));
-  assert.ok(!ids(unknown).includes('template-never-installed'));
+  for (const v of [null, '12', 12.5]) {
+    const unknown = report(installNaming(['templates/harness-guard.sh'], v));
+    assert.deepStrictEqual(unknown.notInstalled.gaps, [], String(v));
+    assert.ok(unknown.notInstalled.core.includes('templates/scripts/intake.mjs'), String(v));
+    assert.ok(!ids(unknown).includes('template-never-installed'), String(v));
+  }
+  // leftover-processes.mjs became core at v11: a v10 install takes it now
+  const at10 = report(installNaming(['templates/harness-guard.sh'], 10)).notInstalled;
+  assert.ok(at10.core.includes('templates/leftover-processes.mjs') && !at10.gaps.includes('templates/leftover-processes.mjs'));
+});
+
+test('template-never-installed (v13): a template a kept or new file imports or runs is the upgrade\'s, not a gap', () => {
+  // deploy-list.mjs (new) imports retro-core and run-sources; the guard (kept) runs review-gate.mjs
+  const at12 = report(installNaming(['templates/harness-guard.sh'], 12)).notInstalled;
+  for (const t of [...NEW_IN_V13, 'templates/scripts/lib/retro-core.mjs', 'templates/scripts/lib/retro-gather.mjs', 'templates/scripts/lib/run-sources.mjs',
+    'templates/scripts/lib/review-gate-core.mjs', 'templates/scripts/lib/unit-record-core.mjs', 'templates/scripts/review-gate.mjs', 'templates/scripts/lib/harness-due-core.mjs']) {
+    assert.ok(at12.core.includes(t) && !at12.gaps.includes(t), t);
+  }
+  assert.ok(at12.gaps.includes('templates/scripts/intake.mjs'), 'nothing kept or new imports the intake script');
+  assert.deepStrictEqual(at12.core, [...at12.core].sort());
+  // a fixture: a new template importing an old one; the mutant without the closure leaves it a gap
+  const withImport = (script) => {
+    const tpl = path.join(path.dirname(path.dirname(script)), 'templates', 'scripts');
+    fs.mkdirSync(path.join(tpl, 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(tpl, 'deploy-list.mjs'), "import { a } from './lib/retro-core.mjs';\nexport { a };\n");
+    fs.writeFileSync(path.join(tpl, 'lib', 'retro-core.mjs'), 'export const a = 1;\n');
+    return script;
+  };
+  const named = ['templates/demo.mjs', 'templates/new-core.mjs'];
+  const fixed = report(installNaming(named, 12), withImport(skillWithOptional())).notInstalled;
+  assert.deepStrictEqual([fixed.core, fixed.gaps], [['templates/scripts/deploy-list.mjs', 'templates/scripts/lib/retro-core.mjs'], []]);
+  const blind = report(installNaming(named, 12), withImport(skillWithOptional('    for (const d of templateDeps(kept[i], known)) {', '    for (const d of []) {'))).notInstalled;
+  assert.deepStrictEqual(blind.gaps, ['templates/scripts/lib/retro-core.mjs'], 'the mutant still reads the imports');
 });
 
 test('template-never-installed (v13): a template not listed is new, and the version boundary is noticed', () => {
@@ -2219,35 +2255,64 @@ test("template-unrecorded (v13): an entry with no template where the template is
   editManifest(repo, m => m.entries.push({ path: 'scripts/new-core.mjs', kind: 'generated', sha256: 'b'.repeat(64) }));
   const rep = report(repo, script);
   assert.deepStrictEqual([rep.notInstalled.core, rep.notInstalled.unrecorded], [[], ['scripts/new-core.mjs (templates/new-core.mjs)']]);
-  assert.match(rep.hazards.find(h => h.id === 'template-unrecorded').detail, /^1 generated manifest entry holds a template's file and records no template: scripts\/new-core\.mjs \(templates\/new-core\.mjs\)$/);
+  assert.match(rep.hazards.find(h => h.id === 'template-unrecorded').detail, /^1 manifest entry not reviewed holds a template's file and records no template: scripts\/new-core\.mjs \(templates\/new-core\.mjs\)$/);
   assert.ok(run(repo, ['--text'], script).stdout.includes('no template recorded: scripts/new-core.mjs (templates/new-core.mjs)'));
-  // a reviewed one is the project's own file: nothing to report
-  editManifest(repo, m => { m.entries[m.entries.length - 1].kind = 'reviewed'; });
-  const own = report(repo, script);
-  assert.deepStrictEqual([own.notInstalled.core, own.notInstalled.unrecorded], [[], []]);
-  assert.ok(!ids(own).some(id => /^template-(not-installed|unrecorded)$/.test(id)), ids(own).join());
-  // a path that only ends in the name, or a block, holds nothing
-  for (const holder of [{ path: 'scripts/my-new-core.mjs' }, { path: 'scripts/new-core.mjs', block: 'x' }]) {
+  // at the top, under a directory, or with no kind, an entry not reviewed holds it
+  for (const holder of [{ path: 'new-core.mjs', kind: 'generated' }, { path: '.claude/hooks/new-core.mjs', kind: 'scaffold' }, { path: 'new-core.mjs' }]) {
+    editManifest(repo, m => { m.entries[m.entries.length - 1] = holder; });
+    assert.deepStrictEqual(report(repo, script).notInstalled.unrecorded, [`${holder.path} (templates/new-core.mjs)`], JSON.stringify(holder));
+  }
+  // a path that only ends in the name, or a block, holds nothing; a block that is no string is no holder and no crash
+  for (const holder of [{ path: 'scripts/my-new-core.mjs' }, { path: 'scripts/new-core.mjs', block: 'x' }, { path: 'scripts/new-core.mjs', block: { toString: 1 } }]) {
     editManifest(repo, m => { m.entries[m.entries.length - 1] = { kind: 'generated', ...holder }; });
     assert.ok(report(repo, script).notInstalled.core.includes('templates/new-core.mjs'), JSON.stringify(holder));
   }
-  // the rules block holds the rules template; another block does not
-  const real = installNaming(['templates/harness-guard.sh'], 12);
+  const blind = skillWithOptional('    const holder = unnamed.find(e => installedAt(t, e));\n', '    const holder = null;\n');
+  editManifest(repo, m => { m.entries[m.entries.length - 1] = { path: '.claude/hooks/new-core.mjs', kind: 'generated' }; });
+  assert.deepStrictEqual(report(repo, script).notInstalled.core, []);
+  assert.ok(report(repo, blind).notInstalled.core.includes('templates/new-core.mjs'), 'the mutant still finds the holder');
+  // the rules block holds the rules template, and the guard's hook or husky script the guard; another block does not
+  const real = installNaming(['templates/command-guard.mjs'], 12);
   editManifest(real, m => m.entries.push({ path: 'AGENTS.md', block: 'rules', kind: 'generated' }, { path: 'AGENTS.md', block: 'policy', kind: 'reviewed' }));
   const rules = report(real).notInstalled;
   assert.deepStrictEqual(rules.unrecorded, ['AGENTS.md#rules (templates/agents-rules.md)']);
-  assert.ok(!rules.gaps.includes('templates/agents-rules.md') && !rules.core.includes('templates/agents-rules.md'));
-  const blind = skillWithOptional('    const holder = unnamed.find(e => installedAt(t, e));\n', '    const holder = null;\n');
-  editManifest(repo, m => { m.entries[m.entries.length - 1] = { path: '.claude/hooks/new-core.mjs', kind: 'reviewed' }; });
-  assert.deepStrictEqual(report(repo, script).notInstalled.core, []);
-  assert.ok(report(repo, blind).notInstalled.core.includes('templates/new-core.mjs'), 'the mutant still finds the holder');
+  assert.ok(![...rules.gaps, ...rules.core].includes('templates/agents-rules.md'));
+  const odd = installNaming(['templates/command-guard.mjs'], 12);
+  editManifest(odd, m => m.entries.push({ path: 'AGENTS.md', block: { toString: 1 }, kind: 'generated' }));
+  assert.ok(report(odd).notInstalled.gaps.includes('templates/agents-rules.md'), 'a block that is no string holds no rules block');
+  for (const hook of ['.githooks/pre-commit', '.githooks/harness-guard.sh']) {
+    const guard = installNaming(['templates/command-guard.mjs'], 12);
+    editManifest(guard, m => m.entries.push({ path: hook, kind: 'generated' }));
+    assert.ok(report(guard).notInstalled.unrecorded.includes(`${hook} (templates/harness-guard.sh)`), hook);
+  }
+});
+
+test("template-unrecorded (v13): a reviewed entry is the project's own file for an old template, never for a new one", () => {
+  // the install's version shipped the intake script: a reviewed file in its place is the project's
+  const old = installNaming(['templates/harness-guard.sh'], 12);
+  editManifest(old, m => m.entries.push({ path: 'scripts/intake.mjs', kind: 'reviewed' }));
+  const own = report(old).notInstalled;
+  assert.ok(![...own.core, ...own.gaps, ...own.unrecorded].includes('templates/scripts/intake.mjs'));
+  // deploy-list.mjs is new at v13: a reviewed file where it goes leaves it to install, and is named
+  const fresh = installNaming(['templates/harness-guard.sh'], 12);
+  editManifest(fresh, m => m.entries.push({ path: 'tools/scripts/deploy-list.mjs', kind: 'reviewed' }));
+  const rep = report(fresh);
+  assert.ok(rep.notInstalled.core.includes('templates/scripts/deploy-list.mjs'));
+  assert.deepStrictEqual(rep.notInstalled.reviewedAt, ['tools/scripts/deploy-list.mjs (templates/scripts/deploy-list.mjs)']);
+  assert.match(rep.hazards.find(h => h.id === 'template-not-installed').detail, /; a reviewed entry sits where one is installed: tools\/scripts\/deploy-list\.mjs \(templates\/scripts\/deploy-list\.mjs\)$/);
+  // in the fixture skill a template not listed is new, so a reviewed holder never silences it
+  const script = skillWithOptional();
+  const repo = installNaming(['templates/demo.mjs']);
+  editManifest(repo, m => m.entries.push({ path: 'scripts/new-core.mjs', kind: 'reviewed' }));
+  assert.deepStrictEqual(report(repo, script).notInstalled.reviewedAt, ['scripts/new-core.mjs (templates/new-core.mjs)']);
 });
 
 test('TEMPLATES_SINCE (v13): every shipped template, once, at a version from 6 to the skill\'s', () => {
   const { TEMPLATES_SINCE } = require(SCRIPT);
   const skill = path.dirname(path.dirname(SCRIPT));
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]));
-  const shipped = walk(path.join(skill, 'templates')).filter(f => !path.basename(f).startsWith('.')).map(f => path.relative(skill, f).split(path.sep).join('/')).sort();
+  const stray = (f) => /^\./.test(path.basename(f)) || /(\.(orig|rej|bak|swp)|~)$/.test(f);
+  const shipped = walk(path.join(skill, 'templates')).filter(f => !stray(f)).map(f => path.relative(skill, f).split(path.sep).join('/')).sort();
   const listed = Object.values(TEMPLATES_SINCE).flat();
   assert.strictEqual(new Set(listed).size, listed.length, 'a template listed twice');
   assert.deepStrictEqual([...listed].sort(), shipped, 'a new template takes the version that ships it');

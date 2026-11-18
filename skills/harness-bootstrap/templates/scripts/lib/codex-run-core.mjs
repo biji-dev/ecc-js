@@ -480,8 +480,10 @@ export function classify({
       .filter((l) => /^ERROR/.test(l))
       .join('\n'),
   ].join('\n');
+  // a refusal can also come as an item error, which parseEvents keeps as a warning; the reason is its line
+  const refusal = [errorText, ...events.warnings].flatMap((t) => t.split('\n')).find((l) => REFUSED.test(l));
   if (mode === 'review' && /^review was interrupted\b/i.test(verdict?.trim() ?? '')) {
-    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
+    if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };
     // Interrupted by quota/login -> still the Claude fallback, not "fix the call".
     if (UNAVAILABLE.test(errorText))
       return { outcome: 'unavailable', exit: EXIT.unavailable, reason: firstLine(errorText) };
@@ -493,7 +495,7 @@ export function classify({
   }
   // A refusal in an error event or on stderr is never a verdict, even in a turn that completed:
   // what the model wrote after the filter turned it down is not the review it was asked for.
-  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };
+  if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };
   if (events.turns > 0 && !events.failed && verdict?.trim()) {
     const warnings = [...events.warnings, ...events.errors];
     const reasons = exitCode === 0 ? [] : [`codex exit ${exitCode} but verdict present`];

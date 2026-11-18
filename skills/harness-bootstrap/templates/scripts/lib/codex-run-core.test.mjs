@@ -1531,6 +1531,20 @@ test('classify: a safety-filter refusal is refused (exit 5), in a failed turn, a
   const completed = parseEvents([JSON.stringify({ type: 'error', message: CYBER }), '{"type":"turn.started"}', '{"type":"turn.completed","usage":{}}'].join('\n'));
   assert.equal(classify({ exitCode: 0, events: completed, verdict: 'No findings.' }).exit, EXIT.refused);
   assert.equal(classify({ exitCode: 0, events: parseEvents(ok), verdict: 'No findings.', stderr: `ERROR: ${CYBER}` }).exit, EXIT.refused);
+  // an item error, which parseEvents keeps as a warning, in a turn that completed or a review it interrupted
+  const item = parseEvents([JSON.stringify({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: CYBER } }), '{"type":"turn.completed","usage":{}}'].join('\n'));
+  assert.deepEqual(item.warnings, [CYBER]);
+  const viaItem = classify({ exitCode: 0, events: item, verdict: 'No findings.' });
+  assert.deepEqual([viaItem.outcome, viaItem.exit], ['refused', EXIT.refused]);
+  assert.match(viaItem.reason, /^This content was flagged for possible cybersecurity risk/);
+  assert.equal(classify({ exitCode: 0, events: item, verdict: 'Review was interrupted.', mode: 'review' }).exit, EXIT.refused);
+  // the reason is the refusal's line, not a retry line before it
+  const retried = parseEvents([JSON.stringify({ type: 'error', message: 'Reconnecting... 1/5 (stream disconnected)' }), JSON.stringify({ type: 'turn.failed', error: { message: CYBER } })].join('\n'));
+  assert.match(classify({ exitCode: 1, events: retried, verdict: '' }).reason, /^This content was flagged for possible cybersecurity risk/);
+  // an item error that is no refusal stays a warning on an ok verdict
+  const meta = parseEvents([JSON.stringify({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata for `gpt-x` not found' } }), '{"type":"turn.completed","usage":{}}'].join('\n'));
+  const warned = classify({ exitCode: 0, events: meta, verdict: 'No findings.' });
+  assert.deepEqual([warned.outcome, warned.reason], ['ok', 'warnings: Model metadata for `gpt-x` not found']);
   // a finished verdict that quotes the filter's words (Codex reading this file) is a verdict
   assert.equal(classify({ exitCode: 0, events: parseEvents(ok), verdict: `the wrapper maps "${CYBER}" to refused` }).exit, EXIT.ok);
   // the codes stay distinct: a caller tells "rerun on Opus" from "take the fallback" by the exit alone

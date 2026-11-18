@@ -236,14 +236,20 @@ codexMutant('classifying a safety refusal as a failure', CORE_REL, 'const REFUSE
 codexMutant(
   'not checking an interrupted review for a refusal',
   CORE_REL,
-  "    if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  "    if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };\n",
   '',
 );
 codexMutant(
   'not checking a failed or completed turn for a refusal',
   CORE_REL,
-  "\n  if (REFUSED.test(errorText)) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(errorText) };\n",
+  "\n  if (refusal !== undefined) return { outcome: 'refused', exit: EXIT.refused, reason: firstLine(refusal) };\n",
   '\n',
+);
+codexMutant(
+  'reading a refusal from the error events only, not an item error',
+  CORE_REL,
+  'const refusal = [errorText, ...events.warnings].flatMap(',
+  'const refusal = [errorText].flatMap(',
 );
 // The landing check counts an adversarial pass with a base as a read of its whole range: the prompt lists it.
 codexMutant('sending an adversarial pass with a base no range', WRAPPER_REL, "const stdin = fullPrompt + (ranged ? rangeText(a.cwd, snapshot.baseTree, snapshot.tree) : '');", 'const stdin = fullPrompt;');

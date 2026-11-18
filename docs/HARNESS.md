@@ -1695,8 +1695,9 @@ admission, the review-gate core, `codex-run.mjs`, the command guard, `session-re
 guard's hooks), so the landing check says `NONE`: the session runs the merge hook's checks and the branch's own
 landing check first (its v13 line names the critical paths no review read, and their adversarial pass
 runs before the ask), asks in one chat line, and on the yes runs the owner-key merge itself. From v11, the v12 and v13 rows go together, as
-one upgrade and one merge. `harness-status` names each core template the manifest lacks
-(`template-not-installed`): where every entry records its template, those are the upgrade's new files. The bindings are read from the install: `SCOPE="checkout"`, with the
+one upgrade and one merge. `harness-status` names each core template the manifest lacks and the install's
+version did not ship (`template-not-installed`), the upgrade's new files; one the install's own version shipped and it
+never took (`template-never-installed`) is a follow-up row, never part of the upgrade. The bindings are read from the install: `SCOPE="checkout"`, with the
 registry's `Worktree` column added and any bad cell fixed first; `PRODUCT_PATHS`, `RECORDS`,
 `GATE_JOBS` and `SERIAL`, `RETRY_FLAKY=1` and `DOCS_ONLY` in the gates, `LEASE_SLOTS` in admission and `WORKTREES` in `leftover-processes.mjs`; each gate's
 scoped command made scoped in fact; a merge-time suite pointed at `run-gates.sh`; the merge block's
